@@ -1,11 +1,11 @@
 # factory.yaml - Host Project Configuration for Agentic Software Factory
-project_name: "ziggy-cocker-spaniel-platformer"
+project_name: "clifton-down-social-sandbox"
 base_branch: "main"
-tech_stack: "HTML5 Canvas / Vanilla ES6 JavaScript / Web Audio API"
+tech_stack: "HTML5 Canvas / Vanilla ES6 JavaScript / Web Audio API / WebRTC P2P (PeerJS)"
 
 # Automation commands executed by Validator workers in isolated worktrees:
 commands:
-  build: "python3 -c 'import os; assert os.path.exists(\"index.html\") and os.path.exists(\"src/main.js\"); print(\"Build check passed\")'"
+  build: "python3 -c 'import os; assert os.path.exists(\"index.html\") and os.path.exists(\"src/main.js\") and os.path.exists(\"src/world/field.js\"); print(\"Build check passed\")'"
   test: "python3 test/run_tests.py"
   lint: "python3 -c 'print(\"Lint check passed\")'"
   format_check: "echo 'format check passed'"
@@ -13,4 +13,4 @@ commands:
 # Paths to relevant host project documentation for Architect and Reviewer:
 documentation:
   guidelines: "README.md"
-  architecture: "openspec/changes/ticket-001/spec.md"
+  architecture: "openspec/changes/ticket-002/spec.md"

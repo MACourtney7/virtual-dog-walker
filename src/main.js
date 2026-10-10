@@ -1,337 +1,392 @@
-// Ziggy: The Great Park Adventure - Full Game Engine & Loop
-import { Ziggy, ZiggyState } from './entities/ziggy.js';
-import { ParkLevel } from './level/park_level.js';
-import { ParticleSystem } from './systems/particles.js';
+// Clifton Down: Social Dog Walking Sandbox - Main Orchestrator
+
+import { Field, Camera } from './world/field.js';
+import { Owner } from './entities/owner.js';
+import { CompanionDog, CoatPreset, DogState } from './entities/companion_dog.js';
+import { TennisBall } from './entities/toy.js';
+import { NetworkManager, NetStatus } from './net/network.js';
+import { Protocol } from './net/protocol.js';
+import { SocialHUD } from './ui/social_hud.js';
 import { sound } from './systems/audio.js';
-import { CollectibleType } from './entities/collectibles.js';
 
-export class GameEngine {
-  constructor(canvasId) {
-    const canvas = document.getElementById(canvasId);
-    if (!canvas) throw new Error(`Canvas '${canvasId}' not found.`);
-    this.canvas = canvas;
+class CliftonDownGame {
+  constructor() {
+    this.canvas = document.getElementById('game-canvas');
+    this.ctx = this.canvas.getContext('2d');
 
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Could not acquire 2D context.');
-    this.ctx = ctx;
+    // World & Viewport
+    this.field = new Field(2600, 1900);
+    this.camera = new Camera(window.innerWidth, window.innerHeight, this.field.width, this.field.height);
 
-    this.isRunning = false;
-    this.lastTime = 0;
+    // Local Entities
+    const startX = 1350;
+    const startY = 1000;
+    this.owner = new Owner(startX, startY, 'You (Walker)', true);
+    this.dog = new CompanionDog(startX + 40, startY + 20, this.owner, CoatPreset.CHOCOLATE_TAN);
+    this.ball = new TennisBall(startX + 20, startY + 20);
 
-    // Viewport & Camera
-    this.viewWidth = 1280;
-    this.viewHeight = 720;
-    this.cameraX = 0;
+    this.camera.follow(this.owner);
 
-    // Game Objects
-    this.level = new ParkLevel();
-    this.ziggy = new Ziggy(80, 500);
-    this.particles = new ParticleSystem();
+    // Remote Players (peerId -> { owner: Owner, dog: CompanionDog })
+    this.remotePlayers = new Map();
 
-    // Game Stats
-    this.lives = 3;
-    this.bonesCollected = 0;
-    this.score = 0;
-    this.isVictory = false;
-    this.sprintTimer = 0;
+    // Networking
+    this.net = new NetworkManager();
 
-    // Hook Ziggy Audio
-    this.ziggy.onBarkTrigger = () => {
-      sound.playBark();
-      this.particles.emitDust(this.ziggy.pos.x + 20, this.ziggy.pos.y + 36, this.ziggy.facing);
-    };
+    // UI HUD
+    this.hud = new SocialHUD(this.net, this.owner, this.dog, CoatPreset);
 
-    // Input state
-    this.keys = {
-      left: false,
-      right: false,
-      down: false,
-      sprint: false,
-      jumpPressed: false,
-      jumpReleased: false,
-      barkPressed: false
-    };
+    // Audio tracking
+    this.hasInteracted = false;
+    this.lastFootstepTime = 0;
 
-    this.initCanvasSize();
-    this.bindEvents();
-    this.updateHUD();
+    // Loop Timing
+    this.lastTime = performance.now();
+
+    this.initCanvas();
+    this.bindInputs();
+    this.initNetworking();
+
+    // Start 60fps loop
+    requestAnimationFrame((t) => this.gameLoop(t));
   }
 
-  initCanvasSize() {
-    const dpr = window.devicePixelRatio || 1;
-    const rect = this.canvas.getBoundingClientRect();
-    this.viewWidth = rect.width || 1280;
-    this.viewHeight = rect.height || 720;
-
-    this.canvas.width = this.viewWidth * dpr;
-    this.canvas.height = this.viewHeight * dpr;
-    if (this.ctx.resetTransform) this.ctx.resetTransform();
-    this.ctx.scale(dpr, dpr);
+  initCanvas() {
+    const resize = () => {
+      this.canvas.width = window.innerWidth;
+      this.canvas.height = window.innerHeight;
+      this.camera.resize(this.canvas.width, this.canvas.height);
+    };
+    window.addEventListener('resize', resize);
+    resize();
   }
 
-  bindEvents() {
-    window.addEventListener('resize', () => this.initCanvasSize());
+  initNetworking() {
+    // Set initial local profile metadata for networking
+    this.net.setLocalMeta({
+      name: this.owner.name,
+      jacketColor: this.owner.jacketColor,
+      coatName: this.dog.coat.name
+    });
+
+    // Check if URL has ?room=... parameter to auto-join
+    const urlParams = new URLSearchParams(window.location.search);
+    const targetRoom = urlParams.get('room');
+
+    if (targetRoom) {
+      this.net.joinRoom(targetRoom);
+    }
+
+    this.net.onStatusChange = (status, msg) => {
+      this.hud.updateNetworkState(status, msg);
+    };
+
+    // When a peer connects
+    this.net.onPeerJoin = (peerId, meta) => {
+      if (peerId === this.net.peerId) return;
+
+      let coat = CoatPreset.CHOCOLATE_TAN;
+      const coatName = (meta && meta.coatName) ? meta.coatName : '';
+      if (coatName.includes('Golden')) coat = CoatPreset.GOLDEN;
+      else if (coatName.includes('Black')) coat = CoatPreset.BLACK_LAB;
+
+      let existing = this.remotePlayers.get(peerId);
+      if (existing) {
+        if (meta.name) existing.owner.name = meta.name;
+        if (meta.jacketColor) existing.owner.jacketColor = meta.jacketColor;
+        existing.dog.coat = coat;
+        return;
+      }
+
+      const remoteOwner = new Owner(this.owner.x, this.owner.y, meta.name || 'Friend', false);
+      remoteOwner.jacketColor = meta.jacketColor || '#14532d';
+
+      const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
+      this.remotePlayers.set(peerId, { owner: remoteOwner, dog: remoteDog });
+
+      this.hud.updatePlayerCount(this.remotePlayers.size + 1);
+      this.hud.showToast(`👋 ${remoteOwner.name} joined the field!`);
+    };
+
+    this.net.onPeerLeave = (peerId) => {
+      const p = this.remotePlayers.get(peerId);
+      if (p) {
+        this.hud.showToast(`🚶 ${p.owner.name} left the park.`);
+        this.remotePlayers.delete(peerId);
+        this.hud.updatePlayerCount(this.remotePlayers.size + 1);
+      }
+    };
+
+    // Handle Network Events
+    this.net.onBallThrown = (data) => {
+      this.ball.throw(data.fromX, data.fromY, data.dirX, data.dirY, data.speed);
+      sound.playBallPickup();
+    };
+
+    this.net.onBark = (peerId, data) => {
+      const p = this.remotePlayers.get(peerId);
+      if (p) {
+        p.dog.bark(sound);
+      }
+    };
+
+    this.net.onPet = (peerId) => {
+      const p = this.remotePlayers.get(peerId);
+      if (p) {
+        p.dog.pet();
+      }
+    };
+
+    this.net.onChatMessage = (peerId, text) => {
+      const p = this.remotePlayers.get(peerId);
+      if (p) {
+        p.owner.setChat(text);
+      }
+    };
+
+    this.net.onEmote = (peerId, emote) => {
+      const p = this.remotePlayers.get(peerId);
+      if (p) {
+        p.owner.setEmote(emote);
+      }
+    };
+
+    // Start 16Hz sync loop
+    this.net.startSyncLoop(() => {
+      return {
+        owner: this.owner,
+        dog: this.dog
+      };
+    });
+  }
+
+  bindInputs() {
+    const handleAudioInteraction = () => {
+      if (!this.hasInteracted) {
+        this.hasInteracted = true;
+        sound.startAmbientBreeze();
+      }
+    };
 
     window.addEventListener('keydown', (e) => {
-      sound.ensureContext();
-      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(e.key)) {
-        e.preventDefault();
+      handleAudioInteraction();
+
+      // Ignore game inputs when typing in chat
+      if (document.activeElement === document.getElementById('chat-input')) {
+        return;
       }
 
-      if (e.key === 'a' || e.key === 'A' || e.key === 'ArrowLeft') this.keys.left = true;
-      if (e.key === 'd' || e.key === 'D' || e.key === 'ArrowRight') this.keys.right = true;
-      if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') this.keys.down = true;
-      if (e.key === 'Shift') this.keys.sprint = true;
+      switch (e.code) {
+        case 'KeyW':
+        case 'ArrowUp':
+          this.owner.keys.up = true;
+          break;
+        case 'KeyS':
+        case 'ArrowDown':
+          this.owner.keys.down = true;
+          break;
+        case 'KeyA':
+        case 'ArrowLeft':
+          this.owner.keys.left = true;
+          break;
+        case 'KeyD':
+        case 'ArrowRight':
+          this.owner.keys.right = true;
+          break;
 
-      if (e.key === ' ' || e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') {
-        this.keys.jumpPressed = true;
-        if (this.ziggy.isGrounded) sound.playJump();
-        else if (this.ziggy.canFlutter) sound.playFlutter();
-      }
+        case 'Space':
+        case 'KeyT':
+          // Throw Tennis Ball
+          e.preventDefault();
+          this.throwBall();
+          break;
 
-      if (e.key === 'b' || e.key === 'B' || e.key === 'k' || e.key === 'K') {
-        this.keys.barkPressed = true;
-      }
+        case 'KeyL':
+          // Toggle Leash
+          this.owner.isLeashed = !this.owner.isLeashed;
+          this.hud.showToast(this.owner.isLeashed ? '🦮 Leash on: Walking close' : '🐕 Off-lead: Free to roam & play!');
+          break;
 
-      if (e.key === 'r' || e.key === 'R') {
-        if (this.isVictory || this.lives <= 0) this.restart();
+        case 'KeyB':
+          // Bark!
+          this.dog.bark(sound);
+          this.net.broadcast(Protocol.createBark(this.net.peerId, this.dog.x, this.dog.y));
+          break;
+
+        case 'KeyE':
+          // Pet Dog
+          const distToDog = Math.hypot(this.owner.x - this.dog.x, this.owner.y - this.dog.y);
+          if (distToDog < 75) {
+            this.dog.pet();
+            sound.playPet();
+            this.hud.showToast('❤️ Good dog!');
+            this.net.broadcast(Protocol.createPet(this.net.peerId));
+          }
+          break;
+
+        case 'Enter':
+          e.preventDefault();
+          this.hud.toggleChatInput();
+          break;
       }
     });
 
     window.addEventListener('keyup', (e) => {
-      if (e.key === 'a' || e.key === 'A' || e.key === 'ArrowLeft') this.keys.left = false;
-      if (e.key === 'd' || e.key === 'D' || e.key === 'ArrowRight') this.keys.right = false;
-      if (e.key === 's' || e.key === 'S' || e.key === 'ArrowDown') this.keys.down = false;
-      if (e.key === 'Shift') this.keys.sprint = false;
-
-      if (e.key === ' ' || e.key === 'w' || e.key === 'W' || e.key === 'ArrowUp') {
-        this.keys.jumpReleased = true;
+      switch (e.code) {
+        case 'KeyW':
+        case 'ArrowUp':
+          this.owner.keys.up = false;
+          break;
+        case 'KeyS':
+        case 'ArrowDown':
+          this.owner.keys.down = false;
+          break;
+        case 'KeyA':
+        case 'ArrowLeft':
+          this.owner.keys.left = false;
+          break;
+        case 'KeyD':
+        case 'ArrowRight':
+          this.owner.keys.right = false;
+          break;
       }
     });
 
-    // Click/touch bark
-    this.canvas.addEventListener('pointerdown', () => {
-      sound.ensureContext();
-      this.keys.barkPressed = true;
+    window.addEventListener('click', () => {
+      handleAudioInteraction();
     });
   }
 
-  restart() {
-    this.level = new ParkLevel();
-    this.ziggy = new Ziggy(80, 500);
-    this.ziggy.onBarkTrigger = () => sound.playBark();
-    this.lives = 3;
-    this.bonesCollected = 0;
-    this.score = 0;
-    this.isVictory = false;
-    this.sprintTimer = 0;
-    this.updateHUD();
+  throwBall() {
+    const dirX = Math.cos(this.owner.angle);
+    const dirY = Math.sin(this.owner.angle);
+
+    this.ball.throw(this.owner.x, this.owner.y, dirX, dirY, 380, 190);
+    sound.playBallBounce();
+
+    // Trigger local dog to chase
+    this.dog.fetchBall(this.ball);
+
+    // Broadcast throw to multiplayer field
+    this.net.broadcast(Protocol.createBallThrown(this.net.peerId, this.owner.x, this.owner.y, dirX, dirY, 380));
+    this.hud.showToast('🎾 Ball thrown! Fetch!');
   }
 
-  start() {
-    if (this.isRunning) return;
-    this.isRunning = true;
-    this.lastTime = performance.now();
-    requestAnimationFrame((t) => this.loop(t));
-  }
-
-  loop(currentTime) {
-    if (!this.isRunning) return;
-    const dt = Math.min((currentTime - this.lastTime) / 1000, 0.05);
-    this.lastTime = currentTime;
+  gameLoop(timestamp) {
+    const dt = Math.min((timestamp - this.lastTime) / 1000, 0.1);
+    this.lastTime = timestamp;
 
     this.update(dt);
     this.render();
 
-    // Reset single-frame input flags
-    this.keys.jumpPressed = false;
-    this.keys.jumpReleased = false;
-    this.keys.barkPressed = false;
-
-    requestAnimationFrame((t) => this.loop(t));
+    requestAnimationFrame((t) => this.gameLoop(t));
   }
 
   update(dt) {
-    if (this.isVictory) return;
+    // 1. Update Field & Ambient Particles
+    this.field.update(dt);
 
-    // Tennis ball speed boost decay
-    if (this.sprintTimer > 0) {
-      this.sprintTimer -= dt;
-      this.keys.sprint = true;
+    // 2. Gather all other dogs for social play-bow reactions
+    const allDogs = [this.dog];
+    for (const p of this.remotePlayers.values()) {
+      allDogs.push(p.dog);
     }
 
-    // Check Mud Puddle Traction Reduction
-    let inMud = false;
-    for (const mud of this.level.mudPuddles) {
-      if (this.ziggy.aabb.intersects(mud.aabb)) {
-        inMud = true;
-        break;
+    // 3. Update Local Entities
+    this.owner.update(dt, this.field);
+    this.dog.update(dt, this.field, allDogs, this.ball);
+    this.ball.update(dt, this.field);
+
+    // Grass footstep sound
+    if (this.owner.isMoving && timestampNow() - this.lastFootstepTime > 320) {
+      this.lastFootstepTime = timestampNow();
+      sound.playFootstep();
+    }
+
+    // 4. Update Remote Peers via Interpolators
+    for (const [peerId, interpolatorData] of this.net.remotePeers) {
+      if (peerId === this.net.peerId) continue;
+
+      let remote = this.remotePlayers.get(peerId);
+      if (!remote) {
+        // Auto-create remote player if not yet instantiated
+        const meta = interpolatorData.meta || {};
+        let coat = CoatPreset.CHOCOLATE_TAN;
+        const coatName = (meta && meta.coatName) ? meta.coatName : '';
+        if (coatName.includes('Golden')) coat = CoatPreset.GOLDEN;
+        else if (coatName.includes('Black')) coat = CoatPreset.BLACK_LAB;
+
+        const remoteOwner = new Owner(this.owner.x, this.owner.y, meta.name || 'Friend', false);
+        remoteOwner.jacketColor = meta.jacketColor || '#14532d';
+        const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
+        remote = { owner: remoteOwner, dog: remoteDog };
+        this.remotePlayers.set(peerId, remote);
+        this.hud.updatePlayerCount(this.remotePlayers.size + 1);
       }
-    }
-    const speedScale = inMud ? 0.55 : 1.0;
-    this.ziggy.moveSpeed = 240 * speedScale;
 
-    // Dust particles on running
-    if (this.ziggy.isGrounded && Math.abs(this.ziggy.vel.x) > 100 && Math.random() < 0.25) {
-      this.particles.emitDust(this.ziggy.pos.x + 20, this.ziggy.pos.y + 36, this.ziggy.facing);
-    }
+      const ownerState = interpolatorData.ownerInterpolator.update(dt);
+      if (ownerState) {
+        remote.owner.x = ownerState.x;
+        remote.owner.y = ownerState.y;
+        remote.owner.vx = ownerState.vx;
+        remote.owner.vy = ownerState.vy;
+        remote.owner.angle = ownerState.angle;
+        remote.owner.isMoving = ownerState.isMoving;
+        remote.owner.isLeashed = ownerState.isLeashed;
+        remote.owner.depthY = remote.owner.y + 12;
+      }
 
-    // Ziggy Physics & Input
-    this.ziggy.handleInput(this.keys, dt);
-    this.ziggy.update(dt, this.level.platforms);
-
-    // Pitfall check
-    if (this.ziggy.pos.y > this.level.height + 40) {
-      this.lives = Math.max(0, this.lives - 1);
-      this.ziggy.pos.set(80, 500);
-      this.ziggy.vel.set(0, 0);
-      this.updateHUD();
-    }
-
-    // Update critters
-    for (const sq of this.level.squirrels) {
-      sq.update(dt, this.ziggy.activeBarks);
-    }
-
-    // Collectibles Collision Check
-    const ziggyBox = this.ziggy.aabb;
-    for (const c of this.level.collectibles) {
-      if (!c.isCollected) {
-        c.update(dt);
-        if (ziggyBox.intersects(c.aabb)) {
-          c.isCollected = true;
-          if (c.type === CollectibleType.BONE) {
-            this.bonesCollected++;
-            this.score += 100;
-            sound.playBoneCollect();
-            this.particles.emitSparkles(c.x + 10, c.y + 10);
-          } else if (c.type === CollectibleType.TENNIS_BALL) {
-            this.sprintTimer = 5.0; // 5 seconds speed boost!
-            this.score += 50;
-            sound.playBallPickup();
-            this.particles.emitSparkles(c.x + 10, c.y + 10);
-          } else if (c.type === CollectibleType.SAUSAGE) {
-            this.lives = Math.min(3, this.lives + 1);
-            this.score += 150;
-            sound.playBoneCollect();
-            this.particles.emitSparkles(c.x + 10, c.y + 10);
-          }
-          this.updateHUD();
-        }
+      const dogState = interpolatorData.dogInterpolator.update(dt);
+      if (dogState) {
+        remote.dog.x = dogState.x;
+        remote.dog.y = dogState.y;
+        remote.dog.vx = dogState.vx;
+        remote.dog.vy = dogState.vy;
+        remote.dog.angle = dogState.angle;
+        remote.dog.state = dogState.state;
+        remote.dog.depthY = remote.dog.y + 6;
       }
     }
 
-    // Goal Check: Dog Park Gate
-    if (this.level.goalGate && !this.isVictory) {
-      if (ziggyBox.intersects(this.level.goalGate.aabb)) {
-        this.isVictory = true;
-        this.score += 500;
-        sound.playVictory();
-        this.particles.emitConfetti(this.level.goalGate.x + 30, this.level.goalGate.y + 20);
-        this.updateHUD();
-      }
+    // 5. Host broadcasts authoritative ball state when ball is in play
+    if (this.net.isHost && (this.ball.isThrown || this.ball.isCarried || Math.hypot(this.ball.vx, this.ball.vy) > 1)) {
+      this.net.broadcast(Protocol.createBallSync(this.ball));
     }
 
-    this.particles.update(dt);
-
-    // Smooth Camera Tracking (keep Ziggy roughly 35% from left)
-    const targetCamX = this.ziggy.pos.x - this.viewWidth * 0.35;
-    const maxCamX = Math.max(0, this.level.width - this.viewWidth);
-    this.cameraX += (Math.max(0, Math.min(targetCamX, maxCamX)) - this.cameraX) * 0.1;
-  }
-
-  updateHUD() {
-    const livesEl = document.getElementById('lives-val');
-    const bonesEl = document.getElementById('bones-val');
-    const scoreEl = document.getElementById('score-val');
-
-    if (livesEl) livesEl.textContent = '🐾'.repeat(this.lives) || '💀';
-    if (bonesEl) bonesEl.textContent = String(this.bonesCollected).padStart(2, '0');
-    if (scoreEl) scoreEl.textContent = String(this.score).padStart(5, '0');
+    // 5. Update Camera
+    this.camera.update(dt);
   }
 
   render() {
-    this.ctx.clearRect(0, 0, this.viewWidth, this.viewHeight);
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
-    // 1. Parallax Sky & Scenic Backgrounds
-    this.level.drawBackground(this.ctx, this.cameraX, this.viewWidth, this.viewHeight);
+    // Apply Camera translation
+    this.camera.apply(this.ctx);
 
-    // 2. World Space Transformation
-    this.ctx.save();
-    this.ctx.translate(-this.cameraX, 0);
+    // Gather all dynamic entities to depth-sort
+    const dynamicEntities = [
+      this.owner,
+      this.dog,
+      this.ball
+    ];
 
-    // Level Platforms, Benches, Walls
-    this.level.drawPlatforms(this.ctx);
-
-    // Critters (Squirrels)
-    for (const sq of this.level.squirrels) {
-      sq.draw(this.ctx);
+    for (const p of this.remotePlayers.values()) {
+      dynamicEntities.push(p.owner);
+      dynamicEntities.push(p.dog);
     }
 
-    // Collectibles (Bones & Balls)
-    for (const c of this.level.collectibles) {
-      c.draw(this.ctx);
-    }
+    // Field renders background turf, then Y-sorts trees, benches, owners, dogs, and balls
+    this.field.render(this.ctx, this.camera, dynamicEntities);
 
-    // Hero: Ziggy the Cocker Spaniel
-    this.ziggy.draw(this.ctx);
-
-    // Particles
-    this.particles.draw(this.ctx);
-
-    this.ctx.restore();
-
-    // 3. Victory or Game Over Overlay
-    if (this.isVictory) {
-      this.renderVictoryOverlay();
-    } else if (this.lives <= 0) {
-      this.renderGameOverOverlay();
-    }
-  }
-
-  renderVictoryOverlay() {
-    this.ctx.save();
-    this.ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
-    this.ctx.fillRect(0, 0, this.viewWidth, this.viewHeight);
-
-    this.ctx.fillStyle = '#f3c948';
-    this.ctx.font = 'bold 36px "Outfit", sans-serif';
-    this.ctx.textAlign = 'center';
-    this.ctx.fillText('🎉 LEVEL CLEARED! 🎉', this.viewWidth / 2, this.viewHeight / 2 - 40);
-
-    this.ctx.fillStyle = '#f8fafc';
-    this.ctx.font = '22px "Outfit", sans-serif';
-    this.ctx.fillText('Ziggy reached the Dog Park!', this.viewWidth / 2, this.viewHeight / 2 + 10);
-
-    this.ctx.fillStyle = '#38bdf8';
-    this.ctx.font = '16px monospace';
-    this.ctx.fillText(`Final Score: ${this.score}  •  Bones: ${this.bonesCollected}`, this.viewWidth / 2, this.viewHeight / 2 + 50);
-
-    this.ctx.fillStyle = '#94a3b8';
-    this.ctx.font = '14px sans-serif';
-    this.ctx.fillText('Press R to play again', this.viewWidth / 2, this.viewHeight / 2 + 90);
-    this.ctx.restore();
-  }
-
-  renderGameOverOverlay() {
-    this.ctx.save();
-    this.ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
-    this.ctx.fillRect(0, 0, this.viewWidth, this.viewHeight);
-
-    this.ctx.fillStyle = '#ef4444';
-    this.ctx.font = 'bold 36px "Outfit", sans-serif';
-    this.ctx.textAlign = 'center';
-    this.ctx.fillText('NAPS TIME! 😴', this.viewWidth / 2, this.viewHeight / 2 - 20);
-
-    this.ctx.fillStyle = '#94a3b8';
-    this.ctx.font = '16px sans-serif';
-    this.ctx.fillText('Ziggy got a bit too tired. Press R to try again!', this.viewWidth / 2, this.viewHeight / 2 + 30);
-    this.ctx.restore();
+    // Restore Camera
+    this.camera.restore(this.ctx);
   }
 }
 
-// Auto-boot on load
+function timestampNow() {
+  return typeof performance !== 'undefined' ? performance.now() : Date.now();
+}
+
 window.addEventListener('DOMContentLoaded', () => {
-  const engine = new GameEngine('game-canvas');
-  engine.start();
+  new CliftonDownGame();
 });

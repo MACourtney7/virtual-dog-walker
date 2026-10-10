@@ -13,4 +13,4 @@ commands:
 # Paths to relevant host project documentation for Architect and Reviewer:
 documentation:
   guidelines: "README.md"
-  architecture: "openspec/changes/ticket-003/spec.md"
+  architecture: "openspec/changes/ticket-004/spec.md"

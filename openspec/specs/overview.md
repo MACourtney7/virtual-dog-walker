@@ -45,14 +45,13 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 
 ---
 
-## 4. Pure In-Browser WebRTC Networking
-- **Zero-Server P2P Transport (`src/net/network.js`, `src/net/protocol.js`)**:
-  - Built on PeerJS DataChannels with dynamic CDN injection.
-  - Clean room code generation (`clifton-####`) and one-click URL sharing (`?room=...`).
-  - **Bi-Directional Handshake**:
-    - Visitor connects -> sends `HELLO`.
-    - Host responds -> sends `WELCOME` with host profile and active peers list.
-    - Host relays `HELLO` to all other visitors.
+## 4. Universal Networking Architecture
+- **Multi-Transport Network Engine (`src/net/network.js`, `src/net/protocol.js`, `src/net/ws_network.js`)**:
+  - Transparent dual-mode architecture:
+    1. **Dedicated WebSocket Microserver Mode**: Automatically connects via native WebSockets (`ws://` or `wss://`) when launched via server or when `?server=...` parameter is present.
+    2. **WebRTC P2P Fallback Mode**: Gracefully falls back to browser-to-browser PeerJS DataChannels if run without a server.
+  - **Packet Protocol Parity**:
+    - Uniform packet schemas: `HELLO`, `WELCOME`, `SYNC_STATE`, `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, `EMOTE`, `PEER_LEFT`.
   - **Host Relaying & Synchronization**:
     - Host synchronizes authoritative ball physics.
     - State broadcasts at 16Hz; `EntityInterpolator` provides smooth exponential damping (lerp) for remote positions at 60fps.
@@ -60,17 +59,28 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 
 ---
 
-## 5. Sensory & Audio Polish
+## 5. Dedicated Microserver & Zero-Port Tunneling (`server/`)
+- **Asynchronous Python Microserver (`server/server.py`)**:
+  - Handles concurrent isolated rooms (`room_id`), serves static HTML/JS assets on `http://127.0.0.1:8080`, and multiplexes WebSocket game events between peers.
+  - Active heartbeat pinging (15s) and automatic cleanup of disconnected players and empty rooms.
+- **Zero-Port Public Tunnel Manager (`server/host.py`, `server/tunnel.py`)**:
+  - Automatically provisions Cloudflare Quick Tunnels (`https://<subdomain>.trycloudflare.com`) without router port-forwarding.
+  - Generates instant 1-click shareable URLs for remote players.
+
+---
+
+## 6. Sensory & Audio Polish
 - **Procedural Nature Soundscape (`src/systems/audio.js`)**:
   - Pink-noise filtered low-pass breeze for tree canopy wind.
   - Intermittent procedural birdsong chirps.
   - Soft procedural grass footstep rustles during movement.
   - Formant-filtered canine barks and ball bounce pops.
 - **Social HUD Overlay (`src/ui/social_hud.js`)**:
-  - Glassmorphic top bar displaying room badge, player count, and "Share Field" button with toast confirmation.
+  - Glassmorphic top bar displaying connection badge, room ID, player count, and "Share Park" button with toast confirmation.
   - Style customizer modal and quick chat bar (<kbd>Enter</kbd>) with emote buttons (👋, 🐾, ❤️, 🎾).
 
 ---
 
-## 6. Test Suite
-- `python3 test/run_tests.py`: Executes tests for scaffold presence, arrival steering, leash clamping, play-bow proximity, ballistics, ground bounce restitution, rolling friction, and network packet schemas.
+## 7. Test Suite
+- `python3 test/run_tests.py`: Comprehensive test runner covering physics ballistics, arrival steering, leash clamping, network packet schemas, microserver room routing, and tunnel configuration.
+

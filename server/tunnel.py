@@ -3,6 +3,7 @@ Clifton Down: Zero-Port Tunnel Manager
 Automates Cloudflare Quick Tunnel for instantaneous zero-config public access.
 """
 
+import io
 import os
 import platform
 import re
@@ -10,9 +11,10 @@ import shutil
 import socket
 import subprocess
 import sys
+import tarfile
 import time
 import urllib.request
-from typing import Optional, Tuple
+from typing import Optional
 
 
 def get_local_ip() -> str:
@@ -56,8 +58,8 @@ class TunnelManager:
         arch = platform.machine().lower()
 
         url_map = {
-            ("darwin", "arm64"): "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64",
-            ("darwin", "x86_64"): "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64",
+            ("darwin", "arm64"): "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz",
+            ("darwin", "x86_64"): "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz",
             ("linux", "x86_64"): "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
             ("linux", "aarch64"): "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64",
         }
@@ -68,7 +70,17 @@ class TunnelManager:
 
         try:
             print("⬇️  Downloading standalone Cloudflare Quick Tunnel helper binary...")
-            urllib.request.urlretrieve(download_url, local_bin)
+            req = urllib.request.Request(download_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read()
+
+            if download_url.endswith(".tgz"):
+                with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+                    tar.extract("cloudflared", path=self.bin_dir)
+            else:
+                with open(local_bin, "wb") as f:
+                    f.write(data)
+
             os.chmod(local_bin, 0o755)
             print("✅ Cloudflare Quick Tunnel binary ready.")
             return local_bin
@@ -81,7 +93,7 @@ class TunnelManager:
                     pass
             return None
 
-    def start_tunnel(self, timeout_sec: int = 15) -> Optional[str]:
+    def start_tunnel(self, timeout_sec: int = 25) -> Optional[str]:
         """Starts the tunnel subprocess and captures the generated trycloudflare.com URL."""
         bin_path = self.find_or_fetch_cloudflared()
         if not bin_path:
@@ -120,7 +132,7 @@ class TunnelManager:
                         self.public_url = match.group(0)
                         return self.public_url
 
-                time.sleep(0.1)
+                time.sleep(0.05)
 
         except Exception as e:
             print(f"⚠️  Error starting tunnel: {e}")

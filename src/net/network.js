@@ -51,11 +51,18 @@ export class NetworkManager {
     this.roomId = null;
     this.isHost = false;
 
+    // Local player metadata to broadcast during handshakes
+    this.localMeta = {
+      name: 'Park Walker',
+      jacketColor: '#1e3a8a',
+      coatName: 'Chocolate & Tan (Ziggy)'
+    };
+
     // Connections map (peerId -> DataConnection)
     this.connections = new Map();
     this.hostConnection = null;
 
-    // Remote entity interpolators (peerId -> { owner: EntityInterpolator, dog: EntityInterpolator, meta: {} })
+    // Remote entity interpolators (peerId -> { ownerInterpolator, dogInterpolator, meta })
     this.remotePeers = new Map();
 
     // Event hooks
@@ -72,6 +79,10 @@ export class NetworkManager {
     // Sync broadcast ticker
     this.syncInterval = null;
     this.syncHz = 16; // 16 updates per sec
+  }
+
+  setLocalMeta(meta) {
+    this.localMeta = { ...this.localMeta, ...meta };
   }
 
   setStatus(newStatus, msg = '') {
@@ -111,6 +122,28 @@ export class NetworkManager {
     return url.toString();
   }
 
+  // Ensure remote peer entry exists in this.remotePeers
+  ensureRemotePeer(peerId, meta = {}) {
+    let peerData = this.remotePeers.get(peerId);
+    if (!peerData) {
+      peerData = {
+        ownerInterpolator: new EntityInterpolator(),
+        dogInterpolator: new EntityInterpolator(),
+        meta: {
+          name: meta.name || 'Player',
+          jacketColor: meta.jacketColor || '#14532d',
+          coatName: meta.coatName || 'Chocolate & Tan (Ziggy)'
+        }
+      };
+      this.remotePeers.set(peerId, peerData);
+    } else if (meta && (meta.name || meta.jacketColor || meta.coatName)) {
+      if (meta.name) peerData.meta.name = meta.name;
+      if (meta.jacketColor) peerData.meta.jacketColor = meta.jacketColor;
+      if (meta.coatName) peerData.meta.coatName = meta.coatName;
+    }
+    return peerData;
+  }
+
   // 1. Host a Field Room
   async hostRoom(customRoomId = null) {
     try {
@@ -135,7 +168,6 @@ export class NetworkManager {
 
       this.peer.on('error', (err) => {
         console.warn('PeerJS Host Error:', err);
-        // If room ID is taken, fallback to random ID
         if (err.type === 'unavailable-id') {
           this.hostRoom(this.generateRoomId());
         } else {
@@ -168,8 +200,13 @@ export class NetworkManager {
 
         conn.on('open', () => {
           this.setStatus(NetStatus.CONNECTED_PEER, `Joined field: ${roomId}`);
-          // Send HELLO packet with local player info
-          conn.send(Protocol.createHello(this.peerId, 'Visitor', '#14532d', 'Chocolate & Tan'));
+          // Send HELLO packet to host with our local player profile
+          conn.send(Protocol.createHello(
+            this.peerId,
+            this.localMeta.name,
+            this.localMeta.jacketColor,
+            this.localMeta.coatName
+          ));
         });
 
         conn.on('data', (data) => {
@@ -178,6 +215,8 @@ export class NetworkManager {
 
         conn.on('close', () => {
           this.setStatus(NetStatus.OFFLINE, 'Host closed the connection');
+          this.remotePeers.delete(roomId);
+          if (this.onPeerLeave) this.onPeerLeave(roomId);
         });
 
         conn.on('error', (err) => {
@@ -199,30 +238,10 @@ export class NetworkManager {
   handleIncomingConnection(conn) {
     conn.on('open', () => {
       this.connections.set(conn.peer, conn);
-
-      // Initialize remote peer interpolators
-      this.remotePeers.set(conn.peer, {
-        ownerInterpolator: new EntityInterpolator(),
-        dogInterpolator: new EntityInterpolator(),
-        meta: { name: 'Player', jacketColor: '#1e3a8a', coatName: 'Chocolate & Tan' }
-      });
-
-      if (this.onPeerJoin) {
-        this.onPeerJoin(conn.peer, { name: 'Player' });
-      }
     });
 
     conn.on('data', (data) => {
       this.handlePacket(conn.peer, data);
-
-      // If host, relay broadcast to other connected clients
-      if (this.isHost && data && data.type !== PacketType.SYNC_STATE) {
-        for (const [id, c] of this.connections) {
-          if (id !== conn.peer && c.open) {
-            c.send(data);
-          }
-        }
-      }
     });
 
     conn.on('close', () => {
@@ -231,6 +250,8 @@ export class NetworkManager {
       if (this.onPeerLeave) {
         this.onPeerLeave(conn.peer);
       }
+      // Broadcast peer departure to remaining peers
+      this.broadcast({ type: PacketType.PEER_LEFT, peerId: conn.peer });
     });
   }
 
@@ -239,35 +260,95 @@ export class NetworkManager {
 
     switch (packet.type) {
       case PacketType.HELLO: {
-        let peerData = this.remotePeers.get(senderId);
-        if (!peerData) {
-          peerData = {
-            ownerInterpolator: new EntityInterpolator(),
-            dogInterpolator: new EntityInterpolator(),
-            meta: {}
-          };
-          this.remotePeers.set(senderId, peerData);
-        }
-        peerData.meta.name = packet.name || 'Player';
-        peerData.meta.jacketColor = packet.jacketColor || '#1e3a8a';
-        peerData.meta.coatName = packet.dogCoatName || 'Chocolate & Tan';
+        const meta = {
+          name: packet.name || 'Visitor',
+          jacketColor: packet.jacketColor || '#14532d',
+          coatName: packet.dogCoatName || 'Chocolate & Tan (Ziggy)'
+        };
+        this.ensureRemotePeer(senderId, meta);
+
         if (this.onPeerJoin) {
-          this.onPeerJoin(senderId, peerData.meta);
+          this.onPeerJoin(senderId, meta);
+        }
+
+        // If we are Host, respond with WELCOME (our host meta + list of existing peers)
+        if (this.isHost) {
+          const conn = this.connections.get(senderId);
+          if (conn && conn.open) {
+            const peersList = [];
+            for (const [id, d] of this.remotePeers) {
+              if (id !== senderId) {
+                peersList.push({ id, ...d.meta });
+              }
+            }
+            conn.send(Protocol.createWelcome(this.peerId, this.localMeta, peersList));
+          }
+
+          // Relay this new peer's HELLO to all other connected visitors
+          for (const [id, c] of this.connections) {
+            if (id !== senderId && c.open) {
+              c.send(packet);
+            }
+          }
+        }
+        break;
+      }
+
+      case PacketType.WELCOME: {
+        // Visitor received WELCOME from Host!
+        // 1. Add the Host as a remote player
+        const hostId = packet.hostId || senderId;
+        const hostMeta = packet.hostMeta || {
+          name: 'Host Walker',
+          jacketColor: '#1e3a8a',
+          coatName: 'Chocolate & Tan (Ziggy)'
+        };
+        this.ensureRemotePeer(hostId, hostMeta);
+        if (this.onPeerJoin) {
+          this.onPeerJoin(hostId, hostMeta);
+        }
+
+        // 2. Add any other existing peers in the room
+        if (Array.isArray(packet.peers)) {
+          for (const p of packet.peers) {
+            if (p.id && p.id !== this.peerId) {
+              this.ensureRemotePeer(p.id, p);
+              if (this.onPeerJoin) {
+                this.onPeerJoin(p.id, p);
+              }
+            }
+          }
         }
         break;
       }
 
       case PacketType.SYNC_STATE: {
-        const peerData = this.remotePeers.get(senderId);
-        if (peerData) {
-          peerData.ownerInterpolator.setTarget(packet.owner);
-          peerData.dogInterpolator.setTarget(packet.dog);
+        // Auto-ensure remote peer exists in case HELLO was delayed
+        let peerData = this.remotePeers.get(senderId);
+        if (!peerData) {
+          peerData = this.ensureRemotePeer(senderId, { name: 'Player' });
+          if (this.onPeerJoin) {
+            this.onPeerJoin(senderId, peerData.meta);
+          }
+        }
+
+        peerData.ownerInterpolator.setTarget(packet.owner);
+        peerData.dogInterpolator.setTarget(packet.dog);
+
+        // If Host: relay client's SYNC_STATE to all other connected clients
+        if (this.isHost) {
+          for (const [id, c] of this.connections) {
+            if (id !== senderId && c.open) {
+              c.send(packet);
+            }
+          }
         }
         break;
       }
 
       case PacketType.BALL_THROWN: {
         if (this.onBallThrown) this.onBallThrown(packet);
+        if (this.isHost) this.relayToOthers(senderId, packet);
         break;
       }
 
@@ -278,22 +359,42 @@ export class NetworkManager {
 
       case PacketType.BARK: {
         if (this.onBark) this.onBark(senderId, packet);
+        if (this.isHost) this.relayToOthers(senderId, packet);
         break;
       }
 
       case PacketType.PET: {
         if (this.onPet) this.onPet(senderId);
+        if (this.isHost) this.relayToOthers(senderId, packet);
         break;
       }
 
       case PacketType.CHAT_MESSAGE: {
         if (this.onChatMessage) this.onChatMessage(senderId, packet.text);
+        if (this.isHost) this.relayToOthers(senderId, packet);
         break;
       }
 
       case PacketType.EMOTE: {
         if (this.onEmote) this.onEmote(senderId, packet.emote);
+        if (this.isHost) this.relayToOthers(senderId, packet);
         break;
+      }
+
+      case PacketType.PEER_LEFT: {
+        const leftId = packet.peerId || senderId;
+        this.remotePeers.delete(leftId);
+        if (this.onPeerLeave) this.onPeerLeave(leftId);
+        break;
+      }
+    }
+  }
+
+  relayToOthers(excludePeerId, packet) {
+    if (!this.isHost) return;
+    for (const [id, c] of this.connections) {
+      if (id !== excludePeerId && c.open) {
+        c.send(packet);
       }
     }
   }

@@ -62,6 +62,13 @@ class CliftonDownGame {
   }
 
   initNetworking() {
+    // Set initial local profile metadata for networking
+    this.net.setLocalMeta({
+      name: this.owner.name,
+      jacketColor: this.owner.jacketColor,
+      coatName: this.dog.coat.name
+    });
+
     // Check if URL has ?room=... parameter to auto-join
     const urlParams = new URLSearchParams(window.location.search);
     const targetRoom = urlParams.get('room');
@@ -76,12 +83,23 @@ class CliftonDownGame {
 
     // When a peer connects
     this.net.onPeerJoin = (peerId, meta) => {
-      const remoteOwner = new Owner(this.owner.x, this.owner.y, meta.name || 'Friend', false);
-      remoteOwner.jacketColor = meta.jacketColor || '#14532d';
+      if (peerId === this.net.peerId) return;
 
       let coat = CoatPreset.CHOCOLATE_TAN;
-      if (meta.coatName === 'Golden Retriever') coat = CoatPreset.GOLDEN;
-      else if (meta.coatName === 'Black Lab') coat = CoatPreset.BLACK_LAB;
+      const coatName = (meta && meta.coatName) ? meta.coatName : '';
+      if (coatName.includes('Golden')) coat = CoatPreset.GOLDEN;
+      else if (coatName.includes('Black')) coat = CoatPreset.BLACK_LAB;
+
+      let existing = this.remotePlayers.get(peerId);
+      if (existing) {
+        if (meta.name) existing.owner.name = meta.name;
+        if (meta.jacketColor) existing.owner.jacketColor = meta.jacketColor;
+        existing.dog.coat = coat;
+        return;
+      }
+
+      const remoteOwner = new Owner(this.owner.x, this.owner.y, meta.name || 'Friend', false);
+      remoteOwner.jacketColor = meta.jacketColor || '#14532d';
 
       const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
       this.remotePlayers.set(peerId, { owner: remoteOwner, dog: remoteDog });
@@ -286,32 +304,53 @@ class CliftonDownGame {
     }
 
     // 4. Update Remote Peers via Interpolators
-    for (const [peerId, remote] of this.remotePlayers) {
-      const interpolatorData = this.net.remotePeers.get(peerId);
-      if (interpolatorData) {
-        const ownerState = interpolatorData.ownerInterpolator.update(dt);
-        if (ownerState) {
-          remote.owner.x = ownerState.x;
-          remote.owner.y = ownerState.y;
-          remote.owner.vx = ownerState.vx;
-          remote.owner.vy = ownerState.vy;
-          remote.owner.angle = ownerState.angle;
-          remote.owner.isMoving = ownerState.isMoving;
-          remote.owner.isLeashed = ownerState.isLeashed;
-          remote.owner.depthY = remote.owner.y + 12;
-        }
+    for (const [peerId, interpolatorData] of this.net.remotePeers) {
+      if (peerId === this.net.peerId) continue;
 
-        const dogState = interpolatorData.dogInterpolator.update(dt);
-        if (dogState) {
-          remote.dog.x = dogState.x;
-          remote.dog.y = dogState.y;
-          remote.dog.vx = dogState.vx;
-          remote.dog.vy = dogState.vy;
-          remote.dog.angle = dogState.angle;
-          remote.dog.state = dogState.state;
-          remote.dog.depthY = remote.dog.y + 6;
-        }
+      let remote = this.remotePlayers.get(peerId);
+      if (!remote) {
+        // Auto-create remote player if not yet instantiated
+        const meta = interpolatorData.meta || {};
+        let coat = CoatPreset.CHOCOLATE_TAN;
+        const coatName = (meta && meta.coatName) ? meta.coatName : '';
+        if (coatName.includes('Golden')) coat = CoatPreset.GOLDEN;
+        else if (coatName.includes('Black')) coat = CoatPreset.BLACK_LAB;
+
+        const remoteOwner = new Owner(this.owner.x, this.owner.y, meta.name || 'Friend', false);
+        remoteOwner.jacketColor = meta.jacketColor || '#14532d';
+        const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
+        remote = { owner: remoteOwner, dog: remoteDog };
+        this.remotePlayers.set(peerId, remote);
+        this.hud.updatePlayerCount(this.remotePlayers.size + 1);
       }
+
+      const ownerState = interpolatorData.ownerInterpolator.update(dt);
+      if (ownerState) {
+        remote.owner.x = ownerState.x;
+        remote.owner.y = ownerState.y;
+        remote.owner.vx = ownerState.vx;
+        remote.owner.vy = ownerState.vy;
+        remote.owner.angle = ownerState.angle;
+        remote.owner.isMoving = ownerState.isMoving;
+        remote.owner.isLeashed = ownerState.isLeashed;
+        remote.owner.depthY = remote.owner.y + 12;
+      }
+
+      const dogState = interpolatorData.dogInterpolator.update(dt);
+      if (dogState) {
+        remote.dog.x = dogState.x;
+        remote.dog.y = dogState.y;
+        remote.dog.vx = dogState.vx;
+        remote.dog.vy = dogState.vy;
+        remote.dog.angle = dogState.angle;
+        remote.dog.state = dogState.state;
+        remote.dog.depthY = remote.dog.y + 6;
+      }
+    }
+
+    // 5. Host broadcasts authoritative ball state when ball is in play
+    if (this.net.isHost && (this.ball.isThrown || this.ball.isCarried || Math.hypot(this.ball.vx, this.ball.vy) > 1)) {
+      this.net.broadcast(Protocol.createBallSync(this.ball));
     }
 
     // 5. Update Camera

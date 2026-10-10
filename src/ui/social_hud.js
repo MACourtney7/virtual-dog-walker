@@ -1,4 +1,5 @@
 // Social HUD Component - Room Status, One-Click Share, Chat Input, and Character Customizer
+import { Protocol } from '../net/protocol.js';
 
 export class SocialHUD {
   constructor(networkManager, localOwner, localDog, coatPresets) {
@@ -212,6 +213,20 @@ export class SocialHUD {
         const coatSelect = document.getElementById('cust-dog-coat');
         if (coatSelect && this.coatPresets[coatSelect.value]) {
           this.dog.coat = this.coatPresets[coatSelect.value];
+        }
+
+        if (this.net && typeof this.net.setLocalMeta === 'function') {
+          this.net.setLocalMeta({
+            name: this.owner.name,
+            jacketColor: this.owner.jacketColor,
+            coatName: this.dog.coat.name
+          });
+          this.net.broadcast(Protocol.createHello(
+            this.net.peerId,
+            this.owner.name,
+            this.owner.jacketColor,
+            this.dog.coat.name
+          ));
         }
 
         modal.style.display = 'none';

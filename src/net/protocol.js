@@ -25,10 +25,12 @@ export class Protocol {
     };
   }
 
-  static createWelcome(hostId, peersList, ballState) {
+  static createWelcome(hostId, hostMeta, peersList = [], ballState = null) {
     return {
       type: PacketType.WELCOME,
       senderId: hostId,
+      hostId: hostId,
+      hostMeta: hostMeta,
       peers: peersList,
       ball: ballState,
       timestamp: Date.now()

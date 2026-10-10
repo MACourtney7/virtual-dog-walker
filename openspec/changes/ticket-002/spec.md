@@ -40,15 +40,14 @@ Players inhabit the park as an **Owner and Dog companion** walking together acro
     - Y-sorted depth rendering (players, dogs, trees, and benches correctly layer as entities walk in front of or behind objects).
     - Boundary collision (park perimeter stonewalls/railings and solid tree trunks).
   - **Companion Dog & Player Mechanics**:
-    - Dual entity control: Player moves with WASD / Arrow keys or click/tap to walk.
+    - Dual entity control: Keyboard-focused navigation via WASD or Arrow keys.
     - Dog autonomous companion steering: follows owner naturally, stays within comfortable leash distance, stops to sniff, or explores off-leash.
     - Leash Toggle (`L` key): switch between loose lead (stays within 80px) and off-lead roaming (runs freely, plays with others).
-    - Ball Fetching (`T` key or click): throw a tennis ball across the grass; dogs track the ball, sprint to catch it, and happily bring it back.
+    - Ball Fetching (`Space` or `T` key): throw a tennis ball ahead in facing direction; dogs track the ball, sprint to catch it, and happily bring it back.
     - Bark Ability (`B` key): emit procedural canine bark sound with expanding sound-ring and "Woof!" emote bubble.
     - Petting Interaction (`E` key): bend down to pet the dog with heart particle FX and happy tail-wag burst.
-  - **Multiplayer Networking (In-Browser & Self-Hostable)**:
-    - **Browser-to-Browser P2P (WebRTC via PeerJS)**: Zero-server setup; host clicks "Host Field" to generate a shareable room link/code; visitors paste or click link to join instantly.
-    - **Self-Hostable WebSocket Server**: Standalone lightweight Node.js server (`server/server.js`) for dedicated LAN or VPS hosting.
+  - **Multiplayer Networking (Pure In-Browser WebRTC P2P)**:
+    - **Zero-Server Browser-to-Browser P2P (WebRTC via PeerJS DataChannels)**: Host clicks "Host Field" to generate a shareable room link or short code (e.g. `?room=clifton-xyz`); visitors paste or open the link to join the host's field instantly with zero backend or server installation.
     - State synchronization: player position, facing, dog position, animation state, ball physics, bark events, and chat bubbles.
     - Local fallback: works 100% offline in Solo Mode if no network is active.
   - **Social Interactions**:
@@ -59,7 +58,7 @@ Players inhabit the park as an **Owner and Dog companion** walking together acro
     - Web Audio API procedural soundscape: birds, rustling breeze, grass footstep sounds, authentic cocker spaniel barks, ball bounce pops.
 - **Out-of-Scope**:
   - Complex combat, health bars, or fail states (pure peaceful social sandbox).
-  - Persistent user accounts/database (ephemeral rooms with instant join).
+  - External server hosting or persistent account databases (pure ephemeral peer-to-peer browser rooms).
   - 3D rendering engine (maintains lightweight, instant-loading 2D HTML5 canvas).
 
 ---
@@ -70,19 +69,20 @@ Players inhabit the park as an **Owner and Dog companion** walking together acro
   - Y-sorted entity rendering for trees, benches, owners, dogs, and tennis balls.
   - Ambient grass blade particles and wind breeze effects.
   - *Verification*: 60 FPS rendering, correct depth sorting when walking above/below trees and benches.
-- [ ] **REQ-2: Owner & Companion Dog Physics**
-  - 8-directional movement for Owner avatar with walk animations.
+- [ ] **REQ-2: Owner & Companion Dog Physics (Keyboard Focused)**
+  - 8-directional movement for Owner avatar with walk animations via WASD / Arrow keys.
   - Natural steering behavior for Dog companion (following, loose leash constraint, wandering, sitting, play-bowing).
-  - Leash toggle (`L`), Petting (`E`), and Barking (`B`) with spring ear physics and tail wagging.
-  - Tennis ball throw (`T` / click) with bounce physics and dog retrieval behavior.
+  - Keyboard actions: Leash toggle (`L`), Ball throw (`Space`/`T`), Petting (`E`), and Barking (`B`).
+  - Tennis ball trajectory with bounce physics and canine retrieval behavior.
   - *Verification*: Unit tests for companion steering vectors, leash constraints, and ball trajectory.
-- [ ] **REQ-3: Zero-Config In-Browser WebRTC & Self-Hostable Multiplayer**
-  - Host creates room; generates join URL / room code.
-  - Remote peers connect over WebRTC DataChannel (or WebSocket server if configured).
+- [ ] **REQ-3: Pure In-Browser WebRTC Peer-to-Peer Multiplayer**
+  - Host generates room; shareable URL / room code.
+  - Remote peers connect over WebRTC DataChannel (PeerJS).
   - Low-latency position interpolation (lerp) for remote owners and dogs.
-  - *Verification*: Two browser tabs can connect, walk together in the field, see each other's dogs, and throw/fetch balls simultaneously.
+  - Host authoritative ball physics and player join/leave sync.
+  - *Verification*: Two browser tabs connect via room link, walk together in the field, see each other's dogs, and throw/fetch balls simultaneously.
 - [ ] **REQ-4: Social Sandbox Interactions & Chat/Emotes**
-  - In-game chat and emote bubbles floating above avatars.
+  - In-game chat and emote bubbles floating above avatars (`Enter` to trigger).
   - Dog-to-dog proximity greeting reaction (sniff, tail wag, friendly bounce).
   - Dog & Owner customization modal (name, jacket color, dog coat color: chocolate & tan, golden, black).
   - *Verification*: Chat messages appear correctly over avatar heads in both host and client views.
@@ -95,14 +95,11 @@ Players inhabit the park as an **Owner and Dog companion** walking together acro
 
 ## 5. Architectural Design & Impacted Modules
 - **New Modules / Files**:
-  - `src/world/field.js`: Clifton Down tilemap, rolling turf, trees, benches, perimeter boundaries, and grass particle systems.
+  - `src/world/field.js`: Clifton Down continuous terrain, rolling turf, trees, benches, perimeter boundaries, and grass particle systems.
   - `src/entities/owner.js`: Human player avatar, 8-way movement, walk cycle rendering, outfit customization.
   - `src/entities/companion_dog.js`: Top-down canine companion entity, steering physics, leash dynamics, ear & tail wag animations.
-  - `src/entities/toy.js`: Tennis ball / stick physics, bouncing, and fetch target tracking.
-  - `src/net/network.js`: Unified network interface supporting WebRTC P2P (PeerJS) and WebSocket transports.
-  - `src/net/webrtc_transport.js`: Browser-to-browser P2P room hosting and joining.
-  - `src/net/websocket_transport.js`: Optional dedicated WebSocket client.
-  - `server/server.js`: Standalone lightweight Node.js WebSocket server for self-hosting.
+  - `src/entities/toy.js`: Tennis ball physics, bouncing, and fetch target tracking.
+  - `src/net/network.js`: WebRTC peer-to-peer room manager (PeerJS DataChannel protocol, room code generation, message serialization).
   - `src/ui/social_hud.js`: Room code display, invite link copier, chat/emote bubbles, and character customizer.
   - `test/steering.test.js`: Companion dog steering behavior and leash distance tests.
   - `test/network.test.js`: Serialization and packet schema verification.
@@ -111,7 +108,7 @@ Players inhabit the park as an **Owner and Dog companion** walking together acro
   - `src/main.js`: Main loop orchestrating sandbox field, player, companion dog, network, and audio.
   - `src/systems/audio.js`: Expand Web Audio engine with nature ambiance (breeze, birdsong, footsteps).
   - `factory.yaml`: Update project metadata and validation commands.
-  - `README.md`: Document social sandbox gameplay, self-hosting instructions, and WebRTC room sharing.
+  - `README.md`: Document social sandbox gameplay and WebRTC room sharing.
 
 ---
 

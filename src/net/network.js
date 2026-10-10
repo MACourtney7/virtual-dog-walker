@@ -1,12 +1,14 @@
-// Pure In-Browser WebRTC Peer-to-Peer Multiplayer Network Engine (PeerJS)
+// Universal Multiplayer Network Engine (Supporting Dedicated WebSocket Server & In-Browser PeerJS)
 
 import { PacketType, Protocol } from './protocol.js';
+import { WebSocketNetworkManager, WSStatus } from './ws_network.js';
 
 export const NetStatus = {
   OFFLINE: 'OFFLINE',
   CONNECTING: 'CONNECTING',
   HOSTING: 'HOSTING',
   CONNECTED_PEER: 'CONNECTED_PEER',
+  CONNECTED_SERVER: 'CONNECTED_SERVER',
   ERROR: 'ERROR'
 };
 
@@ -43,29 +45,26 @@ export class EntityInterpolator {
   }
 }
 
-export class NetworkManager {
+// PeerJS-based P2P Network Implementation
+export class PeerNetworkManager {
   constructor() {
     this.status = NetStatus.OFFLINE;
     this.peer = null;
     this.peerId = null;
     this.roomId = null;
     this.isHost = false;
+    this.isDedicatedServer = false;
 
-    // Local player metadata to broadcast during handshakes
     this.localMeta = {
       name: 'Park Walker',
       jacketColor: '#1e3a8a',
       coatName: 'Chocolate & Tan (Ziggy)'
     };
 
-    // Connections map (peerId -> DataConnection)
     this.connections = new Map();
     this.hostConnection = null;
-
-    // Remote entity interpolators (peerId -> { ownerInterpolator, dogInterpolator, meta })
     this.remotePeers = new Map();
 
-    // Event hooks
     this.onPeerJoin = null;
     this.onPeerLeave = null;
     this.onBallThrown = null;
@@ -76,9 +75,8 @@ export class NetworkManager {
     this.onEmote = null;
     this.onStatusChange = null;
 
-    // Sync broadcast ticker
     this.syncInterval = null;
-    this.syncHz = 16; // 16 updates per sec
+    this.syncHz = 16;
   }
 
   setLocalMeta(meta) {
@@ -92,7 +90,6 @@ export class NetworkManager {
     }
   }
 
-  // Load PeerJS library dynamically if not already available on window
   async ensurePeerJS() {
     if (window.Peer) return window.Peer;
 
@@ -109,7 +106,6 @@ export class NetworkManager {
     });
   }
 
-  // Generate clean room code
   generateRoomId() {
     const num = Math.floor(1000 + Math.random() * 9000);
     return `clifton-${num}`;
@@ -119,10 +115,10 @@ export class NetworkManager {
     if (!this.roomId) return window.location.href;
     const url = new URL(window.location.href);
     url.searchParams.set('room', this.roomId);
+    url.searchParams.set('p2p', '1');
     return url.toString();
   }
 
-  // Ensure remote peer entry exists in this.remotePeers
   ensureRemotePeer(peerId, meta = {}) {
     let peerData = this.remotePeers.get(peerId);
     if (!peerData) {
@@ -144,7 +140,6 @@ export class NetworkManager {
     return peerData;
   }
 
-  // 1. Host a Field Room
   async hostRoom(customRoomId = null) {
     try {
       this.setStatus(NetStatus.CONNECTING, 'Initializing PeerJS host...');
@@ -153,9 +148,7 @@ export class NetworkManager {
       this.roomId = customRoomId || this.generateRoomId();
       this.isHost = true;
 
-      this.peer = new window.Peer(this.roomId, {
-        debug: 1
-      });
+      this.peer = new window.Peer(this.roomId, { debug: 1 });
 
       this.peer.on('open', (id) => {
         this.peerId = id;
@@ -180,7 +173,6 @@ export class NetworkManager {
     }
   }
 
-  // 2. Join an existing Field Room
   async joinRoom(roomId) {
     try {
       this.setStatus(NetStatus.CONNECTING, `Connecting to field: ${roomId}...`);
@@ -189,9 +181,7 @@ export class NetworkManager {
       this.roomId = roomId;
       this.isHost = false;
 
-      this.peer = new window.Peer({
-        debug: 1
-      });
+      this.peer = new window.Peer({ debug: 1 });
 
       this.peer.on('open', (id) => {
         this.peerId = id;
@@ -200,7 +190,6 @@ export class NetworkManager {
 
         conn.on('open', () => {
           this.setStatus(NetStatus.CONNECTED_PEER, `Joined field: ${roomId}`);
-          // Send HELLO packet to host with our local player profile
           conn.send(Protocol.createHello(
             this.peerId,
             this.localMeta.name,
@@ -214,7 +203,7 @@ export class NetworkManager {
         });
 
         conn.on('close', () => {
-          this.setStatus(NetStatus.OFFLINE, 'Host closed the connection');
+          this.setStatus(NetStatus.OFFLINE, 'Host closed connection');
           this.remotePeers.delete(roomId);
           if (this.onPeerLeave) this.onPeerLeave(roomId);
         });
@@ -250,7 +239,6 @@ export class NetworkManager {
       if (this.onPeerLeave) {
         this.onPeerLeave(conn.peer);
       }
-      // Broadcast peer departure to remaining peers
       this.broadcast({ type: PacketType.PEER_LEFT, peerId: conn.peer });
     });
   }
@@ -266,37 +254,25 @@ export class NetworkManager {
           coatName: packet.dogCoatName || 'Chocolate & Tan (Ziggy)'
         };
         this.ensureRemotePeer(senderId, meta);
+        if (this.onPeerJoin) this.onPeerJoin(senderId, meta);
 
-        if (this.onPeerJoin) {
-          this.onPeerJoin(senderId, meta);
-        }
-
-        // If we are Host, respond with WELCOME (our host meta + list of existing peers)
         if (this.isHost) {
           const conn = this.connections.get(senderId);
           if (conn && conn.open) {
             const peersList = [];
             for (const [id, d] of this.remotePeers) {
-              if (id !== senderId) {
-                peersList.push({ id, ...d.meta });
-              }
+              if (id !== senderId) peersList.push({ id, ...d.meta });
             }
             conn.send(Protocol.createWelcome(this.peerId, this.localMeta, peersList));
           }
-
-          // Relay this new peer's HELLO to all other connected visitors
           for (const [id, c] of this.connections) {
-            if (id !== senderId && c.open) {
-              c.send(packet);
-            }
+            if (id !== senderId && c.open) c.send(packet);
           }
         }
         break;
       }
 
       case PacketType.WELCOME: {
-        // Visitor received WELCOME from Host!
-        // 1. Add the Host as a remote player
         const hostId = packet.hostId || senderId;
         const hostMeta = packet.hostMeta || {
           name: 'Host Walker',
@@ -304,18 +280,13 @@ export class NetworkManager {
           coatName: 'Chocolate & Tan (Ziggy)'
         };
         this.ensureRemotePeer(hostId, hostMeta);
-        if (this.onPeerJoin) {
-          this.onPeerJoin(hostId, hostMeta);
-        }
+        if (this.onPeerJoin) this.onPeerJoin(hostId, hostMeta);
 
-        // 2. Add any other existing peers in the room
         if (Array.isArray(packet.peers)) {
           for (const p of packet.peers) {
             if (p.id && p.id !== this.peerId) {
               this.ensureRemotePeer(p.id, p);
-              if (this.onPeerJoin) {
-                this.onPeerJoin(p.id, p);
-              }
+              if (this.onPeerJoin) this.onPeerJoin(p.id, p);
             }
           }
         }
@@ -323,24 +294,18 @@ export class NetworkManager {
       }
 
       case PacketType.SYNC_STATE: {
-        // Auto-ensure remote peer exists in case HELLO was delayed
         let peerData = this.remotePeers.get(senderId);
         if (!peerData) {
           peerData = this.ensureRemotePeer(senderId, { name: 'Player' });
-          if (this.onPeerJoin) {
-            this.onPeerJoin(senderId, peerData.meta);
-          }
+          if (this.onPeerJoin) this.onPeerJoin(senderId, peerData.meta);
         }
 
         peerData.ownerInterpolator.setTarget(packet.owner);
         peerData.dogInterpolator.setTarget(packet.dog);
 
-        // If Host: relay client's SYNC_STATE to all other connected clients
         if (this.isHost) {
           for (const [id, c] of this.connections) {
-            if (id !== senderId && c.open) {
-              c.send(packet);
-            }
+            if (id !== senderId && c.open) c.send(packet);
           }
         }
         break;
@@ -399,7 +364,6 @@ export class NetworkManager {
     }
   }
 
-  // Broadcast packet to all connected peers
   broadcast(packet) {
     if (this.isHost) {
       for (const conn of this.connections.values()) {
@@ -410,7 +374,6 @@ export class NetworkManager {
     }
   }
 
-  // Start periodic 16Hz state broadcast
   startSyncLoop(getLocalStateFn) {
     if (this.syncInterval) clearInterval(this.syncInterval);
 
@@ -431,5 +394,71 @@ export class NetworkManager {
     this.connections.clear();
     this.remotePeers.clear();
     this.setStatus(NetStatus.OFFLINE);
+  }
+}
+
+// Universal Network Manager Factory & Polymorphic Wrapper
+export class NetworkManager {
+  constructor() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const serverParam = urlParams.get('server');
+    const isP2P = urlParams.get('p2p') === '1';
+
+    // Auto-detect whether to use Dedicated WebSocket Server or PeerJS P2P
+    const isHttp = window.location.protocol.startsWith('http');
+
+    if (!isP2P && (serverParam || isHttp)) {
+      // 1. WebSocket Dedicated Server Mode
+      let wsEndpoint = '';
+      if (serverParam) {
+        let clean = serverParam.trim();
+        if (clean.startsWith('http://')) clean = clean.replace('http://', 'ws://');
+        else if (clean.startsWith('https://')) clean = clean.replace('https://', 'wss://');
+        else if (!clean.startsWith('ws://') && !clean.startsWith('wss://')) clean = `wss://${clean}`;
+
+        if (!clean.endsWith('/ws')) clean = clean.replace(/\/+$/, '') + '/ws';
+        wsEndpoint = clean;
+      } else {
+        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        wsEndpoint = `${proto}//${window.location.host}/ws`;
+      }
+
+      this.adapter = new WebSocketNetworkManager();
+      this.isDedicatedServer = true;
+      this.wsEndpoint = wsEndpoint;
+    } else {
+      // 2. PeerJS P2P Fallback Mode
+      this.adapter = new PeerNetworkManager();
+      this.isDedicatedServer = false;
+    }
+
+    // Proxy properties & methods
+    return new Proxy(this, {
+      get: (target, prop) => {
+        if (prop in target) return target[prop];
+        const val = target.adapter[prop];
+        if (typeof val === 'function') return val.bind(target.adapter);
+        return val;
+      },
+      set: (target, prop, value) => {
+        if (prop in target) {
+          target[prop] = value;
+          return true;
+        }
+        target.adapter[prop] = value;
+        return true;
+      }
+    });
+  }
+
+  autoConnect() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const targetRoom = urlParams.get('room') || 'clifton-field';
+
+    if (this.isDedicatedServer && this.wsEndpoint) {
+      this.adapter.connect(this.wsEndpoint, targetRoom);
+    } else if (urlParams.get('room')) {
+      this.adapter.joinRoom(targetRoom);
+    }
   }
 }

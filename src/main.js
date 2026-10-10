@@ -69,17 +69,20 @@ class CliftonDownGame {
       coatName: this.dog.coat.name
     });
 
-    // Check if URL has ?room=... parameter to auto-join
-    const urlParams = new URLSearchParams(window.location.search);
-    const targetRoom = urlParams.get('room');
-
-    if (targetRoom) {
-      this.net.joinRoom(targetRoom);
-    }
-
     this.net.onStatusChange = (status, msg) => {
       this.hud.updateNetworkState(status, msg);
     };
+
+    // Auto-connect to dedicated server or join room via query parameters
+    if (typeof this.net.autoConnect === 'function') {
+      this.net.autoConnect();
+    } else {
+      const urlParams = new URLSearchParams(window.location.search);
+      const targetRoom = urlParams.get('room');
+      if (targetRoom) {
+        this.net.joinRoom(targetRoom);
+      }
+    }
 
     // When a peer connects
     this.net.onPeerJoin = (peerId, meta) => {

@@ -47,25 +47,27 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 
 ## 4. Universal Networking Architecture
 - **Multi-Transport Network Engine (`src/net/network.js`, `src/net/protocol.js`, `src/net/ws_network.js`)**:
-  - Transparent dual-mode architecture:
-    1. **Dedicated WebSocket Microserver Mode**: Automatically connects via native WebSockets (`ws://` or `wss://`) when launched via server or when `?server=...` parameter is present.
-    2. **WebRTC P2P Fallback Mode**: Gracefully falls back to browser-to-browser PeerJS DataChannels if run without a server.
+  - Transparent multi-mode polymorphic architecture:
+    1. **PartyKit Global Edge Mode**: Automatically connects to Cloudflare/PartyKit ephemeral edge rooms (`/parties/park/:room`) with zero installation, instant global routing, and scale-to-zero ($0 idle cost).
+    2. **Dedicated WebSocket Microserver Mode**: Connects via native WebSockets (`ws://` or `wss://`) when launched via local server or when `?server=...` parameter is present.
+    3. **WebRTC P2P Fallback Mode**: Gracefully falls back to browser-to-browser PeerJS DataChannels if run without a server.
   - **Packet Protocol Parity**:
     - Uniform packet schemas: `HELLO`, `WELCOME`, `SYNC_STATE`, `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, `EMOTE`, `PEER_LEFT`.
   - **Host Relaying & Synchronization**:
-    - Host synchronizes authoritative ball physics.
+    - Synchronizes authoritative ball physics.
     - State broadcasts at 16Hz; `EntityInterpolator` provides smooth exponential damping (lerp) for remote positions at 60fps.
   - **Offline / Solo Mode**: Operates seamlessly in singleplayer sandbox mode when disconnected.
 
 ---
 
-## 5. Dedicated Microserver & Zero-Port Tunneling (`server/`)
-- **Asynchronous Python Microserver (`server/server.py`)**:
-  - Handles concurrent isolated rooms (`room_id`), serves static HTML/JS assets on `http://127.0.0.1:8080`, and multiplexes WebSocket game events between peers.
-  - Active heartbeat pinging (15s) and automatic cleanup of disconnected players and empty rooms.
-- **Zero-Port Public Tunnel Manager (`server/host.py`, `server/tunnel.py`)**:
-  - Automatically provisions Cloudflare Quick Tunnels (`https://<subdomain>.trycloudflare.com`) without router port-forwarding.
-  - Generates instant 1-click shareable URLs for remote players.
+## 5. Global Edge Server & Local Microserver
+- **PartyKit Global Edge Room Relay (`party/main.js`, `partykit.json`)**:
+  - Ephemeral serverless room actors managing player handshakes (`WELCOME`), high-throughput state broadcasts, barking, tennis ball fetch, and disconnect cleanup.
+  - Serves static HTML/JS frontend assets and WSS endpoints under a single unified URL.
+  - Runs on Cloudflare's edge network across 300+ cities with zero infrastructure maintenance.
+- **Dedicated Local Python Microserver (`server/server.py`, `server/host.py`)**:
+  - Alternative local async WebSocket and HTTP static file server.
+  - Automatically provisions Cloudflare Quick Tunnels (`https://<subdomain>.trycloudflare.com`) for private self-hosted multiplayer.
 
 ---
 

@@ -8,6 +8,7 @@ def test_scaffold():
     assert os.path.exists("src/main.js"), "src/main.js missing"
     assert os.path.exists("src/style.css"), "src/style.css missing"
     assert os.path.exists("src/engine/physics.js"), "src/engine/physics.js missing"
+    assert os.path.exists("src/entities/ziggy.js"), "src/entities/ziggy.js missing"
     
     with open("index.html") as f:
         html = f.read()
@@ -18,9 +19,10 @@ def test_scaffold():
 
 def run_all():
     test_scaffold()
-    res = subprocess.run([sys.executable, "test/test_physics.py"])
-    if res.returncode != 0:
-        sys.exit(res.returncode)
+    for t in ["test/test_physics.py", "test/test_ziggy.py"]:
+        res = subprocess.run([sys.executable, t])
+        if res.returncode != 0:
+            sys.exit(res.returncode)
     print("🎉 All test suites passed successfully!")
 
 if __name__ == "__main__":

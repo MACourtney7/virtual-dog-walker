@@ -9,6 +9,11 @@ def test_scaffold():
     assert os.path.exists("src/style.css"), "src/style.css missing"
     assert os.path.exists("src/engine/physics.js"), "src/engine/physics.js missing"
     assert os.path.exists("src/entities/ziggy.js"), "src/entities/ziggy.js missing"
+    assert os.path.exists("src/entities/collectibles.js"), "src/entities/collectibles.js missing"
+    assert os.path.exists("src/entities/hazards.js"), "src/entities/hazards.js missing"
+    assert os.path.exists("src/level/park_level.js"), "src/level/park_level.js missing"
+    assert os.path.exists("src/systems/audio.js"), "src/systems/audio.js missing"
+    assert os.path.exists("src/systems/particles.js"), "src/systems/particles.js missing"
     
     with open("index.html") as f:
         html = f.read()
@@ -19,7 +24,12 @@ def test_scaffold():
 
 def run_all():
     test_scaffold()
-    for t in ["test/test_physics.py", "test/test_ziggy.py"]:
+    test_suites = [
+        "test/test_physics.py",
+        "test/test_ziggy.py",
+        "test/test_gameplay.py"
+    ]
+    for t in test_suites:
         res = subprocess.run([sys.executable, t])
         if res.returncode != 0:
             sys.exit(res.returncode)

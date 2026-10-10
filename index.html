@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Ziggy: The Great Park Adventure</title>
+    <title>Clifton Down: Social Dog Walking Field</title>
     <link rel="stylesheet" href="src/style.css" />
   </head>
   <body>
@@ -11,30 +11,10 @@
       <canvas id="game-canvas"></canvas>
 
       <!-- Glassmorphic In-Game HUD -->
-      <div id="hud-overlay">
-        <div class="hud-panel">
-          <div class="hud-item" id="hud-lives">
-            <span class="hud-icon">🐾</span>
-            <span class="hud-val" id="lives-val">3</span>
-          </div>
-          <div class="hud-item" id="hud-bones">
-            <span class="hud-icon">🦴</span>
-            <span class="hud-val" id="bones-val">00</span>
-          </div>
-        </div>
-
-        <div class="hud-panel">
-          <div class="hud-item" id="hud-score">
-            <span>SCORE:</span>
-            <span class="hud-val" id="score-val">00000</span>
-          </div>
-        </div>
-      </div>
+      <div id="hud-overlay"></div>
 
       <!-- Controls Guidance -->
-      <div id="controls-hint">
-        <kbd>A</kbd> / <kbd>D</kbd> Run &bull; <kbd>SPACE</kbd> Jump &bull; <kbd>SPACE</kbd> (in air) Ear Flutter &bull; <kbd>B</kbd> Bark!
-      </div>
+      <div id="controls-hint"></div>
     </div>
 
     <script type="module" src="src/main.js"></script>

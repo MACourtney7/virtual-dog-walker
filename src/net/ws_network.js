@@ -19,6 +19,7 @@ export class WebSocketNetworkManager {
     this.roomId = 'clifton-field';
     this.isHost = false;
     this.isDedicatedServer = true;
+    this.isPartyKit = false;
 
     // Local player metadata to broadcast during handshakes
     this.localMeta = {
@@ -50,6 +51,53 @@ export class WebSocketNetworkManager {
     this.maxReconnectAttempts = 6;
     this.reconnectTimeout = null;
     this.manualDisconnect = false;
+  }
+
+  isPartyKitHost(url) {
+    if (!url) {
+      if (typeof window !== 'undefined') {
+        return window.location.hostname.includes('partykit.dev') ||
+               window.location.port === '1999' ||
+               new URLSearchParams(window.location.search).has('party') ||
+               new URLSearchParams(window.location.search).has('partykit');
+      }
+      return false;
+    }
+    const str = String(url).toLowerCase();
+    return str.includes('partykit.dev') ||
+           str.includes(':1999') ||
+           str.includes('/parties/') ||
+           str === 'party' ||
+           str === 'partykit';
+  }
+
+  buildWebSocketUrl(serverEndpoint, roomId) {
+    if (this.isPartyKitHost(serverEndpoint)) {
+      this.isPartyKit = true;
+      let base = serverEndpoint;
+      if (!base || base === 'partykit' || base === 'party') {
+        const proto = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const host = typeof window !== 'undefined' ? window.location.host : 'localhost:1999';
+        base = `${proto}//${host}`;
+      }
+      let clean = base.trim();
+      if (clean.startsWith('http://')) clean = clean.replace('http://', 'ws://');
+      else if (clean.startsWith('https://')) clean = clean.replace('https://', 'wss://');
+      else if (!clean.startsWith('ws://') && !clean.startsWith('wss://')) clean = `wss://${clean}`;
+
+      if (clean.includes('/parties/')) {
+        return new URL(clean);
+      }
+      clean = clean.replace(/\/+$/, '');
+      return new URL(`${clean}/parties/park/${roomId}`);
+    }
+
+    // Standard Dedicated Microserver fallback
+    this.isPartyKit = false;
+    const wsUrl = new URL(serverEndpoint);
+    wsUrl.searchParams.set('room', roomId);
+    wsUrl.searchParams.set('peer', this.peerId);
+    return wsUrl;
   }
 
   setLocalMeta(meta) {
@@ -100,13 +148,11 @@ export class WebSocketNetworkManager {
     this.serverUrl = serverEndpoint;
     if (roomId) this.roomId = roomId;
 
-    this.setStatus(WSStatus.CONNECTING, 'Connecting to dedicated park server...');
+    const modeLabel = this.isPartyKitHost(serverEndpoint) ? 'PartyKit edge room' : 'dedicated park server';
+    this.setStatus(WSStatus.CONNECTING, `Connecting to ${modeLabel}...`);
 
     try {
-      const wsUrl = new URL(this.serverUrl);
-      wsUrl.searchParams.set('room', this.roomId);
-      wsUrl.searchParams.set('peer', this.peerId);
-
+      const wsUrl = this.buildWebSocketUrl(this.serverUrl, this.roomId);
       this.ws = new WebSocket(wsUrl.toString());
 
       this.ws.onopen = () => {
@@ -187,13 +233,18 @@ export class WebSocketNetworkManager {
       }
 
       case PacketType.WELCOME: {
+        if (packet.peerId && packet.peerId !== this.peerId) {
+          this.peerId = packet.peerId;
+        }
         // Populate all existing peers in the room
         if (Array.isArray(packet.peers)) {
           for (const p of packet.peers) {
-            if (p.id && p.id !== this.peerId) {
-              this.ensureRemotePeer(p.id, p);
+            const peerId = typeof p === 'string' ? p : p?.id;
+            const meta = typeof p === 'object' ? p : {};
+            if (peerId && peerId !== this.peerId) {
+              this.ensureRemotePeer(peerId, meta);
               if (this.onPeerJoin) {
-                this.onPeerJoin(p.id, p);
+                this.onPeerJoin(peerId, meta);
               }
             }
           }

@@ -1,0 +1,16 @@
+# factory.yaml - Host Project Configuration for Agentic Software Factory
+project_name: "some_kind_of_game"
+base_branch: "main"
+tech_stack: "TBD" # Ready to configure once game stack is chosen (e.g., TypeScript/HTML5 Canvas, Rust/Bevy, Python, etc.)
+
+# Automation commands executed by Validator workers in isolated worktrees:
+commands:
+  build: "echo 'No build step configured yet'"
+  test: "echo 'No test suite configured yet'"
+  lint: "echo 'No linter configured yet'"
+  format_check: "echo 'No format check configured yet'"
+
+# Paths to relevant host project documentation for Architect and Reviewer:
+documentation:
+  guidelines: "README.md"
+  architecture: "openspec/specs/overview.md"

@@ -65,17 +65,11 @@ export class WebSocketNetworkManager {
 
   getShareUrl() {
     const url = new URL(window.location.href);
-    if (this.serverUrl) {
-      // Convert ws:// or wss:// back to http/https for the share link if appropriate
-      let httpOrigin = this.serverUrl.replace(/^ws:\/\//, 'http://').replace(/^wss:\/\//, 'https://').replace(/\/ws$/, '');
-      if (httpOrigin.startsWith('http://localhost') || httpOrigin.startsWith('http://127.0.0.1')) {
-        url.searchParams.delete('server'); // Localhost uses default origin
-      } else {
-        url.searchParams.set('server', httpOrigin);
-      }
-    }
-    if (this.roomId) {
+    url.searchParams.delete('server'); // Redundant when guest opens the site from the host server
+    if (this.roomId && this.roomId !== 'clifton-field') {
       url.searchParams.set('room', this.roomId);
+    } else {
+      url.searchParams.delete('room');
     }
     return url.toString();
   }

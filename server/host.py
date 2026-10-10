@@ -39,9 +39,9 @@ def is_port_in_use(port: int) -> bool:
 
 
 def print_banner(local_url: str, lan_url: str, public_url: str = None, room_id: str = "clifton-field"):
-    invite_param = f"?server={public_url or local_url}&room={room_id}"
-    full_public_invite = f"{public_url}{invite_param}" if public_url else None
-    full_local_invite = f"{lan_url}{invite_param}"
+    room_param = f"?room={room_id}" if room_id != "clifton-field" else ""
+    full_public_invite = f"{public_url}{room_param}" if public_url else None
+    full_local_invite = f"{lan_url}{room_param}"
 
     print("\n" + "=" * 68)
     print(" 🌲  CLIFTON DOWN: DEDICATED PARK SERVER ACTIVE  🐕")
@@ -52,11 +52,15 @@ def print_banner(local_url: str, lan_url: str, public_url: str = None, room_id: 
         print(f" 🌐  Public Web URL:   {public_url}")
         print("-" * 68)
         print(" 🔗  ONE-CLICK INVITE LINK FOR FRIENDS (ANYWHERE IN THE WORLD):")
-        print(f"     👉  {full_public_invite}")
+        print()
+        print(f"     {full_public_invite}")
+        print()
     else:
         print("-" * 68)
         print(" 🔗  LOCAL NETWORK INVITE LINK:")
-        print(f"     👉  {full_local_invite}")
+        print()
+        print(f"     {full_local_invite}")
+        print()
     print("=" * 68)
     print(" 💡  Keep this terminal open while playing. Press Ctrl+C to close park.")
     print("=" * 68 + "\n")

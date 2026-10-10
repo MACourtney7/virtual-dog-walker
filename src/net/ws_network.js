@@ -1,0 +1,288 @@
+// Dedicated WebSocket Multiplayer Network Engine for Clifton Down
+import { PacketType, Protocol } from './protocol.js';
+import { EntityInterpolator } from './network.js';
+
+export const WSStatus = {
+  OFFLINE: 'OFFLINE',
+  CONNECTING: 'CONNECTING',
+  CONNECTED: 'CONNECTED',
+  RECONNECTING: 'RECONNECTING',
+  ERROR: 'ERROR'
+};
+
+export class WebSocketNetworkManager {
+  constructor() {
+    this.status = WSStatus.OFFLINE;
+    this.ws = null;
+    this.serverUrl = null;
+    this.peerId = `walker-${Math.floor(1000 + Math.random() * 9000)}`;
+    this.roomId = 'clifton-field';
+    this.isHost = false;
+    this.isDedicatedServer = true;
+
+    // Local player metadata to broadcast during handshakes
+    this.localMeta = {
+      name: 'Park Walker',
+      jacketColor: '#1e3a8a',
+      coatName: 'Chocolate & Tan (Ziggy)'
+    };
+
+    // Remote entity interpolators (peerId -> { ownerInterpolator, dogInterpolator, meta })
+    this.remotePeers = new Map();
+
+    // Event hooks
+    this.onPeerJoin = null;
+    this.onPeerLeave = null;
+    this.onBallThrown = null;
+    this.onBallSync = null;
+    this.onBark = null;
+    this.onPet = null;
+    this.onChatMessage = null;
+    this.onEmote = null;
+    this.onStatusChange = null;
+
+    // Sync broadcast ticker
+    this.syncInterval = null;
+    this.syncHz = 16; // 16 updates per sec
+
+    // Auto-reconnect handling
+    this.reconnectAttempts = 0;
+    this.maxReconnectAttempts = 6;
+    this.reconnectTimeout = null;
+    this.manualDisconnect = false;
+  }
+
+  setLocalMeta(meta) {
+    this.localMeta = { ...this.localMeta, ...meta };
+  }
+
+  setStatus(newStatus, msg = '') {
+    this.status = newStatus;
+    if (this.onStatusChange) {
+      this.onStatusChange(newStatus, msg);
+    }
+  }
+
+  getShareUrl() {
+    const url = new URL(window.location.href);
+    url.searchParams.delete('server'); // Redundant when guest opens the site from the host server
+    if (this.roomId && this.roomId !== 'clifton-field') {
+      url.searchParams.set('room', this.roomId);
+    } else {
+      url.searchParams.delete('room');
+    }
+    return url.toString();
+  }
+
+  ensureRemotePeer(peerId, meta = {}) {
+    let peerData = this.remotePeers.get(peerId);
+    if (!peerData) {
+      peerData = {
+        ownerInterpolator: new EntityInterpolator(),
+        dogInterpolator: new EntityInterpolator(),
+        meta: {
+          name: meta.name || 'Player',
+          jacketColor: meta.jacketColor || '#14532d',
+          coatName: meta.coatName || 'Chocolate & Tan (Ziggy)'
+        }
+      };
+      this.remotePeers.set(peerId, peerData);
+    } else if (meta && (meta.name || meta.jacketColor || meta.coatName)) {
+      if (meta.name) peerData.meta.name = meta.name;
+      if (meta.jacketColor) peerData.meta.jacketColor = meta.jacketColor;
+      if (meta.coatName) peerData.meta.coatName = meta.coatName;
+    }
+    return peerData;
+  }
+
+  connect(serverEndpoint, roomId = null) {
+    this.manualDisconnect = false;
+    this.serverUrl = serverEndpoint;
+    if (roomId) this.roomId = roomId;
+
+    this.setStatus(WSStatus.CONNECTING, 'Connecting to dedicated park server...');
+
+    try {
+      const wsUrl = new URL(this.serverUrl);
+      wsUrl.searchParams.set('room', this.roomId);
+      wsUrl.searchParams.set('peer', this.peerId);
+
+      this.ws = new WebSocket(wsUrl.toString());
+
+      this.ws.onopen = () => {
+        this.reconnectAttempts = 0;
+        this.setStatus(WSStatus.CONNECTED, `Park connected (${this.roomId})`);
+
+        // Send HELLO handshake packet
+        this.broadcast(Protocol.createHello(
+          this.peerId,
+          this.localMeta.name,
+          this.localMeta.jacketColor,
+          this.localMeta.coatName
+        ));
+      };
+
+      this.ws.onmessage = (event) => {
+        try {
+          const packet = JSON.parse(event.data);
+          this.handlePacket(packet);
+        } catch (e) {
+          console.warn('Invalid JSON packet received from server:', e);
+        }
+      };
+
+      this.ws.onclose = () => {
+        if (!this.manualDisconnect) {
+          this.scheduleReconnect();
+        } else {
+          this.setStatus(WSStatus.OFFLINE, 'Disconnected');
+        }
+      };
+
+      this.ws.onerror = (err) => {
+        console.warn('WebSocket connection error:', err);
+        this.setStatus(WSStatus.ERROR, 'Server connection error');
+      };
+    } catch (e) {
+      console.error('Failed to instantiate WebSocket:', e);
+      this.setStatus(WSStatus.ERROR, 'Could not connect to server');
+    }
+  }
+
+  scheduleReconnect() {
+    if (this.reconnectAttempts < this.maxReconnectAttempts) {
+      this.reconnectAttempts++;
+      const delay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 8000);
+      this.setStatus(WSStatus.RECONNECTING, `Connection lost. Reconnecting in ${Math.round(delay / 1000)}s...`);
+
+      if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = setTimeout(() => {
+        if (!this.manualDisconnect) {
+          this.connect(this.serverUrl, this.roomId);
+        }
+      }, delay);
+    } else {
+      this.setStatus(WSStatus.OFFLINE, 'Server unreachable. Playing in solo mode.');
+    }
+  }
+
+  handlePacket(packet) {
+    if (!packet || !packet.type) return;
+
+    const senderId = packet.senderId;
+    if (senderId === this.peerId) return; // Ignore echoes of our own packets
+
+    switch (packet.type) {
+      case PacketType.HELLO: {
+        const meta = {
+          name: packet.name || 'Visitor',
+          jacketColor: packet.jacketColor || '#14532d',
+          coatName: packet.dogCoatName || 'Chocolate & Tan (Ziggy)'
+        };
+        this.ensureRemotePeer(senderId, meta);
+        if (this.onPeerJoin) {
+          this.onPeerJoin(senderId, meta);
+        }
+        break;
+      }
+
+      case PacketType.WELCOME: {
+        // Populate all existing peers in the room
+        if (Array.isArray(packet.peers)) {
+          for (const p of packet.peers) {
+            if (p.id && p.id !== this.peerId) {
+              this.ensureRemotePeer(p.id, p);
+              if (this.onPeerJoin) {
+                this.onPeerJoin(p.id, p);
+              }
+            }
+          }
+        }
+        break;
+      }
+
+      case PacketType.SYNC_STATE: {
+        let peerData = this.remotePeers.get(senderId);
+        if (!peerData) {
+          peerData = this.ensureRemotePeer(senderId, { name: 'Player' });
+          if (this.onPeerJoin) {
+            this.onPeerJoin(senderId, peerData.meta);
+          }
+        }
+        if (packet.owner) peerData.ownerInterpolator.setTarget(packet.owner);
+        if (packet.dog) peerData.dogInterpolator.setTarget(packet.dog);
+        break;
+      }
+
+      case PacketType.BALL_THROWN: {
+        if (this.onBallThrown) this.onBallThrown(packet);
+        break;
+      }
+
+      case PacketType.BALL_SYNC: {
+        if (this.onBallSync) this.onBallSync(packet);
+        break;
+      }
+
+      case PacketType.BARK: {
+        if (this.onBark) this.onBark(senderId, packet);
+        break;
+      }
+
+      case PacketType.PET: {
+        if (this.onPet) this.onPet(senderId);
+        break;
+      }
+
+      case PacketType.CHAT_MESSAGE: {
+        if (this.onChatMessage) this.onChatMessage(senderId, packet.text);
+        break;
+      }
+
+      case PacketType.EMOTE: {
+        if (this.onEmote) this.onEmote(senderId, packet.emote);
+        break;
+      }
+
+      case PacketType.PEER_LEFT: {
+        const leftId = packet.peerId || senderId;
+        this.remotePeers.delete(leftId);
+        if (this.onPeerLeave) this.onPeerLeave(leftId);
+        break;
+      }
+    }
+  }
+
+  broadcast(packet) {
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+      if (!packet.senderId) packet.senderId = this.peerId;
+      this.ws.send(JSON.stringify(packet));
+    }
+  }
+
+  startSyncLoop(getLocalStateFn) {
+    if (this.syncInterval) clearInterval(this.syncInterval);
+
+    this.syncInterval = setInterval(() => {
+      if (this.status !== WSStatus.CONNECTED) return;
+
+      const state = getLocalStateFn();
+      if (!state || !state.owner || !state.dog) return;
+
+      const packet = Protocol.createSyncState(this.peerId, state.owner, state.dog);
+      this.broadcast(packet);
+    }, 1000 / this.syncHz);
+  }
+
+  stop() {
+    this.manualDisconnect = true;
+    if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+    if (this.syncInterval) clearInterval(this.syncInterval);
+    if (this.ws) {
+      this.ws.close();
+      this.ws = null;
+    }
+    this.remotePeers.clear();
+    this.setStatus(WSStatus.OFFLINE);
+  }
+}

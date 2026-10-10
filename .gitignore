@@ -26,3 +26,7 @@ env/
 
 # Rust
 target/
+
+# Tunnel helper binaries
+server/.bin/
+.bin/

@@ -12,9 +12,12 @@ def test_scaffold():
     assert os.path.exists("src/entities/companion_dog.js"), "src/entities/companion_dog.js missing"
     assert os.path.exists("src/entities/toy.js"), "src/entities/toy.js missing"
     assert os.path.exists("src/net/network.js"), "src/net/network.js missing"
-    assert os.path.exists("src/net/protocol.js"), "src/net/protocol.js missing"
+    assert os.path.exists("src/net/ws_network.js"), "src/net/ws_network.js missing"
     assert os.path.exists("src/ui/social_hud.js"), "src/ui/social_hud.js missing"
     assert os.path.exists("src/systems/audio.js"), "src/systems/audio.js missing"
+    assert os.path.exists("server/server.py"), "server/server.py missing"
+    assert os.path.exists("server/host.py"), "server/host.py missing"
+    assert os.path.exists("server/tunnel.py"), "server/tunnel.py missing"
     
     with open("index.html") as f:
         html = f.read()
@@ -29,7 +32,8 @@ def run_all():
     test_suites = [
         "test/test_steering.py",
         "test/test_ball_physics.py",
-        "test/test_protocol.py"
+        "test/test_protocol.py",
+        "test/test_server.py"
     ]
     for t in test_suites:
         res = subprocess.run([sys.executable, t])

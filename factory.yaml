@@ -1,5 +1,5 @@
 # factory.yaml - Host Project Configuration for Agentic Software Factory
-project_name: "some_kind_of_game"
+project_name: "ziggy-cocker-spaniel-platformer"
 base_branch: "main"
 tech_stack: "TypeScript / HTML5 Canvas / Vite / Vitest"
 

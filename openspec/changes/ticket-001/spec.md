@@ -3,9 +3,9 @@
 ```yaml
 ---
 ticket_id: "ticket-001"
-title: "2D Arcade Space Combat Game Scaffold & Core Loop"
+title: "Ziggy the Cocker Spaniel: 2D Platformer Adventure"
 state: "PLANNING"
-created_at: "2026-10-10T16:57:00Z"
+created_at: "2026-10-10T17:59:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-001/main"
 max_review_cycles: 3
@@ -13,66 +13,81 @@ max_review_cycles: 3
 ```
 
 ## 1. Problem Statement & Objective
-Scaffold the foundational repository architecture for `some_kind_of_game` as a fast-paced, neon-arcade 2D space combat web game ("Void Defender") powered by TypeScript, Vite, and HTML5 Canvas. Implement responsive ship controls, momentum physics, particle engine, shooting mechanics, enemy spawning, collision systems, procedural Web Audio sound synthesis, and an automated test suite with Vitest.
+Build the foundational release of **"Ziggy: The Great Park Adventure"**, a charming, highly responsive 2D platformer starring **Ziggy the Cocker Spaniel**. Ziggy features signature cocker spaniel animations (long floppy ears with spring physics, wagging tail, joyful bounding strides), platforming mechanics (variable jumping, mid-air ear-flutter glide), a "Bark" shockwave ability to disperse park pests, bone collectibles, multi-tier platforms, procedural Web Audio effects, and parallax park scenery.
 
 ## 2. Scope Boundaries
 - **In-Scope**:
-  - Vite + TypeScript development environment with automated build and Vitest unit testing.
-  - Core game loop with fixed-step updates and smooth requestAnimationFrame rendering.
-  - Player ship physics: rotational steering, forward thrust with particle exhaust, inertia, boundary handling.
-  - Weapon firing system: projectiles, cooldowns, pool/array management.
-  - Enemy AI waves: asteroids, interceptors, and chasing drones.
-  - Collision detection: circle-to-circle / bounding box collisions between projectiles, enemies, and player.
-  - Particle FX & screen shake system for explosions and thrust.
-  - Web Audio API sound generator (no external audio files required).
-  - Game state machine: `START`, `PLAYING`, `GAME_OVER`, score tracking, lives, and high score persistence in `localStorage`.
+  - **Hero Character (Ziggy)**:
+    - Procedurally rendered golden-caramel Cocker Spaniel sprite with dynamic floppy ears (secondary physics), animated legs, and wagging tail.
+    - Kinematic movement: horizontal acceleration, deceleration/skid, coyote time, jump buffering, and variable jump height.
+    - **Ear-Flap Flutter**: Mid-air secondary jump/glide where Ziggy's fluffy ears flap for extra hangtime.
+    - **Bark Action**: Emits a visible sonic ring pulse that startles squirrels/pigeons and breaks brittle bushes.
+  - **Platforming & Environment**:
+    - Parallax scrolling multi-layered world (sunlit sky, rolling green hills, park benches, garden fences, wooden bridges).
+    - Solid ground collision, sloped edges, and one-way pass-through platforms (jump up through, drop down with S/Down + Jump).
+  - **Collectibles & Hazards**:
+    - Golden Bones (points & completion tally), Tennis Balls (super speed boost), Sausages (health recovery).
+    - Hazards: Mud puddles (traction reduction/slowdown), oscillating garden sprinklers, mischievous squirrels.
+    - Level Goal: The Golden Dog Park Gate (triggers celebration dance and level clear screen).
+  - **Audio & Visual Polish**:
+    - Web Audio API procedural sound engine: realistic cheerful dog barks, boing leaps, bone pickup chimes, and playful background chiptune music.
+    - Particle FX: Dirt kick-up when sprinting/landing, sparkles on bone pickup, water droplets near sprinklers.
+    - Paw-print lives counter, bone score, bark energy meter, and game over / level complete screens.
+  - **Test Suite**:
+    - Vitest unit tests covering vector physics, gravity/jump equations, collision resolution, and collectible scoring.
 - **Out-of-Scope**:
-  - Multiplayer / networked lobbies (reserved for future tickets).
-  - Complex 3D WebGL / Three.js engines (focusing on razor-sharp 2D Canvas performance).
+  - Level editor (reserved for subsequent tickets).
+  - Multiplayer / co-op (future roadmap).
 
 ## 3. Requirements & Acceptance Criteria
-- [ ] **REQ-1: Vite & TypeScript Environment Setup**
-  - Project builds cleanly with `npm run build` and tests execute with `npm test`.
-  - *Verification*: Validator executes build and test harness with 0 exit code.
-- [ ] **REQ-2: Deterministic Physics & Collision Math**
-  - Pure vector math utilities for 2D position, velocity, acceleration, distance, and circle-circle collision.
-  - *Verification*: Vitest unit tests covering vector operations, ship inertia, and collision detection.
-- [ ] **REQ-3: Player Ship & Weapon Systems**
-  - Smooth keyboard controls (WASD / Arrow keys for thrust & rotation, Space / Click to shoot).
-  - Dynamic projectile firing with rate limiting and range expiration.
-  - *Verification*: Unit tests for firing cooldowns and projectile lifecycle.
-- [ ] **REQ-4: Wave Spawning & Enemy Behaviors**
-  - Progressive wave difficulty spawning asteroids and hostile drones.
-  - Destruction yields score points and triggers particle bursts.
-  - *Verification*: Enemy spawn manager tested for wave progression.
-- [ ] **REQ-5: Visuals, HUD, & Audio Polish**
-  - High-contrast neon arcade visuals on full-bleed HTML5 Canvas.
-  - Glassmorphic HUD displaying Score, Wave, Shield, and Lives.
-  - Synthesized Web Audio effects for lasers, explosions, and thrust hum.
-  - *Verification*: Visual inspection and interactive playability in browser.
+- [ ] **REQ-1: Vite & TypeScript Platformer Foundation**
+  - Project scaffolding with TypeScript, Vite, and Vitest.
+  - Zero external raster asset dependency (procedural canvas rendering + Web Audio).
+  - *Verification*: `npm run build` passes with zero errors; `npm test` runs with passing tests.
+- [ ] **REQ-2: Kinematic Platforming Physics & Collisions**
+  - Axis-Aligned Bounding Box (AABB) collision detection with solid tiles and one-way platforms.
+  - Coyote time (5-frame window after walking off ledges) and jump input buffering for crisp, responsive platforming.
+  - *Verification*: Vitest unit tests for gravity, jump curves, platform resting, and collision clipping prevention.
+- [ ] **REQ-3: Ziggy Hero Entity & Canine Mechanics**
+  - Fully animated Cocker Spaniel with state machine (`IDLE`, `RUN`, `JUMP`, `FLUTTER`, `BARK`, `HURT`).
+  - Floppy ear spring physics responding to velocity and air resistance.
+  - "Bark" ability emitting a circular expansion wave with cooldown and sound effect.
+  - *Verification*: State machine unit tests and interactive browser testing.
+- [ ] **REQ-4: Park Level, Collectibles, & Enemies**
+  - Multi-tier park level layout with hills, benches, platforms, bone trails, and park gate goal.
+  - Interactive squirrels that scurry away when barked at.
+  - Collectible pickup registration and score tracking.
+  - *Verification*: Unit tests verifying bone collection and win condition triggers.
+- [ ] **REQ-5: Procedural Canine Audio & UI Polish**
+  - Web Audio API synthesis generating sound effects without external MP3/WAV files.
+  - HUD overlay featuring Paw-Print lives, Bone Counter, Bark energy meter, and Victory screen.
+  - *Verification*: Audio synthesis plays cleanly on user interaction; 60fps canvas performance.
 
 ## 4. Architectural Design & Impacted Modules
 - **New Modules / Files**:
-  - `package.json`, `tsconfig.json`, `vite.config.ts`: Project manifest and build configuration.
-  - `index.html`: Entry point canvas with HUD overlay and retro-futuristic arcade styling.
-  - `src/main.ts`: Engine entry point and loop orchestrator.
-  - `src/math/vector.ts`: 2D vector mathematics and collision utilities.
-  - `src/entities/player.ts`: Ship controller, momentum physics, and weapon mount.
-  - `src/entities/projectile.ts`: Laser bolt physics and lifecycle.
-  - `src/entities/enemy.ts`: Enemy archetypes (Asteroid, Drone, Interceptor).
-  - `src/systems/particles.ts`: High-performance particle bursts and trails.
-  - `src/systems/audio.ts`: Zero-dependency Web Audio sound synthesizer.
-  - `src/systems/state.ts`: Game state machine, score, and wave director.
-  - `test/vector.test.ts`, `test/collision.test.ts`: Automated test specs.
+  - `package.json`, `tsconfig.json`, `vite.config.ts`: Modern dev toolchain.
+  - `index.html`: Canvas container and retro-modern HUD styling.
+  - `src/main.ts`: Game loop orchestrator (`requestAnimationFrame` + delta time clamp).
+  - `src/engine/physics.ts`: AABB collision resolver, gravity, and raycast floor checks.
+  - `src/entities/ziggy.ts`: Ziggy player controller, floppy ear physics, and animation renderer.
+  - `src/entities/collectibles.ts`: Bones, tennis balls, and treats.
+  - `src/entities/hazards.ts`: Squirrels, sprinklers, and mud patches.
+  - `src/level/park_level.ts`: Tilemap generator and parallax background layers.
+  - `src/systems/audio.ts`: Procedural Web Audio canine bark & synth effects.
+  - `src/systems/particles.ts`: Grass/dust kick-up and sparkle bursts.
+  - `src/ui/hud.ts`: Canvas HUD overlays (paws, bones, score, win/lose states).
+  - `test/physics.test.ts`: Automated physics and collision tests.
+  - `test/gameplay.test.ts`: Collectible scoring and state progression tests.
 - **Modified Modules**:
-  - `factory.yaml`: Tech stack commands updated for Vite and Vitest.
-  - `openspec/specs/overview.md`: Project summary updated to reflect the game architecture.
+  - `factory.yaml`: Tech stack and validation commands.
+  - `openspec/specs/overview.md`: Repository overview updated for Ziggy platformer.
 
 ## 5. Decomposition Plan (Architect Briefs)
 | Brief ID | Role | Target Thinking Level | Description | Dependencies |
 | :--- | :--- | :---: | :--- | :--- |
 | `brief-01-scaffold` | Implementer | `LOW` | Vite + TypeScript + Vitest repo scaffolding and package configuration | None |
-| `brief-02-core-engine` | Implementer | `MEDIUM` | Vector math, physics loops, entity management, and unit tests | `brief-01-scaffold` |
-| `brief-03-gameplay-fx` | Implementer | `MEDIUM` | Wave director, collision reactions, particle FX, HUD, and Web Audio | `brief-02-core-engine` |
-| `brief-val-01` | Validator | `LOW` | Execute automated test suite and production build verification | `brief-03-gameplay-fx` |
-| `brief-rev-01` | Reviewer | `HIGH` | Architectural review, memory leak checks (canvas/audio), and performance audit | `brief-val-01` |
+| `brief-02-physics-engine` | Implementer | `MEDIUM` | Kinematic 2D platforming physics, AABB collisions, one-way ledges, and unit tests | `brief-01-scaffold` |
+| `brief-03-ziggy-hero` | Implementer | `MEDIUM` | Ziggy character rendering (floppy ear springs, tail wags, bark shockwave, ear-flap glide) | `brief-02-physics-engine` |
+| `brief-04-park-world-audio` | Implementer | `MEDIUM` | Parallax park scenery, collectibles (bones), hazards, Web Audio procedural barks & HUD | `brief-03-ziggy-hero` |
+| `brief-val-01` | Validator | `LOW` | Run Vitest unit tests, type-check, and verify production build | `brief-04-park-world-audio` |
+| `brief-rev-01` | Reviewer | `HIGH` | Deep architectural review: 60fps frame budgeting, memory leak audit, and control fluidity | `brief-val-01` |

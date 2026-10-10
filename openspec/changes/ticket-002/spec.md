@@ -64,29 +64,29 @@ Players inhabit the park as an **Owner and Dog companion** walking together acro
 ---
 
 ## 4. Requirements & Acceptance Criteria
-- [ ] **REQ-1: Top-Down Open Field Engine & Clifton Down Meadow**
+- [x] **REQ-1: Top-Down Open Field Engine & Clifton Down Meadow**
   - Smooth 2D canvas viewport with camera tracking local player across an expansive park.
   - Y-sorted entity rendering for trees, benches, owners, dogs, and tennis balls.
   - Ambient grass blade particles and wind breeze effects.
   - *Verification*: 60 FPS rendering, correct depth sorting when walking above/below trees and benches.
-- [ ] **REQ-2: Owner & Companion Dog Physics (Keyboard Focused)**
+- [x] **REQ-2: Owner & Companion Dog Physics (Keyboard Focused)**
   - 8-directional movement for Owner avatar with walk animations via WASD / Arrow keys.
   - Natural steering behavior for Dog companion (following, loose leash constraint, wandering, sitting, play-bowing).
   - Keyboard actions: Leash toggle (`L`), Ball throw (`Space`/`T`), Petting (`E`), and Barking (`B`).
   - Tennis ball trajectory with bounce physics and canine retrieval behavior.
   - *Verification*: Unit tests for companion steering vectors, leash constraints, and ball trajectory.
-- [ ] **REQ-3: Pure In-Browser WebRTC Peer-to-Peer Multiplayer**
+- [x] **REQ-3: Pure In-Browser WebRTC Peer-to-Peer Multiplayer**
   - Host generates room; shareable URL / room code.
   - Remote peers connect over WebRTC DataChannel (PeerJS).
   - Low-latency position interpolation (lerp) for remote owners and dogs.
   - Host authoritative ball physics and player join/leave sync.
   - *Verification*: Two browser tabs connect via room link, walk together in the field, see each other's dogs, and throw/fetch balls simultaneously.
-- [ ] **REQ-4: Social Sandbox Interactions & Chat/Emotes**
+- [x] **REQ-4: Social Sandbox Interactions & Chat/Emotes**
   - In-game chat and emote bubbles floating above avatars (`Enter` to trigger).
   - Dog-to-dog proximity greeting reaction (sniff, tail wag, friendly bounce).
   - Dog & Owner customization modal (name, jacket color, dog coat color: chocolate & tan, golden, black).
   - *Verification*: Chat messages appear correctly over avatar heads in both host and client views.
-- [ ] **REQ-5: Procedural Soundscape & Polished HUD**
+- [x] **REQ-5: Procedural Soundscape & Polished HUD**
   - Ambient park audio (breeze, birdsong, grass footsteps, barks) via Web Audio API.
   - Minimalist glassmorphic park HUD showing room code, copy link button, player count, and controls guide.
   - *Verification*: Audio activates cleanly upon interaction; HUD buttons respond with smooth feedback.

@@ -1,0 +1,14 @@
+{
+  "name": "clifton-down-social-sandbox",
+  "version": "1.0.0",
+  "description": "Multiplayer dog walking field social sandbox at Clifton Down with on-demand edge rooms",
+  "type": "module",
+  "scripts": {
+    "party:dev": "partykit dev",
+    "party:deploy": "partykit deploy",
+    "test": "python3 test/run_tests.py"
+  },
+  "devDependencies": {
+    "partykit": "^0.0.108"
+  }
+}

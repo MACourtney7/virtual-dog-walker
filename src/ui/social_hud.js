@@ -278,7 +278,15 @@ export class SocialHUD {
     const badge = document.getElementById('hud-mode-badge');
     const label = document.getElementById('btn-room-label');
 
-    if (this.net.isDedicatedServer) {
+    if (this.net.isPartyKit) {
+      if (badge) {
+        badge.textContent = `⚡ Edge Room (${this.net.roomId || 'Connected'})`;
+        badge.style.background = '#8b5cf6';
+      }
+      if (label) {
+        label.textContent = 'Share Link';
+      }
+    } else if (this.net.isDedicatedServer) {
       if (badge) {
         badge.textContent = `🌲 Park (${this.net.roomId || 'Connected'})`;
         badge.style.background = '#059669';

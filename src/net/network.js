@@ -402,13 +402,26 @@ export class NetworkManager {
   constructor() {
     const urlParams = new URLSearchParams(window.location.search);
     const serverParam = urlParams.get('server');
+    const partyParam = urlParams.get('party') || urlParams.get('partykit');
     const isP2P = urlParams.get('p2p') === '1';
 
-    // Auto-detect whether to use Dedicated WebSocket Server or PeerJS P2P
+    // Auto-detect whether to use PartyKit Edge, Dedicated WebSocket Server, or PeerJS P2P
     const isHttp = window.location.protocol.startsWith('http');
+    const isPartyHost = window.location.hostname.includes('partykit.dev') ||
+                        window.location.port === '1999' ||
+                        Boolean(partyParam);
 
-    if (!isP2P && (serverParam || isHttp)) {
-      // 1. WebSocket Dedicated Server Mode
+    if (!isP2P && (partyParam || isPartyHost)) {
+      // 1. PartyKit Global Edge Mode
+      const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const targetHost = partyParam && partyParam !== '1' ? partyParam : window.location.host;
+      this.wsEndpoint = `${proto}//${targetHost}`;
+      this.adapter = new WebSocketNetworkManager();
+      this.isDedicatedServer = true;
+      this.isPartyKit = true;
+      this.adapter.isPartyKit = true;
+    } else if (!isP2P && (serverParam || isHttp)) {
+      // 2. Local/Dedicated Python Microserver Mode
       let wsEndpoint = '';
       if (serverParam) {
         let clean = serverParam.trim();
@@ -425,11 +438,13 @@ export class NetworkManager {
 
       this.adapter = new WebSocketNetworkManager();
       this.isDedicatedServer = true;
+      this.isPartyKit = false;
       this.wsEndpoint = wsEndpoint;
     } else {
-      // 2. PeerJS P2P Fallback Mode
+      // 3. PeerJS P2P Fallback Mode
       this.adapter = new PeerNetworkManager();
       this.isDedicatedServer = false;
+      this.isPartyKit = false;
     }
 
     // Proxy properties & methods

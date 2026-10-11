@@ -108,8 +108,8 @@ When a player toggles their dog off-leash (via the <kbd>L</kbd> key or the touch
 
 ## 5. Acceptance Criteria
 
-- [ ] `AC-1`: When a player takes their dog off-leash (pressing <kbd>L</kbd> or tapping the touch leash button), all other connected client windows (desktop, incognito, mobile) immediately remove the red leash graphic connecting the owner to the dog.
-- [ ] `AC-2`: When a player re-leashes their dog, all other connected client windows immediately re-draw the red catenary leash between the owner and the dog.
-- [ ] `AC-3`: `EntityInterpolator` properly propagates all discrete properties (`isLeashed`, `isMoving`, and dog `state`) from incoming `SYNC_STATE` packets while smoothly interpolating `x`, `y`, and `angle`.
-- [ ] `AC-4`: The mobile touch action button (`btn-touch-leash`) visually reflects the active leash status (e.g. toggling between `🦮` on-lead and `🐕` off-lead).
-- [ ] `AC-5`: All automated tests in `test/run_tests.py` (including the new leash synchronization tests) pass with 100% green status.
+- [x] `AC-1`: When a player takes their dog off-leash (pressing <kbd>L</kbd> or tapping the touch leash button), all other connected client windows (desktop, incognito, mobile) immediately remove the red leash graphic connecting the owner to the dog.
+- [x] `AC-2`: When a player re-leashes their dog, all other connected client windows immediately re-draw the red catenary leash between the owner and the dog.
+- [x] `AC-3`: `EntityInterpolator` properly propagates all discrete properties (`isLeashed`, `isMoving`, and dog `state`) from incoming `SYNC_STATE` packets while smoothly interpolating `x`, `y`, and `angle`.
+- [x] `AC-4`: The mobile touch action button (`btn-touch-leash`) visually reflects the active leash status (e.g. toggling between `🦮` on-lead and `🐕` off-lead).
+- [x] `AC-5`: All automated tests in `test/run_tests.py` (including the new leash synchronization tests) pass with 100% green status.

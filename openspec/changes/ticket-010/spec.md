@@ -139,9 +139,9 @@ Currently in *Virtual Dog Walker (Clifton Down)*:
 
 ## 5. Acceptance Criteria
 
-- [ ] `AC-1`: When on-leash, the dog walks closely beside the human (~38–48px) at heel, matching speed with natural lead tension.
-- [ ] `AC-2`: When off-leash, the dog enters autonomous roaming mode, exploring and sniffing naturally while staying within a bounded radius (~160–220px) of the human.
-- [ ] `AC-3`: When two dogs come within proximity (~90–120px), they approach and engage in social canine interactions (friendly sniffing, circling, tail wagging, emote bubbles, and play-bows).
-- [ ] `AC-4`: Triggering the whistle command (<kbd>H</kbd>, <kbd>R</kbd>, or touch button `📯`) plays a training whistle sound, causes the dog to perk up, sprint back to the human, and follow closely at heel for ~10 seconds before resuming roaming.
-- [ ] `AC-5`: The whistle event is synchronized over the network so other connected players hear the whistle and see the owner's dog recall to heel.
-- [ ] `AC-6`: All automated unit tests in `test/run_tests.py` pass with 100% green status.
+- [x] `AC-1`: When on-leash, the dog walks closely beside the human (~38–48px) at heel, matching speed with natural lead tension.
+- [x] `AC-2`: When off-leash, the dog enters autonomous roaming mode, exploring and sniffing naturally while staying within a bounded radius (~160–220px) of the human.
+- [x] `AC-3`: When two dogs come within proximity (~90–120px), they approach and engage in social canine interactions (friendly sniffing, circling, tail wagging, emote bubbles, and play-bows).
+- [x] `AC-4`: Triggering the whistle command (<kbd>H</kbd>, <kbd>R</kbd>, or touch button `📯`) plays a training whistle sound, causes the dog to perk up, sprint back to the human, and follow closely at heel for ~10 seconds before resuming roaming.
+- [x] `AC-5`: The whistle event is synchronized over the network so other connected players hear the whistle and see the owner's dog recall to heel.
+- [x] `AC-6`: All automated unit tests in `test/run_tests.py` pass with 100% green status.

@@ -30,9 +30,8 @@ export class ParkServer extends Server {
     try {
       const data = typeof message === "string" ? JSON.parse(message) : message;
 
-      if (!data.peerId) {
-        data.peerId = conn.id;
-      }
+      data.senderId = conn.id;
+      data.peerId = conn.id;
 
       const payload = JSON.stringify(data);
       // Broadcast to other peers in this room
@@ -59,11 +58,21 @@ export class ParkServer extends Server {
 
 export default {
   async fetch(request, env, ctx) {
-    // 1. Route PartyServer WebSocket / partykit requests
+    // Durable Object Namespace Aliasing
+    if (env && env.ParkServer) {
+      if (!env.park) env.park = env.ParkServer;
+      if (!env.parkserver) env.parkserver = env.ParkServer;
+    }
+
+    // 1. Route PartyServer WebSocket / partykit requests with crash guard
     if (typeof routePartykitRequest === "function") {
-      const partyResponse = await routePartykitRequest(request, env);
-      if (partyResponse) {
-        return partyResponse;
+      try {
+        const partyResponse = await routePartykitRequest(request, env);
+        if (partyResponse) {
+          return partyResponse;
+        }
+      } catch (err) {
+        console.error("[ParkServer] routePartykitRequest error:", err);
       }
     }
 

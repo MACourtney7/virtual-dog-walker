@@ -26,7 +26,7 @@ export class SocialHUD {
         <div class="hud-panel">
           <div class="hud-pill">
             <span style="font-size: 1.2rem;">🌳</span>
-            <span style="font-weight: 700; color: #f8fafc;">Clifton Down</span>
+            <span style="font-weight: 700; color: #f8fafc;">The Downs</span>
             <span class="hud-pill-badge" id="hud-mode-badge">Solo</span>
           </div>
           <div class="hud-pill" id="hud-player-count">

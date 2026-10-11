@@ -17,9 +17,9 @@ Transform *Virtual Dog Walker* into **"The Downs"**, inspired by the authentic g
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `ticket-011` | The Downs Map Redesign, Bins & Nature Audio | `HIGH` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-012` | Character & Canine Customization & 2D Aesthetics | `MEDIUM` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
-| `ticket-013` | Canine Personality System & Leash Dynamics | `HIGH` | `["ticket-012"]` | `PARALLEL_ELIGIBLE` | `PLANNED` |
+| `ticket-013` | Canine Personality System & Leash Dynamics | `HIGH` | `["ticket-012"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
 | `ticket-014` | Canine Stray Run-Off & Dog Poop/Bin Mechanics | `MEDIUM` | `["ticket-011", "ticket-013"]` | `BLOCKED_ON_ticket-013` | `PLANNED` |
-| `ticket-015` | Ad-Hoc Proximity Group Chat & Tombstones | `HIGH` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `PLANNED` |
+| `ticket-015` | Ad-Hoc Proximity Group Chat & Tombstones | `HIGH` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
 | `ticket-016` | Park NPCs: Autonomous Walkers & Joggers | `MEDIUM` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `PLANNED` |
 | `ticket-017` | UTC Day/Night Twilight & Clifton Downs Weather | `MEDIUM` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `PLANNED` |
 

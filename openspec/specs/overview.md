@@ -1,23 +1,26 @@
-# Canonical System Specification: Clifton Down Social Sandbox
+# Canonical System Specification: The Downs Social Sandbox
 
 ## 1. System Overview
-**Virtual Dog Walker (Clifton Down)** is a relaxing, charming multiplayer sandbox built entirely in the browser using HTML5 Canvas 2D, Vanilla ES6 JavaScript, the Web Audio API, Cloudflare PartyServer with Durable Objects, and dedicated local microserver fallback.
+**Virtual Dog Walker (The Downs)** is a relaxing, charming multiplayer sandbox built entirely in the browser using HTML5 Canvas 2D, Vanilla ES6 JavaScript, the Web Audio API, Cloudflare PartyServer with Durable Objects, and dedicated local microserver fallback.
 
-Players inhabit the meadow as an **Owner** and **Dog companion** walking together across an expansive, sunlit open park space inspired by **Clifton Down** in Bristol, UK. Anyone can open the park in their browser and immediately walk alongside other online players in **The Commons** with zero room codes or server setup required.
+Players inhabit the meadow as an **Owner** and **Dog companion** walking together across an expansive, sunlit open park space inspired by **The Downs** (Clifton & Durdham Downs) in Bristol, UK. Anyone can open the park in their browser and immediately walk alongside other online players in **The Commons** with zero room codes or server setup required.
 
 ---
 
 ## 2. World & Rendering Architecture
-- **Continuous Meadow (`src/world/field.js`)**:
-  - 2600 × 1900 px coordinate space featuring lush layered grass tones (`#437332`, `#375e28`, `#538c3e`), curved gravel walking trails, and clustered wildflower beds (buttercups, white clover, bluebells).
-  - 17 mature English oak and sweet chestnut trees with soft drop shadows, circular trunk collision bounds, and layered foliage canopies.
-  - 8 wooden teak park benches with collision boundaries.
-  - Stone perimeter boundary walls and iron corner pillars.
+- **The Downs Parkland (`src/world/field.js`)**:
+  - Expansive 3200 × 2400 px coordinate space featuring authentic Bristol Downs geography:
+    - **Ladies Mile Avenue**: Diagonal Cotswold gravel boulevard with sweet chestnut and lime tree borders.
+    - **Sea Walls & Avon Gorge Viewpoints**: Western cliff rim with limestone outcrops, stone parapet wall with wrought iron railings, and panoramic teak benches.
+    - **Durdham Down Grasslands & Water Tower**: Wide open northern greens with subtle mown lawn striping and Victorian stone Water Tower landmark pavilion (`x: 2400, y: 450`).
+    - **Clifton Down Woodland Copse**: Southern sweet chestnut and oak groves with curving woodland dirt footpaths.
+  - Multi-tone procedural turf palette (`#3e6b2c`, `#335824`, `#4c8237`), grass blade flecks, and wildflower meadows (buttercups, white clover, bluebells).
+  - 8 public park dog-waste bins strategically placed at path intersections and overlooks with collision resolution and depth-sorted rendering.
   - Ambient particle system: floating dandelion seeds/pollen and wind streaks.
 - **Camera Viewport**:
-  - Smooth exponential damping tracking (`Camera.follow`) centered on the player and clamped to world boundaries.
+  - Smooth exponential damping tracking (`Camera.follow`) centered on the player and clamped to 3200 × 2400 boundaries.
 - **Y-Sorted Depth Renderer**:
-  - Collects all scenery objects (trees, benches) and dynamic entities (owners, dogs, tennis balls).
+  - Collects all scenery objects (trees, benches, bins, rocks, water tower) and dynamic entities (owners, dogs, tennis balls).
   - Sorts by base Y coordinate (`depthY`) so entities and scenery overlap with natural 2D depth.
 
 ---
@@ -85,13 +88,16 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 
 ## 6. Sensory & Audio Polish
 - **Procedural Nature Soundscape (`src/systems/audio.js`)**:
-  - Pink-noise filtered low-pass breeze for tree canopy wind.
-  - Intermittent procedural birdsong chirps.
+  - Dual-filter low-pass pink noise with 0.1 Hz LFO sweeping cutoff between 260 Hz and 440 Hz for organic breathing canopy wind.
+  - Multi-species authentic British birdsong synthesizer:
+    - Melodic flute-like Blackbird piping (`playBlackbird()`, 1800–2600 Hz motifs).
+    - Crystalline European Robin trills (`playRobin()`, 3200–4200 Hz with vibrato).
+    - Warm rhythmic Woodpigeon cooing (`playWoodpigeon()`, 380–420 Hz pulses).
   - Soft procedural grass footstep rustles during movement.
   - Formant-filtered canine barks and ball bounce pops.
   - Dual-oscillator acoustic dog training whistle chirp (`playWhistle`) with 17Hz vibrato warble.
 - **Social HUD Overlay (`src/ui/social_hud.js`)**:
-  - Live status-driven diagnostic badge: green `🌳 Clifton Commons` (or purple `🔒 Meadow`) when connected, amber `⏳ Connecting...` / `🔄 Reconnecting...`, and slate gray `Solo (Offline)` on disconnect.
+  - Live status-driven diagnostic badge: green `🌳 The Downs` (or purple `🔒 Meadow`) when connected, amber `⏳ Connecting...` / `🔄 Reconnecting...`, and slate gray `Solo (Offline)` on disconnect.
   - Player count badge and "Share Park" button with toast confirmation.
   - Style customizer modal and quick chat bar (<kbd>Enter</kbd>) with emote buttons (👋, 🐾, ❤️, 🎾).
   - Controls legend including <kbd>WASD</kbd> walk, <kbd>Space</kbd> throw, <kbd>L</kbd> leash, <kbd>B</kbd> bark, <kbd>E</kbd> pet, <kbd>H</kbd> whistle.

@@ -180,6 +180,43 @@ export class SocialHUD {
             <div class="color-swatch" data-palette="collarColor" data-color="#7c3aed" style="background: #7c3aed;" title="Purple"></div>
           </div>
         </div>
+
+        <!-- Canine Personality Editor (1-5 Traits) -->
+        <div class="cust-form-group cust-personality-group">
+          <label class="cust-label" style="margin-bottom: 8px;">Canine Personality Traits</label>
+          
+          <div class="cust-trait-row">
+            <div class="cust-trait-header">
+              <label class="cust-trait-label" for="cust-personality-playfulness">🎾 Playfulness</label>
+              <span class="cust-trait-badge" id="val-personality-playfulness">3</span>
+            </div>
+            <input type="range" min="1" max="5" step="1" value="3" class="cust-range" id="cust-personality-playfulness" />
+          </div>
+
+          <div class="cust-trait-row">
+            <div class="cust-trait-header">
+              <label class="cust-trait-label" for="cust-personality-shyness">🙈 Shyness</label>
+              <span class="cust-trait-badge" id="val-personality-shyness">2</span>
+            </div>
+            <input type="range" min="1" max="5" step="1" value="2" class="cust-range" id="cust-personality-shyness" />
+          </div>
+
+          <div class="cust-trait-row">
+            <div class="cust-trait-header">
+              <label class="cust-trait-label" for="cust-personality-barkyness">🗣️ Barkyness</label>
+              <span class="cust-trait-badge" id="val-personality-barkyness">2</span>
+            </div>
+            <input type="range" min="1" max="5" step="1" value="2" class="cust-range" id="cust-personality-barkyness" />
+          </div>
+
+          <div class="cust-trait-row">
+            <div class="cust-trait-header">
+              <label class="cust-trait-label" for="cust-personality-obedience">🎓 Obedience</label>
+              <span class="cust-trait-badge" id="val-personality-obedience">4</span>
+            </div>
+            <input type="range" min="1" max="5" step="1" value="4" class="cust-range" id="cust-personality-obedience" />
+          </div>
+        </div>
       </div>
 
       <button id="btn-save-cust" class="btn-primary-cust">Save & Walk</button>
@@ -217,11 +254,20 @@ export class SocialHUD {
     try {
       const savedStr = localStorage.getItem('clifton_walker_profile');
       if (!savedStr) {
+        // Initialize default personality if not present on dog
+        if (this.dog) {
+          if (!this.dog.personality) {
+            this.dog.personality = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
+          }
+        }
         this.updateModalActiveSelections();
         return;
       }
       const saved = JSON.parse(savedStr);
       if (!saved || typeof saved !== 'object') {
+        if (this.dog && !this.dog.personality) {
+          this.dog.personality = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
+        }
         this.updateModalActiveSelections();
         return;
       }
@@ -258,9 +304,29 @@ export class SocialHUD {
         this.dog.collarColor = saved.collarColor;
       }
 
+      // 3. Canine Personality attributes (with fallback defaults)
+      const personalityDefaults = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
+      if (this.dog) {
+        const loadedPersonality = saved.personality && typeof saved.personality === 'object'
+          ? {
+              playfulness: parseInt(saved.personality.playfulness, 10) || personalityDefaults.playfulness,
+              shyness: parseInt(saved.personality.shyness, 10) || personalityDefaults.shyness,
+              barkyness: parseInt(saved.personality.barkyness, 10) || personalityDefaults.barkyness,
+              obedience: parseInt(saved.personality.obedience, 10) || personalityDefaults.obedience
+            }
+          : { ...personalityDefaults };
+
+        if (typeof this.dog.setPersonality === 'function') {
+          this.dog.setPersonality(loadedPersonality);
+        } else {
+          this.dog.personality = loadedPersonality;
+        }
+      }
+
       this.updateModalActiveSelections();
 
       if (this.net && typeof this.net.setLocalMeta === 'function') {
+        const personality = this.dog && this.dog.personality ? this.dog.personality : personalityDefaults;
         this.net.setLocalMeta({
           name: this.owner.name,
           jacketColor: this.owner.jacketColor,
@@ -269,11 +335,15 @@ export class SocialHUD {
           hairColor: this.owner.hairColor,
           pantsColor: this.owner.pantsColor,
           skinTone: this.owner.skinTone,
-          collarColor: this.dog.collarColor
+          collarColor: this.dog.collarColor,
+          personality
         });
       }
     } catch (e) {
       console.warn('Could not load saved walker profile from localStorage:', e);
+      if (this.dog && !this.dog.personality) {
+        this.dog.personality = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
+      }
       this.updateModalActiveSelections();
     }
   }
@@ -321,6 +391,20 @@ export class SocialHUD {
         }
       }
     }
+
+    // Update personality sliders and badges
+    const personality = (this.dog && this.dog.personality)
+      ? this.dog.personality
+      : { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
+
+    const traits = ['playfulness', 'shyness', 'barkyness', 'obedience'];
+    traits.forEach(trait => {
+      const slider = document.getElementById(`cust-personality-${trait}`);
+      const badge = document.getElementById(`val-personality-${trait}`);
+      const val = personality[trait] !== undefined ? personality[trait] : 3;
+      if (slider) slider.value = val;
+      if (badge) badge.textContent = val;
+    });
   }
 
   showToast(text) {
@@ -423,6 +507,29 @@ export class SocialHUD {
       });
     });
 
+    // Canine Personality slider event wiring
+    const traits = ['playfulness', 'shyness', 'barkyness', 'obedience'];
+    traits.forEach(trait => {
+      const slider = document.getElementById(`cust-personality-${trait}`);
+      const badge = document.getElementById(`val-personality-${trait}`);
+      if (slider) {
+        slider.addEventListener('input', (e) => {
+          const val = parseInt(e.target.value, 10);
+          if (badge) badge.textContent = val;
+          if (this.dog) {
+            if (!this.dog.personality) {
+              this.dog.personality = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
+            }
+            if (typeof this.dog.setPersonality === 'function') {
+              this.dog.setPersonality({ [trait]: val });
+            } else {
+              this.dog.personality[trait] = val;
+            }
+          }
+        });
+      }
+    });
+
     // Save & Walk button
     if (btnSaveCust && modal) {
       btnSaveCust.addEventListener('click', () => {
@@ -438,6 +545,22 @@ export class SocialHUD {
           this.dog.coat = this.coatPresets[coatSelect.value];
         }
 
+        // Current personality configuration
+        const personality = {
+          playfulness: parseInt(document.getElementById('cust-personality-playfulness')?.value || (this.dog?.personality?.playfulness ?? 3), 10),
+          shyness: parseInt(document.getElementById('cust-personality-shyness')?.value || (this.dog?.personality?.shyness ?? 2), 10),
+          barkyness: parseInt(document.getElementById('cust-personality-barkyness')?.value || (this.dog?.personality?.barkyness ?? 2), 10),
+          obedience: parseInt(document.getElementById('cust-personality-obedience')?.value || (this.dog?.personality?.obedience ?? 4), 10)
+        };
+
+        if (this.dog) {
+          if (typeof this.dog.setPersonality === 'function') {
+            this.dog.setPersonality(personality);
+          } else {
+            this.dog.personality = personality;
+          }
+        }
+
         // Save updated profile to localStorage
         if (typeof localStorage !== 'undefined') {
           try {
@@ -449,7 +572,8 @@ export class SocialHUD {
               jacketColor: this.owner.jacketColor,
               pantsColor: this.owner.pantsColor,
               coatKey: coatSelect ? coatSelect.value : coatKey,
-              collarColor: this.dog.collarColor
+              collarColor: this.dog.collarColor,
+              personality: personality
             };
             localStorage.setItem('clifton_walker_profile', JSON.stringify(profileToSave));
           } catch (e) {
@@ -463,7 +587,8 @@ export class SocialHUD {
             hairColor: this.owner.hairColor,
             pantsColor: this.owner.pantsColor,
             skinTone: this.owner.skinTone,
-            collarColor: this.dog.collarColor
+            collarColor: this.dog.collarColor,
+            personality: personality
           };
 
           this.net.setLocalMeta({

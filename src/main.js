@@ -86,7 +86,12 @@ class CliftonDownGame {
     this.net.setLocalMeta({
       name: this.owner.name,
       jacketColor: this.owner.jacketColor,
-      coatName: this.dog.coat.name
+      coatName: this.dog.coat ? this.dog.coat.name : 'Chocolate & Tan (Ziggy)',
+      hairStyle: this.owner.hairStyle,
+      hairColor: this.owner.hairColor,
+      pantsColor: this.owner.pantsColor,
+      skinTone: this.owner.skinTone,
+      collarColor: this.dog.collarColor
     });
 
     this.net.onStatusChange = (status, msg) => {
@@ -104,27 +109,47 @@ class CliftonDownGame {
       }
     }
 
-    // When a peer connects
+    // Helper to resolve CoatPreset from coatName or coatKey
+    const resolveCoat = (coatName) => {
+      if (!coatName) return CoatPreset.CHOCOLATE_TAN;
+      const cn = String(coatName).toLowerCase();
+      if (cn.includes('golden')) return CoatPreset.GOLDEN;
+      if (cn.includes('black')) return CoatPreset.BLACK_LAB;
+      if (cn.includes('jack') || cn.includes('russell')) return CoatPreset.JACK_RUSSELL || CoatPreset.CHOCOLATE_TAN;
+      if (cn.includes('setter') || cn.includes('red')) return CoatPreset.RED_SETTER || CoatPreset.CHOCOLATE_TAN;
+      if (cn.includes('chocolate') || cn.includes('ziggy')) return CoatPreset.CHOCOLATE_TAN;
+      return CoatPreset.CHOCOLATE_TAN;
+    };
+
+    // When a peer connects or updates appearance
     this.net.onPeerJoin = (peerId, meta) => {
       if (peerId === this.net.peerId) return;
 
-      let coat = CoatPreset.CHOCOLATE_TAN;
-      const coatName = (meta && meta.coatName) ? meta.coatName : '';
-      if (coatName.includes('Golden')) coat = CoatPreset.GOLDEN;
-      else if (coatName.includes('Black')) coat = CoatPreset.BLACK_LAB;
+      const coat = resolveCoat(meta && meta.coatName);
 
       let existing = this.remotePlayers.get(peerId);
       if (existing) {
         if (meta.name) existing.owner.name = meta.name;
         if (meta.jacketColor) existing.owner.jacketColor = meta.jacketColor;
+        if (meta.hairStyle) existing.owner.hairStyle = meta.hairStyle;
+        if (meta.hairColor) existing.owner.hairColor = meta.hairColor;
+        if (meta.pantsColor) existing.owner.pantsColor = meta.pantsColor;
+        if (meta.skinTone) existing.owner.skinTone = meta.skinTone;
+        if (meta.collarColor) existing.dog.collarColor = meta.collarColor;
         existing.dog.coat = coat;
         return;
       }
 
-      const remoteOwner = new Owner(this.owner.x, this.owner.y, meta.name || 'Walker', false);
-      remoteOwner.jacketColor = meta.jacketColor || '#1e3a8a';
+      const remoteOwner = new Owner(this.owner.x, this.owner.y, meta?.name || 'Walker', false);
+      if (meta?.jacketColor) remoteOwner.jacketColor = meta.jacketColor;
+      if (meta?.hairStyle) remoteOwner.hairStyle = meta.hairStyle;
+      if (meta?.hairColor) remoteOwner.hairColor = meta.hairColor;
+      if (meta?.pantsColor) remoteOwner.pantsColor = meta.pantsColor;
+      if (meta?.skinTone) remoteOwner.skinTone = meta.skinTone;
 
       const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
+      if (meta?.collarColor) remoteDog.collarColor = meta.collarColor;
+
       this.remotePlayers.set(peerId, { owner: remoteOwner, dog: remoteDog });
 
       this.hud.updatePlayerCount(this.remotePlayers.size + 1);

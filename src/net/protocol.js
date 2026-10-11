@@ -15,13 +15,18 @@ export const PacketType = {
 };
 
 export class Protocol {
-  static createHello(peerId, name, jacketColor, dogCoatName) {
+  static createHello(peerId, name, jacketColor, dogCoatName, extraMeta = {}) {
     return {
       type: PacketType.HELLO,
       senderId: peerId,
       name,
       jacketColor,
       dogCoatName,
+      hairStyle: extraMeta.hairStyle,
+      hairColor: extraMeta.hairColor,
+      pantsColor: extraMeta.pantsColor,
+      skinTone: extraMeta.skinTone,
+      collarColor: extraMeta.collarColor,
       timestamp: Date.now()
     };
   }

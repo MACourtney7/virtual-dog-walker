@@ -2,11 +2,14 @@
 
 export const DogState = {
   FOLLOWING: 'FOLLOWING',
+  ROAMING: 'ROAMING',
+  SOCIAL_GREET: 'SOCIAL_GREET',
   IDLE_SNIFF: 'IDLE_SNIFF',
   SITTING: 'SITTING',
   FETCHING: 'FETCHING',
   PLAY_BOW: 'PLAY_BOW',
-  BARKING: 'BARKING'
+  BARKING: 'BARKING',
+  RECALLED: 'RECALLED'
 };
 
 export const CoatPreset = {
@@ -53,18 +56,18 @@ export class CompanionDog {
     this.vy = 0;
     this.angle = 0;
     this.speed = 195; // px/s
-    this.sprintSpeed = 290; // px/s while fetching
+    this.sprintSpeed = 290; // px/s while fetching or recalling
 
     this.owner = owner;
     this.coat = coat;
     this.radius = 14;
     this.depthY = this.y + 6;
 
-    this.state = DogState.FOLLOWING;
+    this.state = (this.owner && !this.owner.isLeashed) ? DogState.ROAMING : DogState.FOLLOWING;
     this.stateTimer = 0;
 
-    // Follow offset relative to owner
-    this.followDistance = 62;
+    // Follow offset relative to owner (on-leash close heel follow between 35px and 45px)
+    this.followDistance = 42;
     this.followAngleOffset = Math.PI * 0.75; // trots slightly behind and to the side
 
     // Ear spring physics (secondary damper system)
@@ -92,6 +95,19 @@ export class CompanionDog {
     // Happiness / Heart particles
     this.happiness = 100;
     this.hearts = [];
+
+    // Bounded Off-Leash Roaming state
+    this.wanderAngle = 0;
+    this.wanderTimer = 0;
+    this.wanderSpeed = 135;
+    this.isReturningToOwner = false;
+
+    // Canine Social Interactions
+    this.socialTargetDog = null;
+
+    // Whistle Recall & Timed Heel state
+    this.isRecalledToHeel = false;
+    this.recallHeelTimer = 0;
   }
 
   bark(audioEngine = null) {
@@ -106,6 +122,22 @@ export class CompanionDog {
 
     if (audioEngine && typeof audioEngine.playBark === 'function') {
       audioEngine.playBark();
+    }
+  }
+
+  whistleRecall() {
+    this.state = DogState.RECALLED;
+    this.emoteBubble = '!';
+    this.emoteTimer = 2.0;
+    this.wagSpeed = 18;
+    this.isRecalledToHeel = false;
+    this.recallHeelTimer = 10.0; // 10 seconds of close heel following
+    this.socialTargetDog = null;
+    this.isReturningToOwner = false;
+    if (this.hasBall && this.targetBall) {
+      this.hasBall = false;
+      this.targetBall.drop(this.x, this.y);
+      this.targetBall = null;
     }
   }
 
@@ -146,6 +178,18 @@ export class CompanionDog {
         this.updateFetching(dt);
         break;
 
+      case DogState.RECALLED:
+        this.updateRecalled(dt);
+        break;
+
+      case DogState.SOCIAL_GREET:
+        this.updateSocialGreet(dt);
+        break;
+
+      case DogState.ROAMING:
+        this.updateRoaming(dt, otherDogs);
+        break;
+
       case DogState.PLAY_BOW:
         this.updatePlayBow(dt);
         break;
@@ -161,7 +205,7 @@ export class CompanionDog {
       case DogState.BARKING:
         this.stateTimer -= dt;
         if (this.stateTimer <= 0) {
-          this.state = DogState.FOLLOWING;
+          this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
           this.isBarking = false;
         }
         break;
@@ -188,6 +232,17 @@ export class CompanionDog {
         this.y = this.owner.y + (dy / dist) * maxLeash;
         this.vx *= 0.5;
         this.vy *= 0.5;
+      }
+    } else if (this.owner && !this.owner.isLeashed) {
+      // Off-leash bounded perimeter constraint: hard clamp to 230px so dog never strays out of sight
+      const maxRoam = 230;
+      const dx = this.x - this.owner.x;
+      const dy = this.y - this.owner.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist > maxRoam) {
+        this.x = this.owner.x + (dx / dist) * maxRoam;
+        this.y = this.owner.y + (dy / dist) * maxRoam;
       }
     }
 
@@ -240,8 +295,41 @@ export class CompanionDog {
     }
   }
 
-  updateFollowing(dt, otherDogs) {
+  checkSocialInteractions(otherDogs) {
+    if (!otherDogs || !Array.isArray(otherDogs)) return false;
+    if (this.state === DogState.FETCHING || this.state === DogState.RECALLED) return false;
+
+    for (const other of otherDogs) {
+      if (other && other !== this && other.state !== DogState.FETCHING && this.state !== DogState.FETCHING) {
+        const dogDist = Math.hypot(this.x - other.x, this.y - other.y);
+        if (dogDist < 110 && this.state !== DogState.SOCIAL_GREET && this.state !== DogState.PLAY_BOW && Math.random() < 0.03) {
+          this.state = DogState.SOCIAL_GREET;
+          this.socialTargetDog = other;
+          this.stateTimer = 3.0;
+          this.wagSpeed = 16;
+          this.emoteBubble = Math.random() < 0.5 ? '🐾' : (Math.random() < 0.5 ? '🐶' : '❤️');
+          this.emoteTimer = 2.5;
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  updateFollowing(dt, otherDogs = []) {
     if (!this.owner) return;
+
+    if (!this.owner.isLeashed) {
+      this.state = DogState.ROAMING;
+      this.updateRoaming(dt, otherDogs);
+      return;
+    }
+
+    this.followDistance = 42;
+
+    if (this.checkSocialInteractions(otherDogs)) {
+      return;
+    }
 
     // Desired position: slightly offset from owner
     const targetX = this.owner.x + Math.cos(this.owner.angle + this.followAngleOffset) * this.followDistance;
@@ -250,21 +338,6 @@ export class CompanionDog {
     const dx = targetX - this.x;
     const dy = targetY - this.y;
     const dist = Math.hypot(dx, dy);
-
-    // Check proximity to other dogs for Play-Bow interaction
-    for (const other of otherDogs) {
-      if (other !== this) {
-        const dogDist = Math.hypot(this.x - other.x, this.y - other.y);
-        if (dogDist < 58 && Math.random() < 0.02) {
-          this.state = DogState.PLAY_BOW;
-          this.stateTimer = 2.4;
-          this.emoteBubble = '🐾';
-          this.emoteTimer = 2.0;
-          this.wagSpeed = 16;
-          return;
-        }
-      }
-    }
 
     // If owner stopped for a while, transition to idle sniff or sit
     if (!this.owner.isMoving && dist < 25) {
@@ -278,7 +351,7 @@ export class CompanionDog {
       return;
     }
 
-    // Arrival steering calculation
+    // Arrival steering calculation matching owner's pace
     const slowingRadius = 40;
     let targetSpeed = this.speed;
     if (dist < slowingRadius) {
@@ -297,9 +370,232 @@ export class CompanionDog {
     }
   }
 
+  updateRoaming(dt, otherDogs = []) {
+    if (!this.owner) return;
+
+    if (this.owner.isLeashed) {
+      this.state = DogState.FOLLOWING;
+      this.followDistance = 42;
+      return;
+    }
+
+    if (this.checkSocialInteractions(otherDogs)) {
+      return;
+    }
+
+    const fromOwnerX = this.x - this.owner.x;
+    const fromOwnerY = this.y - this.owner.y;
+    let distToOwner = Math.hypot(fromOwnerX, fromOwnerY);
+
+    // Hard boundary clamp: if distToOwner > 230, clamp position along the vector to owner
+    if (distToOwner > 230) {
+      this.x = this.owner.x + (fromOwnerX / distToOwner) * 230;
+      this.y = this.owner.y + (fromOwnerY / distToOwner) * 230;
+      distToOwner = 230;
+    }
+
+    // If distToOwner > 200: steer directly back toward the owner at normal trot speed until within 120px
+    if (distToOwner > 200) {
+      this.isReturningToOwner = true;
+    }
+
+    if (this.isReturningToOwner) {
+      if (distToOwner <= 120) {
+        this.isReturningToOwner = false;
+      } else {
+        const toOwnerX = this.owner.x - this.x;
+        const toOwnerY = this.owner.y - this.y;
+        const dirDist = Math.hypot(toOwnerX, toOwnerY) || 1;
+        const trotSpeed = this.speed;
+        this.vx = (toOwnerX / dirDist) * trotSpeed;
+        this.vy = (toOwnerY / dirDist) * trotSpeed;
+        this.angle = Math.atan2(this.vy, this.vx);
+        this.wagSpeed = 10;
+        return;
+      }
+    }
+
+    // Maintain exploratory wander target
+    this.wanderTimer -= dt;
+    if (this.wanderTimer <= 0) {
+      this.wanderTimer = 2.0 + Math.random() * 2.0;
+
+      // Periodically pauses for 2-3s to sniff a spot (IDLE_SNIFF)
+      if (Math.random() < 0.25) {
+        this.state = DogState.IDLE_SNIFF;
+        this.stateTimer = 2.0 + Math.random() * 1.0;
+        this.vx = 0;
+        this.vy = 0;
+        return;
+      }
+
+      // Trotting ahead or to the sides of walking path
+      if (this.owner.isMoving) {
+        const spread = (Math.random() - 0.5) * (Math.PI * 0.75);
+        this.wanderAngle = this.owner.angle + spread;
+      } else {
+        this.wanderAngle = Math.random() * Math.PI * 2;
+      }
+      this.wanderSpeed = this.speed * (0.65 + Math.random() * 0.25);
+    }
+
+    let wanderVx = Math.cos(this.wanderAngle) * this.wanderSpeed;
+    let wanderVy = Math.sin(this.wanderAngle) * this.wanderSpeed;
+
+    // If distToOwner > 150: bias wander velocity back towards the owner
+    if (distToOwner > 150) {
+      const bias = Math.min(1.0, (distToOwner - 150) / 50); // 0 at 150, 1 at 200
+      const toOwnerX = (this.owner.x - this.x) / (distToOwner || 1);
+      const toOwnerY = (this.owner.y - this.y) / (distToOwner || 1);
+      this.vx = wanderVx * (1.0 - bias) + toOwnerX * this.wanderSpeed * bias;
+      this.vy = wanderVy * (1.0 - bias) + toOwnerY * this.wanderSpeed * bias;
+    } else {
+      if (!this.owner.isMoving && distToOwner < 40) {
+        this.vx = wanderVx * 0.3;
+        this.vy = wanderVy * 0.3;
+      } else {
+        this.vx = wanderVx;
+        this.vy = wanderVy;
+      }
+    }
+
+    if (Math.hypot(this.vx, this.vy) > 8) {
+      this.angle = Math.atan2(this.vy, this.vx);
+      this.wagSpeed = 9;
+    } else {
+      this.wagSpeed = 6;
+    }
+  }
+
+  updateSocialGreet(dt) {
+    if (!this.socialTargetDog || this.socialTargetDog.state === DogState.FETCHING) {
+      this.socialTargetDog = null;
+      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
+      return;
+    }
+
+    if (this.owner && this.owner.isLeashed) {
+      const distToOwner = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
+      if (distToOwner > 95) {
+        this.socialTargetDog = null;
+        this.state = DogState.FOLLOWING;
+        return;
+      }
+    }
+
+    const dx = this.socialTargetDog.x - this.x;
+    const dy = this.socialTargetDog.y - this.y;
+    const dist = Math.hypot(dx, dy);
+
+    if (dist > 160) {
+      this.socialTargetDog = null;
+      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
+      return;
+    }
+
+    // Approach peer dog down to ~28-36px, then circle gently or pause for snout-to-snout sniff
+    if (dist > 36) {
+      const approachSpeed = this.speed * 0.75;
+      this.vx = (dx / dist) * approachSpeed;
+      this.vy = (dy / dist) * approachSpeed;
+      this.angle = Math.atan2(this.vy, this.vx);
+    } else if (dist < 28) {
+      const backSpeed = this.speed * 0.25;
+      this.vx = -(dx / (dist || 1)) * backSpeed;
+      this.vy = -(dy / (dist || 1)) * backSpeed;
+      this.angle = Math.atan2(dy, dx);
+    } else {
+      const tangentX = -dy / dist;
+      const tangentY = dx / dist;
+      const circleSpeed = 30;
+      this.vx = tangentX * circleSpeed;
+      this.vy = tangentY * circleSpeed;
+      this.angle = Math.atan2(dy, dx);
+    }
+
+    this.wagSpeed = 16;
+    this.stateTimer -= dt;
+
+    if (this.stateTimer <= 0) {
+      this.socialTargetDog = null;
+      if (Math.random() < 0.4) {
+        this.state = DogState.PLAY_BOW;
+        this.stateTimer = 2.2;
+        this.emoteBubble = '🐾';
+        this.emoteTimer = 2.0;
+        this.wagSpeed = 16;
+      } else {
+        this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
+      }
+    }
+  }
+
+  updateRecalled(dt) {
+    if (!this.owner) {
+      this.state = DogState.ROAMING;
+      return;
+    }
+
+    if (!this.isRecalledToHeel) {
+      // Sprints back directly to owner
+      const dx = this.owner.x - this.x;
+      const dy = this.owner.y - this.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist < 40) {
+        this.isRecalledToHeel = true;
+        this.emoteBubble = '🐾';
+        this.emoteTimer = 1.5;
+        this.vx = 0;
+        this.vy = 0;
+      } else {
+        const targetSpeed = this.sprintSpeed;
+        this.vx = (dx / dist) * targetSpeed;
+        this.vy = (dy / dist) * targetSpeed;
+        this.angle = Math.atan2(this.vy, this.vx);
+        this.wagSpeed = 18;
+      }
+    }
+
+    if (this.isRecalledToHeel) {
+      // Executes tight close heel following (followDistance = 35)
+      this.followDistance = 35;
+      const targetX = this.owner.x + Math.cos(this.owner.angle + this.followAngleOffset) * this.followDistance;
+      const targetY = this.owner.y + Math.sin(this.owner.angle + this.followAngleOffset) * this.followDistance;
+
+      const dx = targetX - this.x;
+      const dy = targetY - this.y;
+      const dist = Math.hypot(dx, dy);
+
+      const slowingRadius = 35;
+      let targetSpeed = this.speed;
+      if (dist < slowingRadius) {
+        targetSpeed = this.speed * (dist / slowingRadius);
+      }
+
+      if (dist > 6) {
+        this.vx = (dx / dist) * targetSpeed;
+        this.vy = (dy / dist) * targetSpeed;
+        this.angle = Math.atan2(this.vy, this.vx);
+        this.wagSpeed = 12;
+      } else {
+        this.vx = 0;
+        this.vy = 0;
+        this.wagSpeed = 8;
+      }
+
+      this.recallHeelTimer -= dt;
+      if (this.recallHeelTimer <= 0) {
+        this.isRecalledToHeel = false;
+        this.followDistance = 42;
+        this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
+      }
+    }
+  }
+
   updateFetching(dt) {
     if (!this.targetBall) {
-      this.state = DogState.FOLLOWING;
+      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
       return;
     }
 
@@ -326,7 +622,8 @@ export class CompanionDog {
       if (!this.owner) {
         this.hasBall = false;
         this.targetBall.drop(this.x, this.y);
-        this.state = DogState.FOLLOWING;
+        this.targetBall = null;
+        this.state = DogState.ROAMING;
         return;
       }
 
@@ -344,7 +641,7 @@ export class CompanionDog {
         this.hasBall = false;
         this.targetBall.drop(this.x + Math.cos(this.angle) * 14, this.y + Math.sin(this.angle) * 14);
         this.targetBall = null;
-        this.state = DogState.FOLLOWING;
+        this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
         this.pet(); // reward with happiness!
       }
     }
@@ -356,7 +653,7 @@ export class CompanionDog {
     this.stateTimer -= dt;
     this.wagSpeed = 18;
     if (this.stateTimer <= 0) {
-      this.state = DogState.FOLLOWING;
+      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
     }
   }
 
@@ -365,10 +662,12 @@ export class CompanionDog {
     this.vy *= 0.4;
     this.stateTimer -= dt;
     this.wagSpeed = 4;
-    if (this.owner && this.owner.isMoving) {
+    if (this.owner && this.owner.isMoving && this.owner.isLeashed) {
       this.state = DogState.FOLLOWING;
+    } else if (this.owner && !this.owner.isLeashed && Math.hypot(this.x - this.owner.x, this.y - this.owner.y) > 150) {
+      this.state = DogState.ROAMING;
     } else if (this.stateTimer <= 0) {
-      this.state = DogState.FOLLOWING;
+      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
     }
   }
 
@@ -377,10 +676,12 @@ export class CompanionDog {
     this.vy = 0;
     this.stateTimer -= dt;
     this.wagSpeed = 4;
-    if (this.owner && this.owner.isMoving) {
+    if (this.owner && this.owner.isMoving && this.owner.isLeashed) {
       this.state = DogState.FOLLOWING;
+    } else if (this.owner && !this.owner.isLeashed && Math.hypot(this.x - this.owner.x, this.y - this.owner.y) > 150) {
+      this.state = DogState.ROAMING;
     } else if (this.stateTimer <= 0) {
-      this.state = DogState.FOLLOWING;
+      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
     }
   }
 

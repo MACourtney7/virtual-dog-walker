@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-005"
 title: "Virtual Dog Walker: Migrate to PartyServer on Cloudflare Workers with Shared Public Commons"
-state: "PLANNING"
+state: "COMPLETED"
 created_at: "2026-10-11T11:21:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-005/main"

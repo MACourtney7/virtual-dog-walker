@@ -1,15 +1,17 @@
-name: CI & Test Suite
+name: CI & Deployment
 
 on:
   push:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 jobs:
   test:
     name: Run Automated Test Suites
     runs-on: ubuntu-latest
+    timeout-minutes: 3
 
     steps:
       - name: Checkout Repository
@@ -27,3 +29,41 @@ jobs:
 
       - name: Run Test Runner
         run: python3 test/run_tests.py
+
+  deploy:
+    name: Deploy to Cloudflare Workers
+    needs: test
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Check Cloudflare Credentials
+        id: check_creds
+        run: |
+          if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
+            echo "::warning ::CLOUDFLARE_API_TOKEN secret is not configured in GitHub repository settings. Skipping deployment."
+            echo "has_token=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_token=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Node.js
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Dependencies
+        if: steps.check_creds.outputs.has_token == 'true'
+        run: npm install
+
+      - name: Deploy with Wrangler
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

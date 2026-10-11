@@ -149,6 +149,11 @@ class CliftonServer:
                         peer.meta["name"] = packet.get("name", "Walker")
                         peer.meta["jacketColor"] = packet.get("jacketColor", "#1e3a8a")
                         peer.meta["coatName"] = packet.get("dogCoatName", "Chocolate & Tan (Ziggy)")
+                        peer.meta["hairStyle"] = packet.get("hairStyle")
+                        peer.meta["hairColor"] = packet.get("hairColor")
+                        peer.meta["pantsColor"] = packet.get("pantsColor")
+                        peer.meta["skinTone"] = packet.get("skinTone")
+                        peer.meta["collarColor"] = packet.get("collarColor")
 
                         # Send WELCOME packet back to this peer with list of existing peers
                         room_peers = self.rooms.get_room_peers(peer.room_id)
@@ -159,7 +164,12 @@ class CliftonServer:
                                     "id": pid,
                                     "name": p.meta.get("name", "Friend"),
                                     "jacketColor": p.meta.get("jacketColor", "#14532d"),
-                                    "coatName": p.meta.get("coatName", "Chocolate & Tan (Ziggy)")
+                                    "coatName": p.meta.get("coatName", "Chocolate & Tan (Ziggy)"),
+                                    "hairStyle": p.meta.get("hairStyle"),
+                                    "hairColor": p.meta.get("hairColor"),
+                                    "pantsColor": p.meta.get("pantsColor"),
+                                    "skinTone": p.meta.get("skinTone"),
+                                    "collarColor": p.meta.get("collarColor")
                                 })
 
                         welcome_pkt = {

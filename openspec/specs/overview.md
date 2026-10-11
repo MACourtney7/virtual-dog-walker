@@ -48,15 +48,17 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 ## 4. Universal Networking Architecture
 - **Multi-Transport Network Engine (`src/net/network.js`, `src/net/protocol.js`, `src/net/ws_network.js`)**:
   - Transparent multi-mode polymorphic architecture:
-    1. **Cloudflare PartyServer Edge Mode**: Native Cloudflare Workers + Durable Objects (`party/server.js`), defaulting universally to **The Commons** (`the-commons`). Scale-to-zero at $0 idle cost.
+    1. **Cloudflare PartyServer Edge Mode**: Native Cloudflare Workers + Durable Objects (`party/server.js`), connecting canonically via `/parties/parkserver/${roomId}` with automatic aliasing for `/parties/park/` legacy paths. Scale-to-zero at $0 idle cost.
     2. **Dedicated WebSocket Microserver Mode**: Connects via native WebSockets (`ws://` or `wss://`) when launched via local server or when `?server=...` parameter is present.
     3. **WebRTC P2P Fallback Mode**: Gracefully falls back to browser-to-browser PeerJS DataChannels if run without a server.
   - **The Always-Open Public Commons**:
     - Default room is `the-commons`. Anyone loading the site enters the same active park instance.
     - `getShareUrl()` returns the clean base domain (`https://<domain>/`).
     - Optional private rooms supported via `?room=<custom-code>`.
-  - **Packet Protocol Parity**:
+  - **Packet Protocol Parity & Authoritative Stamping**:
     - Uniform packet schemas: `HELLO`, `WELCOME`, `SYNC_STATE`, `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, `EMOTE`, `PEER_LEFT`.
+    - Edge relay server enforces authoritative `conn.id` stamping on all broadcasts (`data.senderId = conn.id`).
+    - Client automatically re-dispatches `HELLO` profile handshake upon receiving `WELCOME` with assigned `peerId`, ensuring remote peers register player appearance matching 16Hz `SYNC_STATE` updates.
   - **Host Relaying & Synchronization**:
     - Synchronizes authoritative ball physics.
     - State broadcasts at 16Hz; `EntityInterpolator` provides smooth exponential damping (lerp) for remote positions at 60fps.
@@ -67,6 +69,7 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 ## 5. Edge Server & Local Microserver
 - **Cloudflare PartyServer Room Relay (`party/server.js`, `wrangler.jsonc`)**:
   - Implements `ParkServer` inheriting from `Server` in `partyserver`.
+  - In Worker `fetch`, aliases `env.park = env.ParkServer` and `env.parkserver = env.ParkServer` with defensive `try...catch` crash guard, eliminating Cloudflare Error 1101 exceptions.
   - Ephemeral serverless Durable Object actors managing player handshakes (`WELCOME`), high-throughput state broadcasts, barking, tennis ball fetch, and disconnect cleanup.
   - Serves static HTML/JS frontend assets and WSS endpoints under a single unified Cloudflare Worker URL.
   - Automatic deployment via GitHub Actions CI/CD to Cloudflare Workers at $0 cost.
@@ -83,7 +86,8 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
   - Soft procedural grass footstep rustles during movement.
   - Formant-filtered canine barks and ball bounce pops.
 - **Social HUD Overlay (`src/ui/social_hud.js`)**:
-  - Glassmorphic top bar displaying `🌳 Clifton Commons` badge (or `🔒 Meadow` for private rooms), player count, and "Share Park" button with toast confirmation.
+  - Live status-driven diagnostic badge: green `🌳 Clifton Commons` (or purple `🔒 Meadow`) when connected, amber `⏳ Connecting...` / `🔄 Reconnecting...`, and slate gray `Solo (Offline)` on disconnect.
+  - Player count badge and "Share Park" button with toast confirmation.
   - Style customizer modal and quick chat bar (<kbd>Enter</kbd>) with emote buttons (👋, 🐾, ❤️, 🎾).
 
 ---

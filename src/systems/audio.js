@@ -199,33 +199,139 @@ class SoundSynthesizer {
     noise.start(t);
   }
 
-  // Intermittent birdsong in the trees
-  playBirdChirp() {
+  // Authentic British Birdsong Variety:
+  // Blackbird: Melodic flute-like whistles sweeping 1800 Hz to 2600 Hz in expressive 2-3 note motifs
+  playBlackbird() {
     this.ensureContext();
     if (!this.ctx || this.isMuted) return;
 
     const t = this.ctx.currentTime;
-    const baseFreq = 2200 + Math.random() * 800;
+    // 2 to 3 note motif
+    const noteCount = Math.random() < 0.5 ? 2 : 3;
+    const motifNotes = [
+      { startFreq: 1850 + Math.random() * 200, endFreq: 2400 + Math.random() * 200, dur: 0.16 },
+      { startFreq: 2300 + Math.random() * 200, endFreq: 2000 + Math.random() * 150, dur: 0.18 },
+      { startFreq: 2100 + Math.random() * 200, endFreq: 2550 + Math.random() * 100, dur: 0.22 }
+    ];
+
+    let noteOffset = 0;
+    for (let i = 0; i < noteCount; i++) {
+      const note = motifNotes[i];
+      const startT = t + noteOffset;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(note.startFreq, startT);
+      osc.frequency.exponentialRampToValueAtTime(note.endFreq, startT + note.dur * 0.85);
+
+      gain.gain.setValueAtTime(0, startT);
+      gain.gain.linearRampToValueAtTime(0.045, startT + 0.02);
+      gain.gain.setValueAtTime(0.04, startT + note.dur * 0.7);
+      gain.gain.exponentialRampToValueAtTime(0.001, startT + note.dur);
+      gain.gain.setValueAtTime(0, startT + note.dur + 0.01);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(startT);
+      osc.stop(startT + note.dur + 0.02);
+
+      noteOffset += note.dur + 0.06 + Math.random() * 0.04;
+    }
+  }
+
+  // European Robin: High-frequency crystalline trills (3200 Hz to 4200 Hz with fast vibrato modulation)
+  playRobin() {
+    this.ensureContext();
+    if (!this.ctx || this.isMuted) return;
+
+    const t = this.ctx.currentTime;
+    const trillDuration = 0.24 + Math.random() * 0.08;
+    const baseFreq = 3400 + Math.random() * 500; // 3400 - 3900 Hz
 
     const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-
     osc.type = 'sine';
     osc.frequency.setValueAtTime(baseFreq, t);
-    osc.frequency.linearRampToValueAtTime(baseFreq + 400, t + 0.04);
-    osc.frequency.linearRampToValueAtTime(baseFreq - 200, t + 0.08);
+    osc.frequency.linearRampToValueAtTime(Math.min(4200, baseFreq + 300), t + trillDuration);
 
-    gain.gain.setValueAtTime(0.04, t);
-    gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+    // Fast vibrato modulation (~28-35 Hz)
+    const vibrato = this.ctx.createOscillator();
+    const vibratoGain = this.ctx.createGain();
+    vibrato.type = 'sine';
+    vibrato.frequency.setValueAtTime(32, t);
+    vibratoGain.gain.setValueAtTime(120, t); // modulation depth in Hz
+
+    vibrato.connect(vibratoGain);
+    vibratoGain.connect(osc.frequency);
+
+    const gain = this.ctx.createGain();
+    gain.gain.setValueAtTime(0, t);
+    gain.gain.linearRampToValueAtTime(0.035, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + trillDuration);
+    gain.gain.setValueAtTime(0, t + trillDuration + 0.01);
 
     osc.connect(gain);
     gain.connect(this.ctx.destination);
 
+    vibrato.start(t);
     osc.start(t);
-    osc.stop(t + 0.13);
+
+    vibrato.stop(t + trillDuration + 0.02);
+    osc.stop(t + trillDuration + 0.02);
   }
 
-  // Background Breeze in the trees (continuous subtle pink noise filtered)
+  // Woodpigeon: Gentle, low-frequency rhythmic cooing (two warm rounded pulses around 380-420 Hz)
+  playWoodpigeon() {
+    this.ensureContext();
+    if (!this.ctx || this.isMuted) return;
+
+    const t = this.ctx.currentTime;
+    const pulses = [
+      { start: 0, dur: 0.22, freq: 390 },
+      { start: 0.28, dur: 0.32, freq: 410 }
+    ];
+
+    pulses.forEach(p => {
+      const pulseT = t + p.start;
+      const osc = this.ctx.createOscillator();
+      const gain = this.ctx.createGain();
+
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(p.freq, pulseT);
+      osc.frequency.linearRampToValueAtTime(p.freq - 15, pulseT + p.dur);
+
+      gain.gain.setValueAtTime(0, pulseT);
+      gain.gain.linearRampToValueAtTime(0.04, pulseT + 0.05);
+      gain.gain.setValueAtTime(0.035, pulseT + p.dur * 0.6);
+      gain.gain.exponentialRampToValueAtTime(0.001, pulseT + p.dur);
+      gain.gain.setValueAtTime(0, pulseT + p.dur + 0.01);
+
+      osc.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      osc.start(pulseT);
+      osc.stop(pulseT + p.dur + 0.02);
+    });
+  }
+
+  // Intermittent birdsong in the trees - randomly selects among authentic British species
+  playBirdChirp() {
+    this.ensureContext();
+    if (!this.ctx || this.isMuted) return;
+
+    const r = Math.random();
+    if (r < 0.40) {
+      this.playBlackbird();
+    } else if (r < 0.75) {
+      this.playRobin();
+    } else {
+      this.playWoodpigeon();
+    }
+  }
+
+  // Background Breeze in the trees:
+  // Breathing canopy wind with dual-filter low-pass pink noise swept by slow sinusoidal LFO (period ~10s, 260 Hz to 440 Hz)
   startAmbientBreeze() {
     if (this.ambientStarted) return;
     this.ensureContext();
@@ -249,23 +355,51 @@ class SoundSynthesizer {
       noise.buffer = buffer;
       noise.loop = true;
 
-      const filter = this.ctx.createBiquadFilter();
-      filter.type = 'lowpass';
-      filter.frequency.setValueAtTime(350, this.ctx.currentTime);
+      // Dual-filter low-pass configuration for organic canopy acoustics
+      const filter1 = this.ctx.createBiquadFilter();
+      filter1.type = 'lowpass';
+      filter1.frequency.setValueAtTime(350, this.ctx.currentTime);
+      filter1.Q.setValueAtTime(1.0, this.ctx.currentTime);
 
+      const filter2 = this.ctx.createBiquadFilter();
+      filter2.type = 'lowpass';
+      filter2.frequency.setValueAtTime(350, this.ctx.currentTime);
+      filter2.Q.setValueAtTime(0.7, this.ctx.currentTime);
+
+      // Slow sinusoidal LFO (period ~10s -> 0.1 Hz) gently sweeping filter cutoffs between 260 Hz and 440 Hz
+      // Base frequency = 350 Hz, modulation depth = 90 Hz (350 - 90 = 260 Hz, 350 + 90 = 440 Hz)
+      const lfo = this.ctx.createOscillator();
+      lfo.type = 'sine';
+      lfo.frequency.setValueAtTime(0.1, this.ctx.currentTime); // 10 second period
+
+      const lfoGain1 = this.ctx.createGain();
+      lfoGain1.gain.setValueAtTime(90, this.ctx.currentTime);
+      lfo.connect(lfoGain1);
+      lfoGain1.connect(filter1.frequency);
+
+      const lfoGain2 = this.ctx.createGain();
+      lfoGain2.gain.setValueAtTime(90, this.ctx.currentTime);
+      lfo.connect(lfoGain2);
+      lfoGain2.connect(filter2.frequency);
+
+      // Smooth gain transition ensuring relaxing, non-intrusive background presence (gain ~0.035)
       const gain = this.ctx.createGain();
-      gain.gain.setValueAtTime(0.03, this.ctx.currentTime);
+      gain.gain.setValueAtTime(0.001, this.ctx.currentTime);
+      gain.gain.linearRampToValueAtTime(0.035, this.ctx.currentTime + 3.0);
 
-      noise.connect(filter);
-      filter.connect(gain);
+      // Audio routing: noise -> filter1 -> filter2 -> gain -> destination
+      noise.connect(filter1);
+      filter1.connect(filter2);
+      filter2.connect(gain);
       gain.connect(this.ctx.destination);
 
+      lfo.start();
       noise.start();
       this.breezeNode = gain;
 
-      // Schedule occasional birdsong
+      // Schedule occasional authentic British birdsong
       setInterval(() => {
-        if (Math.random() < 0.4 && !this.isMuted) {
+        if (Math.random() < 0.45 && !this.isMuted) {
           this.playBirdChirp();
         }
       }, 4000);

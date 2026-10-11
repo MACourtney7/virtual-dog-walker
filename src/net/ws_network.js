@@ -38,6 +38,7 @@ export class WebSocketNetworkManager {
     this.onBallSync = null;
     this.onBark = null;
     this.onPet = null;
+    this.onWhistle = null;
     this.onChatMessage = null;
     this.onEmote = null;
     this.onStatusChange = null;
@@ -327,6 +328,11 @@ export class WebSocketNetworkManager {
 
       case PacketType.EMOTE: {
         if (this.onEmote) this.onEmote(senderId, packet.emote);
+        break;
+      }
+
+      case PacketType.WHISTLE: {
+        if (this.onWhistle) this.onWhistle(senderId, packet);
         break;
       }
 

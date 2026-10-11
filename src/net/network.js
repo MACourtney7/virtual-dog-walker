@@ -82,6 +82,7 @@ export class PeerNetworkManager {
     this.onBallSync = null;
     this.onBark = null;
     this.onPet = null;
+    this.onWhistle = null;
     this.onChatMessage = null;
     this.onEmote = null;
     this.onStatusChange = null;
@@ -353,6 +354,12 @@ export class PeerNetworkManager {
 
       case PacketType.EMOTE: {
         if (this.onEmote) this.onEmote(senderId, packet.emote);
+        if (this.isHost) this.relayToOthers(senderId, packet);
+        break;
+      }
+
+      case PacketType.WHISTLE: {
+        if (this.onWhistle) this.onWhistle(senderId, packet);
         if (this.isHost) this.relayToOthers(senderId, packet);
         break;
       }

@@ -10,6 +10,7 @@ export const PacketType = {
   PET: 'PET',
   CHAT_MESSAGE: 'CHAT_MESSAGE',
   EMOTE: 'EMOTE',
+  WHISTLE: 'WHISTLE',
   PEER_LEFT: 'PEER_LEFT'
 };
 
@@ -122,6 +123,16 @@ export class Protocol {
       type: PacketType.EMOTE,
       senderId: peerId,
       emote,
+      timestamp: Date.now()
+    };
+  }
+
+  static createWhistle(peerId, x, y) {
+    return {
+      type: PacketType.WHISTLE,
+      senderId: peerId,
+      x,
+      y,
       timestamp: Date.now()
     };
   }

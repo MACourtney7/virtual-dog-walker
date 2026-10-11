@@ -28,13 +28,22 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 ## 3. Entities & Canine Companion Mechanics
 - **Owner Avatar (`src/entities/owner.js`)**:
   - 8-directional movement (<kbd>WASD</kbd> / touch joystick) with acceleration and deceleration.
-  - Animated walk cycles (foot swing and arm sway).
+  - Expressive 2D top-down / soft isometric vector rendering with directional facial cues, natural walking leg oscillation, dual-tone shoes, torso jacket with collar lapels, and arm swing.
+  - Customizable hairstyles (`SHORT`, `WAVY`, `PONYTAIL`, `BEANIE`) with layered rear plumes and forehead bangs.
+  - Diverse palette tokens for skin tones, hair colors, jacket colors, pants colors, and player names.
   - Clean baseline player naming: default name is `"Walker"` with local avatar nametag dynamically displaying `"${this.name} (You)"` in yellow (`#fde047`), while remote avatars display `"${this.name}"` in white (`#f8fafc`).
-  - Real-time customizer: customizable jacket colors, pants, hair colors, skin tones, and player names with `localStorage` profile persistence across reloads.
+  - Glassmorphic tabbed customizer modal with `localStorage` profile persistence and full multiplayer handshake synchronization.
   - Speech bubble and emote rendering above avatar heads.
 - **Companion Dog (`src/entities/companion_dog.js`)**:
-  - Authentic Cocker Spaniel model featuring chocolate & tan coat (`#2E1A14`, `#D89B54`), honey-tan eyebrow pips, white chest bib, and teal collar with gold charm.
-  - Presets for Golden Retriever and Black Lab coats.
+  - 5 distinct canine breed coat presets:
+    - Cocker Spaniel (Ziggy - Chocolate & Tan `#2E1A14`, `#D89B54` with honey eyebrow pips and white bib)
+    - Golden Retriever (`#D4A373` honey gold with warm buff shading)
+    - Black Lab (`#1E2022` sleek charcoal black with pale bib)
+    - Jack Russell Terrier (`#F8FAFC` crisp white base with chestnut eye patches and ear markings)
+    - Irish Red Setter (`#7C2D12` deep mahogany red with silky ear feathering)
+  - Customizable collar colors (`teal`, `red`, `blue`, `gold`, `purple`) with a reflective metallic gold charm tag.
+  - Expressive canine snout catchlights, whisker dots, and catchlight iris rings.
+  - Floppy ear spring damper physics responding to trot speed inertia and lateral lag.
   - Multi-state steering AI (`FOLLOWING`, `ROAMING`, `SOCIAL_GREET`, `PLAY_BOW`, `IDLE_SNIFF`, `SITTING`, `FETCHING`, `BARKING`, `RECALLED`):
     - *On-Leash Close Heel*: Trots closely at the owner's side/heel (~38–48px) with natural slack, matching owner speed and decelerating smoothly.
     - *Bounded Off-Leash Roaming*: When off-leash, explores and sniffs turf autonomously while remaining organically bounded to the human (150px return bias, 200px return trot, 230px outer perimeter clamp).

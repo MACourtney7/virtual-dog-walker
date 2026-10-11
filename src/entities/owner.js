@@ -16,10 +16,11 @@ export class Owner {
     this.depthY = this.y + 12;
 
     // Customization tokens
+    this.hairStyle = 'SHORT'; // Supported: 'SHORT', 'WAVY', 'PONYTAIL', 'BEANIE'
+    this.hairColor = '#451a03'; // Chestnut brown
+    this.skinTone = '#fed7aa'; // Warm light peach
     this.jacketColor = '#1e3a8a'; // Deep blue
     this.pantsColor = '#334155'; // Slate dark trousers
-    this.skinTone = '#fed7aa'; // Warm light peach
-    this.hairColor = '#451a03'; // Chestnut brown
     this.shoeColor = '#0f172a';
 
     // State & Animations
@@ -122,70 +123,155 @@ export class Owner {
 
     // Left leg / shoe
     ctx.fillStyle = this.pantsColor;
-    ctx.fillRect(this.x - legSpread - 3, this.y + 2 + legSwing, 5, 8);
+    ctx.beginPath();
+    ctx.roundRect(this.x - legSpread - 3.5, this.y + 1 + legSwing, 5.5, 9, 2);
+    ctx.fill();
     ctx.fillStyle = this.shoeColor;
-    ctx.fillRect(this.x - legSpread - 3, this.y + 10 + legSwing, 6, 4);
+    ctx.beginPath();
+    ctx.roundRect(this.x - legSpread - 4, this.y + 9 + legSwing, 6.8, 5, 2.5);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.fillRect(this.x - legSpread - 4, this.y + 13 + legSwing, 6.8, 1.2);
 
     // Right leg / shoe
     ctx.fillStyle = this.pantsColor;
-    ctx.fillRect(this.x + legSpread - 2, this.y + 2 - legSwing, 5, 8);
+    ctx.beginPath();
+    ctx.roundRect(this.x + legSpread - 2, this.y + 1 - legSwing, 5.5, 9, 2);
+    ctx.fill();
     ctx.fillStyle = this.shoeColor;
-    ctx.fillRect(this.x + legSpread - 2, this.y + 10 - legSwing, 6, 4);
+    ctx.beginPath();
+    ctx.roundRect(this.x + legSpread - 2.5, this.y + 9 - legSwing, 6.8, 5, 2.5);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.fillRect(this.x + legSpread - 2.5, this.y + 13 - legSwing, 6.8, 1.2);
 
-    // 3. Torso / Jacket
+    // 3. Torso / Jacket with lapels
     ctx.fillStyle = this.jacketColor;
     ctx.beginPath();
     ctx.roundRect(this.x - 11, this.y - 12, 22, 18, 5);
     ctx.fill();
 
+    // Shoulder lapels & collar
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.moveTo(this.x - 4, this.y - 12);
+    ctx.lineTo(this.x + 4, this.y - 12);
+    ctx.lineTo(this.x, this.y - 6);
+    ctx.closePath();
+    ctx.fill();
+
+    // Lapels over neckline
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+    ctx.beginPath();
+    ctx.moveTo(this.x - 7, this.y - 12);
+    ctx.lineTo(this.x - 3, this.y - 12);
+    ctx.lineTo(this.x, this.y - 5);
+    ctx.lineTo(this.x - 5, this.y - 5);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.moveTo(this.x + 7, this.y - 12);
+    ctx.lineTo(this.x + 3, this.y - 12);
+    ctx.lineTo(this.x, this.y - 5);
+    ctx.lineTo(this.x + 5, this.y - 5);
+    ctx.closePath();
+    ctx.fill();
+
     // Jacket zipper / seam line
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)';
     ctx.lineWidth = 1.5;
     ctx.beginPath();
-    ctx.moveTo(this.x, this.y - 12);
+    ctx.moveTo(this.x, this.y - 5);
     ctx.lineTo(this.x, this.y + 6);
     ctx.stroke();
 
-    // 4. Arms & Hands
+    // 4. Arms & Hands swinging based on walkPhase
     const armSwing = this.isMoving ? Math.cos(this.walkPhase) * 5 : 0;
     // Left arm
     ctx.fillStyle = this.jacketColor;
-    ctx.fillRect(this.x - 15, this.y - 10 - armSwing, 4, 12);
+    ctx.beginPath();
+    ctx.roundRect(this.x - 15.5, this.y - 10 - armSwing, 4.5, 12, 2);
+    ctx.fill();
     ctx.fillStyle = this.skinTone;
     ctx.beginPath();
-    ctx.arc(this.x - 13, this.y + 3 - armSwing, 2.5, 0, Math.PI * 2);
+    ctx.arc(this.x - 13.25, this.y + 3 - armSwing, 2.5, 0, Math.PI * 2);
     ctx.fill();
 
     // Right arm
     ctx.fillStyle = this.jacketColor;
-    ctx.fillRect(this.x + 11, this.y - 10 + armSwing, 4, 12);
+    ctx.beginPath();
+    ctx.roundRect(this.x + 11, this.y - 10 + armSwing, 4.5, 12, 2);
+    ctx.fill();
     ctx.fillStyle = this.skinTone;
     ctx.beginPath();
-    ctx.arc(this.x + 13, this.y + 3 + armSwing, 2.5, 0, Math.PI * 2);
+    ctx.arc(this.x + 13.25, this.y + 3 + armSwing, 2.5, 0, Math.PI * 2);
     ctx.fill();
 
-    // 5. Head, Hair & Cap
-    // Head base
+    // 5. Head & Face
+    const style = (this.hairStyle || 'SHORT').toUpperCase();
+
+    // Rear hair layer for WAVY or PONYTAIL
+    if (style === 'WAVY') {
+      ctx.fillStyle = this.hairColor;
+      ctx.beginPath();
+      ctx.ellipse(this.x, this.y - 18, 11.5, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (style === 'PONYTAIL') {
+      const backAngle = this.angle + Math.PI;
+      const pBaseX = this.x + Math.cos(backAngle) * 7.5;
+      const pBaseY = this.y - 22 + Math.sin(backAngle) * 6.5;
+
+      // Scrunchie tie
+      ctx.fillStyle = '#dc2626';
+      ctx.beginPath();
+      ctx.arc(pBaseX, pBaseY, 2.8, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Tied ponytail plume extending behind head
+      ctx.fillStyle = this.hairColor;
+      const pTipX = pBaseX + Math.cos(backAngle) * 9.5;
+      const pTipY = pBaseY + Math.sin(backAngle) * 9.5;
+      ctx.beginPath();
+      ctx.ellipse(pTipX, pTipY, 4.8, 7.8, backAngle + Math.PI / 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Head base with skin tone
     ctx.fillStyle = this.skinTone;
     ctx.beginPath();
     ctx.arc(this.x, this.y - 20, 8.5, 0, Math.PI * 2);
     ctx.fill();
 
-    // Hair
-    ctx.fillStyle = this.hairColor;
+    // Ears on sides
+    ctx.fillStyle = this.skinTone;
     ctx.beginPath();
-    ctx.arc(this.x, this.y - 22, 9, Math.PI, Math.PI * 2);
+    ctx.arc(this.x - 8.8, this.y - 20, 2.2, 0, Math.PI * 2);
+    ctx.arc(this.x + 8.8, this.y - 20, 2.2, 0, Math.PI * 2);
     ctx.fill();
 
-    // Subtle facial orientation dot
-    const faceDx = Math.cos(this.angle) * 3;
-    const faceDy = Math.sin(this.angle) * 3;
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+    // Subtle facial direction cues based on angle
+    const eyeForwardX = Math.cos(this.angle) * 3.5;
+    const eyeForwardY = Math.sin(this.angle) * 3.5;
+    const eyeSideX = Math.sin(this.angle) * 2.8;
+    const eyeSideY = -Math.cos(this.angle) * 2.8;
+
+    ctx.fillStyle = '#1e293b';
     ctx.beginPath();
-    ctx.arc(this.x + faceDx, this.y - 19 + faceDy, 1.2, 0, Math.PI * 2);
+    ctx.arc(this.x + eyeForwardX + eyeSideX, this.y - 20 + eyeForwardY + eyeSideY, 1.1, 0, Math.PI * 2);
+    ctx.arc(this.x + eyeForwardX - eyeSideX, this.y - 20 + eyeForwardY - eyeSideY, 1.1, 0, Math.PI * 2);
     ctx.fill();
 
-    // 6. Name Label Badge
+    // Subtle nose directional indicator
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+    ctx.beginPath();
+    ctx.arc(this.x + Math.cos(this.angle) * 4.6, this.y - 20 + Math.sin(this.angle) * 4.6, 1.0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 6. Hairstyle silhouettes
+    this.drawHair(ctx, style);
+
+    // 7. Name Label Badge
     ctx.font = '600 11px Outfit, sans-serif';
     ctx.textAlign = 'center';
     const displayNametag = this.isLocal ? `${this.name} (You)` : this.name;
@@ -199,13 +285,159 @@ export class Owner {
     ctx.fillStyle = this.isLocal ? '#fde047' : '#f8fafc';
     ctx.fillText(displayNametag, this.x, this.y - 30);
 
-    // 7. Speech Bubble or Emote
+    // 8. Speech Bubble or Emote
     if (this.chatText) {
       this.drawSpeechBubble(ctx, this.chatText);
     } else if (this.emote) {
       this.drawEmoteBubble(ctx, this.emote);
     }
 
+    ctx.restore();
+  }
+
+  drawHair(ctx, style) {
+    ctx.save();
+    switch (style) {
+      case 'WAVY': {
+        ctx.fillStyle = this.hairColor;
+        // Wavy locks framing face
+        ctx.beginPath();
+        ctx.ellipse(this.x - 8.5, this.y - 17, 3.8, 6.5, -0.25, 0, Math.PI * 2);
+        ctx.ellipse(this.x - 8.0, this.y - 11, 3.2, 5.0, 0.15, 0, Math.PI * 2);
+        ctx.ellipse(this.x + 8.5, this.y - 17, 3.8, 6.5, 0.25, 0, Math.PI * 2);
+        ctx.ellipse(this.x + 8.0, this.y - 11, 3.2, 5.0, -0.15, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Crown volume
+        ctx.beginPath();
+        ctx.arc(this.x, this.y - 23, 9.5, Math.PI * 0.9, Math.PI * 2.1);
+        ctx.fill();
+
+        // Soft parted wavy bangs
+        ctx.beginPath();
+        ctx.moveTo(this.x - 8, this.y - 22);
+        ctx.quadraticCurveTo(this.x - 4, this.y - 18.5, this.x, this.y - 21.5);
+        ctx.quadraticCurveTo(this.x + 4, this.y - 18.5, this.x + 8, this.y - 22);
+        ctx.lineTo(this.x + 7, this.y - 26);
+        ctx.lineTo(this.x - 7, this.y - 26);
+        ctx.closePath();
+        ctx.fill();
+
+        // Highlight
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(this.x - 3, this.y - 25, 5.5, Math.PI * 1.15, Math.PI * 1.75);
+        ctx.stroke();
+        break;
+      }
+
+      case 'PONYTAIL': {
+        ctx.fillStyle = this.hairColor;
+        // Swept-back hair over crown
+        ctx.beginPath();
+        ctx.arc(this.x, this.y - 22, 9.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Temple strands
+        ctx.beginPath();
+        ctx.ellipse(this.x - 7.5, this.y - 21, 2.2, 3.8, -0.15, 0, Math.PI * 2);
+        ctx.ellipse(this.x + 7.5, this.y - 21, 2.2, 3.8, 0.15, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Crown shine
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.beginPath();
+        ctx.arc(this.x, this.y - 25.5, 4.2, Math.PI * 1.1, Math.PI * 1.9);
+        ctx.fill();
+        break;
+      }
+
+      case 'BEANIE': {
+        // Peeking hair tufts below beanie brim
+        ctx.fillStyle = this.hairColor;
+        ctx.beginPath();
+        ctx.ellipse(this.x - 7.2, this.y - 19, 2.5, 4.0, -0.2, 0, Math.PI * 2);
+        ctx.ellipse(this.x + 7.2, this.y - 19, 2.5, 4.0, 0.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Hair bangs peeking out
+        ctx.beginPath();
+        ctx.arc(this.x, this.y - 21, 8.5, Math.PI * 0.95, Math.PI * 1.25);
+        ctx.arc(this.x, this.y - 21, 8.5, Math.PI * 1.75, Math.PI * 2.05);
+        ctx.fill();
+
+        // Beanie dome
+        const beanieMain = '#c2410c';
+        const beanieCuff = '#9a3412';
+        ctx.fillStyle = beanieMain;
+        ctx.beginPath();
+        ctx.ellipse(this.x, this.y - 24, 10.0, 8.8, 0, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Ribbed folded cuff
+        ctx.fillStyle = beanieCuff;
+        ctx.beginPath();
+        ctx.roundRect(this.x - 9.5, this.y - 23, 19, 5.5, 2.5);
+        ctx.fill();
+
+        // Vertical ribbed knit stitches on cuff
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+        ctx.lineWidth = 1;
+        for (let rx = -7.5; rx <= 7.5; rx += 2.5) {
+          ctx.beginPath();
+          ctx.moveTo(this.x + rx, this.y - 23);
+          ctx.lineTo(this.x + rx, this.y - 18);
+          ctx.stroke();
+        }
+
+        // Fluffy pom-pom on top
+        ctx.fillStyle = '#f8fafc';
+        ctx.beginPath();
+        ctx.arc(this.x, this.y - 32.5, 3.8, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = '#cbd5e1';
+        ctx.beginPath();
+        ctx.arc(this.x - 1, this.y - 32.5, 2.2, 0, Math.PI * 2);
+        ctx.fill();
+        break;
+      }
+
+      case 'SHORT':
+      default: {
+        ctx.fillStyle = this.hairColor;
+        // Main cropped crown
+        ctx.beginPath();
+        ctx.arc(this.x, this.y - 22, 9.2, Math.PI * 0.85, Math.PI * 2.15);
+        ctx.fill();
+
+        // Side crops
+        ctx.beginPath();
+        ctx.ellipse(this.x - 7.5, this.y - 20.5, 2.5, 4.2, -0.2, 0, Math.PI * 2);
+        ctx.ellipse(this.x + 7.5, this.y - 20.5, 2.5, 4.2, 0.2, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Textured bangs across forehead
+        ctx.beginPath();
+        ctx.moveTo(this.x - 8, this.y - 22);
+        ctx.quadraticCurveTo(this.x - 4, this.y - 19.5, this.x - 2, this.y - 22.5);
+        ctx.quadraticCurveTo(this.x + 1, this.y - 19, this.x + 3.5, this.y - 22.5);
+        ctx.quadraticCurveTo(this.x + 6, this.y - 20, this.x + 8, this.y - 22);
+        ctx.lineTo(this.x + 7, this.y - 26);
+        ctx.lineTo(this.x - 7, this.y - 26);
+        ctx.closePath();
+        ctx.fill();
+
+        // Hair crown highlight
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.arc(this.x - 2, this.y - 26, 4.5, Math.PI * 1.1, Math.PI * 1.8);
+        ctx.stroke();
+        break;
+      }
+    }
     ctx.restore();
   }
 

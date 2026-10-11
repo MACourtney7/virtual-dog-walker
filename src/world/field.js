@@ -96,6 +96,7 @@ export class Field {
     this.wildflowers = [];
     this.boundaries = [];
     this.ambientParticles = [];
+    this.tombstones = [];
     this.windTime = 0;
 
     this.initScenery();
@@ -321,8 +322,25 @@ export class Field {
     }
   }
 
+  addTombstone(tombstone) {
+    if (tombstone) {
+      this.tombstones.push(tombstone);
+    }
+  }
+
   update(dt) {
     this.windTime += dt;
+
+    // Update active tombstones and cull dead ones
+    for (let i = this.tombstones.length - 1; i >= 0; i--) {
+      const tomb = this.tombstones[i];
+      if (typeof tomb.update === 'function') {
+        tomb.update(dt);
+      }
+      if (tomb.isDead) {
+        this.tombstones.splice(i, 1);
+      }
+    }
 
     // Update ambient dandelion seeds
     for (const p of this.ambientParticles) {
@@ -538,6 +556,24 @@ export class Field {
           type: 'rock',
           y: rock.depthY,
           data: rock
+        });
+      }
+    }
+
+    // Add active tombstones
+    const renderedEntities = new Set(dynamicEntities);
+    for (const tomb of this.tombstones) {
+      if (renderedEntities.has(tomb)) continue;
+      if (
+        tomb.x + 50 > viewLeft &&
+        tomb.x - 50 < viewRight &&
+        tomb.y + 50 > viewTop &&
+        tomb.y - 50 < viewBottom
+      ) {
+        renderList.push({
+          type: 'entity',
+          y: tomb.depthY !== undefined ? tomb.depthY : tomb.y + 8,
+          data: tomb
         });
       }
     }

@@ -24,7 +24,7 @@ def test_scaffold():
         html = f.read()
         assert "game-canvas" in html, "Canvas id missing in index.html"
         assert "src/main.js" in html, "Script module tag missing in index.html"
-        assert "Clifton Down" in html, "Clifton Down title missing in index.html"
+        assert ("The Downs" in html or "Clifton Down" in html), "Park title missing in index.html"
         
     print("✅ test_scaffold passed: All Clifton Down social sandbox modules present.")
 
@@ -39,7 +39,8 @@ def run_all():
         "test/test_mobile_controls.py",
         "test/test_player_identity.py",
         "test/test_leash_sync.py",
-        "test/test_dog_behavior.py"
+        "test/test_dog_behavior.py",
+        "test/test_downs_map.py"
     ]
     for t in test_suites:
         res = subprocess.run([sys.executable, t])

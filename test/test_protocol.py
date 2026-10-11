@@ -66,6 +66,22 @@ def test_chat_and_emote_schema():
     assert emote_packet["emote"] == "🐾"
     print("✅ test_chat_and_emote_schema passed")
 
+def test_whistle_schema():
+    packet = {
+        "type": "WHISTLE",
+        "senderId": "peer-1234",
+        "x": 1350.0,
+        "y": 1000.0,
+        "timestamp": int(time.time() * 1000)
+    }
+
+    assert packet["type"] == "WHISTLE"
+    assert packet["senderId"] == "peer-1234"
+    assert packet["x"] == 1350.0
+    assert packet["y"] == 1000.0
+    assert "timestamp" in packet
+    print("✅ test_whistle_schema passed")
+
 def test_entity_interpolator_discrete_propagation():
     """Verify EntityInterpolator propagates non-spatial discrete properties to current."""
     import math
@@ -127,4 +143,5 @@ if __name__ == "__main__":
     test_sync_state_schema()
     test_ball_throw_schema()
     test_chat_and_emote_schema()
+    test_whistle_schema()
     test_entity_interpolator_discrete_propagation()

@@ -159,6 +159,19 @@ class CliftonDownGame {
       }
     };
 
+    this.net.onWhistle = (peerId, packet) => {
+      sound.playWhistle();
+      const p = this.remotePlayers.get(peerId);
+      if (p) {
+        if (p.dog && typeof p.dog.whistleRecall === 'function') {
+          p.dog.whistleRecall();
+        }
+        if (p.owner && typeof p.owner.setEmote === 'function') {
+          p.owner.setEmote('📯', 2.0);
+        }
+      }
+    };
+
     this.net.onChatMessage = (peerId, text) => {
       const p = this.remotePlayers.get(peerId);
       if (p) {
@@ -237,6 +250,12 @@ class CliftonDownGame {
         case 'KeyE':
           // Pet Dog
           this.petDog();
+          break;
+
+        case 'KeyH':
+        case 'KeyR':
+          // Whistle Recall Dog
+          this.whistleDog();
           break;
 
         case 'Enter':
@@ -351,6 +370,15 @@ class CliftonDownGame {
     } else {
       this.hud.showToast('🐾 Walk closer to Ziggy to pet!');
     }
+  }
+
+  whistleDog() {
+    sound.playWhistle();
+    if (this.dog && typeof this.dog.whistleRecall === 'function') {
+      this.dog.whistleRecall();
+    }
+    this.hud.showToast('📯 Whistle! Ziggy recalled to heel');
+    this.net.broadcast(Protocol.createWhistle(this.net.peerId, this.owner.x, this.owner.y));
   }
 
   throwBall() {

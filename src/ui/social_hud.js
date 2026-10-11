@@ -149,7 +149,52 @@ export class SocialHUD {
     `;
     this.container.appendChild(toast);
 
+    // Load saved profile from localStorage if available
+    this.loadSavedProfile();
+
     this.bindEvents();
+  }
+
+  loadSavedProfile() {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const savedStr = localStorage.getItem('clifton_walker_profile');
+      if (!savedStr) return;
+      const saved = JSON.parse(savedStr);
+      if (!saved || typeof saved !== 'object') return;
+
+      if (saved.name) {
+        this.owner.name = saved.name;
+        const nameInput = document.getElementById('cust-name');
+        if (nameInput) nameInput.value = saved.name;
+      }
+      if (saved.jacketColor) {
+        this.owner.jacketColor = saved.jacketColor;
+        const swatches = document.querySelectorAll('.color-swatch');
+        swatches.forEach(s => {
+          if (s.getAttribute('data-color') === saved.jacketColor) {
+            s.style.border = '2px solid #fff';
+          } else {
+            s.style.border = 'none';
+          }
+        });
+      }
+      if (saved.coatKey && this.coatPresets && this.coatPresets[saved.coatKey]) {
+        this.dog.coat = this.coatPresets[saved.coatKey];
+        const coatSelect = document.getElementById('cust-dog-coat');
+        if (coatSelect) coatSelect.value = saved.coatKey;
+      }
+
+      if (this.net && typeof this.net.setLocalMeta === 'function') {
+        this.net.setLocalMeta({
+          name: this.owner.name,
+          jacketColor: this.owner.jacketColor,
+          coatName: this.dog.coat.name
+        });
+      }
+    } catch (e) {
+      console.warn('Could not load saved walker profile from localStorage:', e);
+    }
   }
 
   showToast(text) {
@@ -218,8 +263,23 @@ export class SocialHUD {
         }
 
         const coatSelect = document.getElementById('cust-dog-coat');
+        let coatKey = 'CHOCOLATE_TAN';
         if (coatSelect && this.coatPresets[coatSelect.value]) {
+          coatKey = coatSelect.value;
           this.dog.coat = this.coatPresets[coatSelect.value];
+        }
+
+        // Save updated profile to localStorage
+        if (typeof localStorage !== 'undefined') {
+          try {
+            localStorage.setItem('clifton_walker_profile', JSON.stringify({
+              name: this.owner.name,
+              jacketColor: this.owner.jacketColor,
+              coatKey: coatSelect ? coatSelect.value : coatKey
+            }));
+          } catch (e) {
+            console.warn('Could not save walker profile to localStorage:', e);
+          }
         }
 
         if (this.net && typeof this.net.setLocalMeta === 'function') {

@@ -36,7 +36,8 @@ def run_all():
         "test/test_protocol.py",
         "test/test_server.py",
         "test/test_partyserver.py",
-        "test/test_mobile_controls.py"
+        "test/test_mobile_controls.py",
+        "test/test_player_identity.py"
     ]
     for t in test_suites:
         res = subprocess.run([sys.executable, t])

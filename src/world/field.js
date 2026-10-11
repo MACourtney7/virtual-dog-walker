@@ -46,12 +46,17 @@ export class Camera {
     ctx.restore();
   }
 
-  worldToScreen(wx, wy) {
-    return { x: wx - this.x, y: wy - this.y };
+  worldToScreen(worldX, worldY) {
+    return { x: worldX - this.x, y: worldY - this.y };
   }
 
-  screenToWorld(sx, sy) {
-    return { x: sx + this.x, y: sy + this.y };
+  screenToWorld(screenX, screenY) {
+    const rawX = screenX + this.x;
+    const rawY = screenY + this.y;
+    return {
+      x: Math.max(0, Math.min(this.worldWidth, rawX)),
+      y: Math.max(0, Math.min(this.worldHeight, rawY))
+    };
   }
 }
 

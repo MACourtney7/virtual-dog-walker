@@ -257,6 +257,12 @@ body {
   background: rgba(59, 130, 246, 0.6);
 }
 
+.touch-action-btn.off-leash {
+  background: rgba(217, 119, 6, 0.4);
+  border-color: rgba(245, 158, 11, 0.7);
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.35);
+}
+
 /* Responsive Media Queries for Mobile & Coarse Pointers */
 @media (max-width: 768px), (pointer: coarse) {
   #controls-hint {

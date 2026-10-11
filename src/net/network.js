@@ -23,11 +23,22 @@ export class EntityInterpolator {
     if (!this.current) {
       this.current = { ...snapshot };
     }
+    for (const key of Object.keys(snapshot)) {
+      if (key !== 'x' && key !== 'y' && key !== 'angle') {
+        this.current[key] = snapshot[key];
+      }
+    }
     this.target = { ...snapshot };
   }
 
   update(dt) {
     if (!this.target || !this.current) return this.current;
+
+    for (const key of Object.keys(this.target)) {
+      if (key !== 'x' && key !== 'y' && key !== 'angle') {
+        this.current[key] = this.target[key];
+      }
+    }
 
     const rate = 1 - Math.exp(-this.lerpRate * 60 * dt);
     this.current.x += (this.target.x - this.current.x) * rate;

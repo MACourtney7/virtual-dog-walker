@@ -63,6 +63,62 @@ class SoundSynthesizer {
     osc.stop(t + 0.24);
   }
 
+  // Authentic Procedural Dog Training Whistle
+  playWhistle() {
+    this.ensureContext();
+    if (!this.ctx || this.isMuted) return;
+
+    const t = this.ctx.currentTime;
+
+    // Carrier Oscillator (Sine wave sweeping ~2400 Hz to ~2850 Hz)
+    const carrier = this.ctx.createOscillator();
+    carrier.type = 'sine';
+    carrier.frequency.setValueAtTime(2400, t);
+    carrier.frequency.exponentialRampToValueAtTime(2850, t + 0.18);
+
+    // Overtone Oscillator (Sine wave at ~3600 Hz with lower gain)
+    const overtone = this.ctx.createOscillator();
+    overtone.type = 'sine';
+    overtone.frequency.setValueAtTime(3600, t);
+    overtone.frequency.exponentialRampToValueAtTime(4250, t + 0.18);
+
+    const overtoneGain = this.ctx.createGain();
+    overtoneGain.gain.setValueAtTime(0.22, t);
+
+    // Vibrato LFO at 17 Hz for characteristic whistle warble
+    const lfo = this.ctx.createOscillator();
+    const lfoGain = this.ctx.createGain();
+    lfo.type = 'sine';
+    lfo.frequency.setValueAtTime(17, t);
+    lfoGain.gain.setValueAtTime(45, t); // 45 Hz frequency modulation depth
+
+    lfo.connect(lfoGain);
+    lfoGain.connect(carrier.frequency);
+
+    // Master whistle gain envelope: fast attack (~0.02s), sustained pip (~0.18s), quick decay (~0.06s)
+    const masterGain = this.ctx.createGain();
+    masterGain.gain.setValueAtTime(0, t);
+    masterGain.gain.linearRampToValueAtTime(0.28, t + 0.02);
+    masterGain.gain.setValueAtTime(0.28, t + 0.20);
+    masterGain.gain.exponentialRampToValueAtTime(0.001, t + 0.26);
+    masterGain.gain.setValueAtTime(0, t + 0.27);
+
+    // Routing
+    carrier.connect(masterGain);
+    overtone.connect(overtoneGain);
+    overtoneGain.connect(masterGain);
+    masterGain.connect(this.ctx.destination);
+
+    // Start & stop nodes
+    lfo.start(t);
+    carrier.start(t);
+    overtone.start(t);
+
+    lfo.stop(t + 0.28);
+    carrier.stop(t + 0.28);
+    overtone.stop(t + 0.28);
+  }
+
   // Tennis ball bounce pop
   playBallBounce() {
     this.ensureContext();

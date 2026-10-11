@@ -1,7 +1,7 @@
 // Human Owner Player Avatar - 8-Way Movement, Customization & Interaction Controller
 
 export class Owner {
-  constructor(x = 1200, y = 900, name = 'Park Walker', isLocal = true) {
+  constructor(x = 1200, y = 900, name = 'Walker', isLocal = true) {
     this.x = x;
     this.y = y;
     this.vx = 0;
@@ -188,7 +188,8 @@ export class Owner {
     // 6. Name Label Badge
     ctx.font = '600 11px Outfit, sans-serif';
     ctx.textAlign = 'center';
-    const textWidth = ctx.measureText(this.name).width;
+    const displayNametag = this.isLocal ? `${this.name} (You)` : this.name;
+    const textWidth = ctx.measureText(displayNametag).width;
 
     ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
     ctx.beginPath();
@@ -196,7 +197,7 @@ export class Owner {
     ctx.fill();
 
     ctx.fillStyle = this.isLocal ? '#fde047' : '#f8fafc';
-    ctx.fillText(this.name, this.x, this.y - 30);
+    ctx.fillText(displayNametag, this.x, this.y - 30);
 
     // 7. Speech Bubble or Emote
     if (this.chatText) {

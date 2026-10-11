@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Unit and integration tests for PartyKit Global Edge Room Server, route formatting, and configuration.
+Unit and integration tests for Cloudflare PartyServer Room Server, Commons Default routing, and Wrangler configuration.
 """
 
 import json
@@ -8,15 +8,15 @@ import os
 import unittest
 
 
-class MockPartyRoom:
-    """Mock PartyKit room environment for testing lifecycle and message relaying."""
-    def __init__(self, room_id):
-        self.id = room_id
+class MockPartyServerRoom:
+    """Mock PartyServer room environment for testing lifecycle and message relaying."""
+    def __init__(self, room_name="the-commons"):
+        self.name = room_name
         self.connections = {}
         self.broadcast_log = []
 
     def add_connection(self, conn_id):
-        conn = MockPartyConnection(conn_id)
+        conn = MockPartyServerConnection(conn_id)
         self.connections[conn_id] = conn
         return conn
 
@@ -36,7 +36,7 @@ class MockPartyRoom:
                 conn.messages_received.append(parsed)
 
 
-class MockPartyConnection:
+class MockPartyServerConnection:
     def __init__(self, conn_id):
         self.id = conn_id
         self.messages_received = []
@@ -46,25 +46,22 @@ class MockPartyConnection:
         self.messages_received.append(parsed)
 
 
-class TestPartyKitLifecycle(unittest.TestCase):
+class TestPartyServerLifecycle(unittest.TestCase):
     def setUp(self):
-        self.room = MockPartyRoom("meadow-101")
+        self.room = MockPartyServerRoom("the-commons")
 
-    def test_room_welcome_handshake(self):
-        """Verify onConnect produces a valid WELCOME packet with peer list and server time."""
-        # Existing player in room
+    def test_commons_welcome_handshake(self):
+        """Verify onConnect produces a valid WELCOME packet defaulting to the-commons."""
         c1 = self.room.add_connection("walker-1001")
-
-        # New player arrives
         c2 = self.room.add_connection("walker-2002")
 
         existing_peers = [c.id for c in self.room.get_connections() if c.id != c2.id]
         welcome_packet = {
             "type": "WELCOME",
             "peerId": c2.id,
-            "roomId": self.room.id,
+            "roomId": self.room.name,
             "peers": existing_peers,
-            "serverTime": 1728590000000
+            "serverTime": 1728640000000
         }
         c2.send(welcome_packet)
 
@@ -72,7 +69,7 @@ class TestPartyKitLifecycle(unittest.TestCase):
         pkt = c2.messages_received[0]
         self.assertEqual(pkt["type"], "WELCOME")
         self.assertEqual(pkt["peerId"], "walker-2002")
-        self.assertEqual(pkt["roomId"], "meadow-101")
+        self.assertEqual(pkt["roomId"], "the-commons")
         self.assertIn("walker-1001", pkt["peers"])
 
     def test_message_broadcast_relaying(self):
@@ -83,11 +80,10 @@ class TestPartyKitLifecycle(unittest.TestCase):
         sync_packet = {
             "type": "SYNC_STATE",
             "senderId": "walker-1001",
-            "owner": {"x": 420.5, "y": 310.0, "vx": 1.2, "vy": 0.0, "angle": 0.5},
-            "dog": {"x": 380.0, "y": 320.0, "vx": 1.5, "vy": 0.2, "state": "FOLLOWING"}
+            "owner": {"x": 500.0, "y": 400.0, "vx": 2.0, "vy": 0.0, "angle": 0.0},
+            "dog": {"x": 460.0, "y": 410.0, "vx": 2.2, "vy": 0.1, "state": "FOLLOWING"}
         }
 
-        # c1 broadcasts to room, excluding c1
         self.room.broadcast(json.dumps(sync_packet), exclude=[c1.id])
 
         self.assertEqual(len(c1.messages_received), 0)
@@ -100,12 +96,11 @@ class TestPartyKitLifecycle(unittest.TestCase):
         c1 = self.room.add_connection("walker-1001")
         c2 = self.room.add_connection("walker-2002")
 
-        # c1 disconnects
         self.room.remove_connection(c1.id)
         left_packet = {
             "type": "PEER_LEFT",
             "peerId": c1.id,
-            "timestamp": 1728590050000
+            "timestamp": 1728640050000
         }
         self.room.broadcast(json.dumps(left_packet))
 
@@ -114,13 +109,13 @@ class TestPartyKitLifecycle(unittest.TestCase):
         self.assertEqual(c2.messages_received[0]["peerId"], "walker-1001")
 
 
-class TestPartyKitRouteBuilder(unittest.TestCase):
-    def test_partykit_url_formatting(self):
-        """Test party route path resolution matching PartyKit standards."""
+class TestPartyServerRouteBuilder(unittest.TestCase):
+    def test_partyserver_url_formatting(self):
+        """Test party route path resolution matching Cloudflare PartyServer standards."""
         base_urls = [
-            ("https://clifton-down.partykit.dev", "meadow-1", "wss://clifton-down.partykit.dev/parties/park/meadow-1"),
-            ("http://localhost:1999", "park-42", "ws://localhost:1999/parties/park/park-42"),
-            ("wss://my-game.partykit.dev/parties/park/custom", "unused", "wss://my-game.partykit.dev/parties/park/custom")
+            ("https://virtual-dog-walker.workers.dev", "the-commons", "wss://virtual-dog-walker.workers.dev/parties/park/the-commons"),
+            ("http://localhost:8787", "the-commons", "ws://localhost:8787/parties/park/the-commons"),
+            ("wss://my-game.workers.dev/parties/park/private-1", "unused", "wss://my-game.workers.dev/parties/park/private-1")
         ]
 
         for base, room, expected in base_urls:

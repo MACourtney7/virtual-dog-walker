@@ -1,7 +1,7 @@
 {
-  "name": "clifton-down-social-sandbox",
+  "name": "virtual-dog-walker",
   "version": "1.0.0",
-  "description": "Multiplayer dog walking field social sandbox at Clifton Down with on-demand edge rooms",
+  "description": "Virtual Dog Walker - Multiplayer dog walking field social sandbox at Clifton Down with on-demand edge rooms",
   "type": "module",
   "scripts": {
     "party:dev": "partykit dev",

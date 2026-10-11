@@ -1,6 +1,6 @@
 {
   "$schema": "https://www.partykit.io/schema.json",
-  "name": "clifton-down",
+  "name": "virtual-dog-walker",
   "main": "party/main.js",
   "serve": "./",
   "compatibilityDate": "2026-10-10"

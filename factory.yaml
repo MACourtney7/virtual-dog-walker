@@ -1,5 +1,5 @@
 # factory.yaml - Host Project Configuration for Agentic Software Factory
-project_name: "clifton-down-social-sandbox"
+project_name: "virtual-dog-walker"
 base_branch: "main"
 tech_stack: "HTML5 Canvas / Vanilla ES6 JavaScript / Web Audio API / PartyKit Global Edge WSS / Python Microserver / WebRTC P2P"
 

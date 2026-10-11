@@ -1,6 +1,6 @@
-# some_kind_of_game
+# Virtual Dog Walker (Clifton Down)
 
-A game project developed using the **Agentic Software Factory**.
+A multiplayer social dog-walking sandbox game built with HTML5 Canvas, Web Audio, and PartyKit global edge multiplayer, developed using the **Agentic Software Factory**.
 
 ---
 

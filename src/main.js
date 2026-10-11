@@ -5,19 +5,26 @@ import { Owner } from './entities/owner.js';
 import { CompanionDog, CoatPreset, DogState } from './entities/companion_dog.js';
 import { TennisBall } from './entities/toy.js';
 import { NetworkManager, NetStatus } from './net/network.js';
-import { Protocol } from './net/protocol.js';
+import { Protocol, PacketType } from './net/protocol.js';
 import { SocialHUD } from './ui/social_hud.js';
 import { sound } from './systems/audio.js';
 import { TouchControls } from './ui/touch_controls.js';
+import { ProximityChat } from './ui/proximity_chat.js';
+import { ChatTombstone } from './entities/tombstone.js';
 
-class CliftonDownGame {
+export class CliftonDownGame {
   constructor() {
     this.canvas = document.getElementById('game-canvas');
-    this.ctx = this.canvas.getContext('2d');
+    this.ctx = this.canvas ? this.canvas.getContext('2d') : null;
 
     // World & Viewport
     this.field = new Field(2600, 1900);
-    this.camera = new Camera(window.innerWidth, window.innerHeight, this.field.width, this.field.height);
+    this.camera = new Camera(
+      typeof window !== 'undefined' ? window.innerWidth : 1280,
+      typeof window !== 'undefined' ? window.innerHeight : 720,
+      this.field.width,
+      this.field.height
+    );
 
     // Local Entities
     const startX = 1350;
@@ -37,16 +44,73 @@ class CliftonDownGame {
     // UI HUD
     this.hud = new SocialHUD(this.net, this.owner, this.dog, CoatPreset);
 
+    // Proximity Chat HUD & Dynamic Spatial Clustering
+    this.proximityChat = new ProximityChat({
+      onSendMessage: (text, clusterPeerIds) => {
+        const peers = clusterPeerIds || this.proximityChat.getActivePeers();
+        if (this.net && typeof this.net.broadcast === 'function') {
+          if (typeof Protocol.createProximityChat === 'function') {
+            this.net.broadcast(Protocol.createProximityChat(
+              this.net.peerId,
+              this.owner.name,
+              text,
+              this.owner.x,
+              this.owner.y,
+              peers
+            ));
+          } else if (typeof Protocol.createChatMessage === 'function') {
+            this.net.broadcast(Protocol.createChatMessage(this.net.peerId, text));
+          }
+        }
+        this.owner.setChat(text);
+        if (sound && typeof sound.playChatChime === 'function') {
+          sound.playChatChime();
+        } else if (sound && typeof sound.playChat === 'function') {
+          sound.playChat();
+        }
+      },
+      onClusterDissolved: (partingContext) => {
+        const text = partingContext.snippet || (partingContext.lastMessage ? (typeof partingContext.lastMessage === 'string' ? partingContext.lastMessage : partingContext.lastMessage.text) : '');
+        const participants = (partingContext.participants || []).map(p => p.name || 'Walker');
+        const tombstone = new ChatTombstone(partingContext.x, partingContext.y, {
+          text,
+          participants
+        });
+        this.field.addTombstone(tombstone);
+        if (this.net && typeof this.net.broadcast === 'function') {
+          if (typeof Protocol.createTombstoneDrop === 'function') {
+            this.net.broadcast(Protocol.createTombstoneDrop(
+              this.net.peerId,
+              partingContext.x,
+              partingContext.y,
+              tombstone.text,
+              tombstone.participants
+            ));
+          }
+        }
+        this.hud.showToast('💬 Conversation parted. Placed marker on the turf.');
+      }
+    });
+
     // Touch Controls
     this.joystickActive = false;
     this.touchControls = new TouchControls({
       onMove: (vec) => this.handleJoystickMove(vec),
       onThrow: () => this.throwBall(),
       onLeash: () => this.toggleLeash(),
-      onWhistle: () => this.whistleDog?.(),
+      onWhistle: () => this.whistleDog(),
       onBark: () => this.barkDog(),
       onPet: () => this.petDog(),
-      onChat: () => this.hud.toggleChatInput()
+      onChat: () => {
+        if (this.proximityChat && this.proximityChat.isClusterActive()) {
+          const proxInput = document.getElementById('proximity-chat-input');
+          if (proxInput) {
+            proxInput.focus();
+            return;
+          }
+        }
+        this.hud.toggleChatInput();
+      }
     });
 
     // Audio tracking
@@ -54,14 +118,16 @@ class CliftonDownGame {
     this.lastFootstepTime = 0;
 
     // Loop Timing
-    this.lastTime = performance.now();
+    this.lastTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
 
     this.initCanvas();
     this.bindInputs();
     this.initNetworking();
 
     // Start 60fps loop
-    requestAnimationFrame((t) => this.gameLoop(t));
+    if (typeof requestAnimationFrame !== 'undefined') {
+      requestAnimationFrame((t) => this.gameLoop(t));
+    }
   }
 
   initCanvas() {
@@ -162,6 +228,9 @@ class CliftonDownGame {
         this.hud.showToast(`🚶 ${p.owner.name} left the park.`);
         this.remotePlayers.delete(peerId);
         this.hud.updatePlayerCount(this.remotePlayers.size + 1);
+        if (this.proximityChat) {
+          this.proximityChat.update(0, this.owner, this.remotePlayers);
+        }
       }
     };
 
@@ -212,6 +281,53 @@ class CliftonDownGame {
       }
     };
 
+    // Proximity Chat & Parting Tombstone Handlers
+    this.net.onProximityChat = (data) => {
+      if (!data) return;
+      this.proximityChat.addMessage(data.senderId, data.name || 'Walker', data.text, false);
+      const p = this.remotePlayers.get(data.senderId);
+      if (p && p.owner) {
+        p.owner.setChat(data.text);
+      }
+    };
+
+    this.net.onTombstoneDrop = (data) => {
+      if (!data) return;
+      const tombstone = new ChatTombstone(data.x, data.y, {
+        text: data.text,
+        participants: data.participants
+      });
+      this.field.addTombstone(tombstone);
+    };
+
+    // Intercept packets on underlying network adapter if adapter lacks native dispatch
+    if (this.net.adapter && typeof this.net.adapter.handlePacket === 'function') {
+      const originalHandlePacket = this.net.adapter.handlePacket.bind(this.net.adapter);
+      this.net.adapter.handlePacket = (...args) => {
+        const packet = args.length > 1 ? args[1] : args[0];
+        const senderId = args.length > 1 ? args[0] : (packet ? packet.senderId : null);
+        if (packet) {
+          if (packet.type === PacketType.PROXIMITY_CHAT || packet.type === 'PROXIMITY_CHAT') {
+            const data = { ...packet, senderId: packet.senderId || senderId };
+            this.net.onProximityChat(data);
+            if (this.net.isHost && typeof this.net.relayToOthers === 'function') {
+              this.net.relayToOthers(senderId, packet);
+            }
+            return;
+          }
+          if (packet.type === PacketType.TOMBSTONE_DROP || packet.type === 'TOMBSTONE_DROP') {
+            const data = { ...packet, senderId: packet.senderId || senderId };
+            this.net.onTombstoneDrop(data);
+            if (this.net.isHost && typeof this.net.relayToOthers === 'function') {
+              this.net.relayToOthers(senderId, packet);
+            }
+            return;
+          }
+        }
+        return originalHandlePacket(...args);
+      };
+    }
+
     // Start 16Hz sync loop
     this.net.startSyncLoop(() => {
       return {
@@ -234,7 +350,9 @@ class CliftonDownGame {
       handleAudioInteraction();
 
       // Ignore game inputs when typing in chat
-      if (document.activeElement === document.getElementById('chat-input')) {
+      const chatInput = document.getElementById('chat-input');
+      const proxInput = document.getElementById('proximity-chat-input');
+      if (document.activeElement === chatInput || document.activeElement === proxInput) {
         return;
       }
 
@@ -286,6 +404,13 @@ class CliftonDownGame {
 
         case 'Enter':
           e.preventDefault();
+          if (this.proximityChat && this.proximityChat.isClusterActive()) {
+            const proxInput = document.getElementById('proximity-chat-input');
+            if (proxInput) {
+              proxInput.focus();
+              break;
+            }
+          }
           this.hud.toggleChatInput();
           break;
       }
@@ -415,15 +540,6 @@ class CliftonDownGame {
     }
   }
 
-  whistleDog() {
-    sound.playWhistle();
-    if (this.dog && typeof this.dog.whistleRecall === 'function') {
-      this.dog.whistleRecall();
-    }
-    this.hud.showToast('📯 Whistle! Ziggy recalled to heel');
-    this.net.broadcast(Protocol.createWhistle(this.net.peerId, this.owner.x, this.owner.y));
-  }
-
   throwBall() {
     const dirX = Math.cos(this.owner.angle);
     const dirY = Math.sin(this.owner.angle);
@@ -532,12 +648,20 @@ class CliftonDownGame {
       }
     }
 
-    // 5. Host broadcasts authoritative ball state when ball is in play
+    // 5. Update Proximity Chat Spatial Clustering
+    if (this.proximityChat) {
+      if (this.owner && this.net && this.net.peerId) {
+        this.owner.id = this.net.peerId;
+      }
+      this.proximityChat.update(dt, this.owner, this.remotePlayers);
+    }
+
+    // 6. Host broadcasts authoritative ball state when ball is in play
     if (this.net.isHost && (this.ball.isThrown || this.ball.isCarried || Math.hypot(this.ball.vx, this.ball.vy) > 1)) {
       this.net.broadcast(Protocol.createBallSync(this.ball));
     }
 
-    // 5. Update Camera
+    // 7. Update Camera
     this.camera.update(dt);
   }
 
@@ -559,7 +683,7 @@ class CliftonDownGame {
       dynamicEntities.push(p.dog);
     }
 
-    // Field renders background turf, then Y-sorts trees, benches, owners, dogs, and balls
+    // Field renders background turf, then Y-sorts trees, benches, tombstones, owners, dogs, and balls
     this.field.render(this.ctx, this.camera, dynamicEntities);
 
     // Restore Camera
@@ -571,6 +695,10 @@ function timestampNow() {
   return typeof performance !== 'undefined' ? performance.now() : Date.now();
 }
 
-window.addEventListener('DOMContentLoaded', () => {
-  new CliftonDownGame();
-});
+if (typeof window !== 'undefined') {
+  window.addEventListener('DOMContentLoaded', () => {
+    new CliftonDownGame();
+  });
+}
+
+export default CliftonDownGame;

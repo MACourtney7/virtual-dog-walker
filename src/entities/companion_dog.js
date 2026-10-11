@@ -38,18 +38,41 @@ export const CoatPreset = {
   BLACK_LAB: {
     name: 'Black Lab',
     bodyColor: '#1e2022',
-    bodyShade: '#121314',
+    bodyShade: '#374151',
     tanColor: '#4b5563',
     tanHighlight: '#6b7280',
     earRoot: '#1e2022',
     earHighlight: '#374151',
     noseColor: '#090a0f',
     bibColor: '#f1f5f9'
+  },
+  JACK_RUSSELL: {
+    name: 'Jack Russell Terrier',
+    bodyColor: '#f8fafc',
+    bodyShade: '#e2e8f0',
+    tanColor: '#b45309',
+    tanHighlight: '#d97706',
+    earRoot: '#b45309',
+    earHighlight: '#92400e',
+    noseColor: '#1e293b',
+    bibColor: '#ffffff',
+    hasEyePatch: true
+  },
+  RED_SETTER: {
+    name: 'Irish Red Setter',
+    bodyColor: '#7c2d12',
+    bodyShade: '#991b1b',
+    tanColor: '#b45309',
+    tanHighlight: '#d97706',
+    earRoot: '#7c2d12',
+    earHighlight: '#991b1b',
+    noseColor: '#27100b',
+    bibColor: '#fef2f2'
   }
 };
 
 export class CompanionDog {
-  constructor(x = 1240, y = 920, owner = null, coat = CoatPreset.CHOCOLATE_TAN) {
+  constructor(x = 1240, y = 920, owner = null, coat = CoatPreset.CHOCOLATE_TAN, collarColor = '#0d9488') {
     this.x = x;
     this.y = y;
     this.vx = 0;
@@ -60,6 +83,7 @@ export class CompanionDog {
 
     this.owner = owner;
     this.coat = coat;
+    this.collarColor = collarColor;
     this.radius = 14;
     this.depthY = this.y + 6;
 
@@ -255,9 +279,13 @@ export class CompanionDog {
 
     this.depthY = this.y + 6;
 
-    // 4. Ear Secondary Spring Physics
-    const targetLeftEar = -this.vx * 0.003;
-    const targetRightEar = -this.vx * 0.003;
+    // 4. Ear Secondary Spring Physics responding to trot speed inertia
+    const speedMag = Math.hypot(this.vx, this.vy);
+    const trotBob = speedMag > 10 ? Math.sin(Date.now() * 0.014) * 0.12 : 0;
+    const lateralLag = -Math.sin(this.angle) * this.vx * 0.0025 + Math.cos(this.angle) * this.vy * 0.0025;
+    const speedLag = -speedMag * 0.0007;
+    const targetLeftEar = speedLag - trotBob + lateralLag;
+    const targetRightEar = speedLag + trotBob - lateralLag;
 
     // Left ear spring
     const leftForce = -this.springK * (this.leftEar.angle - targetLeftEar) - this.springDamp * this.leftEar.vel;
@@ -718,84 +746,166 @@ export class CompanionDog {
     }
 
     // Paws (front and back)
-    ctx.fillStyle = this.coat.tanColor;
     const legOffset = Math.sin(Date.now() * 0.012) * (Math.hypot(this.vx, this.vy) > 10 ? 3 : 0);
+    const pawColor = this.coat.hasEyePatch ? '#f1f5f9' : (this.coat.tanColor || this.coat.bodyColor);
+    ctx.fillStyle = pawColor;
     ctx.fillRect(-10, -9 - legOffset, 5, 4);
     ctx.fillRect(-10, 5 + legOffset, 5, 4);
     ctx.fillRect(8, -9 + legOffset, 5, 4);
     ctx.fillRect(8, 5 - legOffset, 5, 4);
 
-    // Feathered Tail
+    // Feathered Wagging Tail matching breed coat colors with tufted brush tip
     ctx.save();
     ctx.translate(-14, 0);
     ctx.rotate(this.tailAngle);
-    ctx.fillStyle = this.coat.tanColor;
+    // Base tail shaft
+    ctx.fillStyle = this.coat.bodyColor;
     ctx.beginPath();
-    ctx.ellipse(-6, 0, 7, 3, 0, 0, Math.PI * 2);
+    ctx.ellipse(-5, 0, 7.5, 3.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Tufted feathered brush tip matching breed highlight/tan
+    const brushColor = this.coat.tanHighlight || this.coat.tanColor || this.coat.earHighlight || this.coat.bodyColor;
+    ctx.fillStyle = brushColor;
+    ctx.beginPath();
+    ctx.ellipse(-9.5, 0, 4.5, 2.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(-13, 0, 2.0, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
 
     // Torso (rich coat)
     ctx.fillStyle = this.coat.bodyColor;
     ctx.beginPath();
-    ctx.ellipse(-2, 0, 13, 8, 0, 0, Math.PI * 2);
+    ctx.ellipse(-2, 0, 13, 8.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Subtle coat dorsal sheen
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
+    ctx.beginPath();
+    ctx.ellipse(-2, -2, 10, 4.5, -0.05, 0, Math.PI * 2);
     ctx.fill();
 
     // Creamy white chest bib
-    ctx.fillStyle = this.coat.bibColor;
+    ctx.fillStyle = this.coat.bibColor || '#f4efe6';
     ctx.beginPath();
-    ctx.ellipse(5, 0, 4, 3.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(5, 0, 4.2, 3.6, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Teal collar with golden bone charm
-    ctx.fillStyle = '#1b6b65';
-    ctx.fillRect(6, -6, 2.5, 12);
-    ctx.fillStyle = '#f3c948';
+    // Collar band rendered using this.collarColor with a metallic gold charm tag
+    const collar = this.collarColor || '#0d9488';
+    ctx.fillStyle = collar;
     ctx.beginPath();
-    ctx.arc(8, 0, 1.8, 0, Math.PI * 2);
+    ctx.roundRect(5.5, -6.5, 3.0, 13, 1.5);
+    ctx.fill();
+
+    // Metallic gold charm tag
+    ctx.fillStyle = '#f59e0b';
+    ctx.beginPath();
+    ctx.arc(8.5, 0, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+    // Metallic gold gleam / catchlight
+    ctx.fillStyle = '#fef08a';
+    ctx.beginPath();
+    ctx.arc(8.0, -0.6, 0.8, 0, Math.PI * 2);
     ctx.fill();
 
     // Head
     ctx.fillStyle = this.coat.bodyColor;
     ctx.beginPath();
-    ctx.ellipse(11, 0, 7.5, 6, 0, 0, Math.PI * 2);
+    ctx.ellipse(11, 0, 7.8, 6.2, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Tan Muzzle & Nose
+    // Signature tan eye patch for Jack Russell Terrier
+    if (this.coat.hasEyePatch) {
+      ctx.fillStyle = this.coat.tanColor;
+      ctx.beginPath();
+      ctx.ellipse(12, -3.2, 3.8, 3.2, 0.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Tan Muzzle & Snout
     ctx.fillStyle = this.coat.tanColor;
     ctx.beginPath();
-    ctx.ellipse(16, 0, 4.5, 3.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(16, 0, 4.8, 3.6, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Liver Truffle Nose
-    ctx.fillStyle = this.coat.noseColor;
+    // Snout highlighting
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
     ctx.beginPath();
-    ctx.arc(19, 0, 1.8, 0, Math.PI * 2);
+    ctx.ellipse(15.5, -1.0, 2.8, 1.6, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Amber Eyes & Tan Eyebrow Pips
-    // Eyes
+    // Whisker dots
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
+    ctx.beginPath();
+    ctx.arc(15.2, -2.0, 0.5, 0, Math.PI * 2);
+    ctx.arc(16.5, -1.8, 0.5, 0, Math.PI * 2);
+    ctx.arc(15.8, -1.0, 0.5, 0, Math.PI * 2);
+    ctx.arc(15.2, 2.0, 0.5, 0, Math.PI * 2);
+    ctx.arc(16.5, 1.8, 0.5, 0, Math.PI * 2);
+    ctx.arc(15.8, 1.0, 0.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Truffle Nose
+    ctx.fillStyle = this.coat.noseColor || '#1e293b';
+    ctx.beginPath();
+    ctx.ellipse(19.2, 0, 1.8, 1.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Nose specular shine
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.beginPath();
+    ctx.arc(18.8, -0.6, 0.6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Expressive Eyes with amber iris, dark pupils, and specular catchlights
+    ctx.fillStyle = '#261b12';
+    ctx.beginPath();
+    ctx.arc(12, -3.2, 1.6, 0, Math.PI * 2);
+    ctx.arc(12, 3.2, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+
     ctx.fillStyle = '#c6933a';
     ctx.beginPath();
-    ctx.arc(12, -3.2, 1.4, 0, Math.PI * 2);
-    ctx.arc(12, 3.2, 1.4, 0, Math.PI * 2);
+    ctx.arc(12.1, -3.2, 1.2, 0, Math.PI * 2);
+    ctx.arc(12.1, 3.2, 1.2, 0, Math.PI * 2);
     ctx.fill();
 
-    // Honey-tan circular eyebrow pips (iconic cocker spaniel feature)
-    ctx.fillStyle = this.coat.tanHighlight;
+    ctx.fillStyle = '#0f172a';
     ctx.beginPath();
-    ctx.arc(10.5, -3.5, 1.1, 0, Math.PI * 2);
-    ctx.arc(10.5, 3.5, 1.1, 0, Math.PI * 2);
+    ctx.arc(12.2, -3.2, 0.8, 0, Math.PI * 2);
+    ctx.arc(12.2, 3.2, 0.8, 0, Math.PI * 2);
     ctx.fill();
 
-    // Floppy Cocker Spaniel Ears (with spring rotation)
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(11.7, -3.6, 0.55, 0, Math.PI * 2);
+    ctx.arc(11.7, 2.8, 0.55, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eyebrow pips (for Cocker Spaniel, Black Lab, Red Setter)
+    if (this.coat.tanHighlight && !this.coat.hasEyePatch) {
+      ctx.fillStyle = this.coat.tanHighlight;
+      ctx.beginPath();
+      ctx.arc(10.5, -3.5, 1.1, 0, Math.PI * 2);
+      ctx.arc(10.5, 3.5, 1.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Floppy Ears (with spring rotation responding to trot speed inertia)
     // Left ear
     ctx.save();
     ctx.translate(9, -6);
     ctx.rotate(this.leftEar.angle);
-    ctx.fillStyle = this.coat.earHighlight;
+    ctx.fillStyle = this.coat.earRoot || this.coat.bodyColor;
     ctx.beginPath();
-    ctx.ellipse(-1, -4, 4.5, 8, -Math.PI * 0.15, 0, Math.PI * 2);
+    ctx.ellipse(-1, -4, 4.6, 8.2, -Math.PI * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = this.coat.earHighlight || this.coat.tanHighlight || this.coat.tanColor;
+    ctx.beginPath();
+    ctx.ellipse(-1, -5.5, 3.2, 5.5, -Math.PI * 0.15, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
 
@@ -803,9 +913,14 @@ export class CompanionDog {
     ctx.save();
     ctx.translate(9, 6);
     ctx.rotate(this.rightEar.angle);
-    ctx.fillStyle = this.coat.earHighlight;
+    ctx.fillStyle = this.coat.earRoot || this.coat.bodyColor;
     ctx.beginPath();
-    ctx.ellipse(-1, 4, 4.5, 8, Math.PI * 0.15, 0, Math.PI * 2);
+    ctx.ellipse(-1, 4, 4.6, 8.2, Math.PI * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = this.coat.earHighlight || this.coat.tanHighlight || this.coat.tanColor;
+    ctx.beginPath();
+    ctx.ellipse(-1, 5.5, 3.2, 5.5, Math.PI * 0.15, 0, Math.PI * 2);
     ctx.fill();
     ctx.restore();
 

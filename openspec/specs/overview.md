@@ -32,12 +32,14 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 - **Companion Dog (`src/entities/companion_dog.js`)**:
   - Authentic Cocker Spaniel model featuring chocolate & tan coat (`#2E1A14`, `#D89B54`), honey-tan eyebrow pips, white chest bib, and teal collar with gold charm.
   - Presets for Golden Retriever and Black Lab coats.
-  - Multi-state steering AI (`FOLLOWING`, `IDLE_SNIFF`, `SITTING`, `FETCHING`, `PLAY_BOW`, `BARKING`):
-    - *Arrival Steering*: Smoothly decelerates as it approaches the owner.
+  - Multi-state steering AI (`FOLLOWING`, `ROAMING`, `SOCIAL_GREET`, `PLAY_BOW`, `IDLE_SNIFF`, `SITTING`, `FETCHING`, `BARKING`, `RECALLED`):
+    - *On-Leash Close Heel*: Trots closely at the owner's side/heel (~38–48px) with natural slack, matching owner speed and decelerating smoothly.
+    - *Bounded Off-Leash Roaming*: When off-leash, explores and sniffs turf autonomously while remaining organically bounded to the human (150px return bias, 200px return trot, 230px outer perimeter clamp).
+    - *Canine Social Greetings*: Detects other dogs within 110px, initiating mutual snout/butt sniffing greetings, circular orbits, rapid tail wagging, emote bubbles (`🐾`, `🐶`, `❤️`), and playful play-bows (`PLAY_BOW`).
+    - *Whistle Recall & Timed Heel*: Whistle command triggers immediate sprint recall back to the owner (`290 px/s`), locking into close heel following for 10 seconds before returning to roaming.
     - *Leash Dynamics*: Loose red nylon catenary lead; clamps distance to max 105px when leashed.
     - *Floppy Ear Springs*: Secondary spring-damper inertia rotation responding to trot speed.
     - *Tail Wagging*: Speed-dependent oscillation increasing during joy, fetching, or greetings.
-    - *Social Play-Bow*: Lowers chest and raises tail in a play-bow when within 60px of another dog.
     - *Bark Pulse*: Expanding sonic rings with procedural audio and "Woof!" bubble.
     - *Petting*: Heart particles emitter upon interaction.
 - **Tennis Ball Toy (`src/entities/toy.js`)**:
@@ -57,7 +59,7 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
     - `getShareUrl()` returns the clean base domain (`https://<domain>/`).
     - Optional private rooms supported via `?room=<custom-code>`.
   - **Packet Protocol Parity, Stateful Peer Registry & Bidirectional Handshake**:
-    - Uniform packet schemas: `HELLO`, `WELCOME`, `SYNC_STATE`, `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, `EMOTE`, `PEER_LEFT`.
+    - Uniform packet schemas: `HELLO`, `WELCOME`, `SYNC_STATE`, `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, `EMOTE`, `PEER_LEFT`, `WHISTLE`.
     - Edge relay server enforces authoritative `conn.id` stamping on all broadcasts (`data.senderId = conn.id`).
     - Server maintains active peer registry (`this.peers`) and transmits rich peer styling records (`{ id, name, jacketColor, coatName }`) in `WELCOME.peers`.
     - Existing peers reply with bidirectional `HELLO` greetings when a new player arrives, ensuring zero placeholder fallbacks.
@@ -87,10 +89,12 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
   - Intermittent procedural birdsong chirps.
   - Soft procedural grass footstep rustles during movement.
   - Formant-filtered canine barks and ball bounce pops.
+  - Dual-oscillator acoustic dog training whistle chirp (`playWhistle`) with 17Hz vibrato warble.
 - **Social HUD Overlay (`src/ui/social_hud.js`)**:
   - Live status-driven diagnostic badge: green `🌳 Clifton Commons` (or purple `🔒 Meadow`) when connected, amber `⏳ Connecting...` / `🔄 Reconnecting...`, and slate gray `Solo (Offline)` on disconnect.
   - Player count badge and "Share Park" button with toast confirmation.
   - Style customizer modal and quick chat bar (<kbd>Enter</kbd>) with emote buttons (👋, 🐾, ❤️, 🎾).
+  - Controls legend including <kbd>WASD</kbd> walk, <kbd>Space</kbd> throw, <kbd>L</kbd> leash, <kbd>B</kbd> bark, <kbd>E</kbd> pet, <kbd>H</kbd> whistle.
 
 ---
 
@@ -98,7 +102,7 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 - **Virtual Touch Controller (`src/ui/touch_controls.js`)**:
   - Virtual analog joystick with dynamic thumb tracking, 10% deadzone threshold, 50px maximum deflection clamp, and normalized `(vx, vy)` vector output for fluid 360° locomotion.
   - Multi-touch isolation using explicit touch identifiers (`joystickTouchId`) ensuring left-thumb steering does not conflict with right-hand button taps or meadow interactions.
-  - Glassmorphic touch action pad (Throw 🎾, Leash 🦮/🐕, Bark 🐕, Pet ❤️, Chat 💬) with haptic feedback support (`navigator.vibrate`) and dynamic visual state toggling for active vs off-lead status.
+  - Glassmorphic touch action pad (Throw 🎾, Pet ❤️, Bark 🐕, Leash 🦮/🐕, Whistle 📯, Chat 💬) with haptic feedback support (`navigator.vibrate`) and dynamic visual state toggling for active vs off-lead status.
   - Direct canvas tap-to-throw: tapping any point on the open field translates screen coordinates to world coordinates via `Camera.screenToWorld` and throws the tennis ball with distance-proportional speed.
   - Direct canvas tap-to-pet: tapping near the companion dog triggers affectionate petting.
 - **Mobile Viewport & Safe-Area Constraints (`index.html`, `src/style.css`)**:

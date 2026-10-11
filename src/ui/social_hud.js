@@ -34,7 +34,7 @@ export class SocialHUD {
         <div class="hud-panel">
           <button class="btn-share" id="btn-room-action">
             <span>🔗</span>
-            <span id="btn-room-label">Host Field</span>
+            <span id="btn-room-label">Share Park</span>
           </button>
           <button class="btn-share" id="btn-customize" style="background: rgba(255, 255, 255, 0.12);">
             <span>🎨</span>
@@ -278,15 +278,21 @@ export class SocialHUD {
     const badge = document.getElementById('hud-mode-badge');
     const label = document.getElementById('btn-room-label');
 
-    if (this.net.isPartyKit) {
+    if (this.net.isPartyKit || this.net.isDedicatedServer) {
+      const isCommons = !this.net.roomId || this.net.roomId === 'the-commons' || this.net.roomId === 'clifton-field';
       if (badge) {
-        badge.textContent = `⚡ Edge Room (${this.net.roomId || 'Connected'})`;
-        badge.style.background = '#8b5cf6';
+        if (isCommons) {
+          badge.textContent = '🌳 Clifton Commons';
+          badge.style.background = '#059669';
+        } else {
+          badge.textContent = `🔒 Meadow (${this.net.roomId})`;
+          badge.style.background = '#8b5cf6';
+        }
       }
       if (label) {
-        label.textContent = 'Share Link';
+        label.textContent = isCommons ? 'Share Park' : 'Share Link';
       }
-    } else if (this.net.isDedicatedServer) {
+    } else if (false) {
       if (badge) {
         badge.textContent = `🌲 Park (${this.net.roomId || 'Connected'})`;
         badge.style.background = '#059669';

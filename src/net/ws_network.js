@@ -16,7 +16,7 @@ export class WebSocketNetworkManager {
     this.ws = null;
     this.serverUrl = null;
     this.peerId = `walker-${Math.floor(1000 + Math.random() * 9000)}`;
-    this.roomId = 'clifton-field';
+    this.roomId = 'the-commons';
     this.isHost = false;
     this.isDedicatedServer = true;
     this.isPartyKit = false;
@@ -56,18 +56,27 @@ export class WebSocketNetworkManager {
   isPartyKitHost(url) {
     if (!url) {
       if (typeof window !== 'undefined') {
-        return window.location.hostname.includes('partykit.dev') ||
-               window.location.port === '1999' ||
-               new URLSearchParams(window.location.search).has('party') ||
-               new URLSearchParams(window.location.search).has('partykit');
+        const host = window.location.hostname.toLowerCase();
+        const port = window.location.port;
+        const search = new URLSearchParams(window.location.search);
+        return host.includes('workers.dev') ||
+               host.includes('partykit.dev') ||
+               port === '8787' ||
+               port === '1999' ||
+               search.has('party') ||
+               search.has('partyserver') ||
+               search.has('partykit');
       }
       return false;
     }
     const str = String(url).toLowerCase();
-    return str.includes('partykit.dev') ||
+    return str.includes('workers.dev') ||
+           str.includes('partykit.dev') ||
+           str.includes(':8787') ||
            str.includes(':1999') ||
            str.includes('/parties/') ||
            str === 'party' ||
+           str === 'partyserver' ||
            str === 'partykit';
   }
 
@@ -113,8 +122,10 @@ export class WebSocketNetworkManager {
 
   getShareUrl() {
     const url = new URL(window.location.href);
-    url.searchParams.delete('server'); // Redundant when guest opens the site from the host server
-    if (this.roomId && this.roomId !== 'clifton-field') {
+    url.searchParams.delete('server');
+    url.searchParams.delete('party');
+    url.searchParams.delete('partykit');
+    if (this.roomId && this.roomId !== 'the-commons' && this.roomId !== 'clifton-field') {
       url.searchParams.set('room', this.roomId);
     } else {
       url.searchParams.delete('room');

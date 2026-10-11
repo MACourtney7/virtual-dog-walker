@@ -407,7 +407,9 @@ export class NetworkManager {
 
     // Auto-detect whether to use PartyKit Edge, Dedicated WebSocket Server, or PeerJS P2P
     const isHttp = window.location.protocol.startsWith('http');
-    const isPartyHost = window.location.hostname.includes('partykit.dev') ||
+    const isPartyHost = window.location.hostname.includes('workers.dev') ||
+                        window.location.hostname.includes('partykit.dev') ||
+                        window.location.port === '8787' ||
                         window.location.port === '1999' ||
                         Boolean(partyParam);
 
@@ -468,7 +470,7 @@ export class NetworkManager {
 
   autoConnect() {
     const urlParams = new URLSearchParams(window.location.search);
-    const targetRoom = urlParams.get('room') || 'clifton-field';
+    const targetRoom = urlParams.get('room') || 'the-commons';
 
     if (this.isDedicatedServer && this.wsEndpoint) {
       this.adapter.connect(this.wsEndpoint, targetRoom);

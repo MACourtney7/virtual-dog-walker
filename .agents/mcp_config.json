@@ -2,9 +2,9 @@
   "mcpServers": {
     "software-factory": {
       "command": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/target/release/factory-mcp",
-      "args": ["--root", "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/some_kind_of_game"],
+      "args": ["--root", "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/virtual-dog-walker"],
       "env": {
-        "FACTORY_REPO_ROOT": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/some_kind_of_game",
+        "FACTORY_REPO_ROOT": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/virtual-dog-walker",
         "RUST_LOG": "info"
       }
     }

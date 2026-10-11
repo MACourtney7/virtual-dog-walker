@@ -140,14 +140,26 @@ export class PeerNetworkManager {
         meta: {
           name: meta.name || 'Player',
           jacketColor: meta.jacketColor || '#14532d',
-          coatName: meta.coatName || 'Chocolate & Tan (Ziggy)'
+          coatName: meta.coatName || 'Chocolate & Tan (Ziggy)',
+          hairStyle: meta.hairStyle,
+          hairColor: meta.hairColor,
+          pantsColor: meta.pantsColor,
+          skinTone: meta.skinTone,
+          collarColor: meta.collarColor,
+          personality: meta.personality || null
         }
       };
       this.remotePeers.set(peerId, peerData);
-    } else if (meta && (meta.name || meta.jacketColor || meta.coatName)) {
+    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality)) {
       if (meta.name) peerData.meta.name = meta.name;
       if (meta.jacketColor) peerData.meta.jacketColor = meta.jacketColor;
       if (meta.coatName) peerData.meta.coatName = meta.coatName;
+      if (meta.hairStyle) peerData.meta.hairStyle = meta.hairStyle;
+      if (meta.hairColor) peerData.meta.hairColor = meta.hairColor;
+      if (meta.pantsColor) peerData.meta.pantsColor = meta.pantsColor;
+      if (meta.skinTone) peerData.meta.skinTone = meta.skinTone;
+      if (meta.collarColor) peerData.meta.collarColor = meta.collarColor;
+      if (meta.personality) peerData.meta.personality = meta.personality;
     }
     return peerData;
   }
@@ -269,7 +281,8 @@ export class PeerNetworkManager {
           hairColor: packet.hairColor,
           pantsColor: packet.pantsColor,
           skinTone: packet.skinTone,
-          collarColor: packet.collarColor
+          collarColor: packet.collarColor,
+          personality: packet.personality || null
         };
         this.ensureRemotePeer(senderId, meta);
         if (this.onPeerJoin) this.onPeerJoin(senderId, meta);
@@ -300,11 +313,13 @@ export class PeerNetworkManager {
           hairColor: packet.hostMeta.hairColor,
           pantsColor: packet.hostMeta.pantsColor,
           skinTone: packet.hostMeta.skinTone,
-          collarColor: packet.hostMeta.collarColor
+          collarColor: packet.hostMeta.collarColor,
+          personality: packet.hostMeta.personality || null
         } : {
           name: 'Host Walker',
           jacketColor: '#1e3a8a',
-          coatName: 'Chocolate & Tan (Ziggy)'
+          coatName: 'Chocolate & Tan (Ziggy)',
+          personality: null
         };
         this.ensureRemotePeer(hostId, hostMeta);
         if (this.onPeerJoin) this.onPeerJoin(hostId, hostMeta);
@@ -320,7 +335,8 @@ export class PeerNetworkManager {
                 hairColor: p.hairColor,
                 pantsColor: p.pantsColor,
                 skinTone: p.skinTone,
-                collarColor: p.collarColor
+                collarColor: p.collarColor,
+                personality: p.personality || null
               } : p;
               this.ensureRemotePeer(p.id, meta);
               if (this.onPeerJoin) this.onPeerJoin(p.id, meta);

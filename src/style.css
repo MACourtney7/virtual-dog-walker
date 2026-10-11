@@ -805,6 +805,120 @@ body {
   transform: translateY(0);
 }
 
+/* Canine Personality Editor Styles */
+.cust-personality-group {
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-top: 8px;
+  backdrop-filter: blur(8px);
+}
+
+.cust-trait-row {
+  margin-bottom: 12px;
+}
+
+.cust-trait-row:last-child {
+  margin-bottom: 2px;
+}
+
+.cust-trait-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.cust-trait-label {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: #e2e8f0;
+}
+
+.cust-trait-badge {
+  font-size: 0.75rem;
+  font-weight: 700;
+  background: #2563eb;
+  color: #fff;
+  border-radius: 10px;
+  padding: 2px 8px;
+  min-width: 20px;
+  text-align: center;
+  box-shadow: 0 1px 4px rgba(37, 99, 235, 0.4);
+}
+
+/* Customized Range Input */
+.cust-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  background: #334155;
+  border-radius: 4px;
+  outline: none;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  margin: 4px 0 2px 0;
+}
+
+.cust-range:focus {
+  background: #475569;
+}
+
+/* WebKit Slider Thumb */
+.cust-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+
+.cust-range::-webkit-slider-thumb:hover {
+  transform: scale(1.18);
+  background: #60a5fa;
+}
+
+.cust-range::-webkit-slider-thumb:active {
+  transform: scale(1.25);
+  background: #2563eb;
+}
+
+/* Firefox Slider Thumb */
+.cust-range::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: #3b82f6;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  cursor: pointer;
+  transition: transform 0.15s ease, background-color 0.15s ease;
+}
+
+.cust-range::-moz-range-thumb:hover {
+  transform: scale(1.18);
+  background: #60a5fa;
+}
+
+.cust-range::-moz-range-thumb:active {
+  transform: scale(1.25);
+  background: #2563eb;
+}
+
+/* Firefox Slider Track */
+.cust-range::-moz-range-track {
+  background: #334155;
+  height: 6px;
+  border-radius: 4px;
+}
+
 /* Responsive Media Queries for Mobile & Coarse Pointers */
 @media (max-width: 768px), (pointer: coarse) {
   #controls-hint {
@@ -880,6 +994,20 @@ body {
   #proximity-chat-messages {
     max-height: 150px;
     padding: 8px 10px;
+  }
+
+  .cust-range::-webkit-slider-thumb {
+    width: 24px;
+    height: 24px;
+  }
+
+  .cust-range::-moz-range-thumb {
+    width: 24px;
+    height: 24px;
+  }
+
+  .cust-trait-row {
+    margin-bottom: 14px;
   }
 }
 

@@ -322,6 +322,9 @@ class CliftonDownGame {
 
   toggleLeash() {
     this.owner.isLeashed = !this.owner.isLeashed;
+    if (this.touchControls && typeof this.touchControls.setLeashed === 'function') {
+      this.touchControls.setLeashed(this.owner.isLeashed);
+    }
     this.hud.showToast(this.owner.isLeashed ? '🦮 Leash on: Walking close' : '🐕 Off-lead: Free to roam & play!');
   }
 

@@ -326,6 +326,14 @@ class CliftonDownGame {
       this.touchControls.setLeashed(this.owner.isLeashed);
     }
     this.hud.showToast(this.owner.isLeashed ? '🦮 Leash on: Walking close' : '🐕 Off-lead: Free to roam & play!');
+
+    if (this.net && typeof this.net.broadcast === 'function') {
+      this.net.broadcast(Protocol.createSyncState(this.net.peerId, this.owner, this.dog));
+    }
+
+    if (this.touchControls && typeof this.touchControls.setLeashed === 'function') {
+      this.touchControls.setLeashed(this.owner.isLeashed);
+    }
   }
 
   barkDog() {
@@ -437,7 +445,7 @@ class CliftonDownGame {
         remote.owner.vy = ownerState.vy;
         remote.owner.angle = ownerState.angle;
         remote.owner.isMoving = ownerState.isMoving;
-        remote.owner.isLeashed = ownerState.isLeashed;
+        remote.owner.isLeashed = !!ownerState.isLeashed;
         remote.owner.depthY = remote.owner.y + 12;
       }
 

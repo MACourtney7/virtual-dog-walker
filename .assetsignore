@@ -1,0 +1,15 @@
+.git
+.github
+.factory
+.agents
+node_modules
+party
+server
+test
+openspec
+requirements.txt
+package.json
+package-lock.json
+wrangler.jsonc
+README.md
+factory.yaml

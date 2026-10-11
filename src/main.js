@@ -8,6 +8,7 @@ import { NetworkManager, NetStatus } from './net/network.js';
 import { Protocol } from './net/protocol.js';
 import { SocialHUD } from './ui/social_hud.js';
 import { sound } from './systems/audio.js';
+import { TouchControls } from './ui/touch_controls.js';
 
 class CliftonDownGame {
   constructor() {
@@ -36,6 +37,17 @@ class CliftonDownGame {
     // UI HUD
     this.hud = new SocialHUD(this.net, this.owner, this.dog, CoatPreset);
 
+    // Touch Controls
+    this.joystickActive = false;
+    this.touchControls = new TouchControls({
+      onMove: (vec) => this.handleJoystickMove(vec),
+      onThrow: () => this.throwBall(),
+      onLeash: () => this.toggleLeash(),
+      onBark: () => this.barkDog(),
+      onPet: () => this.petDog(),
+      onChat: () => this.hud.toggleChatInput()
+    });
+
     // Audio tracking
     this.hasInteracted = false;
     this.lastFootstepTime = 0;
@@ -53,11 +65,18 @@ class CliftonDownGame {
 
   initCanvas() {
     const resize = () => {
-      this.canvas.width = window.innerWidth;
-      this.canvas.height = window.innerHeight;
+      const width = window.visualViewport ? window.visualViewport.width : window.innerWidth;
+      const height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
+      this.canvas.width = width;
+      this.canvas.height = height;
       this.camera.resize(this.canvas.width, this.canvas.height);
     };
+
     window.addEventListener('resize', resize);
+    window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', resize);
+    }
     resize();
   }
 
@@ -165,6 +184,7 @@ class CliftonDownGame {
 
   bindInputs() {
     const handleAudioInteraction = () => {
+      sound.unlockAudio();
       if (!this.hasInteracted) {
         this.hasInteracted = true;
         sound.startAmbientBreeze();
@@ -206,25 +226,17 @@ class CliftonDownGame {
 
         case 'KeyL':
           // Toggle Leash
-          this.owner.isLeashed = !this.owner.isLeashed;
-          this.hud.showToast(this.owner.isLeashed ? '🦮 Leash on: Walking close' : '🐕 Off-lead: Free to roam & play!');
+          this.toggleLeash();
           break;
 
         case 'KeyB':
           // Bark!
-          this.dog.bark(sound);
-          this.net.broadcast(Protocol.createBark(this.net.peerId, this.dog.x, this.dog.y));
+          this.barkDog();
           break;
 
         case 'KeyE':
           // Pet Dog
-          const distToDog = Math.hypot(this.owner.x - this.dog.x, this.owner.y - this.dog.y);
-          if (distToDog < 75) {
-            this.dog.pet();
-            sound.playPet();
-            this.hud.showToast('❤️ Good dog!');
-            this.net.broadcast(Protocol.createPet(this.net.peerId));
-          }
+          this.petDog();
           break;
 
         case 'Enter':
@@ -255,23 +267,99 @@ class CliftonDownGame {
       }
     });
 
-    window.addEventListener('click', () => {
+    // Touch & Pointer Audio Unlock
+    window.addEventListener('click', handleAudioInteraction);
+    window.addEventListener('touchstart', handleAudioInteraction, { passive: true });
+    window.addEventListener('pointerdown', handleAudioInteraction, { passive: true });
+
+    // Direct In-World Canvas Tap Gestures
+    this.canvas.addEventListener('pointerdown', (e) => {
       handleAudioInteraction();
+
+      // Only handle if directly clicking/tapping the game canvas
+      if (e.target !== this.canvas) return;
+
+      // Check if tap was on or close to the companion dog
+      const dogScreen = this.camera.worldToScreen(this.dog.x, this.dog.y);
+      const distToDog = Math.hypot(e.clientX - dogScreen.x, e.clientY - dogScreen.y);
+      if (distToDog < 48) {
+        this.petDog();
+        return;
+      }
+
+      // Open field tap: Throw ball towards tapped world coordinate
+      const worldTarget = this.camera.screenToWorld(e.clientX, e.clientY);
+      const dx = worldTarget.x - this.owner.x;
+      const dy = worldTarget.y - this.owner.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist > 30) {
+        const dirX = dx / dist;
+        const dirY = dy / dist;
+        this.owner.angle = Math.atan2(dy, dx);
+        this.throwBallAt(worldTarget.x, worldTarget.y, dirX, dirY);
+      }
     });
+  }
+
+  handleJoystickMove(vec) {
+    if (vec.active) {
+      this.joystickActive = true;
+      this.owner.keys.up = vec.vy < -0.2;
+      this.owner.keys.down = vec.vy > 0.2;
+      this.owner.keys.left = vec.vx < -0.2;
+      this.owner.keys.right = vec.vx > 0.2;
+      this.owner.angle = vec.angle;
+      this.owner.isMoving = true;
+    } else if (this.joystickActive) {
+      this.joystickActive = false;
+      this.owner.keys.up = false;
+      this.owner.keys.down = false;
+      this.owner.keys.left = false;
+      this.owner.keys.right = false;
+    }
+  }
+
+  toggleLeash() {
+    this.owner.isLeashed = !this.owner.isLeashed;
+    this.hud.showToast(this.owner.isLeashed ? '🦮 Leash on: Walking close' : '🐕 Off-lead: Free to roam & play!');
+  }
+
+  barkDog() {
+    this.dog.bark(sound);
+    this.net.broadcast(Protocol.createBark(this.net.peerId, this.dog.x, this.dog.y));
+  }
+
+  petDog() {
+    const distToDog = Math.hypot(this.owner.x - this.dog.x, this.owner.y - this.dog.y);
+    if (distToDog < 90) {
+      this.dog.pet();
+      sound.playPet();
+      this.hud.showToast('❤️ Good dog!');
+      this.net.broadcast(Protocol.createPet(this.net.peerId));
+    } else {
+      this.hud.showToast('🐾 Walk closer to Ziggy to pet!');
+    }
   }
 
   throwBall() {
     const dirX = Math.cos(this.owner.angle);
     const dirY = Math.sin(this.owner.angle);
+    this.throwBallAt(this.owner.x + dirX * 320, this.owner.y + dirY * 320, dirX, dirY);
+  }
 
-    this.ball.throw(this.owner.x, this.owner.y, dirX, dirY, 380, 190);
+  throwBallAt(targetX, targetY, dirX, dirY) {
+    const dist = Math.hypot(targetX - this.owner.x, targetY - this.owner.y);
+    const speed = Math.min(500, Math.max(240, dist * 1.4));
+
+    this.ball.throw(this.owner.x, this.owner.y, dirX, dirY, speed, speed * 0.5);
     sound.playBallBounce();
 
     // Trigger local dog to chase
     this.dog.fetchBall(this.ball);
 
     // Broadcast throw to multiplayer field
-    this.net.broadcast(Protocol.createBallThrown(this.net.peerId, this.owner.x, this.owner.y, dirX, dirY, 380));
+    this.net.broadcast(Protocol.createBallThrown(this.net.peerId, this.owner.x, this.owner.y, dirX, dirY, speed));
     this.hud.showToast('🎾 Ball thrown! Fetch!');
   }
 

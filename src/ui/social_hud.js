@@ -1,5 +1,6 @@
 // Social HUD Component - Room Status, One-Click Share, Chat Input, and Character Customizer
 import { Protocol } from '../net/protocol.js';
+import { TouchControls } from './touch_controls.js';
 
 export class SocialHUD {
   constructor(networkManager, localOwner, localDog, coatPresets) {
@@ -46,14 +47,18 @@ export class SocialHUD {
 
     // 2. Build Controls Guidance
     if (this.controlsHint) {
-      this.controlsHint.innerHTML = `
-        <kbd>WASD</kbd> Walk &bull; 
-        <kbd>SPACE</kbd> Throw Ball &bull; 
-        <kbd>L</kbd> Leash &bull; 
-        <kbd>B</kbd> Bark &bull; 
-        <kbd>E</kbd> Pet &bull; 
-        <kbd>ENTER</kbd> Chat
-      `;
+      if (TouchControls.isTouchDevice()) {
+        this.controlsHint.style.display = 'none';
+      } else {
+        this.controlsHint.innerHTML = `
+          <kbd>WASD</kbd> Walk &bull; 
+          <kbd>SPACE</kbd> Throw Ball &bull; 
+          <kbd>L</kbd> Leash &bull; 
+          <kbd>B</kbd> Bark &bull; 
+          <kbd>E</kbd> Pet &bull; 
+          <kbd>ENTER</kbd> Chat
+        `;
+      }
     }
 
     // 3. Build Chat Input Bar & Emotes

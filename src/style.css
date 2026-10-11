@@ -168,3 +168,135 @@ body {
   box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
   font-family: inherit;
 }
+
+/* Touch Controls Mobile Overlay */
+#touch-controls-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 25;
+  touch-action: none;
+}
+
+#touch-joystick-zone {
+  position: absolute;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  left: max(24px, env(safe-area-inset-left));
+  width: 130px;
+  height: 130px;
+  pointer-events: auto;
+  touch-action: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+#joystick-base {
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: rgba(15, 23, 42, 0.45);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  touch-action: none;
+}
+
+#joystick-knob {
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #3b82f6, #1d4ed8);
+  border: 2px solid rgba(255, 255, 255, 0.7);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  transform: translate(0px, 0px);
+  will-change: transform;
+}
+
+#touch-action-pad {
+  position: absolute;
+  bottom: max(24px, env(safe-area-inset-bottom));
+  right: max(20px, env(safe-area-inset-right));
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  width: 160px;
+  justify-content: flex-end;
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.touch-action-btn {
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: rgba(18, 26, 36, 0.75);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  border: 1.5px solid rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  cursor: pointer;
+  transition: transform 0.1s ease, background 0.15s ease;
+  touch-action: none;
+}
+
+.touch-action-btn:active {
+  transform: scale(0.92);
+  background: rgba(59, 130, 246, 0.6);
+}
+
+/* Responsive Media Queries for Mobile & Coarse Pointers */
+@media (max-width: 768px), (pointer: coarse) {
+  #controls-hint {
+    display: none !important;
+  }
+
+  #hud-overlay {
+    top: max(10px, env(safe-area-inset-top));
+    left: max(10px, env(safe-area-inset-left));
+    right: max(10px, env(safe-area-inset-right));
+    gap: 8px;
+  }
+
+  .hud-panel {
+    padding: 6px 10px;
+    gap: 8px;
+  }
+
+  .hud-pill {
+    font-size: 0.8rem;
+    gap: 5px;
+  }
+
+  .hud-pill-badge {
+    font-size: 0.7rem;
+    padding: 2px 6px;
+  }
+
+  .btn-share {
+    padding: 5px 10px;
+    font-size: 0.78rem;
+  }
+
+  #chat-container {
+    bottom: max(96px, env(safe-area-inset-bottom));
+    width: 90%;
+  }
+
+  #chat-input {
+    width: 100%;
+    font-size: 0.88rem;
+  }
+}

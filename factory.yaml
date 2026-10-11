@@ -1,16 +1,16 @@
 # factory.yaml - Host Project Configuration for Agentic Software Factory
 project_name: "virtual-dog-walker"
 base_branch: "main"
-tech_stack: "HTML5 Canvas / Vanilla ES6 JavaScript / Web Audio API / PartyKit Global Edge WSS / Python Microserver / WebRTC P2P"
+tech_stack: "HTML5 Canvas / Vanilla ES6 JavaScript / Web Audio API / Cloudflare PartyServer / Python Microserver / WebRTC P2P"
 
-# Automation commands executed by Validator workers in isolated worktrees:
+# Automation commands executed by Validator and Reviewer workers in isolated worktrees:
 commands:
-  build: "python3 -c 'import os; assert os.path.exists(\"index.html\") and os.path.exists(\"src/main.js\") and os.path.exists(\"party/main.js\") and os.path.exists(\"partykit.json\"); print(\"Build check passed\")'"
-  test: "python3 test/run_tests.py"
-  lint: "python3 -c 'print(\"Lint check passed\")'"
-  format_check: "echo 'format check passed'"
+  build: python3 test/run_tests.py
+  test: python3 test/run_tests.py
+  lint: echo lint-passed
+  format_check: echo format-passed
 
 # Paths to relevant host project documentation for Architect and Reviewer:
 documentation:
   guidelines: "README.md"
-  architecture: "openspec/specs/overview.md"
+  architecture: "openspec/changes/ticket-005/spec.md"

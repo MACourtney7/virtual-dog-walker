@@ -1,9 +1,9 @@
 # Canonical System Specification: Clifton Down Social Sandbox
 
 ## 1. System Overview
-**Clifton Down: Social Dog Walking Sandbox** is a relaxing, charming multiplayer sandbox built entirely in the browser using HTML5 Canvas 2D, Vanilla ES6 JavaScript, the Web Audio API, and pure in-browser WebRTC Peer-to-Peer networking (PeerJS). 
+**Virtual Dog Walker (Clifton Down)** is a relaxing, charming multiplayer sandbox built entirely in the browser using HTML5 Canvas 2D, Vanilla ES6 JavaScript, the Web Audio API, Cloudflare PartyServer with Durable Objects, and dedicated local microserver fallback.
 
-Players inhabit the meadow as an **Owner** and **Dog companion** walking together across an expansive, sunlit open park space inspired by **Clifton Down** in Bristol, UK. Anyone can host a field in their browser, copy a shareable room link, and have other players join with zero server installation or external dependencies.
+Players inhabit the meadow as an **Owner** and **Dog companion** walking together across an expansive, sunlit open park space inspired by **Clifton Down** in Bristol, UK. Anyone can open the park in their browser and immediately walk alongside other online players in **The Commons** with zero room codes or server setup required.
 
 ---
 
@@ -48,9 +48,13 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 ## 4. Universal Networking Architecture
 - **Multi-Transport Network Engine (`src/net/network.js`, `src/net/protocol.js`, `src/net/ws_network.js`)**:
   - Transparent multi-mode polymorphic architecture:
-    1. **PartyKit Global Edge Mode**: Automatically connects to Cloudflare/PartyKit ephemeral edge rooms (`/parties/park/:room`) with zero installation, instant global routing, and scale-to-zero ($0 idle cost).
+    1. **Cloudflare PartyServer Edge Mode**: Native Cloudflare Workers + Durable Objects (`party/server.js`), defaulting universally to **The Commons** (`the-commons`). Scale-to-zero at $0 idle cost.
     2. **Dedicated WebSocket Microserver Mode**: Connects via native WebSockets (`ws://` or `wss://`) when launched via local server or when `?server=...` parameter is present.
     3. **WebRTC P2P Fallback Mode**: Gracefully falls back to browser-to-browser PeerJS DataChannels if run without a server.
+  - **The Always-Open Public Commons**:
+    - Default room is `the-commons`. Anyone loading the site enters the same active park instance.
+    - `getShareUrl()` returns the clean base domain (`https://<domain>/`).
+    - Optional private rooms supported via `?room=<custom-code>`.
   - **Packet Protocol Parity**:
     - Uniform packet schemas: `HELLO`, `WELCOME`, `SYNC_STATE`, `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, `EMOTE`, `PEER_LEFT`.
   - **Host Relaying & Synchronization**:
@@ -60,11 +64,12 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 
 ---
 
-## 5. Global Edge Server & Local Microserver
-- **PartyKit Global Edge Room Relay (`party/main.js`, `partykit.json`)**:
-  - Ephemeral serverless room actors managing player handshakes (`WELCOME`), high-throughput state broadcasts, barking, tennis ball fetch, and disconnect cleanup.
-  - Serves static HTML/JS frontend assets and WSS endpoints under a single unified URL.
-  - Runs on Cloudflare's edge network across 300+ cities with zero infrastructure maintenance.
+## 5. Edge Server & Local Microserver
+- **Cloudflare PartyServer Room Relay (`party/server.js`, `wrangler.jsonc`)**:
+  - Implements `ParkServer` inheriting from `Server` in `partyserver`.
+  - Ephemeral serverless Durable Object actors managing player handshakes (`WELCOME`), high-throughput state broadcasts, barking, tennis ball fetch, and disconnect cleanup.
+  - Serves static HTML/JS frontend assets and WSS endpoints under a single unified Cloudflare Worker URL.
+  - Automatic deployment via GitHub Actions CI/CD to Cloudflare Workers at $0 cost.
 - **Dedicated Local Python Microserver (`server/server.py`, `server/host.py`)**:
   - Alternative local async WebSocket and HTTP static file server.
   - Automatically provisions Cloudflare Quick Tunnels (`https://<subdomain>.trycloudflare.com`) for private self-hosted multiplayer.
@@ -78,11 +83,11 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
   - Soft procedural grass footstep rustles during movement.
   - Formant-filtered canine barks and ball bounce pops.
 - **Social HUD Overlay (`src/ui/social_hud.js`)**:
-  - Glassmorphic top bar displaying connection badge, room ID, player count, and "Share Park" button with toast confirmation.
+  - Glassmorphic top bar displaying `🌳 Clifton Commons` badge (or `🔒 Meadow` for private rooms), player count, and "Share Park" button with toast confirmation.
   - Style customizer modal and quick chat bar (<kbd>Enter</kbd>) with emote buttons (👋, 🐾, ❤️, 🎾).
 
 ---
 
-## 7. Test Suite
-- `python3 test/run_tests.py`: Comprehensive test runner covering physics ballistics, arrival steering, leash clamping, network packet schemas, microserver room routing, and tunnel configuration.
-
+## 7. Test Suite & CI/CD
+- `python3 test/run_tests.py`: Comprehensive test runner covering physics ballistics, arrival steering, leash clamping, network packet schemas, microserver room routing, and PartyServer contracts.
+- `.github/workflows/ci.yml`: Automated GitHub Actions pipeline running test suites on every push/PR with a 3-minute safety timeout, followed by auto-deploy to Cloudflare Workers on `main`.

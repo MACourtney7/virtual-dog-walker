@@ -4,11 +4,14 @@
   "description": "Virtual Dog Walker - Multiplayer dog walking field social sandbox at Clifton Down with on-demand edge rooms",
   "type": "module",
   "scripts": {
-    "party:dev": "partykit dev",
-    "party:deploy": "partykit deploy",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
     "test": "python3 test/run_tests.py"
   },
+  "dependencies": {
+    "partyserver": "^0.0.40"
+  },
   "devDependencies": {
-    "partykit": "^0.0.108"
+    "wrangler": "^3.100.0"
   }
 }

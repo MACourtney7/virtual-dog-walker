@@ -176,7 +176,8 @@ export class WebSocketNetworkManager {
           this.peerId,
           this.localMeta.name,
           this.localMeta.jacketColor,
-          this.localMeta.coatName
+          this.localMeta.coatName,
+          this.localMeta
         ));
       };
 
@@ -236,7 +237,12 @@ export class WebSocketNetworkManager {
         const meta = {
           name: packet.name || 'Walker',
           jacketColor: packet.jacketColor || '#1e3a8a',
-          coatName: packet.dogCoatName || 'Chocolate & Tan (Ziggy)'
+          coatName: packet.dogCoatName || 'Chocolate & Tan (Ziggy)',
+          hairStyle: packet.hairStyle,
+          hairColor: packet.hairColor,
+          pantsColor: packet.pantsColor,
+          skinTone: packet.skinTone,
+          collarColor: packet.collarColor
         };
         this.ensureRemotePeer(senderId, meta);
         if (this.onPeerJoin) {
@@ -248,7 +254,8 @@ export class WebSocketNetworkManager {
             this.peerId,
             this.localMeta.name,
             this.localMeta.jacketColor,
-            this.localMeta.coatName
+            this.localMeta.coatName,
+            this.localMeta
           ));
         }
         break;
@@ -265,7 +272,8 @@ export class WebSocketNetworkManager {
           this.peerId,
           this.localMeta.name,
           this.localMeta.jacketColor,
-          this.localMeta.coatName
+          this.localMeta.coatName,
+          this.localMeta
         ));
 
         // Populate all existing peers in the room
@@ -275,7 +283,12 @@ export class WebSocketNetworkManager {
             const meta = typeof p === 'object' && p !== null ? {
               name: p.name,
               jacketColor: p.jacketColor,
-              coatName: p.coatName || p.dogCoatName
+              coatName: p.coatName || p.dogCoatName,
+              hairStyle: p.hairStyle,
+              hairColor: p.hairColor,
+              pantsColor: p.pantsColor,
+              skinTone: p.skinTone,
+              collarColor: p.collarColor
             } : {};
             if (peerId && peerId !== this.peerId) {
               this.ensureRemotePeer(peerId, meta);

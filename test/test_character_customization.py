@@ -251,6 +251,128 @@ class TestCharacterCustomization(unittest.TestCase):
         self.assertEqual(packet_base["name"], "Sam")
         self.assertEqual(packet_base["hairStyle"], "SHORT")
 
+    def test_ws_network_propagates_extended_styling_in_hello_and_welcome(self):
+        """
+        Verifies ws_network.js extracts and forwards hairStyle, hairColor,
+        pantsColor, skinTone, and collarColor in HELLO and WELCOME packets,
+        and includes this.localMeta as the 5th argument in createHello.
+        """
+        ws_net_path = os.path.join(os.path.dirname(__file__), "..", "src", "net", "ws_network.js")
+        with open(ws_net_path, "r", encoding="utf-8") as f:
+            ws_net_code = f.read()
+
+        # 1. Verify createHello invocations pass this.localMeta
+        hello_calls = re.findall(r"Protocol\.createHello\s*\(([^)]+)\)", ws_net_code)
+        self.assertGreaterEqual(len(hello_calls), 3, "Expected at least 3 Protocol.createHello calls in ws_network.js")
+        for call_args in hello_calls:
+            self.assertIn("this.localMeta", call_args, f"Protocol.createHello call missing this.localMeta argument: {call_args}")
+
+        # 2. Verify handlePacket HELLO includes extended styling keys
+        hello_block_match = re.search(r"case\s+PacketType\.HELLO:\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}", ws_net_code)
+        self.assertIsNotNone(hello_block_match, "PacketType.HELLO handler missing in ws_network.js")
+        hello_block = hello_block_match.group(1)
+        for key in ["hairStyle", "hairColor", "pantsColor", "skinTone", "collarColor"]:
+            self.assertIn(f"packet.{key}", hello_block, f"ws_network.js HELLO handler does not map packet.{key}")
+
+        # 3. Verify handlePacket WELCOME includes extended styling keys
+        welcome_match = re.search(r"case\s+PacketType\.WELCOME:\s*\{(.*?)\n\s*break;", ws_net_code, re.DOTALL)
+        self.assertIsNotNone(welcome_match, "PacketType.WELCOME handler missing in ws_network.js")
+        welcome_block = welcome_match.group(1)
+        for key in ["hairStyle", "hairColor", "pantsColor", "skinTone", "collarColor"]:
+            self.assertIn(key, welcome_block, f"ws_network.js WELCOME handler does not map peer {key}")
+
+    def test_network_propagates_extended_styling_in_hello(self):
+        """
+        Verifies network.js includes this.localMeta in createHello and parses
+        extended styling fields in HELLO and WELCOME packets.
+        """
+        net_path = os.path.join(os.path.dirname(__file__), "..", "src", "net", "network.js")
+        with open(net_path, "r", encoding="utf-8") as f:
+            net_code = f.read()
+
+        # 1. Verify createHello invocations pass this.localMeta
+        hello_calls = re.findall(r"Protocol\.createHello\s*\(([^)]+)\)", net_code)
+        self.assertGreaterEqual(len(hello_calls), 1, "Expected at least 1 Protocol.createHello call in network.js")
+        for call_args in hello_calls:
+            self.assertIn("this.localMeta", call_args, f"Protocol.createHello in network.js missing this.localMeta: {call_args}")
+
+        # 2. Verify handlePacket HELLO includes extended styling keys
+        hello_match = re.search(r"case\s+PacketType\.HELLO:\s*\{(.*?)\n\s*break;", net_code, re.DOTALL)
+        self.assertIsNotNone(hello_match, "PacketType.HELLO handler missing in network.js")
+        hello_block = hello_match.group(1)
+        for key in ["hairStyle", "hairColor", "pantsColor", "skinTone", "collarColor"]:
+            self.assertIn(f"packet.{key}", hello_block, f"network.js HELLO handler does not map packet.{key}")
+
+        # 3. Verify handlePacket WELCOME includes extended styling keys
+        welcome_match = re.search(r"case\s+PacketType\.WELCOME:\s*\{(.*?)\n\s*break;", net_code, re.DOTALL)
+        self.assertIsNotNone(welcome_match, "PacketType.WELCOME handler missing in network.js")
+        welcome_block = welcome_match.group(1)
+        for key in ["hairStyle", "hairColor", "pantsColor", "skinTone", "collarColor"]:
+            self.assertIn(key, welcome_block, f"network.js WELCOME handler does not map {key}")
+
+    def test_server_preserves_and_relays_extended_styling(self):
+        """
+        Verifies server.py retains extended styling in peer.meta and includes
+        them in WELCOME existing_peers list.
+        """
+        from server.server import RoomManager, PeerConnection
+        import asyncio
+
+        class MockWS:
+            def __init__(self):
+                self.messages = []
+            async def send_str(self, msg):
+                self.messages.append(json.loads(msg))
+
+        rm = RoomManager()
+        ws1 = MockWS()
+        p1 = PeerConnection(ws1, "peer-1", "room-test")
+        p1.meta.update({
+            "name": "Sarah",
+            "jacketColor": "#831843",
+            "coatName": "Golden Retriever",
+            "hairStyle": "BEANIE",
+            "hairColor": "#171717",
+            "pantsColor": "#1e293b",
+            "skinTone": "#d97706",
+            "collarColor": "#dc2626"
+        })
+        rm.add_peer("room-test", p1)
+
+        server_py_path = os.path.join(os.path.dirname(__file__), "..", "server", "server.py")
+        with open(server_py_path, "r", encoding="utf-8") as f:
+            server_code = f.read()
+
+        # Check that server code stores each extended styling key in peer.meta
+        for key in ["hairStyle", "hairColor", "pantsColor", "skinTone", "collarColor"]:
+            self.assertIn(f'peer.meta["{key}"]', server_code, f'server.py missing peer.meta["{key}"] assignment')
+
+        # Simulate HELLO processing from server.py logic
+        room_peers = rm.get_room_peers("room-test")
+        existing_peers = []
+        for pid, p in room_peers.items():
+            if pid != "peer-2":
+                existing_peers.append({
+                    "id": pid,
+                    "name": p.meta.get("name", "Friend"),
+                    "jacketColor": p.meta.get("jacketColor", "#14532d"),
+                    "coatName": p.meta.get("coatName", "Chocolate & Tan (Ziggy)"),
+                    "hairStyle": p.meta.get("hairStyle"),
+                    "hairColor": p.meta.get("hairColor"),
+                    "pantsColor": p.meta.get("pantsColor"),
+                    "skinTone": p.meta.get("skinTone"),
+                    "collarColor": p.meta.get("collarColor")
+                })
+
+        self.assertEqual(len(existing_peers), 1)
+        p1_data = existing_peers[0]
+        self.assertEqual(p1_data["hairStyle"], "BEANIE")
+        self.assertEqual(p1_data["hairColor"], "#171717")
+        self.assertEqual(p1_data["pantsColor"], "#1e293b")
+        self.assertEqual(p1_data["skinTone"], "#d97706")
+        self.assertEqual(p1_data["collarColor"], "#dc2626")
+
 
 if __name__ == "__main__":
     unittest.main()
+

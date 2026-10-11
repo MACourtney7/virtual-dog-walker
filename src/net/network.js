@@ -206,7 +206,8 @@ export class PeerNetworkManager {
             this.peerId,
             this.localMeta.name,
             this.localMeta.jacketColor,
-            this.localMeta.coatName
+            this.localMeta.coatName,
+            this.localMeta
           ));
         });
 
@@ -263,7 +264,12 @@ export class PeerNetworkManager {
         const meta = {
           name: packet.name || 'Visitor',
           jacketColor: packet.jacketColor || '#14532d',
-          coatName: packet.dogCoatName || 'Chocolate & Tan (Ziggy)'
+          coatName: packet.dogCoatName || 'Chocolate & Tan (Ziggy)',
+          hairStyle: packet.hairStyle,
+          hairColor: packet.hairColor,
+          pantsColor: packet.pantsColor,
+          skinTone: packet.skinTone,
+          collarColor: packet.collarColor
         };
         this.ensureRemotePeer(senderId, meta);
         if (this.onPeerJoin) this.onPeerJoin(senderId, meta);
@@ -286,7 +292,16 @@ export class PeerNetworkManager {
 
       case PacketType.WELCOME: {
         const hostId = packet.hostId || senderId;
-        const hostMeta = packet.hostMeta || {
+        const hostMeta = packet.hostMeta ? {
+          name: packet.hostMeta.name,
+          jacketColor: packet.hostMeta.jacketColor,
+          coatName: packet.hostMeta.coatName || packet.hostMeta.dogCoatName,
+          hairStyle: packet.hostMeta.hairStyle,
+          hairColor: packet.hostMeta.hairColor,
+          pantsColor: packet.hostMeta.pantsColor,
+          skinTone: packet.hostMeta.skinTone,
+          collarColor: packet.hostMeta.collarColor
+        } : {
           name: 'Host Walker',
           jacketColor: '#1e3a8a',
           coatName: 'Chocolate & Tan (Ziggy)'
@@ -297,8 +312,18 @@ export class PeerNetworkManager {
         if (Array.isArray(packet.peers)) {
           for (const p of packet.peers) {
             if (p.id && p.id !== this.peerId) {
-              this.ensureRemotePeer(p.id, p);
-              if (this.onPeerJoin) this.onPeerJoin(p.id, p);
+              const meta = typeof p === 'object' && p !== null ? {
+                name: p.name,
+                jacketColor: p.jacketColor,
+                coatName: p.coatName || p.dogCoatName,
+                hairStyle: p.hairStyle,
+                hairColor: p.hairColor,
+                pantsColor: p.pantsColor,
+                skinTone: p.skinTone,
+                collarColor: p.collarColor
+              } : p;
+              this.ensureRemotePeer(p.id, meta);
+              if (this.onPeerJoin) this.onPeerJoin(p.id, meta);
             }
           }
         }

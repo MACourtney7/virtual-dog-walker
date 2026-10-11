@@ -43,6 +43,7 @@ class CliftonDownGame {
       onMove: (vec) => this.handleJoystickMove(vec),
       onThrow: () => this.throwBall(),
       onLeash: () => this.toggleLeash(),
+      onWhistle: () => this.whistleDog?.(),
       onBark: () => this.barkDog(),
       onPet: () => this.petDog(),
       onChat: () => this.hud.toggleChatInput()
@@ -333,6 +334,23 @@ class CliftonDownGame {
 
     if (this.touchControls && typeof this.touchControls.setLeashed === 'function') {
       this.touchControls.setLeashed(this.owner.isLeashed);
+    }
+  }
+
+  whistleDog() {
+    if (this.dog && typeof this.dog.whistleRecall === 'function') {
+      this.dog.whistleRecall();
+    }
+    if (sound && typeof sound.playWhistle === 'function') {
+      sound.playWhistle();
+    }
+    this.hud.showToast('📯 Whistle! Ziggy recalled to heel');
+    if (this.net && typeof this.net.broadcast === 'function') {
+      if (typeof Protocol.createWhistle === 'function') {
+        this.net.broadcast(Protocol.createWhistle(this.net.peerId, this.owner.x, this.owner.y));
+      } else {
+        this.net.broadcast({ type: 'WHISTLE', senderId: this.net.peerId, x: this.owner.x, y: this.owner.y, timestamp: Date.now() });
+      }
     }
   }
 

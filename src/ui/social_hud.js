@@ -56,6 +56,7 @@ export class SocialHUD {
           <kbd>WASD</kbd> Walk &bull; 
           <kbd>SPACE</kbd> Throw Ball &bull; 
           <kbd>L</kbd> Leash &bull; 
+          <kbd>H</kbd> Whistle &bull; 
           <kbd>B</kbd> Bark &bull; 
           <kbd>E</kbd> Pet &bull; 
           <kbd>ENTER</kbd> Chat

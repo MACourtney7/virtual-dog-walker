@@ -8,7 +8,8 @@ export class TouchControls {
       onLeash: callbacks.onLeash || null,
       onBark: callbacks.onBark || null,
       onPet: callbacks.onPet || null,
-      onChat: callbacks.onChat || null
+      onChat: callbacks.onChat || null,
+      onWhistle: callbacks.onWhistle || null
     };
 
     this.joystickTouchId = null;
@@ -68,6 +69,7 @@ export class TouchControls {
 
     this.actionPad.innerHTML = `
       <button class="touch-action-btn" id="btn-touch-throw" aria-label="Throw Ball">🎾</button>
+      <button class="touch-action-btn" id="btn-touch-whistle" aria-label="Whistle / Recall Dog">📯</button>
       <button class="touch-action-btn" id="btn-touch-pet" aria-label="Pet Dog">❤️</button>
       <button class="touch-action-btn" id="btn-touch-bark" aria-label="Bark">🐕</button>
       <button class="touch-action-btn" id="btn-touch-leash" aria-label="Toggle Leash">🦮</button>
@@ -170,6 +172,7 @@ export class TouchControls {
     };
 
     bindButton('btn-touch-throw', () => this.callbacks.onThrow?.());
+    bindButton('btn-touch-whistle', () => this.callbacks.onWhistle?.());
     bindButton('btn-touch-leash', () => this.callbacks.onLeash?.());
     bindButton('btn-touch-bark', () => this.callbacks.onBark?.());
     bindButton('btn-touch-pet', () => this.callbacks.onPet?.());

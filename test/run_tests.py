@@ -14,6 +14,7 @@ def test_scaffold():
     assert os.path.exists("src/net/network.js"), "src/net/network.js missing"
     assert os.path.exists("src/net/ws_network.js"), "src/net/ws_network.js missing"
     assert os.path.exists("src/ui/social_hud.js"), "src/ui/social_hud.js missing"
+    assert os.path.exists("src/ui/touch_controls.js"), "src/ui/touch_controls.js missing"
     assert os.path.exists("src/systems/audio.js"), "src/systems/audio.js missing"
     assert os.path.exists("server/server.py"), "server/server.py missing"
     assert os.path.exists("server/host.py"), "server/host.py missing"
@@ -34,7 +35,8 @@ def run_all():
         "test/test_ball_physics.py",
         "test/test_protocol.py",
         "test/test_server.py",
-        "test/test_partyserver.py"
+        "test/test_partyserver.py",
+        "test/test_mobile_controls.py"
     ]
     for t in test_suites:
         res = subprocess.run([sys.executable, t])

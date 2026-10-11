@@ -20,6 +20,14 @@ class SoundSynthesizer {
     }
   }
 
+  unlockAudio() {
+    if (!this.ctx) {
+      this.ensureContext();
+    } else if (this.ctx.state === 'suspended') {
+      this.ctx.resume();
+    }
+  }
+
   // Realistic Cheerful Cocker Spaniel Bark
   playBark() {
     this.ensureContext();

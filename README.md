@@ -26,17 +26,18 @@ To monitor active subagents and tasks in real time, launch the TUI board in a te
 
 Clifton Down supports global edge multiplayer and dedicated local hosting with **zero port forwarding**:
 
-1. **Global Edge Rooms (PartyKit - Zero Install / 100% In-Browser)**:
+1. **Always-Open Public Commons (Cloudflare PartyServer & Durable Objects)**:
+   - **Single Shared Park**: By default, all players join **The Commons** (`the-commons`) together. No rooms to create, no codes needed.
    - **Local Edge Dev**:
      ```bash
-     npm run party:dev
+     npm run dev
      ```
-     Runs local edge emulation at `http://localhost:1999`. Open in multiple browser tabs to test multiplayer locally.
-   - **Deploy to Global Edge ($0 Cost)**:
+     Runs local Cloudflare emulation with Wrangler. Open in multiple browser tabs to walk together locally.
+   - **Deploy to Your Cloudflare Account ($0 Cost)**:
      ```bash
-     npm run party:deploy
+     npm run deploy
      ```
-     Deploys the room relay and static game frontend to `https://clifton-down.<subdomain>.partykit.dev`. Anyone can open the link in any web browser and play immediately with zero server installs!
+     Deploys directly to `https://virtual-dog-walker.<your-subdomain>.workers.dev`. Permanent, fast, and free.
 
 2. **Dedicated Local Microserver (Python + Zero-Port Tunnel)**:
    ```bash

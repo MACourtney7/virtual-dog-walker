@@ -11,6 +11,8 @@ export const PacketType = {
   CHAT_MESSAGE: 'CHAT_MESSAGE',
   EMOTE: 'EMOTE',
   WHISTLE: 'WHISTLE',
+  PROXIMITY_CHAT: 'PROXIMITY_CHAT',
+  TOMBSTONE_DROP: 'TOMBSTONE_DROP',
   PEER_LEFT: 'PEER_LEFT'
 };
 
@@ -141,4 +143,30 @@ export class Protocol {
       timestamp: Date.now()
     };
   }
+
+  static createProximityChat(peerId, name, text, x, y, clusterPeers = []) {
+    return {
+      type: PacketType.PROXIMITY_CHAT,
+      senderId: peerId,
+      name,
+      text,
+      x: Math.round(x * 10) / 10,
+      y: Math.round(y * 10) / 10,
+      clusterPeers,
+      timestamp: Date.now()
+    };
+  }
+
+  static createTombstoneDrop(peerId, x, y, text, participants = []) {
+    return {
+      type: PacketType.TOMBSTONE_DROP,
+      senderId: peerId,
+      x: Math.round(x * 10) / 10,
+      y: Math.round(y * 10) / 10,
+      text,
+      participants,
+      timestamp: Date.now()
+    };
+  }
 }
+

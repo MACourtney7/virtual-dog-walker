@@ -83,50 +83,106 @@ export class SocialHUD {
     // 4. Build Customizer Modal
     const modal = document.createElement('div');
     modal.id = 'customizer-modal';
-    modal.style.cssText = `
-      display: none;
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      transform: translate(-50%, -50%);
-      background: rgba(15, 23, 42, 0.94);
-      backdrop-filter: blur(16px);
-      border: 1px solid rgba(255, 255, 255, 0.2);
-      border-radius: 16px;
-      padding: 24px;
-      color: #f8fafc;
-      width: 320px;
-      z-index: 100;
-      box-shadow: 0 16px 40px rgba(0,0,0,0.6);
-    `;
     modal.innerHTML = `
-      <h3 style="margin-bottom: 16px; font-weight: 700; display: flex; justify-content: space-between; align-items: center;">
-        <span>Park Walker Style</span>
-        <span id="close-modal" style="cursor: pointer; opacity: 0.7;">&times;</span>
-      </h3>
-      <div style="margin-bottom: 14px;">
-        <label style="font-size: 0.85rem; color: #94a3b8; display: block; margin-bottom: 6px;">Walker Name</label>
-        <input type="text" id="cust-name" value="${this.owner.name}" maxlength="14" style="width: 100%; padding: 8px 12px; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #fff; font-family: inherit;" />
+      <div class="customizer-header">
+        <h3>Style Customizer</h3>
+        <button class="customizer-close" id="close-modal" aria-label="Close">&times;</button>
       </div>
-      <div style="margin-bottom: 14px;">
-        <label style="font-size: 0.85rem; color: #94a3b8; display: block; margin-bottom: 6px;">Jacket Color</label>
-        <div style="display: flex; gap: 8px;" id="jacket-palette">
-          <div class="color-swatch" data-color="#1e3a8a" style="width: 28px; height: 28px; border-radius: 50%; background: #1e3a8a; cursor: pointer; border: 2px solid #fff;"></div>
-          <div class="color-swatch" data-color="#14532d" style="width: 28px; height: 28px; border-radius: 50%; background: #14532d; cursor: pointer;"></div>
-          <div class="color-swatch" data-color="#831843" style="width: 28px; height: 28px; border-radius: 50%; background: #831843; cursor: pointer;"></div>
-          <div class="color-swatch" data-color="#b45309" style="width: 28px; height: 28px; border-radius: 50%; background: #b45309; cursor: pointer;"></div>
-          <div class="color-swatch" data-color="#334155" style="width: 28px; height: 28px; border-radius: 50%; background: #334155; cursor: pointer;"></div>
+
+      <!-- Tab Navigation -->
+      <div class="customizer-tabs">
+        <button class="customizer-tab-btn active" id="tab-btn-walker" data-tab="cust-tab-walker">👤 Walker</button>
+        <button class="customizer-tab-btn" id="tab-btn-dog" data-tab="cust-tab-dog">🐕 Dog Companion</button>
+      </div>
+
+      <!-- Tab 1: Walker -->
+      <div class="customizer-tab-pane active" id="cust-tab-walker">
+        <div class="cust-form-group">
+          <label class="cust-label" for="cust-name">Walker Name</label>
+          <input type="text" id="cust-name" class="cust-input" value="${this.owner.name || 'Walker'}" maxlength="14" autocomplete="off" />
+        </div>
+
+        <div class="cust-form-group">
+          <label class="cust-label">Skin Tone</label>
+          <div class="cust-palette" id="skin-palette">
+            <div class="color-swatch" data-palette="skinTone" data-color="#fed7aa" style="background: #fed7aa;" title="Light Peach"></div>
+            <div class="color-swatch" data-palette="skinTone" data-color="#fcd34d" style="background: #fcd34d;" title="Warm Gold"></div>
+            <div class="color-swatch" data-palette="skinTone" data-color="#d97706" style="background: #d97706;" title="Honey Tan"></div>
+            <div class="color-swatch" data-palette="skinTone" data-color="#92400e" style="background: #92400e;" title="Warm Chestnut"></div>
+            <div class="color-swatch" data-palette="skinTone" data-color="#7c2d12" style="background: #7c2d12;" title="Deep Espresso"></div>
+          </div>
+        </div>
+
+        <div class="cust-form-group">
+          <label class="cust-label">Hair Style</label>
+          <div class="cust-btn-group" id="hair-style-group">
+            <button class="cust-style-btn active" data-style="SHORT">Short</button>
+            <button class="cust-style-btn" data-style="WAVY">Wavy</button>
+            <button class="cust-style-btn" data-style="PONYTAIL">Ponytail</button>
+            <button class="cust-style-btn" data-style="BEANIE">Beanie</button>
+          </div>
+        </div>
+
+        <div class="cust-form-group">
+          <label class="cust-label">Hair Color</label>
+          <div class="cust-palette" id="hair-palette">
+            <div class="color-swatch" data-palette="hairColor" data-color="#451a03" style="background: #451a03;" title="Brown"></div>
+            <div class="color-swatch" data-palette="hairColor" data-color="#eab308" style="background: #eab308;" title="Blonde"></div>
+            <div class="color-swatch" data-palette="hairColor" data-color="#171717" style="background: #171717;" title="Black"></div>
+            <div class="color-swatch" data-palette="hairColor" data-color="#9a3412" style="background: #9a3412;" title="Auburn"></div>
+            <div class="color-swatch" data-palette="hairColor" data-color="#94a3b8" style="background: #94a3b8;" title="Silver"></div>
+          </div>
+        </div>
+
+        <div class="cust-form-group">
+          <label class="cust-label">Jacket Color</label>
+          <div class="cust-palette" id="jacket-palette">
+            <div class="color-swatch" data-palette="jacketColor" data-color="#1e3a8a" style="background: #1e3a8a;" title="Navy"></div>
+            <div class="color-swatch" data-palette="jacketColor" data-color="#14532d" style="background: #14532d;" title="Forest"></div>
+            <div class="color-swatch" data-palette="jacketColor" data-color="#831843" style="background: #831843;" title="Crimson"></div>
+            <div class="color-swatch" data-palette="jacketColor" data-color="#b45309" style="background: #b45309;" title="Amber"></div>
+            <div class="color-swatch" data-palette="jacketColor" data-color="#334155" style="background: #334155;" title="Slate"></div>
+            <div class="color-swatch" data-palette="jacketColor" data-color="#d97706" style="background: #d97706;" title="Ochre"></div>
+          </div>
+        </div>
+
+        <div class="cust-form-group">
+          <label class="cust-label">Pants Color</label>
+          <div class="cust-palette" id="pants-palette">
+            <div class="color-swatch" data-palette="pantsColor" data-color="#1e293b" style="background: #1e293b;" title="Denim"></div>
+            <div class="color-swatch" data-palette="pantsColor" data-color="#78350f" style="background: #78350f;" title="Tan"></div>
+            <div class="color-swatch" data-palette="pantsColor" data-color="#365314" style="background: #365314;" title="Olive"></div>
+            <div class="color-swatch" data-palette="pantsColor" data-color="#1f2937" style="background: #1f2937;" title="Dark Slate"></div>
+          </div>
         </div>
       </div>
-      <div style="margin-bottom: 18px;">
-        <label style="font-size: 0.85rem; color: #94a3b8; display: block; margin-bottom: 6px;">Dog Breed / Coat</label>
-        <select id="cust-dog-coat" style="width: 100%; padding: 8px 12px; background: #1e293b; border: 1px solid #334155; border-radius: 8px; color: #fff; font-family: inherit;">
-          <option value="CHOCOLATE_TAN">Ziggy (Chocolate & Tan Cocker)</option>
-          <option value="GOLDEN">Golden Retriever</option>
-          <option value="BLACK_LAB">Black Lab</option>
-        </select>
+
+      <!-- Tab 2: Dog Companion -->
+      <div class="customizer-tab-pane" id="cust-tab-dog">
+        <div class="cust-form-group">
+          <label class="cust-label" for="cust-dog-coat">Dog Breed / Coat</label>
+          <select id="cust-dog-coat" class="cust-select">
+            <option value="CHOCOLATE_TAN">Ziggy (Chocolate & Tan Cocker)</option>
+            <option value="GOLDEN">Golden Retriever</option>
+            <option value="BLACK_LAB">Black Lab</option>
+            <option value="JACK_RUSSELL">Jack Russell Terrier</option>
+            <option value="RED_SETTER">Irish Red Setter</option>
+          </select>
+        </div>
+
+        <div class="cust-form-group">
+          <label class="cust-label">Collar Color</label>
+          <div class="cust-palette" id="collar-palette">
+            <div class="color-swatch" data-palette="collarColor" data-color="#0d9488" style="background: #0d9488;" title="Teal"></div>
+            <div class="color-swatch" data-palette="collarColor" data-color="#dc2626" style="background: #dc2626;" title="Red"></div>
+            <div class="color-swatch" data-palette="collarColor" data-color="#2563eb" style="background: #2563eb;" title="Blue"></div>
+            <div class="color-swatch" data-palette="collarColor" data-color="#eab308" style="background: #eab308;" title="Gold"></div>
+            <div class="color-swatch" data-palette="collarColor" data-color="#7c3aed" style="background: #7c3aed;" title="Purple"></div>
+          </div>
+        </div>
       </div>
-      <button id="btn-save-cust" style="width: 100%; padding: 10px; background: #2563eb; color: #fff; border: none; border-radius: 8px; font-weight: 700; cursor: pointer;">Save & Walk</button>
+
+      <button id="btn-save-cust" class="btn-primary-cust">Save & Walk</button>
     `;
     this.container.appendChild(modal);
 
@@ -160,41 +216,110 @@ export class SocialHUD {
     if (typeof localStorage === 'undefined') return;
     try {
       const savedStr = localStorage.getItem('clifton_walker_profile');
-      if (!savedStr) return;
+      if (!savedStr) {
+        this.updateModalActiveSelections();
+        return;
+      }
       const saved = JSON.parse(savedStr);
-      if (!saved || typeof saved !== 'object') return;
+      if (!saved || typeof saved !== 'object') {
+        this.updateModalActiveSelections();
+        return;
+      }
 
+      // 1. Walker attributes (with fallback defaults)
       if (saved.name) {
         this.owner.name = saved.name;
         const nameInput = document.getElementById('cust-name');
         if (nameInput) nameInput.value = saved.name;
       }
+      if (saved.skinTone) {
+        this.owner.skinTone = saved.skinTone;
+      }
+      if (saved.hairStyle) {
+        this.owner.hairStyle = saved.hairStyle;
+      }
+      if (saved.hairColor) {
+        this.owner.hairColor = saved.hairColor;
+      }
       if (saved.jacketColor) {
         this.owner.jacketColor = saved.jacketColor;
-        const swatches = document.querySelectorAll('.color-swatch');
-        swatches.forEach(s => {
-          if (s.getAttribute('data-color') === saved.jacketColor) {
-            s.style.border = '2px solid #fff';
-          } else {
-            s.style.border = 'none';
-          }
-        });
       }
+      if (saved.pantsColor) {
+        this.owner.pantsColor = saved.pantsColor;
+      }
+
+      // 2. Dog companion attributes (with fallback defaults)
       if (saved.coatKey && this.coatPresets && this.coatPresets[saved.coatKey]) {
         this.dog.coat = this.coatPresets[saved.coatKey];
         const coatSelect = document.getElementById('cust-dog-coat');
         if (coatSelect) coatSelect.value = saved.coatKey;
       }
+      if (saved.collarColor) {
+        this.dog.collarColor = saved.collarColor;
+      }
+
+      this.updateModalActiveSelections();
 
       if (this.net && typeof this.net.setLocalMeta === 'function') {
         this.net.setLocalMeta({
           name: this.owner.name,
           jacketColor: this.owner.jacketColor,
-          coatName: this.dog.coat.name
+          coatName: this.dog.coat ? this.dog.coat.name : 'Chocolate & Tan (Ziggy)',
+          hairStyle: this.owner.hairStyle,
+          hairColor: this.owner.hairColor,
+          pantsColor: this.owner.pantsColor,
+          skinTone: this.owner.skinTone,
+          collarColor: this.dog.collarColor
         });
       }
     } catch (e) {
       console.warn('Could not load saved walker profile from localStorage:', e);
+      this.updateModalActiveSelections();
+    }
+  }
+
+  updateModalActiveSelections() {
+    // Update swatch active classes
+    const swatches = document.querySelectorAll('.color-swatch');
+    swatches.forEach(swatch => {
+      const palette = swatch.getAttribute('data-palette');
+      const color = swatch.getAttribute('data-color');
+      let matches = false;
+
+      if (palette === 'skinTone' && this.owner.skinTone === color) matches = true;
+      else if (palette === 'hairColor' && this.owner.hairColor === color) matches = true;
+      else if (palette === 'jacketColor' && this.owner.jacketColor === color) matches = true;
+      else if (palette === 'pantsColor' && this.owner.pantsColor === color) matches = true;
+      else if (palette === 'collarColor' && this.dog.collarColor === color) matches = true;
+
+      if (matches) {
+        swatch.classList.add('active');
+        swatch.style.border = '2px solid #fff';
+      } else {
+        swatch.classList.remove('active');
+        swatch.style.border = '2px solid transparent';
+      }
+    });
+
+    // Update hair style buttons
+    const styleBtns = document.querySelectorAll('.cust-style-btn');
+    styleBtns.forEach(btn => {
+      if (btn.getAttribute('data-style') === (this.owner.hairStyle || 'SHORT')) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+
+    // Update dog coat select
+    const coatSelect = document.getElementById('cust-dog-coat');
+    if (coatSelect && this.dog.coat) {
+      for (const [key, preset] of Object.entries(this.coatPresets || {})) {
+        if (preset === this.dog.coat || preset.name === this.dog.coat.name) {
+          coatSelect.value = key;
+          break;
+        }
+      }
     }
   }
 
@@ -238,6 +363,7 @@ export class SocialHUD {
 
     if (btnCustomize && modal) {
       btnCustomize.addEventListener('click', () => {
+        this.updateModalActiveSelections();
         modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
       });
     }
@@ -246,16 +372,58 @@ export class SocialHUD {
       closeModal.addEventListener('click', () => { modal.style.display = 'none'; });
     }
 
-    // Swatches
-    const swatches = document.querySelectorAll('.color-swatch');
-    swatches.forEach(swatch => {
-      swatch.addEventListener('click', () => {
-        swatches.forEach(s => s.style.border = 'none');
-        swatch.style.border = '2px solid #fff';
-        this.owner.jacketColor = swatch.getAttribute('data-color');
+    // Tab navigation switching
+    const tabBtns = document.querySelectorAll('.customizer-tab-btn');
+    tabBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        tabBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        const targetTabId = btn.getAttribute('data-tab');
+        document.querySelectorAll('.customizer-tab-pane').forEach(pane => {
+          pane.classList.remove('active');
+        });
+        const targetPane = document.getElementById(targetTabId);
+        if (targetPane) targetPane.classList.add('active');
       });
     });
 
+    // Hair Style selector buttons
+    const hairStyleBtns = document.querySelectorAll('.cust-style-btn');
+    hairStyleBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        hairStyleBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.owner.hairStyle = btn.getAttribute('data-style');
+      });
+    });
+
+    // Palette swatches selection
+    const swatches = document.querySelectorAll('.color-swatch');
+    swatches.forEach(swatch => {
+      swatch.addEventListener('click', () => {
+        const palette = swatch.getAttribute('data-palette');
+        const color = swatch.getAttribute('data-color');
+
+        // Deactivate sibling swatches in the same palette
+        const siblings = swatch.parentElement.querySelectorAll('.color-swatch');
+        siblings.forEach(s => {
+          s.classList.remove('active');
+          s.style.border = '2px solid transparent';
+        });
+
+        swatch.classList.add('active');
+        swatch.style.border = '2px solid #fff';
+
+        // Apply immediately to local avatar for live preview
+        if (palette === 'skinTone') this.owner.skinTone = color;
+        else if (palette === 'hairColor') this.owner.hairColor = color;
+        else if (palette === 'jacketColor') this.owner.jacketColor = color;
+        else if (palette === 'pantsColor') this.owner.pantsColor = color;
+        else if (palette === 'collarColor') this.dog.collarColor = color;
+      });
+    });
+
+    // Save & Walk button
     if (btnSaveCust && modal) {
       btnSaveCust.addEventListener('click', () => {
         const nameInput = document.getElementById('cust-name');
@@ -265,7 +433,7 @@ export class SocialHUD {
 
         const coatSelect = document.getElementById('cust-dog-coat');
         let coatKey = 'CHOCOLATE_TAN';
-        if (coatSelect && this.coatPresets[coatSelect.value]) {
+        if (coatSelect && this.coatPresets && this.coatPresets[coatSelect.value]) {
           coatKey = coatSelect.value;
           this.dog.coat = this.coatPresets[coatSelect.value];
         }
@@ -273,27 +441,44 @@ export class SocialHUD {
         // Save updated profile to localStorage
         if (typeof localStorage !== 'undefined') {
           try {
-            localStorage.setItem('clifton_walker_profile', JSON.stringify({
+            const profileToSave = {
               name: this.owner.name,
+              skinTone: this.owner.skinTone,
+              hairStyle: this.owner.hairStyle,
+              hairColor: this.owner.hairColor,
               jacketColor: this.owner.jacketColor,
-              coatKey: coatSelect ? coatSelect.value : coatKey
-            }));
+              pantsColor: this.owner.pantsColor,
+              coatKey: coatSelect ? coatSelect.value : coatKey,
+              collarColor: this.dog.collarColor
+            };
+            localStorage.setItem('clifton_walker_profile', JSON.stringify(profileToSave));
           } catch (e) {
             console.warn('Could not save walker profile to localStorage:', e);
           }
         }
 
         if (this.net && typeof this.net.setLocalMeta === 'function') {
+          const extraMeta = {
+            hairStyle: this.owner.hairStyle,
+            hairColor: this.owner.hairColor,
+            pantsColor: this.owner.pantsColor,
+            skinTone: this.owner.skinTone,
+            collarColor: this.dog.collarColor
+          };
+
           this.net.setLocalMeta({
             name: this.owner.name,
             jacketColor: this.owner.jacketColor,
-            coatName: this.dog.coat.name
+            coatName: this.dog.coat ? this.dog.coat.name : 'Chocolate & Tan (Ziggy)',
+            ...extraMeta
           });
+
           this.net.broadcast(Protocol.createHello(
             this.net.peerId,
             this.owner.name,
             this.owner.jacketColor,
-            this.dog.coat.name
+            this.dog.coat ? this.dog.coat.name : 'Chocolate & Tan (Ziggy)',
+            extraMeta
           ));
         }
 

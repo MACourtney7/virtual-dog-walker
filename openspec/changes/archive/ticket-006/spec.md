@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-006"
 title: "Virtual Dog Walker: Mobile Browser Support with Responsive Touch Controls and Dynamic Viewport"
-state: "PLANNING"
+state: "COMPLETED"
 created_at: "2026-10-11T12:24:00Z"
 base_branch: "main"
 ticket_branch: "factory/ticket-006/main"
@@ -116,30 +116,30 @@ max_review_cycles: 3
 
 ## 4. Requirements & Acceptance Criteria
 
-- [ ] **REQ-1: Viewport & Safe-Area Mobile Configuration (`index.html`, `src/style.css`)**
+- [x] **REQ-1: Viewport & Safe-Area Mobile Configuration (`index.html`, `src/style.css`)**
   - Viewport meta tag configures `viewport-fit=cover, maximum-scale=1.0, user-scalable=no`.
   - Mobile web app capable meta tags configured for iOS/Android full-screen experience.
   - `#game-container` and `#game-canvas` enforce `touch-action: none` and `user-select: none`.
   - UI overlays respect `env(safe-area-inset-top)` and `env(safe-area-inset-bottom)`.
   - *Verification*: Automated unit test validates `index.html` meta tags and CSS attributes.
 
-- [ ] **REQ-2: Camera Screen-to-World Coordinate Conversion (`src/world/field.js`)**
+- [x] **REQ-2: Camera Screen-to-World Coordinate Conversion (`src/world/field.js`)**
   - `Camera` provides `screenToWorld(screenX, screenY)` mapping client touch/mouse coordinates to world coordinates, accounting for viewport offset and world bounds.
   - *Verification*: Unit test validates coordinate conversion with various camera offsets and clamp limits.
 
-- [ ] **REQ-3: Virtual Touch Controller Engine (`src/ui/touch_controls.js`)**
+- [x] **REQ-3: Virtual Touch Controller Engine (`src/ui/touch_controls.js`)**
   - Implements floating/fixed analog joystick with thumb tracking, deadzone (10%), and normalized directional vector output.
   - Provides touch action buttons for Throw (🎾), Leash (🦮), Bark (🐕), Pet (❤️), Chat (💬).
   - Only active or displayed when touch capabilities are present (`navigator.maxTouchPoints > 0` or coarse pointer).
   - *Verification*: Unit tests verify joystick vector calculation, deadzone clamping, and button callback dispatching.
 
-- [ ] **REQ-4: In-Game Tap Interactions & Mobile Audio Unlock (`src/main.js`, `src/systems/audio.js`)**
+- [x] **REQ-4: In-Game Tap Interactions & Mobile Audio Unlock (`src/main.js`, `src/systems/audio.js`)**
   - Touch/tap on field throws ball towards tapped world point.
   - Tapping near companion dog triggers pet action with heart emitter and sound.
   - Audio unlocks on first `touchstart`/`pointerdown` user gesture.
   - *Verification*: Verification of audio unlock handlers and tap dispatch logic in game loop.
 
-- [ ] **REQ-5: Mobile Responsive HUD & Test Suite CI (`src/ui/social_hud.js`, `src/style.css`, `test/test_mobile_controls.py`, `test/run_tests.py`)**
+- [x] **REQ-5: Mobile Responsive HUD & Test Suite CI (`src/ui/social_hud.js`, `src/style.css`, `test/test_mobile_controls.py`, `test/run_tests.py`)**
   - Hides desktop `<kbd>` hint on touch/mobile devices; compacts top bar for 360px+ screens.
   - Test suite `test/test_mobile_controls.py` covers touch math, vector normalization, and viewport integrity.
   - `python3 test/run_tests.py` passes 100% green.

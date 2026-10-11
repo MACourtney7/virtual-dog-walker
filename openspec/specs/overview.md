@@ -88,6 +88,25 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 
 ---
 
-## 7. Test Suite & CI/CD
-- `python3 test/run_tests.py`: Comprehensive test runner covering physics ballistics, arrival steering, leash clamping, network packet schemas, microserver room routing, and PartyServer contracts.
+## 7. Mobile Ergonomics & Responsive Touch Architecture
+- **Virtual Touch Controller (`src/ui/touch_controls.js`)**:
+  - Virtual analog joystick with dynamic thumb tracking, 10% deadzone threshold, 50px maximum deflection clamp, and normalized `(vx, vy)` vector output for fluid 360° locomotion.
+  - Multi-touch isolation using explicit touch identifiers (`joystickTouchId`) ensuring left-thumb steering does not conflict with right-hand button taps or meadow interactions.
+  - Glassmorphic touch action pad (Throw 🎾, Leash 🦮, Bark 🐕, Pet ❤️, Chat 💬) with haptic feedback support (`navigator.vibrate`).
+  - Direct canvas tap-to-throw: tapping any point on the open field translates screen coordinates to world coordinates via `Camera.screenToWorld` and throws the tennis ball with distance-proportional speed.
+  - Direct canvas tap-to-pet: tapping near the companion dog triggers affectionate petting.
+- **Mobile Viewport & Safe-Area Constraints (`index.html`, `src/style.css`)**:
+  - Viewport configured with `viewport-fit=cover, maximum-scale=1.0, user-scalable=no` and full-screen mobile web app capability tags.
+  - Canvas and container lock `touch-action: none` to eliminate accidental browser pinch-zoom, double-tap zoom delay, and rubber-band pull-to-refresh.
+  - Notched phone and dynamic island safe areas respected via `env(safe-area-inset-top)` and `env(safe-area-inset-bottom)`.
+  - Dynamic viewport height handled with `height: 100dvh` and visual viewport resize events.
+- **Touch Audio Auto-Unlock (`src/systems/audio.js`, `src/main.js`)**:
+  - Complies with iOS Safari and Android Chrome autoplay restrictions by unlocking and resuming Web Audio `AudioContext` on initial `touchstart` or `pointerdown`.
+- **Responsive UI Adaptation (`src/ui/social_hud.js`)**:
+  - Automatically hides desktop `<kbd>` controls guidance on touch/mobile devices while keeping desktop experience untouched.
+
+---
+
+## 8. Test Suite & CI/CD
+- `python3 test/run_tests.py`: Comprehensive test runner covering physics ballistics, arrival steering, leash clamping, network packet schemas, microserver room routing, PartyServer contracts, viewport meta attributes, safe-area CSS rules, bounded camera projection math, and joystick analog vector normalization.
 - `.github/workflows/ci.yml`: Automated GitHub Actions pipeline running test suites on every push/PR with a 3-minute safety timeout, followed by auto-deploy to Cloudflare Workers on `main`.

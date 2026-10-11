@@ -2,15 +2,26 @@
 import { Server, routePartykitRequest } from "partyserver";
 
 export class ParkServer extends Server {
+  constructor(...args) {
+    super(...args);
+    this.peers = new Map();
+  }
+
   onConnect(conn, ctx) {
     const roomId = this.name || (this.room && this.room.id) || "the-commons";
     
-    // Collect existing connected peers
+    // Collect existing connected peers with full metadata
     const existingPeers = [];
-    const connections = this.getConnections ? this.getConnections() : (this.room ? this.room.getConnections() : []);
-    for (const otherConn of connections) {
-      if (otherConn.id !== conn.id) {
-        existingPeers.push(otherConn.id);
+    if (this.peers) {
+      for (const [pid, peerData] of this.peers.entries()) {
+        if (pid !== conn.id) {
+          existingPeers.push({
+            id: peerData.id || pid,
+            name: peerData.name || 'Walker',
+            jacketColor: peerData.jacketColor || '#1e3a8a',
+            coatName: peerData.coatName || peerData.dogCoatName || 'Chocolate & Tan (Ziggy)'
+          });
+        }
       }
     }
 
@@ -30,6 +41,16 @@ export class ParkServer extends Server {
     try {
       const data = typeof message === "string" ? JSON.parse(message) : message;
 
+      if (data && data.type === 'HELLO') {
+        if (!this.peers) this.peers = new Map();
+        this.peers.set(conn.id, {
+          id: conn.id,
+          name: data.name || 'Walker',
+          jacketColor: data.jacketColor || '#1e3a8a',
+          coatName: data.dogCoatName || data.coatName || 'Chocolate & Tan (Ziggy)'
+        });
+      }
+
       data.senderId = conn.id;
       data.peerId = conn.id;
 
@@ -42,6 +63,10 @@ export class ParkServer extends Server {
   }
 
   onClose(conn) {
+    if (this.peers) {
+      this.peers.delete(conn.id);
+    }
+
     const leftPacket = {
       type: "PEER_LEFT",
       peerId: conn.id,

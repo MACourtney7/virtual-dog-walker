@@ -23,7 +23,7 @@ export class WebSocketNetworkManager {
 
     // Local player metadata to broadcast during handshakes
     this.localMeta = {
-      name: 'Park Walker',
+      name: 'Walker',
       jacketColor: '#1e3a8a',
       coatName: 'Chocolate & Tan (Ziggy)'
     };
@@ -140,8 +140,8 @@ export class WebSocketNetworkManager {
         ownerInterpolator: new EntityInterpolator(),
         dogInterpolator: new EntityInterpolator(),
         meta: {
-          name: meta.name || 'Player',
-          jacketColor: meta.jacketColor || '#14532d',
+          name: meta.name || 'Walker',
+          jacketColor: meta.jacketColor || '#1e3a8a',
           coatName: meta.coatName || 'Chocolate & Tan (Ziggy)'
         }
       };
@@ -231,14 +231,24 @@ export class WebSocketNetworkManager {
 
     switch (packet.type) {
       case PacketType.HELLO: {
+        const isNewPeer = !this.remotePeers.has(senderId);
         const meta = {
-          name: packet.name || 'Visitor',
-          jacketColor: packet.jacketColor || '#14532d',
+          name: packet.name || 'Walker',
+          jacketColor: packet.jacketColor || '#1e3a8a',
           coatName: packet.dogCoatName || 'Chocolate & Tan (Ziggy)'
         };
         this.ensureRemotePeer(senderId, meta);
         if (this.onPeerJoin) {
           this.onPeerJoin(senderId, meta);
+        }
+        // Bidirectional greeting: ensure late joiners receive our appearance
+        if (isNewPeer) {
+          this.broadcast(Protocol.createHello(
+            this.peerId,
+            this.localMeta.name,
+            this.localMeta.jacketColor,
+            this.localMeta.coatName
+          ));
         }
         break;
       }
@@ -261,7 +271,11 @@ export class WebSocketNetworkManager {
         if (Array.isArray(packet.peers)) {
           for (const p of packet.peers) {
             const peerId = typeof p === 'string' ? p : p?.id;
-            const meta = typeof p === 'object' ? p : {};
+            const meta = typeof p === 'object' && p !== null ? {
+              name: p.name,
+              jacketColor: p.jacketColor,
+              coatName: p.coatName || p.dogCoatName
+            } : {};
             if (peerId && peerId !== this.peerId) {
               this.ensureRemotePeer(peerId, meta);
               if (this.onPeerJoin) {

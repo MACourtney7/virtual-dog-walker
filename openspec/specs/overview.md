@@ -24,9 +24,10 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 
 ## 3. Entities & Canine Companion Mechanics
 - **Owner Avatar (`src/entities/owner.js`)**:
-  - 8-directional keyboard movement (<kbd>WASD</kbd> / <kbd>Arrow keys</kbd>) with acceleration and deceleration.
+  - 8-directional movement (<kbd>WASD</kbd> / touch joystick) with acceleration and deceleration.
   - Animated walk cycles (foot swing and arm sway).
-  - Real-time customizer: customizable jacket colors, pants, hair colors, skin tones, and player names.
+  - Clean baseline player naming: default name is `"Walker"` with local avatar nametag dynamically displaying `"${this.name} (You)"` in yellow (`#fde047`), while remote avatars display `"${this.name}"` in white (`#f8fafc`).
+  - Real-time customizer: customizable jacket colors, pants, hair colors, skin tones, and player names with `localStorage` profile persistence across reloads.
   - Speech bubble and emote rendering above avatar heads.
 - **Companion Dog (`src/entities/companion_dog.js`)**:
   - Authentic Cocker Spaniel model featuring chocolate & tan coat (`#2E1A14`, `#D89B54`), honey-tan eyebrow pips, white chest bib, and teal collar with gold charm.
@@ -55,10 +56,12 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
     - Default room is `the-commons`. Anyone loading the site enters the same active park instance.
     - `getShareUrl()` returns the clean base domain (`https://<domain>/`).
     - Optional private rooms supported via `?room=<custom-code>`.
-  - **Packet Protocol Parity & Authoritative Stamping**:
+  - **Packet Protocol Parity, Stateful Peer Registry & Bidirectional Handshake**:
     - Uniform packet schemas: `HELLO`, `WELCOME`, `SYNC_STATE`, `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, `EMOTE`, `PEER_LEFT`.
     - Edge relay server enforces authoritative `conn.id` stamping on all broadcasts (`data.senderId = conn.id`).
-    - Client automatically re-dispatches `HELLO` profile handshake upon receiving `WELCOME` with assigned `peerId`, ensuring remote peers register player appearance matching 16Hz `SYNC_STATE` updates.
+    - Server maintains active peer registry (`this.peers`) and transmits rich peer styling records (`{ id, name, jacketColor, coatName }`) in `WELCOME.peers`.
+    - Existing peers reply with bidirectional `HELLO` greetings when a new player arrives, ensuring zero placeholder fallbacks.
+    - Render loop dynamically synchronizes remote avatar styling from incoming peer metadata in real time.
   - **Host Relaying & Synchronization**:
     - Synchronizes authoritative ball physics.
     - State broadcasts at 16Hz; `EntityInterpolator` provides smooth exponential damping (lerp) for remote positions at 60fps.

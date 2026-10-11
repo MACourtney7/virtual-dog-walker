@@ -22,7 +22,7 @@ class CliftonDownGame {
     // Local Entities
     const startX = 1350;
     const startY = 1000;
-    this.owner = new Owner(startX, startY, 'You (Walker)', true);
+    this.owner = new Owner(startX, startY, 'Walker', true);
     this.dog = new CompanionDog(startX + 40, startY + 20, this.owner, CoatPreset.CHOCOLATE_TAN);
     this.ball = new TennisBall(startX + 20, startY + 20);
 
@@ -120,8 +120,8 @@ class CliftonDownGame {
         return;
       }
 
-      const remoteOwner = new Owner(this.owner.x, this.owner.y, meta.name || 'Friend', false);
-      remoteOwner.jacketColor = meta.jacketColor || '#14532d';
+      const remoteOwner = new Owner(this.owner.x, this.owner.y, meta.name || 'Walker', false);
+      remoteOwner.jacketColor = meta.jacketColor || '#1e3a8a';
 
       const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
       this.remotePlayers.set(peerId, { owner: remoteOwner, dog: remoteDog });
@@ -399,20 +399,31 @@ class CliftonDownGame {
       if (peerId === this.net.peerId) continue;
 
       let remote = this.remotePlayers.get(peerId);
+      const meta = interpolatorData.meta || {};
+      let coat = CoatPreset.CHOCOLATE_TAN;
+      const coatName = (meta && meta.coatName) ? meta.coatName : '';
+      if (coatName.includes('Golden')) coat = CoatPreset.GOLDEN;
+      else if (coatName.includes('Black')) coat = CoatPreset.BLACK_LAB;
+
       if (!remote) {
         // Auto-create remote player if not yet instantiated
-        const meta = interpolatorData.meta || {};
-        let coat = CoatPreset.CHOCOLATE_TAN;
-        const coatName = (meta && meta.coatName) ? meta.coatName : '';
-        if (coatName.includes('Golden')) coat = CoatPreset.GOLDEN;
-        else if (coatName.includes('Black')) coat = CoatPreset.BLACK_LAB;
-
-        const remoteOwner = new Owner(this.owner.x, this.owner.y, meta.name || 'Friend', false);
-        remoteOwner.jacketColor = meta.jacketColor || '#14532d';
+        const remoteOwner = new Owner(this.owner.x, this.owner.y, meta.name || 'Walker', false);
+        remoteOwner.jacketColor = meta.jacketColor || '#1e3a8a';
         const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
         remote = { owner: remoteOwner, dog: remoteDog };
         this.remotePlayers.set(peerId, remote);
         this.hud.updatePlayerCount(this.remotePlayers.size + 1);
+      } else {
+        // Continuously reflect interpolatorData.meta changes
+        if (meta.name && remote.owner.name !== meta.name) {
+          remote.owner.name = meta.name;
+        }
+        if (meta.jacketColor && remote.owner.jacketColor !== meta.jacketColor) {
+          remote.owner.jacketColor = meta.jacketColor;
+        }
+        if (meta.coatName && remote.dog.coat !== coat) {
+          remote.dog.coat = coat;
+        }
       }
 
       const ownerState = interpolatorData.ownerInterpolator.update(dt);

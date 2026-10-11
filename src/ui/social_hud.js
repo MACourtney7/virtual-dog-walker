@@ -1,6 +1,8 @@
 // Social HUD Component - Room Status, One-Click Share, Chat Input, and Character Customizer
 import { Protocol } from '../net/protocol.js';
 import { TouchControls } from './touch_controls.js';
+import { WSStatus } from '../net/ws_network.js';
+import { NetStatus } from '../net/network.js';
 
 export class SocialHUD {
   constructor(networkManager, localOwner, localDog, coatPresets) {
@@ -283,7 +285,7 @@ export class SocialHUD {
     const badge = document.getElementById('hud-mode-badge');
     const label = document.getElementById('btn-room-label');
 
-    if (this.net.isPartyKit || this.net.isDedicatedServer) {
+    if (status === WSStatus.CONNECTED || status === NetStatus.CONNECTED_PEER || status === NetStatus.HOSTING) {
       const isCommons = !this.net.roomId || this.net.roomId === 'the-commons' || this.net.roomId === 'clifton-field';
       if (badge) {
         if (isCommons) {
@@ -297,26 +299,34 @@ export class SocialHUD {
       if (label) {
         label.textContent = isCommons ? 'Share Park' : 'Share Link';
       }
-    } else if (false) {
+    } else if (status === WSStatus.CONNECTING || status === NetStatus.CONNECTING) {
       if (badge) {
-        badge.textContent = `🌲 Park (${this.net.roomId || 'Connected'})`;
-        badge.style.background = '#059669';
+        badge.textContent = '⏳ Connecting...';
+        badge.style.background = '#d97706';
       }
       if (label) {
-        label.textContent = 'Share Link';
+        label.textContent = 'Connecting...';
       }
-    } else if (this.net.roomId) {
+    } else if (status === WSStatus.RECONNECTING) {
       if (badge) {
-        badge.textContent = this.net.isHost ? `Host (${this.net.roomId})` : `In Field (${this.net.roomId})`;
-        badge.style.background = '#2563eb';
+        badge.textContent = '🔄 Reconnecting...';
+        badge.style.background = '#d97706';
       }
       if (label) {
-        label.textContent = 'Share Link';
+        label.textContent = 'Connecting...';
+      }
+    } else if (status === WSStatus.OFFLINE || status === WSStatus.ERROR || status === NetStatus.OFFLINE || status === NetStatus.ERROR) {
+      if (badge) {
+        badge.textContent = 'Solo (Offline)';
+        badge.style.background = '#64748b';
+      }
+      if (label) {
+        label.textContent = 'Host Field';
       }
     } else {
       if (badge) {
-        badge.textContent = 'Solo';
-        badge.style.background = '#52a447';
+        badge.textContent = 'Solo (Offline)';
+        badge.style.background = '#64748b';
       }
       if (label) {
         label.textContent = 'Host Field';

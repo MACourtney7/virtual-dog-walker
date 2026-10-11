@@ -98,7 +98,7 @@ export class WebSocketNetworkManager {
         return new URL(clean);
       }
       clean = clean.replace(/\/+$/, '');
-      return new URL(`${clean}/parties/park/${roomId}`);
+      return new URL(`${clean}/parties/parkserver/${roomId}`);
     }
 
     // Standard Dedicated Microserver fallback
@@ -244,9 +244,19 @@ export class WebSocketNetworkManager {
       }
 
       case PacketType.WELCOME: {
-        if (packet.peerId && packet.peerId !== this.peerId) {
+        if (packet.peerId) {
           this.peerId = packet.peerId;
         }
+
+        // Immediately re-broadcast the local player's HELLO packet so existing peers and server
+        // record the profile mapped directly to the authoritative connection ID
+        this.broadcast(Protocol.createHello(
+          this.peerId,
+          this.localMeta.name,
+          this.localMeta.jacketColor,
+          this.localMeta.coatName
+        ));
+
         // Populate all existing peers in the room
         if (Array.isArray(packet.peers)) {
           for (const p of packet.peers) {

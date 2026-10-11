@@ -72,7 +72,7 @@ export const CoatPreset = {
 };
 
 export class CompanionDog {
-  constructor(x = 1240, y = 920, owner = null, coat = CoatPreset.CHOCOLATE_TAN, collarColor = '#0d9488') {
+  constructor(x = 1240, y = 920, owner = null, coat = CoatPreset.CHOCOLATE_TAN, collarColor = '#0d9488', personality = null) {
     this.x = x;
     this.y = y;
     this.vx = 0;
@@ -86,6 +86,19 @@ export class CompanionDog {
     this.collarColor = collarColor;
     this.radius = 14;
     this.depthY = this.y + 6;
+
+    // Canine Personality Model (1-5 scale)
+    this.personality = {
+      playfulness: 3,
+      shyness: 2,
+      barkyness: 2,
+      obedience: 4,
+      ...(personality || {})
+    };
+    this.setPersonality(this.personality);
+
+    // Leash pulling physics state
+    this.isPullingLeash = false;
 
     this.state = (this.owner && !this.owner.isLeashed) ? DogState.ROAMING : DogState.FOLLOWING;
     this.stateTimer = 0;
@@ -134,6 +147,49 @@ export class CompanionDog {
     this.recallHeelTimer = 0;
   }
 
+  setPersonality(p) {
+    if (!p || typeof p !== 'object') return;
+    const clampTrait = (val, def) => {
+      if (val === undefined || val === null) return def;
+      const num = Number(val);
+      if (isNaN(num)) return def;
+      return Math.max(1, Math.min(5, Math.round(num)));
+    };
+
+    if (p.playfulness !== undefined) {
+      this.personality.playfulness = clampTrait(p.playfulness, this.personality.playfulness || 3);
+    }
+    if (p.shyness !== undefined) {
+      this.personality.shyness = clampTrait(p.shyness, this.personality.shyness || 2);
+    }
+    if (p.barkyness !== undefined) {
+      this.personality.barkyness = clampTrait(p.barkyness, this.personality.barkyness || 2);
+    }
+    if (p.obedience !== undefined) {
+      this.personality.obedience = clampTrait(p.obedience, this.personality.obedience || 4);
+    }
+
+    // Increases enthusiasm and speed during ball fetch sprint
+    this.sprintSpeed = 260 + this.personality.playfulness * 15;
+  }
+
+  setChat(text, duration = 3.5) {
+    this.emoteBubble = text;
+    this.emoteTimer = duration;
+  }
+
+  setEmote(emote, duration = 2.5) {
+    this.emoteBubble = emote;
+    this.emoteTimer = duration;
+  }
+
+  onRemoteBark(sourceDog = null) {
+    const respondChance = 0.18 * this.personality.barkyness;
+    if (Math.random() < respondChance && !this.isBarking && this.state !== DogState.FETCHING) {
+      this.bark();
+    }
+  }
+
   bark(audioEngine = null) {
     this.state = DogState.BARKING;
     this.stateTimer = 0.45;
@@ -158,10 +214,23 @@ export class CompanionDog {
     this.recallHeelTimer = 10.0; // 10 seconds of close heel following
     this.socialTargetDog = null;
     this.isReturningToOwner = false;
+    this.isPullingLeash = false;
     if (this.hasBall && this.targetBall) {
       this.hasBall = false;
       this.targetBall.drop(this.x, this.y);
       this.targetBall = null;
+    }
+
+    // Whistle recall promptness: sprint speed immediately engages without delay
+    if (this.owner) {
+      const dx = this.owner.x - this.x;
+      const dy = this.owner.y - this.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 10) {
+        this.vx = (dx / dist) * this.sprintSpeed;
+        this.vy = (dy / dist) * this.sprintSpeed;
+        this.angle = Math.atan2(this.vy, this.vx);
+      }
     }
   }
 
@@ -184,16 +253,51 @@ export class CompanionDog {
   }
 
   fetchBall(ball) {
+    // If leashed, the dog NEVER enters FETCHING state and does not chase balls
+    if (this.owner && this.owner.isLeashed) {
+      return;
+    }
     this.targetBall = ball;
     this.state = DogState.FETCHING;
     this.wagSpeed = 15;
   }
 
   update(dt, field, otherDogs = [], activeBall = null) {
-    // 1. Check ball status
-    if (activeBall && (activeBall.isThrown || (this.state === DogState.FETCHING && !this.hasBall))) {
-      this.targetBall = activeBall;
-      this.state = DogState.FETCHING;
+    const isLeashed = Boolean(this.owner && this.owner.isLeashed);
+
+    // 1. Check ball status & enforce strict prohibition of ball chasing on-leash
+    if (isLeashed) {
+      if (this.state === DogState.FETCHING) {
+        this.state = DogState.FOLLOWING;
+        this.targetBall = null;
+        this.hasBall = false;
+      }
+      if (activeBall && activeBall.isThrown) {
+        // Turns head eagerly toward ball position
+        this.angle = Math.atan2(activeBall.y - this.y, activeBall.x - this.x);
+        // Wags tail actively if playful
+        this.wagSpeed = 10 + this.personality.playfulness * 2;
+        // Pulls against leash toward the ball direction
+        this.isPullingLeash = true;
+      }
+    } else {
+      if (activeBall && (activeBall.isThrown || (this.state === DogState.FETCHING && !this.hasBall))) {
+        this.targetBall = activeBall;
+        this.state = DogState.FETCHING;
+      }
+    }
+
+    // Sensitivity to remote bark triggers: higher barkyness responds more promptly
+    if (otherDogs && Array.isArray(otherDogs) && !this.isBarking && this.state !== DogState.FETCHING) {
+      for (const other of otherDogs) {
+        if (other && other !== this && other.isBarking) {
+          const dist = Math.hypot(this.x - other.x, this.y - other.y);
+          if (dist < 260 && Math.random() < (0.008 * this.personality.barkyness)) {
+            this.bark();
+            break;
+          }
+        }
+      }
     }
 
     // 2. State Machine & Steering Behaviors
@@ -240,24 +344,52 @@ export class CompanionDog {
         break;
     }
 
+    // When on-leash and an active ball is thrown, pull toward the ball direction against leash
+    if (isLeashed && activeBall && activeBall.isThrown) {
+      this.angle = Math.atan2(activeBall.y - this.y, activeBall.x - this.x);
+      const pullSpeed = 50 + this.personality.playfulness * 12;
+      this.vx = Math.cos(this.angle) * pullSpeed;
+      this.vy = Math.sin(this.angle) * pullSpeed;
+      this.wagSpeed = 10 + this.personality.playfulness * 2;
+      this.isPullingLeash = true;
+    }
+
     // 3. Movement integration
     this.x += this.vx * dt;
     this.y += this.vy * dt;
 
-    // Leash constraint: If leashed to owner, hard clamp to max leash length
+    // Leash constraint & pulling physics: If leashed to owner, hard clamp to max leash length
     if (this.owner && this.owner.isLeashed && this.state !== DogState.FETCHING) {
       const maxLeash = 105;
       const dx = this.x - this.owner.x;
       const dy = this.y - this.owner.y;
       const dist = Math.hypot(dx, dy);
 
+      // Leash pulling physics
+      if (activeBall && activeBall.isThrown) {
+        this.isPullingLeash = true;
+      } else if (dist > 95) {
+        const dotAway = dx * this.vx + dy * this.vy;
+        if (dotAway > 0 || dist >= maxLeash) {
+          // High obedience reduces propensity to pull against leash
+          if (this.personality.obedience < 4 || dist >= 100) {
+            this.isPullingLeash = true;
+          }
+        }
+      } else if (dist < 48 || (!this.owner.isMoving && Math.hypot(this.vx, this.vy) < 12)) {
+        // Dog is at heel or owner stopped and dog is resting
+        this.isPullingLeash = false;
+      }
+
       if (dist > maxLeash) {
         this.x = this.owner.x + (dx / dist) * maxLeash;
         this.y = this.owner.y + (dy / dist) * maxLeash;
         this.vx *= 0.5;
         this.vy *= 0.5;
+        this.isPullingLeash = true;
       }
     } else if (this.owner && !this.owner.isLeashed) {
+      this.isPullingLeash = false;
       // Off-leash bounded perimeter constraint: hard clamp to 230px so dog never strays out of sight
       const maxRoam = 230;
       const dx = this.x - this.owner.x;
@@ -297,9 +429,10 @@ export class CompanionDog {
     this.rightEar.vel += rightForce * dt;
     this.rightEar.angle += this.rightEar.vel * dt;
 
-    // 5. Tail Wagging
+    // 5. Tail Wagging - scales wag frequency proportional to playfulness
     const movingWag = Math.hypot(this.vx, this.vy) > 10 ? 1.5 : 1.0;
-    this.tailAngle = Math.sin(Date.now() * 0.001 * this.wagSpeed * movingWag) * this.wagAmp;
+    const playfulnessMultiplier = 0.6 + this.personality.playfulness * 0.15;
+    this.tailAngle = Math.sin(Date.now() * 0.001 * this.wagSpeed * movingWag * playfulnessMultiplier) * this.wagAmp;
 
     // 6. Bark Wave Animation
     if (this.isBarking) {
@@ -327,16 +460,29 @@ export class CompanionDog {
     if (!otherDogs || !Array.isArray(otherDogs)) return false;
     if (this.state === DogState.FETCHING || this.state === DogState.RECALLED) return false;
 
+    // Approach probability modified by shyness: low shyness dogs approach eagerly, high shyness approach with lower probability
+    const approachProb = Math.max(0.008, 0.045 - (this.personality.shyness - 1) * 0.009);
+
     for (const other of otherDogs) {
       if (other && other !== this && other.state !== DogState.FETCHING && this.state !== DogState.FETCHING) {
         const dogDist = Math.hypot(this.x - other.x, this.y - other.y);
-        if (dogDist < 110 && this.state !== DogState.SOCIAL_GREET && this.state !== DogState.PLAY_BOW && Math.random() < 0.03) {
-          this.state = DogState.SOCIAL_GREET;
+        if (dogDist < 110 && this.state !== DogState.SOCIAL_GREET && this.state !== DogState.PLAY_BOW && Math.random() < approachProb) {
+          // Playfulness modifies chance to open directly with a play bow
+          const playBowDirectChance = (this.personality.playfulness - 1) * 0.05;
+          if (Math.random() < playBowDirectChance) {
+            this.state = DogState.PLAY_BOW;
+            this.stateTimer = 2.4;
+            this.wagSpeed = 14 + this.personality.playfulness * 2;
+            this.emoteBubble = '🐾';
+            this.emoteTimer = 2.0;
+          } else {
+            this.state = DogState.SOCIAL_GREET;
+            this.stateTimer = 3.0;
+            this.wagSpeed = 12 + this.personality.playfulness * 2;
+            this.emoteBubble = Math.random() < 0.5 ? '🐾' : (Math.random() < 0.5 ? '🐶' : '❤️');
+            this.emoteTimer = 2.5;
+          }
           this.socialTargetDog = other;
-          this.stateTimer = 3.0;
-          this.wagSpeed = 16;
-          this.emoteBubble = Math.random() < 0.5 ? '🐾' : (Math.random() < 0.5 ? '🐶' : '❤️');
-          this.emoteTimer = 2.5;
           return true;
         }
       }
@@ -368,11 +514,13 @@ export class CompanionDog {
     const dist = Math.hypot(dx, dy);
 
     // If owner stopped for a while, transition to idle sniff or sit
+    // High obedience dogs stay attentive at heel longer with smaller stray chance
+    const idleTransitionChance = Math.max(0.001, 0.009 - this.personality.obedience * 0.0015);
     if (!this.owner.isMoving && dist < 25) {
       this.vx *= 0.8;
       this.vy *= 0.8;
       this.wagSpeed = 6;
-      if (Math.random() < 0.006) {
+      if (Math.random() < idleTransitionChance) {
         this.state = Math.random() < 0.5 ? DogState.IDLE_SNIFF : DogState.SITTING;
         this.stateTimer = 2.0 + Math.random() * 3.0;
       }
@@ -386,7 +534,9 @@ export class CompanionDog {
       targetSpeed = this.speed * (dist / slowingRadius);
     }
 
-    if (dist > 8) {
+    // Higher obedience adheres strictly to heel follow offset with smaller arrival deadband
+    const arrivalDeadband = Math.max(3, 11 - this.personality.obedience * 1.5);
+    if (dist > arrivalDeadband) {
       this.vx = (dx / dist) * targetSpeed;
       this.vy = (dy / dist) * targetSpeed;
       this.angle = Math.atan2(this.vy, this.vx);
@@ -493,6 +643,11 @@ export class CompanionDog {
     } else {
       this.wagSpeed = 6;
     }
+
+    // Spontaneous barking influenced by barkyness
+    if (Math.random() < (this.personality.barkyness * 0.0006) && !this.isBarking) {
+      this.bark();
+    }
   }
 
   updateSocialGreet(dt) {
@@ -521,13 +676,16 @@ export class CompanionDog {
       return;
     }
 
-    // Approach peer dog down to ~28-36px, then circle gently or pause for snout-to-snout sniff
-    if (dist > 36) {
+    // Shyness modifies social berth: low shyness dogs approach to ~28px, high shyness dogs keep a wider berth (~45px)
+    const minBerth = 24 + this.personality.shyness * 4.2;
+    const maxBerth = minBerth + 8;
+
+    if (dist > maxBerth) {
       const approachSpeed = this.speed * 0.75;
       this.vx = (dx / dist) * approachSpeed;
       this.vy = (dy / dist) * approachSpeed;
       this.angle = Math.atan2(this.vy, this.vx);
-    } else if (dist < 28) {
+    } else if (dist < minBerth) {
       const backSpeed = this.speed * 0.25;
       this.vx = -(dx / (dist || 1)) * backSpeed;
       this.vy = -(dy / (dist || 1)) * backSpeed;
@@ -541,17 +699,19 @@ export class CompanionDog {
       this.angle = Math.atan2(dy, dx);
     }
 
-    this.wagSpeed = 16;
+    this.wagSpeed = 12 + this.personality.playfulness * 2;
     this.stateTimer -= dt;
 
     if (this.stateTimer <= 0) {
       this.socialTargetDog = null;
-      if (Math.random() < 0.4) {
+      // Playfulness modifies play-bow transition chance
+      const playBowChance = 0.15 + (this.personality.playfulness / 5) * 0.45;
+      if (Math.random() < playBowChance) {
         this.state = DogState.PLAY_BOW;
         this.stateTimer = 2.2;
         this.emoteBubble = '🐾';
         this.emoteTimer = 2.0;
-        this.wagSpeed = 16;
+        this.wagSpeed = 14 + this.personality.playfulness * 2;
       } else {
         this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
       }
@@ -679,7 +839,7 @@ export class CompanionDog {
     this.vx *= 0.5;
     this.vy *= 0.5;
     this.stateTimer -= dt;
-    this.wagSpeed = 18;
+    this.wagSpeed = 14 + this.personality.playfulness * 2;
     if (this.stateTimer <= 0) {
       this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
     }
@@ -690,6 +850,10 @@ export class CompanionDog {
     this.vy *= 0.4;
     this.stateTimer -= dt;
     this.wagSpeed = 4;
+    // Spontaneous barking influenced by barkyness
+    if (Math.random() < (this.personality.barkyness * 0.001) && !this.isBarking) {
+      this.bark();
+    }
     if (this.owner && this.owner.isMoving && this.owner.isLeashed) {
       this.state = DogState.FOLLOWING;
     } else if (this.owner && !this.owner.isLeashed && Math.hypot(this.x - this.owner.x, this.y - this.owner.y) > 150) {
@@ -704,6 +868,10 @@ export class CompanionDog {
     this.vy = 0;
     this.stateTimer -= dt;
     this.wagSpeed = 4;
+    // Spontaneous barking influenced by barkyness
+    if (Math.random() < (this.personality.barkyness * 0.001) && !this.isBarking) {
+      this.bark();
+    }
     if (this.owner && this.owner.isMoving && this.owner.isLeashed) {
       this.state = DogState.FOLLOWING;
     } else if (this.owner && !this.owner.isLeashed && Math.hypot(this.x - this.owner.x, this.y - this.owner.y) > 150) {
@@ -952,16 +1120,29 @@ export class CompanionDog {
     const collarX = this.x;
     const collarY = this.y - 2;
 
-    // Catenary sag curve
-    const midX = (handX + collarX) / 2;
-    const midY = (handY + collarY) / 2 + 14;
+    const distToOwner = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
 
-    ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
-    ctx.lineWidth = 1.8;
-    ctx.beginPath();
-    ctx.moveTo(handX, handY);
-    ctx.quadraticCurveTo(midX, midY, collarX, collarY);
-    ctx.stroke();
+    if (this.isPullingLeash || distToOwner > 98) {
+      // Taut, tensioned straight line from hand anchor to collar anchor with subtle vibrational jitter
+      const jitter = Math.sin(Date.now() * 0.05) * 0.8;
+      ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
+      ctx.lineWidth = 2.0;
+      ctx.beginPath();
+      ctx.moveTo(handX, handY);
+      ctx.lineTo(collarX + jitter, collarY + jitter);
+      ctx.stroke();
+    } else {
+      // Slack catenary sag quadratic curve
+      const midX = (handX + collarX) / 2;
+      const midY = (handY + collarY) / 2 + 14;
+
+      ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(handX, handY);
+      ctx.quadraticCurveTo(midX, midY, collarX, collarY);
+      ctx.stroke();
+    }
     ctx.restore();
   }
 

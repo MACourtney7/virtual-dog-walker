@@ -243,6 +243,21 @@ export class TouchControls {
     }
   }
 
+  setLeashed(isLeashed) {
+    const btn = document.getElementById('btn-touch-leash');
+    if (!btn) return;
+
+    if (isLeashed) {
+      btn.textContent = '🦮';
+      btn.classList.remove('off-leash');
+      btn.setAttribute('aria-label', 'Toggle Leash (Currently On)');
+    } else {
+      btn.textContent = '🐕';
+      btn.classList.add('off-leash');
+      btn.setAttribute('aria-label', 'Toggle Leash (Currently Off)');
+    }
+  }
+
   getVector() {
     return this.joystickVector;
   }

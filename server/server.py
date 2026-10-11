@@ -154,6 +154,10 @@ class CliftonServer:
                         peer.meta["pantsColor"] = packet.get("pantsColor")
                         peer.meta["skinTone"] = packet.get("skinTone")
                         peer.meta["collarColor"] = packet.get("collarColor")
+                        if packet.get("personality") is not None:
+                            peer.meta["personality"] = packet.get("personality")
+                        elif "personality" in packet:
+                            peer.meta["personality"] = None
 
                         # Send WELCOME packet back to this peer with list of existing peers
                         room_peers = self.rooms.get_room_peers(peer.room_id)
@@ -169,7 +173,8 @@ class CliftonServer:
                                     "hairColor": p.meta.get("hairColor"),
                                     "pantsColor": p.meta.get("pantsColor"),
                                     "skinTone": p.meta.get("skinTone"),
-                                    "collarColor": p.meta.get("collarColor")
+                                    "collarColor": p.meta.get("collarColor"),
+                                    "personality": p.meta.get("personality")
                                 })
 
                         welcome_pkt = {

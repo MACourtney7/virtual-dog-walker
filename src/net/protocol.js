@@ -27,6 +27,7 @@ export class Protocol {
       pantsColor: extraMeta.pantsColor,
       skinTone: extraMeta.skinTone,
       collarColor: extraMeta.collarColor,
+      personality: extraMeta.personality || null,
       timestamp: Date.now()
     };
   }

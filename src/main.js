@@ -91,7 +91,8 @@ class CliftonDownGame {
       hairColor: this.owner.hairColor,
       pantsColor: this.owner.pantsColor,
       skinTone: this.owner.skinTone,
-      collarColor: this.dog.collarColor
+      collarColor: this.dog.collarColor,
+      personality: this.dog.personality || null
     });
 
     this.net.onStatusChange = (status, msg) => {
@@ -136,6 +137,13 @@ class CliftonDownGame {
         if (meta.pantsColor) existing.owner.pantsColor = meta.pantsColor;
         if (meta.skinTone) existing.owner.skinTone = meta.skinTone;
         if (meta.collarColor) existing.dog.collarColor = meta.collarColor;
+        if (meta.personality) {
+          if (typeof existing.dog.setPersonality === 'function') {
+            existing.dog.setPersonality(meta.personality);
+          } else {
+            existing.dog.personality = { ...meta.personality };
+          }
+        }
         existing.dog.coat = coat;
         return;
       }
@@ -149,6 +157,13 @@ class CliftonDownGame {
 
       const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
       if (meta?.collarColor) remoteDog.collarColor = meta.collarColor;
+      if (meta?.personality) {
+        if (typeof remoteDog.setPersonality === 'function') {
+          remoteDog.setPersonality(meta.personality);
+        } else {
+          remoteDog.personality = { ...meta.personality };
+        }
+      }
 
       this.remotePlayers.set(peerId, { owner: remoteOwner, dog: remoteDog });
 
@@ -505,6 +520,13 @@ class CliftonDownGame {
         }
         if (meta.coatName && remote.dog.coat !== coat) {
           remote.dog.coat = coat;
+        }
+        if (meta.personality) {
+          if (typeof remote.dog.setPersonality === 'function') {
+            remote.dog.setPersonality(meta.personality);
+          } else {
+            remote.dog.personality = { ...meta.personality };
+          }
         }
       }
 

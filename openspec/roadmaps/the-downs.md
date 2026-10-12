@@ -20,8 +20,8 @@ Transform *Virtual Dog Walker* into **"The Downs"**, inspired by the authentic g
 | `ticket-013` | Canine Personality System & Leash Dynamics | `HIGH` | `["ticket-012"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-014` | Canine Stray Run-Off & Dog Poop/Bin Mechanics | `MEDIUM` | `["ticket-011", "ticket-013"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-015` | Ad-Hoc Proximity Group Chat & Tombstones | `HIGH` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
-| `ticket-016` | Park NPCs: Autonomous Walkers & Joggers | `MEDIUM` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
-| `ticket-017` | UTC Day/Night Twilight & Clifton Downs Weather | `MEDIUM` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
+| `ticket-016` | Park NPCs: Autonomous Walkers & Joggers | `MEDIUM` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-017` | UTC Day/Night Twilight & Clifton Downs Weather | `MEDIUM` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 
 ## 3. Blast Radius & Scope Collision Matrix
 
@@ -44,8 +44,8 @@ flowchart TD
     T013["ticket-013 (Dog Personality & Leash Dynamics) [COMPLETED]"]
     T014["ticket-014 (Stray Run-Off & Poop/Bin Mechanics) [COMPLETED]"]
     T015["ticket-015 (Ad-Hoc Proximity Chat & Tombstones) [COMPLETED]"]
-    T016["ticket-016 (Park NPCs: Walkers & Joggers) [IN_PROGRESS]"]
-    T017["ticket-017 (UTC Day/Night & Clifton Weather) [IN_PROGRESS]"]
+    T016["ticket-016 (Park NPCs: Walkers & Joggers) [COMPLETED]"]
+    T017["ticket-017 (UTC Day/Night & Clifton Weather) [COMPLETED]"]
 
     T012 --> T013
     T011 --> T014
@@ -61,7 +61,7 @@ flowchart TD
 - [x] Ticket-013 completed and merged to `main`.
 - [x] Ticket-014 completed and merged to `main`.
 - [x] Ticket-015 completed and merged to `main`.
-- [ ] Ticket-016 completed and merged to `main`.
-- [ ] Ticket-017 completed and merged to `main`.
-- [ ] End-to-end integration tests pass across combined deliverables.
+- [x] Ticket-016 completed and merged to `main`.
+- [x] Ticket-017 completed and merged to `main`.
+- [x] End-to-end integration tests pass across combined deliverables.
 - [ ] Canonical specifications reconciled in `openspec/specs/`.

@@ -466,6 +466,72 @@ export class Field {
     return { x: nx, y: ny };
   }
 
+  // Predefined waypoint route loops for ambient park NPCs
+  static getParkWaypoints(loopType = 'ladies_mile') {
+    const ladies_mile = [
+      { x: 420, y: 1880, id: 'lm-sw' },
+      { x: 850, y: 1600 },
+      { x: 1250, y: 1330 },
+      { x: 1650, y: 1080 },
+      { x: 2050, y: 830 },
+      { x: 2450, y: 620 },
+      { x: 2680, y: 520, id: 'lm-ne' },
+      { x: 2550, y: 580, isBench: true },
+      { x: 2200, y: 760 },
+      { x: 1750, y: 1020 },
+      { x: 1300, y: 1350 },
+      { x: 750, y: 1700 },
+      { x: 480, y: 1840, isBench: true }
+    ];
+
+    const sea_walls = [
+      { x: 280, y: 800 },
+      { x: 220, y: 920, isBench: true, isOverlook: true },
+      { x: 260, y: 1060 },
+      { x: 240, y: 1200, isBench: true, isOverlook: true },
+      { x: 270, y: 1360 },
+      { x: 260, y: 1480, isBench: true, isOverlook: true },
+      { x: 320, y: 1540 },
+      { x: 420, y: 1380 },
+      { x: 440, y: 1120 },
+      { x: 380, y: 880 }
+    ];
+
+    const durdham_down = [
+      { x: 1550, y: 1200 },
+      { x: 1797, y: 984 },
+      { x: 1420, y: 820, isOverlook: true },
+      { x: 1720, y: 750 },
+      { x: 2150, y: 550 },
+      { x: 2400, y: 450, isOverlook: true },
+      { x: 2320, y: 520, isBench: true },
+      { x: 2120, y: 820 },
+      { x: 1850, y: 1060 }
+    ];
+
+    if (loopType === 'all') {
+      return {
+        ladies_mile,
+        sea_walls,
+        durdham_down
+      };
+    }
+
+    if (loopType === 'sea_walls') {
+      return sea_walls;
+    }
+
+    if (loopType === 'durdham_down') {
+      return durdham_down;
+    }
+
+    return ladies_mile;
+  }
+
+  getParkWaypoints(loopType = 'ladies_mile') {
+    return Field.getParkWaypoints(loopType);
+  }
+
   // Depth-Sorted (Y-sort) Render Pipeline
   render(ctx, camera, dynamicEntities = []) {
     const viewLeft = camera.x;

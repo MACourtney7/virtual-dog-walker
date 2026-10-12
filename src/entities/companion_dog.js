@@ -1,4 +1,5 @@
 // Companion Dog Entity - Canine Steering AI, Floppy Ear Springs, Leash Mechanics & Ball Fetching
+import { PoopPile } from './waste.js';
 
 export const DogState = {
   FOLLOWING: 'FOLLOWING',
@@ -9,7 +10,9 @@ export const DogState = {
   FETCHING: 'FETCHING',
   PLAY_BOW: 'PLAY_BOW',
   BARKING: 'BARKING',
-  RECALLED: 'RECALLED'
+  RECALLED: 'RECALLED',
+  LOST: 'LOST',
+  POOPING: 'POOPING'
 };
 
 export const CoatPreset = {
@@ -145,6 +148,23 @@ export class CompanionDog {
     // Whistle Recall & Timed Heel state
     this.isRecalledToHeel = false;
     this.recallHeelTimer = 0;
+
+    // Canine Idle Stray Run-Off Engine state
+    this.ownerStillTimer = 0;
+    this.strayCheckTimer = 0;
+    this.isLost = false;
+    this.lostTargetX = 0;
+    this.lostTargetY = 0;
+
+    // Dog Poop Event state
+    this.poopTimer = 0;
+    this.nextPoopTime = 150 + Math.random() * 90;
+    this.poopSquatDuration = 0;
+
+    // Event callbacks
+    this.onStrayTriggered = null;
+    this.onStrayResolved = null;
+    this.onPoopDropped = null;
   }
 
   setPersonality(p) {
@@ -206,9 +226,13 @@ export class CompanionDog {
   }
 
   whistleRecall() {
+    const wasLost = this.state === DogState.LOST || this.isLost;
     this.state = DogState.RECALLED;
-    this.emoteBubble = '!';
-    this.emoteTimer = 2.0;
+    this.isLost = false;
+    this.ownerStillTimer = 0;
+    this.strayCheckTimer = 0;
+    this.emoteBubble = wasLost ? '❤️' : '!';
+    this.emoteTimer = wasLost ? 2.5 : 2.0;
     this.wagSpeed = 18;
     this.isRecalledToHeel = false;
     this.recallHeelTimer = 10.0; // 10 seconds of close heel following
@@ -219,6 +243,10 @@ export class CompanionDog {
       this.hasBall = false;
       this.targetBall.drop(this.x, this.y);
       this.targetBall = null;
+    }
+
+    if (wasLost && typeof this.onStrayResolved === 'function') {
+      this.onStrayResolved(this);
     }
 
     // Whistle recall promptness: sprint speed immediately engages without delay
@@ -253,8 +281,11 @@ export class CompanionDog {
   }
 
   fetchBall(ball) {
-    // If leashed, the dog NEVER enters FETCHING state and does not chase balls
+    // If leashed, lost, or pooping, the dog NEVER enters FETCHING state and does not chase balls
     if (this.owner && this.owner.isLeashed) {
+      return;
+    }
+    if (this.state === DogState.LOST || this.state === DogState.POOPING) {
       return;
     }
     this.targetBall = ball;
@@ -267,7 +298,71 @@ export class CompanionDog {
     const nearbyNPCs = npcs || [];
     this.checkNPCInteractions(nearbyNPCs);
 
-    // 1. Check ball status & enforce strict prohibition of ball chasing on-leash
+    // Idle Tracking & Whistle/Leash Reset
+    if (this.owner && !isLeashed && this.state !== DogState.LOST) {
+      const ownerVx = this.owner.vx || 0;
+      const ownerVy = this.owner.vy || 0;
+      const ownerSpeed = Math.hypot(ownerVx, ownerVy);
+      if (ownerSpeed < 2) {
+        this.ownerStillTimer += dt;
+      } else {
+        this.ownerStillTimer = 0;
+        this.strayCheckTimer = 0;
+      }
+
+      // Obedience-Scaled Stray Run-Off Trigger
+      if (this.ownerStillTimer > 35) {
+        this.strayCheckTimer += dt;
+        if (this.strayCheckTimer >= 5.0) {
+          this.strayCheckTimer = 0;
+          const ob = Math.max(1, Math.min(5, Math.round(this.personality.obedience || 4)));
+          const probMap = { 1: 0.50, 2: 0.30, 3: 0.15, 4: 0.05, 5: 0.01 };
+          const prob = probMap[ob] ?? 0.05;
+
+          if (Math.random() < prob) {
+            this.state = DogState.LOST;
+            this.isLost = true;
+            const rx = 250 + Math.random() * 2600;
+            const ry = 250 + Math.random() * 1800;
+            this.lostTargetX = rx;
+            this.lostTargetY = ry;
+            this.x = rx;
+            this.y = ry;
+            this.vx = 0;
+            this.vy = 0;
+            if (typeof this.onStrayTriggered === 'function') {
+              this.onStrayTriggered(this);
+            }
+          }
+        }
+      }
+    } else {
+      this.ownerStillTimer = 0;
+      this.strayCheckTimer = 0;
+      if (isLeashed && (this.state === DogState.LOST || this.isLost)) {
+        this.state = DogState.FOLLOWING;
+        this.isLost = false;
+        if (typeof this.onStrayResolved === 'function') {
+          this.onStrayResolved(this);
+        }
+      }
+    }
+
+    // Walking time accumulation for Dog Poop Event
+    const curSpeed = Math.hypot(this.vx, this.vy);
+    if ((this.state === DogState.FOLLOWING || this.state === DogState.ROAMING) && curSpeed > 10) {
+      this.poopTimer += dt;
+      if (this.poopTimer >= this.nextPoopTime) {
+        this.poopTimer = 0;
+        this.nextPoopTime = 160 + Math.random() * 80;
+        this.state = DogState.POOPING;
+        this.poopSquatDuration = 2.0;
+        this.vx = 0;
+        this.vy = 0;
+      }
+    }
+
+    // 1. Check ball status & enforce strict prohibition of ball chasing on-leash / while lost / while pooping
     if (isLeashed) {
       if (this.state === DogState.FETCHING) {
         this.state = DogState.FOLLOWING;
@@ -284,13 +379,15 @@ export class CompanionDog {
       }
     } else {
       if (activeBall && (activeBall.isThrown || (this.state === DogState.FETCHING && !this.hasBall))) {
-        this.targetBall = activeBall;
-        this.state = DogState.FETCHING;
+        if (this.state !== DogState.LOST && this.state !== DogState.POOPING) {
+          this.targetBall = activeBall;
+          this.state = DogState.FETCHING;
+        }
       }
     }
 
     // Sensitivity to remote bark triggers: higher barkyness responds more promptly
-    if (otherDogs && Array.isArray(otherDogs) && !this.isBarking && this.state !== DogState.FETCHING) {
+    if (otherDogs && Array.isArray(otherDogs) && !this.isBarking && this.state !== DogState.FETCHING && this.state !== DogState.POOPING) {
       for (const other of otherDogs) {
         if (other && other !== this && other.isBarking) {
           const dist = Math.hypot(this.x - other.x, this.y - other.y);
@@ -304,6 +401,14 @@ export class CompanionDog {
 
     // 2. State Machine & Steering Behaviors
     switch (this.state) {
+      case DogState.LOST:
+        this.updateLost(dt);
+        break;
+
+      case DogState.POOPING:
+        this.updatePooping(dt, field);
+        break;
+
       case DogState.FETCHING:
         this.updateFetching(dt);
         break;
@@ -390,7 +495,7 @@ export class CompanionDog {
         this.vy *= 0.5;
         this.isPullingLeash = true;
       }
-    } else if (this.owner && !this.owner.isLeashed) {
+    } else if (this.owner && !this.owner.isLeashed && this.state !== DogState.LOST) {
       this.isPullingLeash = false;
       // Off-leash bounded perimeter constraint: hard clamp to 230px so dog never strays out of sight
       const maxRoam = 230;
@@ -495,9 +600,49 @@ export class CompanionDog {
     }
   }
 
+  updateLost(dt) {
+    this.vx = 0;
+    this.vy = 0;
+    this.wagSpeed = 4;
+
+    // Retrieval check
+    if (this.owner) {
+      const distToOwner = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
+      if (distToOwner < 55) {
+        this.state = DogState.RECALLED;
+        this.isLost = false;
+        this.ownerStillTimer = 0;
+        this.strayCheckTimer = 0;
+        this.emoteBubble = '❤️';
+        this.emoteTimer = 2.5;
+        this.wagSpeed = 18;
+        if (typeof this.onStrayResolved === 'function') {
+          this.onStrayResolved(this);
+        }
+      }
+    }
+  }
+
+  updatePooping(dt, field) {
+    this.vx = 0;
+    this.vy = 0;
+    this.wagSpeed = 3;
+    this.poopSquatDuration -= dt;
+
+    if (this.poopSquatDuration <= 0) {
+      const pile = new PoopPile(null, this.x, this.y);
+      if (field && typeof field.addPoopPile === 'function') {
+        field.addPoopPile(pile);
+      }
+      if (typeof this.onPoopDropped === 'function') {
+        this.onPoopDropped(this, pile);
+      }
+      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
+    }
+  }
   checkSocialInteractions(otherDogs) {
     if (!otherDogs || !Array.isArray(otherDogs)) return false;
-    if (this.state === DogState.FETCHING || this.state === DogState.RECALLED) return false;
+    if (this.state === DogState.FETCHING || this.state === DogState.RECALLED || this.state === DogState.LOST || this.state === DogState.POOPING) return false;
 
     // Approach probability modified by shyness: low shyness dogs approach eagerly, high shyness approach with lower probability
     const approachProb = Math.max(0.008, 0.045 - (this.personality.shyness - 1) * 0.009);
@@ -947,9 +1092,12 @@ export class CompanionDog {
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
 
-    // Play-bow posture squash/stretch
+    // Play-bow or squat posture squash/stretch
     if (this.state === DogState.PLAY_BOW) {
       ctx.scale(1.1, 0.85);
+    } else if (this.state === DogState.POOPING) {
+      ctx.scale(0.88, 1.12);
+      ctx.translate(-2, 0);
     }
 
     // Paws (front and back)

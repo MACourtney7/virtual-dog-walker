@@ -12,6 +12,7 @@ import { TouchControls } from './ui/touch_controls.js';
 import { ProximityChat } from './ui/proximity_chat.js';
 import { ChatTombstone } from './entities/tombstone.js';
 import { WalkerNPC, JoggerNPC } from './entities/npc.js';
+import { NavigationArrow } from './ui/navigation_arrow.js';
 
 export class CliftonDownGame {
   constructor() {
@@ -87,6 +88,32 @@ export class CliftonDownGame {
 
     // UI HUD
     this.hud = new SocialHUD(this.net, this.owner, this.dog, CoatPreset);
+
+    // Directional Navigation Compass Arrow & Waste Management State
+    this.navArrow = new NavigationArrow();
+    this.hasPoopBag = false;
+    this.activePoopPileNearPlayer = null;
+    this.activeBinNearPlayer = null;
+
+    // Dog Stray Run-Off and Waste Drop Event Callbacks
+    this.dog.onStrayTriggered = (dog) => {
+      this.hud.showToast('Your dog ran off! Check the compass arrow 🐕');
+      this.navArrow.setTarget(dog.x, dog.y, 'DOG', 'Find your dog!', '#f59e0b');
+    };
+
+    this.dog.onStrayResolved = (dog) => {
+      if (this.navArrow.target && this.navArrow.target.type === 'DOG') {
+        this.navArrow.clearTarget();
+      }
+      this.hud.showToast('Reunited with your dog! ❤️');
+    };
+
+    this.dog.onPoopDropped = (dog, poopPile) => {
+      if (this.field && typeof this.field.addPoopPile === 'function') {
+        this.field.addPoopPile(poopPile);
+      }
+      this.hud.showToast('Your dog did a poop! Please pick it up 🟤');
+    };
 
     // Proximity Chat HUD & Dynamic Spatial Clustering
     this.proximityChat = new ProximityChat({
@@ -451,8 +478,14 @@ export class CliftonDownGame {
           break;
 
         case 'KeyE':
-          // Pet Dog
-          this.petDog();
+          // Contextual Interact: Pick Up Waste -> Dispose in Bin -> Pet Dog
+          if (this.activePoopPileNearPlayer) {
+            this.pickUpPoop();
+          } else if (this.activeBinNearPlayer && this.hasPoopBag) {
+            this.disposePoopBag();
+          } else {
+            this.petDog();
+          }
           break;
 
         case 'KeyH':
@@ -514,6 +547,26 @@ export class CliftonDownGame {
       if (distToDog < 48) {
         this.petDog();
         return;
+      }
+
+      // Check if tap was near active poop pile (< 40px)
+      if (this.activePoopPileNearPlayer) {
+        const poopScreen = this.camera.worldToScreen(this.activePoopPileNearPlayer.x, this.activePoopPileNearPlayer.y);
+        const distToPoopScreen = Math.hypot(e.clientX - poopScreen.x, e.clientY - poopScreen.y);
+        if (distToPoopScreen < 40) {
+          this.pickUpPoop();
+          return;
+        }
+      }
+
+      // Check if tap was near active dog bin (< 44px)
+      if (this.activeBinNearPlayer && this.hasPoopBag) {
+        const binScreen = this.camera.worldToScreen(this.activeBinNearPlayer.x, this.activeBinNearPlayer.y);
+        const distToBinScreen = Math.hypot(e.clientX - binScreen.x, e.clientY - binScreen.y);
+        if (distToBinScreen < 44) {
+          this.disposePoopBag();
+          return;
+        }
       }
 
       // Open field tap: Throw ball towards tapped world coordinate
@@ -597,6 +650,39 @@ export class CliftonDownGame {
     } else {
       this.hud.showToast('🐾 Walk closer to Ziggy to pet!');
     }
+  }
+
+  pickUpPoop() {
+    if (!this.activePoopPileNearPlayer) return;
+    const pile = this.activePoopPileNearPlayer;
+    if (this.field && typeof this.field.removePoopPile === 'function') {
+      this.field.removePoopPile(pile.id);
+    }
+    this.hasPoopBag = true;
+    this.activePoopPileNearPlayer = null;
+    this.hud.showToast('Collected in poop bag 🟤 Find a dog bin!');
+
+    if (this.field && typeof this.field.getNearestBin === 'function') {
+      const nearestBin = this.field.getNearestBin(this.owner.x, this.owner.y);
+      if (nearestBin && this.navArrow) {
+        this.navArrow.setTarget(nearestBin.x, nearestBin.y, 'BIN', 'Nearest Bin', '#10b981');
+      }
+    }
+  }
+
+  disposePoopBag() {
+    if (!this.activeBinNearPlayer || !this.hasPoopBag) return;
+    this.hasPoopBag = false;
+    this.activeBinNearPlayer = null;
+
+    if (this.navArrow && this.navArrow.target && this.navArrow.target.type === 'BIN') {
+      this.navArrow.clearTarget();
+    }
+
+    if (sound && typeof sound.playPet === 'function') {
+      sound.playPet();
+    }
+    this.hud.showToast('Disposed cleanly! The Downs thanks you 🌳');
   }
 
   throwBall() {
@@ -739,7 +825,41 @@ export class CliftonDownGame {
       this.net.broadcast(Protocol.createBallSync(this.ball));
     }
 
-    // 7. Update Camera
+    // 7. Navigation Arrow & Waste/Bin Proximity Tracking
+    if (this.navArrow) {
+      this.navArrow.update(dt);
+      if (this.dog && this.dog.isLost) {
+        this.navArrow.setTarget(this.dog.x, this.dog.y, 'DOG', 'Find your dog!', '#f59e0b');
+      }
+    }
+
+    // Proximity to poop piles (< 38px)
+    let foundPoop = null;
+    if (this.field && Array.isArray(this.field.poopPiles) && !this.hasPoopBag) {
+      for (const pile of this.field.poopPiles) {
+        const distToPile = Math.hypot(pile.x - this.owner.x, pile.y - this.owner.y);
+        if (distToPile < 38) {
+          foundPoop = pile;
+          break;
+        }
+      }
+    }
+    this.activePoopPileNearPlayer = foundPoop;
+
+    // Proximity to dog bins (< 42px)
+    let foundBin = null;
+    if (this.field && Array.isArray(this.field.bins) && this.hasPoopBag) {
+      for (const bin of this.field.bins) {
+        const distToBin = Math.hypot(bin.x - this.owner.x, bin.y - this.owner.y);
+        if (distToBin < 42) {
+          foundBin = bin;
+          break;
+        }
+      }
+    }
+    this.activeBinNearPlayer = foundBin;
+
+    // 8. Update Camera
     this.camera.update(dt);
   }
 
@@ -768,8 +888,59 @@ export class CliftonDownGame {
     // Field renders background turf, then Y-sorts trees, benches, tombstones, owners, dogs, and balls
     this.field.render(this.ctx, this.camera, dynamicEntities);
 
+    // In-World Contextual Interaction Badges
+    if (this.activePoopPileNearPlayer) {
+      this.drawInteractionPrompt(
+        this.ctx,
+        this.activePoopPileNearPlayer.x,
+        this.activePoopPileNearPlayer.y - 18,
+        '[E] Pick up waste'
+      );
+    } else if (this.activeBinNearPlayer && this.hasPoopBag) {
+      this.drawInteractionPrompt(
+        this.ctx,
+        this.activeBinNearPlayer.x,
+        this.activeBinNearPlayer.y - 28,
+        '[E] Dispose in bin'
+      );
+    }
+
     // Restore Camera
     this.camera.restore(this.ctx);
+
+    // Screen-Space HUD: Directional Navigation Arrow
+    if (this.navArrow && this.ctx && this.camera && this.owner) {
+      this.navArrow.draw(this.ctx, this.camera, this.owner.x, this.owner.y);
+    }
+  }
+
+  drawInteractionPrompt(ctx, worldX, worldY, text) {
+    ctx.save();
+    ctx.font = '600 12px system-ui, -apple-system, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    const textMetrics = ctx.measureText(text);
+    const badgeW = textMetrics.width + 16;
+    const badgeH = 22;
+
+    ctx.fillStyle = 'rgba(15, 23, 42, 0.85)';
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.3)';
+    ctx.lineWidth = 1;
+
+    const r = badgeH / 2;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(worldX - badgeW / 2, worldY - badgeH / 2, badgeW, badgeH, r);
+    } else {
+      ctx.rect(worldX - badgeW / 2, worldY - badgeH / 2, badgeW, badgeH);
+    }
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(text, worldX, worldY + 0.5);
+    ctx.restore();
   }
 }
 

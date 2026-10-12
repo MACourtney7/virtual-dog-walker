@@ -45,7 +45,9 @@ def run_all():
         "test/test_character_customization.py",
         "test/test_dog_personality_leash.py",
         "test/test_proximity_chat.py",
-        "test/test_npcs.py"
+        "test/test_npcs.py",
+        "test/test_navigation_arrow.py",
+        "test/test_stray_and_poop.py"
     ]
     for t in test_suites:
         res = subprocess.run([sys.executable, t])

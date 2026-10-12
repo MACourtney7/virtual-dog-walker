@@ -164,6 +164,16 @@ class TestDownsMap(unittest.TestCase):
         self.assertIn("playBark", self.audio_code, "playBark missing in audio.js")
         self.assertIn("playWhistle", self.audio_code, "playWhistle missing in audio.js")
 
+        # Weather & diurnal audio modulation methods (brief-04-audio-weather)
+        self.assertIn("setWeather", self.audio_code, "setWeather method missing in audio.js")
+        self.assertIn("setTimeOfDay", self.audio_code, "setTimeOfDay method missing in audio.js")
+        self.assertIn("playThunderRumble", self.audio_code, "playThunderRumble method missing in audio.js")
+        self.assertIn("playWindGust", self.audio_code, "playWindGust method missing in audio.js")
+        self.assertIn("_initRainSynthesizer", self.audio_code, "_initRainSynthesizer method missing in audio.js")
+        self.assertIn("rainGainNode", self.audio_code, "rainGainNode property missing in audio.js")
+        self.assertIn("currentWeather", self.audio_code, "currentWeather state property missing in audio.js")
+        self.assertIn("currentTimeOfDay", self.audio_code, "currentTimeOfDay state property missing in audio.js")
+
 
 if __name__ == "__main__":
     unittest.main()

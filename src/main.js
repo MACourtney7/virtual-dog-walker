@@ -11,6 +11,7 @@ import { sound } from './systems/audio.js';
 import { TouchControls } from './ui/touch_controls.js';
 import { ProximityChat } from './ui/proximity_chat.js';
 import { ChatTombstone } from './entities/tombstone.js';
+import { WalkerNPC, JoggerNPC } from './entities/npc.js';
 
 export class CliftonDownGame {
   constructor() {
@@ -34,6 +35,49 @@ export class CliftonDownGame {
     this.ball = new TennisBall(startX + 20, startY + 20);
 
     this.camera.follow(this.owner);
+
+    // Ambient Park NPCs (The Downs Trails)
+    this.npcs = [];
+    const ladiesMileWaypoints = this.field.getParkWaypoints('ladies_mile');
+    const seaWallsWaypoints = this.field.getParkWaypoints('sea_walls');
+    const durdhamDownWaypoints = this.field.getParkWaypoints('durdham_down');
+
+    // Joggers:
+    // 1 Jogger running 'ladies_mile' loop (starting at index 0)
+    const lm0 = ladiesMileWaypoints[0];
+    this.npcs.push(new JoggerNPC(lm0.x, lm0.y, {
+      waypoints: ladiesMileWaypoints,
+      waypointIndex: 0
+    }));
+
+    // 1 Jogger running 'ladies_mile' loop (starting at opposite midpoint index, e.g. index 6)
+    const lm6 = ladiesMileWaypoints[6];
+    this.npcs.push(new JoggerNPC(lm6.x, lm6.y, {
+      waypoints: ladiesMileWaypoints,
+      waypointIndex: 6
+    }));
+
+    // Walkers:
+    // 1 Walker strolling 'sea_walls' overlook path (starting at index 0)
+    const sw0 = seaWallsWaypoints[0];
+    this.npcs.push(new WalkerNPC(sw0.x, sw0.y, {
+      waypoints: seaWallsWaypoints,
+      waypointIndex: 0
+    }));
+
+    // 1 Walker strolling 'durdham_down' meadow trail (starting at index 0)
+    const dd0 = durdhamDownWaypoints[0];
+    this.npcs.push(new WalkerNPC(dd0.x, dd0.y, {
+      waypoints: durdhamDownWaypoints,
+      waypointIndex: 0
+    }));
+
+    // 1 Walker strolling 'ladies_mile' promenade (starting at index 2)
+    const lm2 = ladiesMileWaypoints[2];
+    this.npcs.push(new WalkerNPC(lm2.x, lm2.y, {
+      waypoints: ladiesMileWaypoints,
+      waypointIndex: 2
+    }));
 
     // Remote Players (peerId -> { owner: Owner, dog: CompanionDog })
     this.remotePlayers = new Map();
@@ -596,9 +640,21 @@ export class CliftonDownGame {
       allDogs.push(p.dog);
     }
 
+    // Collect all avoidance entities for NPCs
+    const avoidanceEntities = [this.owner, this.dog, ...this.npcs];
+    for (const p of this.remotePlayers.values()) {
+      avoidanceEntities.push(p.owner);
+      avoidanceEntities.push(p.dog);
+    }
+
+    // Update all ambient NPCs
+    for (const npc of this.npcs) {
+      npc.update(dt, this.field, avoidanceEntities);
+    }
+
     // 3. Update Local Entities
     this.owner.update(dt, this.field);
-    this.dog.update(dt, this.field, allDogs, this.ball);
+    this.dog.update(dt, this.field, allDogs, this.ball, this.npcs);
     this.ball.update(dt, this.field);
 
     // Grass footstep sound
@@ -699,6 +755,10 @@ export class CliftonDownGame {
       this.dog,
       this.ball
     ];
+
+    for (const npc of this.npcs) {
+      dynamicEntities.push(npc);
+    }
 
     for (const p of this.remotePlayers.values()) {
       dynamicEntities.push(p.owner);

@@ -262,8 +262,10 @@ export class CompanionDog {
     this.wagSpeed = 15;
   }
 
-  update(dt, field, otherDogs = [], activeBall = null) {
+  update(dt, field, otherDogs = [], activeBall = null, npcs = []) {
     const isLeashed = Boolean(this.owner && this.owner.isLeashed);
+    const nearbyNPCs = npcs || [];
+    this.checkNPCInteractions(nearbyNPCs);
 
     // 1. Check ball status & enforce strict prohibition of ball chasing on-leash
     if (isLeashed) {
@@ -453,6 +455,43 @@ export class CompanionDog {
       h.y += h.vy * dt;
       h.alpha -= dt * 0.7;
       if (h.alpha <= 0) this.hearts.splice(i, 1);
+    }
+  }
+
+  checkNPCInteractions(npcs) {
+    if (!npcs || !Array.isArray(npcs) || npcs.length === 0) return;
+
+    for (const npc of npcs) {
+      if (!npc) continue;
+      const dist = Math.hypot(this.x - npc.x, this.y - npc.y);
+      if (dist >= 80) continue;
+
+      // 1. Barkyness roll (Joggers)
+      if ((npc.isJogger || npc.type === 'jogger') && this.personality.barkyness >= 3) {
+        if (!this.isBarking && this.state !== DogState.FETCHING && Math.random() < (0.015 * (this.personality.barkyness - 2))) {
+          this.bark();
+        }
+      }
+
+      // 2. Shyness roll (Berth avoidance)
+      if (this.personality.shyness >= 3) {
+        if (dist < 75 && dist > 0.001) {
+          const shyForce = (1.0 - dist / 75) * (this.speed * 0.45) * ((this.personality.shyness - 2) / 3);
+          this.vx += ((this.x - npc.x) / dist) * shyForce;
+          this.vy += ((this.y - npc.y) / dist) * shyForce;
+        }
+      }
+
+      // 3. Playfulness roll (Wag / Bow)
+      if (this.personality.playfulness >= 4) {
+        this.wagSpeed = Math.max(this.wagSpeed, 14 + this.personality.playfulness * 2);
+        if (!this.owner?.isLeashed && this.state === DogState.ROAMING && dist < 50 && Math.random() < 0.008) {
+          this.state = DogState.PLAY_BOW;
+          this.stateTimer = 1.8;
+          this.emoteBubble = '🐾';
+          this.emoteTimer = 1.8;
+        }
+      }
     }
   }
 

@@ -1,5 +1,6 @@
 # Agentic Software Factory runtime
 .factory/
+.agents/
 
 # Operating System files
 .DS_Store

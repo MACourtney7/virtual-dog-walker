@@ -98,6 +98,7 @@ export class Field {
     this.ambientParticles = [];
     this.tombstones = [];
     this.streetlamps = [];
+    this.poopPiles = [];
     this.windTime = 0;
 
     this.initScenery();
@@ -361,6 +362,50 @@ export class Field {
     }
   }
 
+  addPoopPile(poopPile) {
+    if (poopPile) {
+      this.poopPiles.push(poopPile);
+    }
+  }
+
+  removePoopPile(id) {
+    const idx = this.poopPiles.findIndex(p => p.id === id);
+    if (idx !== -1) {
+      this.poopPiles.splice(idx, 1);
+    }
+  }
+
+  getNearestBin(x, y) {
+    if (!this.bins || this.bins.length === 0) return null;
+    let nearest = null;
+    let minDist = Infinity;
+    for (const bin of this.bins) {
+      const dist = Math.hypot(bin.x - x, bin.y - y);
+      if (dist < minDist) {
+        minDist = dist;
+        nearest = bin;
+      }
+    }
+    return nearest ? { ...nearest, dist: minDist } : null;
+  }
+
+  getNearestPoopPile(x, y, maxRange = Infinity) {
+    if (!this.poopPiles || this.poopPiles.length === 0) return null;
+    let nearest = null;
+    let minDist = Infinity;
+    for (const pile of this.poopPiles) {
+      if (pile.isCleaned) continue;
+      const dist = Math.hypot(pile.x - x, pile.y - y);
+      if (dist < minDist && dist <= maxRange) {
+        minDist = dist;
+        nearest = pile;
+      }
+    }
+    if (!nearest) return null;
+    nearest.dist = minDist;
+    return nearest;
+  }
+
   update(dt) {
     this.windTime += dt;
 
@@ -372,6 +417,17 @@ export class Field {
       }
       if (tomb.isDead) {
         this.tombstones.splice(i, 1);
+      }
+    }
+
+    // Update poop piles and cull cleaned ones
+    for (let i = this.poopPiles.length - 1; i >= 0; i--) {
+      const pile = this.poopPiles[i];
+      if (typeof pile.update === 'function') {
+        pile.update(dt);
+      }
+      if (pile.isCleaned) {
+        this.poopPiles.splice(i, 1);
       }
     }
 
@@ -499,17 +555,74 @@ export class Field {
     return { x: nx, y: ny };
   }
 
+  // Predefined waypoint route loops for ambient park NPCs
+  static getParkWaypoints(loopType = 'ladies_mile') {
+    const ladies_mile = [
+      { x: 420, y: 1880, id: 'lm-sw' },
+      { x: 850, y: 1600 },
+      { x: 1250, y: 1330 },
+      { x: 1650, y: 1080 },
+      { x: 2050, y: 830 },
+      { x: 2450, y: 620 },
+      { x: 2680, y: 520, id: 'lm-ne' },
+      { x: 2550, y: 580, isBench: true },
+      { x: 2200, y: 760 },
+      { x: 1750, y: 1020 },
+      { x: 1300, y: 1350 },
+      { x: 750, y: 1700 },
+      { x: 480, y: 1840, isBench: true }
+    ];
+
+    const sea_walls = [
+      { x: 280, y: 800 },
+      { x: 220, y: 920, isBench: true, isOverlook: true },
+      { x: 260, y: 1060 },
+      { x: 240, y: 1200, isBench: true, isOverlook: true },
+      { x: 270, y: 1360 },
+      { x: 260, y: 1480, isBench: true, isOverlook: true },
+      { x: 320, y: 1540 },
+      { x: 420, y: 1380 },
+      { x: 440, y: 1120 },
+      { x: 380, y: 880 }
+    ];
+
+    const durdham_down = [
+      { x: 1550, y: 1200 },
+      { x: 1797, y: 984 },
+      { x: 1420, y: 820, isOverlook: true },
+      { x: 1720, y: 750 },
+      { x: 2150, y: 550 },
+      { x: 2400, y: 450, isOverlook: true },
+      { x: 2320, y: 520, isBench: true },
+      { x: 2120, y: 820 },
+      { x: 1850, y: 1060 }
+    ];
+
+    if (loopType === 'all') {
+      return {
+        ladies_mile,
+        sea_walls,
+        durdham_down
+      };
+    }
+
+    if (loopType === 'sea_walls') {
+      return sea_walls;
+    }
+
+    if (loopType === 'durdham_down') {
+      return durdham_down;
+    }
+
+    return ladies_mile;
+  }
+
+  getParkWaypoints(loopType = 'ladies_mile') {
+    return Field.getParkWaypoints(loopType);
+  }
+
   // Depth-Sorted (Y-sort) Render Pipeline
-  render(ctx, camera, dynamicEntities = []) {
-    const viewLeft = camera.x;
-    const viewTop = camera.y;
-    const viewRight = camera.x + camera.viewportWidth;
-    const viewBottom = camera.y + camera.viewportHeight;
-
-    // 1. Procedural Background Turf & Pathways
-    this.renderGround(ctx, viewLeft, viewTop, viewRight, viewBottom);
-
-    // 2. Gather Scenery and Dynamic Entities for Depth-Sorted Pass
+  getDepthSortedRenderList(viewLeft, viewRight, viewTop, viewBottom, dynamicEntities = []) {
     const renderList = [];
 
     // Add trees
@@ -523,6 +636,7 @@ export class Field {
         renderList.push({
           type: 'tree',
           y: tree.depthY,
+          depthY: tree.depthY,
           data: tree
         });
       }
@@ -539,6 +653,7 @@ export class Field {
         renderList.push({
           type: 'bench',
           y: bench.depthY,
+          depthY: bench.depthY,
           data: bench
         });
       }
@@ -555,7 +670,26 @@ export class Field {
         renderList.push({
           type: 'bin',
           y: bin.depthY,
+          depthY: bin.depthY,
           data: bin
+        });
+      }
+    }
+
+    // Add visible dog poop piles
+    for (const p of this.poopPiles) {
+      if (p.isCleaned) continue;
+      if (
+        p.x + 20 > viewLeft &&
+        p.x - 20 < viewRight &&
+        p.y + 20 > viewTop &&
+        p.y - 20 < viewBottom
+      ) {
+        renderList.push({
+          type: 'poop',
+          y: p.depthY,
+          depthY: p.depthY,
+          data: p
         });
       }
     }
@@ -572,6 +706,7 @@ export class Field {
         renderList.push({
           type: 'water_tower',
           y: wt.depthY,
+          depthY: wt.depthY,
           data: wt
         });
       }
@@ -588,6 +723,7 @@ export class Field {
         renderList.push({
           type: 'rock',
           y: rock.depthY,
+          depthY: rock.depthY,
           data: rock
         });
       }
@@ -619,9 +755,11 @@ export class Field {
         tomb.y + 50 > viewTop &&
         tomb.y - 50 < viewBottom
       ) {
+        const ty = tomb.depthY !== undefined ? tomb.depthY : tomb.y + 8;
         renderList.push({
           type: 'entity',
-          y: tomb.depthY !== undefined ? tomb.depthY : tomb.y + 8,
+          y: ty,
+          depthY: ty,
           data: tomb
         });
       }
@@ -634,30 +772,57 @@ export class Field {
       renderList.push({
         type: 'entity',
         y: ey,
+        depthY: ey,
         data: ent
       });
     }
 
-    // Sort ascending by base Y coordinate (back to front)
-    renderList.sort((a, b) => a.y - b.y);
+    // Sort ascending by base Y / depthY coordinate (back to front)
+    renderList.sort((a, b) => (a.depthY !== undefined ? a.depthY : a.y) - (b.depthY !== undefined ? b.depthY : b.y));
+
+    return renderList;
+  }
+
+  drawSceneryItem(ctx, item) {
+    if (!item) return;
+    if (item.type === 'tree') {
+      this.renderTree(ctx, item.data);
+    } else if (item.type === 'bench') {
+      this.renderBench(ctx, item.data);
+    } else if (item.type === 'bin') {
+      this.renderBin(ctx, item.data);
+    } else if (item.type === 'poop') {
+      if (typeof item.data.draw === 'function') {
+        item.data.draw(ctx);
+      }
+    } else if (item.type === 'water_tower') {
+      this.renderWaterTower(ctx, item.data);
+    } else if (item.type === 'rock') {
+      this.renderRock(ctx, item.data);
+    } else if (item.type === 'streetlamp') {
+      this.renderStreetlamp(ctx, item.data);
+    } else if (item.type === 'entity') {
+      if (typeof item.data.draw === 'function') {
+        item.data.draw(ctx);
+      }
+    }
+  }
+
+  render(ctx, camera, dynamicEntities = []) {
+    const viewLeft = camera.x;
+    const viewTop = camera.y;
+    const viewRight = camera.x + camera.viewportWidth;
+    const viewBottom = camera.y + camera.viewportHeight;
+
+    // 1. Procedural Background Turf & Pathways
+    this.renderGround(ctx, viewLeft, viewTop, viewRight, viewBottom);
+
+    // 2. Gather Scenery and Dynamic Entities for Depth-Sorted Pass
+    const renderList = this.getDepthSortedRenderList(viewLeft, viewRight, viewTop, viewBottom, dynamicEntities);
 
     // 3. Render all sorted items
     for (const item of renderList) {
-      if (item.type === 'tree') {
-        this.renderTree(ctx, item.data);
-      } else if (item.type === 'bench') {
-        this.renderBench(ctx, item.data);
-      } else if (item.type === 'bin') {
-        this.renderBin(ctx, item.data);
-      } else if (item.type === 'water_tower') {
-        this.renderWaterTower(ctx, item.data);
-      } else if (item.type === 'rock') {
-        this.renderRock(ctx, item.data);
-      } else if (item.type === 'streetlamp') {
-        this.renderStreetlamp(ctx, item.data);
-      } else if (item.type === 'entity') {
-        item.data.draw(ctx);
-      }
+      this.drawSceneryItem(ctx, item);
     }
 
     // 4. Overpass Tree Canopies (Subtle transparent foliage sun glints)

@@ -18,7 +18,7 @@ Transform *Virtual Dog Walker* into **"The Downs"**, inspired by the authentic g
 | `ticket-011` | The Downs Map Redesign, Bins & Nature Audio | `HIGH` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-012` | Character & Canine Customization & 2D Aesthetics | `MEDIUM` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-013` | Canine Personality System & Leash Dynamics | `HIGH` | `["ticket-012"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
-| `ticket-014` | Canine Stray Run-Off & Dog Poop/Bin Mechanics | `MEDIUM` | `["ticket-011", "ticket-013"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
+| `ticket-014` | Canine Stray Run-Off & Dog Poop/Bin Mechanics | `MEDIUM` | `["ticket-011", "ticket-013"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-015` | Ad-Hoc Proximity Group Chat & Tombstones | `HIGH` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-016` | Park NPCs: Autonomous Walkers & Joggers | `MEDIUM` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
 | `ticket-017` | UTC Day/Night Twilight & Clifton Downs Weather | `MEDIUM` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
@@ -42,7 +42,7 @@ flowchart TD
     T011["ticket-011 (The Downs Map, Bins & Audio) [COMPLETED]"]
     T012["ticket-012 (Character & Canine Customization) [COMPLETED]"]
     T013["ticket-013 (Dog Personality & Leash Dynamics) [COMPLETED]"]
-    T014["ticket-014 (Stray Run-Off & Poop/Bin Mechanics) [IN_PROGRESS]"]
+    T014["ticket-014 (Stray Run-Off & Poop/Bin Mechanics) [COMPLETED]"]
     T015["ticket-015 (Ad-Hoc Proximity Chat & Tombstones) [COMPLETED]"]
     T016["ticket-016 (Park NPCs: Walkers & Joggers) [IN_PROGRESS]"]
     T017["ticket-017 (UTC Day/Night & Clifton Weather) [IN_PROGRESS]"]
@@ -59,7 +59,7 @@ flowchart TD
 - [x] Ticket-011 completed and merged to `main`.
 - [x] Ticket-012 completed and merged to `main`.
 - [x] Ticket-013 completed and merged to `main`.
-- [ ] Ticket-014 completed and merged to `main`.
+- [x] Ticket-014 completed and merged to `main`.
 - [x] Ticket-015 completed and merged to `main`.
 - [ ] Ticket-016 completed and merged to `main`.
 - [ ] Ticket-017 completed and merged to `main`.

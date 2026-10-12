@@ -6,6 +6,19 @@ class SoundSynthesizer {
     this.isMuted = false;
     this.ambientStarted = false;
     this.breezeNode = null;
+
+    // Weather & diurnal state
+    this.currentWeather = 'CLEAR';
+    this.currentTimeOfDay = 'DAY';
+
+    // Rain synthesis nodes
+    this.rainSource = null;
+    this.rainGainNode = null;
+    this.rainLowpassFilter = null;
+    this.rainBandpassFilter = null;
+
+    // Periodic weather effect timers
+    this.weatherTimer = null;
   }
 
   ensureContext() {
@@ -397,14 +410,307 @@ class SoundSynthesizer {
       noise.start();
       this.breezeNode = gain;
 
-      // Schedule occasional authentic British birdsong
+      // Schedule occasional authentic British birdsong with weather/diurnal modulation
       setInterval(() => {
-        if (Math.random() < 0.45 && !this.isMuted) {
+        if (this.isMuted) return;
+
+        // At NIGHT: birdsong is silent
+        if (this.currentTimeOfDay === 'NIGHT') return;
+
+        // Weather bird chirp suppression:
+        // If weather is RAIN: bird chirps are paused or suppressed (birds shelter during heavy rain)
+        if (this.currentWeather === 'RAIN') return;
+
+        // Base probability is 0.45
+        // If weather is DRIZZLE or FOG: bird chirp frequency is halved
+        let prob = 0.45;
+        if (this.currentWeather === 'DRIZZLE' || this.currentWeather === 'FOG') {
+          prob *= 0.5;
+        }
+
+        if (Math.random() < prob) {
           this.playBirdChirp();
         }
       }, 4000);
+
+      // Initialize rain synth graph if context exists
+      this._initRainSynthesizer();
+
+      // Start periodic wind gust / thunder rumble scheduler for precipitation
+      if (!this.weatherTimer) {
+        this.weatherTimer = setInterval(() => {
+          if (this.isMuted || !this.ctx || this.ctx.state === 'suspended') return;
+          if (this.currentWeather === 'RAIN') {
+            if (Math.random() < 0.35) {
+              this.playThunderRumble();
+            } else if (Math.random() < 0.5) {
+              this.playWindGust();
+            }
+          } else if (this.currentWeather === 'DRIZZLE' && Math.random() < 0.25) {
+            this.playWindGust();
+          }
+        }, 12000);
+      }
     } catch (e) {
       console.warn('Ambient audio could not start:', e);
+    }
+  }
+
+  // Procedural Rain Synthesizer Graph
+  _initRainSynthesizer() {
+    if (!this.ctx || this.rainSource) return;
+
+    try {
+      // Pink / white noise buffer loop (3 seconds)
+      const bufferSize = this.ctx.sampleRate * 3;
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0;
+      for (let i = 0; i < bufferSize; i++) {
+        const white = Math.random() * 2 - 1;
+        b0 = 0.99886 * b0 + white * 0.0555179;
+        b1 = 0.99332 * b1 + white * 0.0750759;
+        b2 = 0.96900 * b2 + white * 0.1538520;
+        b3 = 0.86650 * b3 + white * 0.3104856;
+        b4 = 0.55000 * b4 + white * 0.5329522;
+        b5 = -0.7616 * b5 - white * 0.0168980;
+        data[i] = (b0 + b1 + b2 + b3 + b4 + b5 + white * 0.5362) * 0.1;
+      }
+
+      this.rainSource = this.ctx.createBufferSource();
+      this.rainSource.buffer = buffer;
+      this.rainSource.loop = true;
+
+      // Dual-filter bandpass / lowpass filtering shaping noise into falling precipitation on park foliage and grass
+      this.rainLowpassFilter = this.ctx.createBiquadFilter();
+      this.rainLowpassFilter.type = 'lowpass';
+      this.rainLowpassFilter.frequency.setValueAtTime(2000, this.ctx.currentTime);
+      this.rainLowpassFilter.Q.setValueAtTime(1.0, this.ctx.currentTime);
+
+      this.rainBandpassFilter = this.ctx.createBiquadFilter();
+      this.rainBandpassFilter.type = 'bandpass';
+      this.rainBandpassFilter.frequency.setValueAtTime(1600, this.ctx.currentTime);
+      this.rainBandpassFilter.Q.setValueAtTime(0.8, this.ctx.currentTime);
+
+      this.rainGainNode = this.ctx.createGain();
+      this.rainGainNode.gain.setValueAtTime(0.0001, this.ctx.currentTime);
+
+      // Connect: noise -> bandpass -> lowpass -> rainGainNode -> destination
+      this.rainSource.connect(this.rainBandpassFilter);
+      this.rainBandpassFilter.connect(this.rainLowpassFilter);
+      this.rainLowpassFilter.connect(this.rainGainNode);
+      this.rainGainNode.connect(this.ctx.destination);
+
+      this.rainSource.start();
+    } catch (e) {
+      console.warn('Rain audio synthesizer could not be initialized:', e);
+    }
+  }
+
+  // Low-frequency thunder rumble for rain / heavy squalls (swept 60 Hz to 180 Hz)
+  playThunderRumble() {
+    this.ensureContext();
+    if (!this.ctx || this.isMuted || this.ctx.state === 'suspended') return;
+
+    try {
+      const t = this.ctx.currentTime;
+      const duration = 3.5 + Math.random() * 1.5;
+      const bufferSize = Math.floor(this.ctx.sampleRate * duration);
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      let lastOut = 0.0;
+      for (let i = 0; i < bufferSize; i++) {
+        const white = Math.random() * 2 - 1;
+        // Low-frequency brownian rumble noise
+        lastOut = (lastOut + 0.02 * white) / 1.02;
+        data[i] = lastOut * 3.5;
+      }
+
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = buffer;
+
+      // Lowpass filter swept between 60 Hz and 180 Hz
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(75, t);
+      filter.frequency.exponentialRampToValueAtTime(160, t + 0.8);
+      filter.frequency.exponentialRampToValueAtTime(65, t + duration);
+      filter.Q.setValueAtTime(2.5, t);
+
+      // Subtle LFO modulation sweeping filter cutoffs in the 60-180 Hz range
+      const lfo = this.ctx.createOscillator();
+      const lfoGain = this.ctx.createGain();
+      lfo.type = 'sine';
+      lfo.frequency.setValueAtTime(0.35, t);
+      lfoGain.gain.setValueAtTime(35, t);
+      lfo.connect(lfoGain);
+      lfoGain.connect(filter.frequency);
+
+      // Gain envelope: gentle ambient volume (~0.04) so it remains soothing and immersive
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.linearRampToValueAtTime(0.04, t + 0.9);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      lfo.start(t);
+      noise.start(t);
+
+      lfo.stop(t + duration);
+      noise.stop(t + duration);
+    } catch (e) {
+      console.warn('Thunder rumble could not play:', e);
+    }
+  }
+
+  // Surging wind gusts during precipitation or squalls
+  playWindGust() {
+    this.ensureContext();
+    if (!this.ctx || this.isMuted || this.ctx.state === 'suspended') return;
+
+    try {
+      const t = this.ctx.currentTime;
+      const duration = 4.0;
+      const bufferSize = Math.floor(this.ctx.sampleRate * duration);
+      const buffer = this.ctx.createBuffer(1, bufferSize, this.ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      let b0 = 0, b1 = 0;
+      for (let i = 0; i < bufferSize; i++) {
+        const white = Math.random() * 2 - 1;
+        b0 = 0.98 * b0 + white * 0.08;
+        b1 = 0.95 * b1 + white * 0.08;
+        data[i] = (b0 + b1) * 0.5;
+      }
+
+      const noise = this.ctx.createBufferSource();
+      noise.buffer = buffer;
+
+      // Lowpass filter modulated between 120 Hz and 320 Hz
+      const filter = this.ctx.createBiquadFilter();
+      filter.type = 'lowpass';
+      filter.frequency.setValueAtTime(140, t);
+      filter.frequency.linearRampToValueAtTime(280, t + 1.8);
+      filter.frequency.linearRampToValueAtTime(110, t + duration);
+      filter.Q.setValueAtTime(1.8, t);
+
+      const gain = this.ctx.createGain();
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.linearRampToValueAtTime(0.032, t + 1.6);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + duration);
+
+      noise.connect(filter);
+      filter.connect(gain);
+      gain.connect(this.ctx.destination);
+
+      noise.start(t);
+      noise.stop(t + duration);
+    } catch (e) {
+      console.warn('Wind gust could not play:', e);
+    }
+  }
+
+  // Weather soundscape modulation:
+  // - Updates internal currentWeather property
+  // - Adjusts rain synthesizer and breeze node volume
+  // - Controls birdsong suppression / attenuation
+  setWeather(weatherType) {
+    const validWeather = (weatherType || '').toUpperCase();
+    this.currentWeather = validWeather;
+
+    if (!this.ctx || this.ctx.state === 'suspended') return;
+
+    // Ensure rain synthesizer graph exists
+    if (!this.rainSource) {
+      this._initRainSynthesizer();
+    }
+
+    if (!this.rainGainNode) return;
+
+    const t = this.ctx.currentTime;
+    // Cancel any scheduled transitions
+    this.rainGainNode.gain.cancelScheduledValues(t);
+
+    if (validWeather === 'DRIZZLE') {
+      // Light rain / drizzle: higher cutoff frequency (~1800 Hz) with gentle low gain (~0.02)
+      if (this.rainLowpassFilter) {
+        this.rainLowpassFilter.frequency.cancelScheduledValues(t);
+        this.rainLowpassFilter.frequency.linearRampToValueAtTime(1800, t + 1.5);
+      }
+      if (this.rainBandpassFilter) {
+        this.rainBandpassFilter.frequency.cancelScheduledValues(t);
+        this.rainBandpassFilter.frequency.linearRampToValueAtTime(1400, t + 1.5);
+      }
+      const targetGain = this.isMuted ? 0.0001 : 0.02;
+      this.rainGainNode.gain.linearRampToValueAtTime(targetGain, t + 1.5);
+
+      // Breeze volume modulation
+      if (this.breezeNode) {
+        this.breezeNode.gain.cancelScheduledValues(t);
+        this.breezeNode.gain.linearRampToValueAtTime(this.isMuted ? 0.0001 : 0.038, t + 1.5);
+      }
+    } else if (validWeather === 'RAIN') {
+      // Moderate / heavy rain: broader frequency spectrum (lowpass ~2400 Hz) with richer resonance and gain (~0.05)
+      if (this.rainLowpassFilter) {
+        this.rainLowpassFilter.frequency.cancelScheduledValues(t);
+        this.rainLowpassFilter.frequency.linearRampToValueAtTime(2400, t + 2.0);
+      }
+      if (this.rainBandpassFilter) {
+        this.rainBandpassFilter.frequency.cancelScheduledValues(t);
+        this.rainBandpassFilter.frequency.linearRampToValueAtTime(1800, t + 2.0);
+      }
+      const targetGain = this.isMuted ? 0.0001 : 0.05;
+      this.rainGainNode.gain.linearRampToValueAtTime(targetGain, t + 2.0);
+
+      // In heavy rain, increase breeze gain slightly for stormy rustle
+      if (this.breezeNode) {
+        this.breezeNode.gain.cancelScheduledValues(t);
+        this.breezeNode.gain.linearRampToValueAtTime(this.isMuted ? 0.0001 : 0.045, t + 2.0);
+      }
+    } else {
+      // CLEAR, OVERCAST, or FOG: smoothly ramp rain gain down to 0 over 2 seconds
+      this.rainGainNode.gain.linearRampToValueAtTime(0.0001, t + 2.0);
+
+      // Restore normal canopy breeze gain based on diurnal state
+      if (this.breezeNode) {
+        const defaultBreezeGain = this.currentTimeOfDay === 'NIGHT' ? 0.015 : 0.035;
+        this.breezeNode.gain.cancelScheduledValues(t);
+        this.breezeNode.gain.linearRampToValueAtTime(this.isMuted ? 0.0001 : defaultBreezeGain, t + 2.0);
+      }
+    }
+  }
+
+  // Diurnal soundscape modulation:
+  // - timeState: 'DAWN', 'DAY', 'GOLDEN_HOUR', 'DUSK', 'NIGHT'
+  // - At NIGHT: birdsong is silent; ambient canopy breeze gain is lowered to a quiet, soothing night rustle (~0.015)
+  // - At DAWN / DAY: birdsong interval is active
+  setTimeOfDay(timeState) {
+    const validTime = (timeState || '').toUpperCase();
+    this.currentTimeOfDay = validTime;
+
+    if (!this.ctx || this.ctx.state === 'suspended' || !this.breezeNode) return;
+
+    const t = this.ctx.currentTime;
+    this.breezeNode.gain.cancelScheduledValues(t);
+
+    if (this.isMuted) {
+      this.breezeNode.gain.linearRampToValueAtTime(0.0001, t + 1.0);
+      return;
+    }
+
+    if (validTime === 'NIGHT') {
+      // Night rustle: ~0.015
+      this.breezeNode.gain.linearRampToValueAtTime(0.015, t + 2.5);
+    } else if (validTime === 'DUSK' || validTime === 'GOLDEN_HOUR') {
+      // Twilight gentle rustle: ~0.028
+      this.breezeNode.gain.linearRampToValueAtTime(0.028, t + 2.5);
+    } else {
+      // DAWN / DAY active breeze: ~0.035
+      // If it is currently raining, preserve rain storm breeze
+      const dayBreezeGain = this.currentWeather === 'RAIN' ? 0.045 : 0.035;
+      this.breezeNode.gain.linearRampToValueAtTime(dayBreezeGain, t + 2.5);
     }
   }
 }

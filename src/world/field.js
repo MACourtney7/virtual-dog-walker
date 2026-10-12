@@ -97,6 +97,7 @@ export class Field {
     this.boundaries = [];
     this.ambientParticles = [];
     this.tombstones = [];
+    this.streetlamps = [];
     this.poopPiles = [];
     this.windTime = 0;
 
@@ -304,6 +305,38 @@ export class Field {
         });
       }
     }
+
+    // 8. Victorian Cast-Iron Streetlamps (Network of 12 streetlamps across The Downs)
+    const lampPositions = [
+      // Along Cotswold avenue path / Ladies Mile
+      { id: 'streetlamp-1', x: 700, y: 520 },
+      { id: 'streetlamp-2', x: 1100, y: 560 },
+      { id: 'streetlamp-3', x: 1600, y: 600 },
+      { id: 'streetlamp-4', x: 2100, y: 580 },
+      // Near Durdham Down Water Tower landmark
+      { id: 'streetlamp-5', x: 2300, y: 480 },
+      { id: 'streetlamp-6', x: 2520, y: 490 },
+      // Along Sea Walls path
+      { id: 'streetlamp-7', x: 280, y: 950 },
+      { id: 'streetlamp-8', x: 290, y: 1350 },
+      // Central & south park intersections / avenue crossings
+      { id: 'streetlamp-9', x: 1200, y: 1100 },
+      { id: 'streetlamp-10', x: 1800, y: 1250 },
+      { id: 'streetlamp-11', x: 800, y: 1500 },
+      { id: 'streetlamp-12', x: 2200, y: 1600 }
+    ];
+
+    this.streetlamps = lampPositions.map(l => ({
+      id: l.id,
+      x: l.x,
+      y: l.y,
+      radius: 8,           // Base collision/interaction radius
+      glowRadius: 120,     // Radius for radial light halo in lighting pass
+      intensity: 0.9,      // Light intensity
+      color: '#fef08a',    // Warm amber-yellow incandescent glow
+      depthY: l.y + 8,     // y + 8 for accurate 2D Y-sorting
+      isLamp: true
+    }));
   }
 
   initParticles() {
@@ -696,6 +729,22 @@ export class Field {
       }
     }
 
+    // Add Victorian streetlamps
+    for (const lamp of this.streetlamps) {
+      if (
+        lamp.x + 30 > viewLeft &&
+        lamp.x - 30 < viewRight &&
+        lamp.y + 20 > viewTop &&
+        lamp.y - 70 < viewBottom
+      ) {
+        renderList.push({
+          type: 'streetlamp',
+          y: lamp.depthY,
+          data: lamp
+        });
+      }
+    }
+
     // Add active tombstones
     const renderedEntities = new Set(dynamicEntities);
     for (const tomb of this.tombstones) {
@@ -750,6 +799,8 @@ export class Field {
       this.renderWaterTower(ctx, item.data);
     } else if (item.type === 'rock') {
       this.renderRock(ctx, item.data);
+    } else if (item.type === 'streetlamp') {
+      this.renderStreetlamp(ctx, item.data);
     } else if (item.type === 'entity') {
       if (typeof item.data.draw === 'function') {
         item.data.draw(ctx);
@@ -1309,6 +1360,170 @@ export class Field {
     ctx.fill();
 
     ctx.restore();
+  }
+
+  // Render authentic Victorian cast-iron park streetlamp
+  renderStreetlamp(ctx, lamp) {
+    ctx.save();
+
+    // 1. Elliptical base ground shadow (rgba(0, 0, 0, 0.25))
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+    ctx.beginPath();
+    ctx.ellipse(lamp.x + 3, lamp.depthY, 12, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 2. Cast-iron post: flared base and decorative plinth (#1e293b / #262626)
+    ctx.fillStyle = '#1e293b';
+    // Flared tiered base
+    ctx.beginPath();
+    ctx.moveTo(lamp.x - 7, lamp.depthY);
+    ctx.lineTo(lamp.x - 5, lamp.depthY - 5);
+    ctx.lineTo(lamp.x - 3, lamp.depthY - 10);
+    ctx.lineTo(lamp.x + 3, lamp.depthY - 10);
+    ctx.lineTo(lamp.x + 5, lamp.depthY - 5);
+    ctx.lineTo(lamp.x + 7, lamp.depthY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Base collar ring
+    ctx.fillStyle = '#262626';
+    ctx.fillRect(lamp.x - 4, lamp.depthY - 12, 8, 2.5);
+
+    // Tapered vertical shaft (from y - 12 up to lantern base y - 44)
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath();
+    ctx.moveTo(lamp.x - 2.5, lamp.depthY - 12);
+    ctx.lineTo(lamp.x - 2, lamp.depthY - 44);
+    ctx.lineTo(lamp.x + 2, lamp.depthY - 44);
+    ctx.lineTo(lamp.x + 2.5, lamp.depthY - 12);
+    ctx.closePath();
+    ctx.fill();
+
+    // Shaft middle decorative ring
+    ctx.fillStyle = '#262626';
+    ctx.fillRect(lamp.x - 3.5, lamp.depthY - 28, 7, 2);
+
+    // 3. Decorative ladder bar crossarm (Victorian lamplighter ladder rest)
+    ctx.fillStyle = '#262626';
+    ctx.fillRect(lamp.x - 9, lamp.depthY - 40, 18, 2);
+    // Ladder bar end finial knobs
+    ctx.beginPath();
+    ctx.arc(lamp.x - 9, lamp.depthY - 39, 1.5, 0, Math.PI * 2);
+    ctx.arc(lamp.x + 9, lamp.depthY - 39, 1.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 4. Lantern cradle / base bracket
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath();
+    ctx.moveTo(lamp.x - 4, lamp.depthY - 44);
+    ctx.lineTo(lamp.x - 6.5, lamp.depthY - 47);
+    ctx.lineTo(lamp.x + 6.5, lamp.depthY - 47);
+    ctx.lineTo(lamp.x + 4, lamp.depthY - 44);
+    ctx.closePath();
+    ctx.fill();
+
+    // 5. Four-pane glass lantern casing with black iron framing
+    const lanternBottomY = lamp.depthY - 47;
+    const lanternTopY = lamp.depthY - 58;
+    const lanternHalfWBottom = 6;
+    const lanternHalfWTop = 7.5;
+
+    // Glass chamber fill (subtle warm glow background)
+    ctx.fillStyle = 'rgba(254, 240, 138, 0.45)';
+    ctx.beginPath();
+    ctx.moveTo(lamp.x - lanternHalfWBottom, lanternBottomY);
+    ctx.lineTo(lamp.x - lanternHalfWTop, lanternTopY);
+    ctx.lineTo(lamp.x + lanternHalfWTop, lanternTopY);
+    ctx.lineTo(lamp.x + lanternHalfWBottom, lanternBottomY);
+    ctx.closePath();
+    ctx.fill();
+
+    // 6. Warm luminous lantern glow core inside glass chamber
+    ctx.fillStyle = '#fde047';
+    ctx.beginPath();
+    ctx.arc(lamp.x, (lanternBottomY + lanternTopY) / 2, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#fef08a';
+    ctx.beginPath();
+    ctx.arc(lamp.x, (lanternBottomY + lanternTopY) / 2, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Lantern glass panes black iron frame & vertical divider
+    ctx.strokeStyle = '#262626';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(lamp.x - lanternHalfWBottom, lanternBottomY);
+    ctx.lineTo(lamp.x - lanternHalfWTop, lanternTopY);
+    ctx.lineTo(lamp.x + lanternHalfWTop, lanternTopY);
+    ctx.lineTo(lamp.x + lanternHalfWBottom, lanternBottomY);
+    ctx.closePath();
+    ctx.stroke();
+
+    // Center vertical pane strut
+    ctx.beginPath();
+    ctx.moveTo(lamp.x, lanternBottomY);
+    ctx.lineTo(lamp.x, lanternTopY);
+    ctx.stroke();
+
+    // 7. Victorian Lantern Cap / Hood and pointed top finial
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath();
+    ctx.moveTo(lamp.x - lanternHalfWTop - 1.5, lanternTopY);
+    ctx.lineTo(lamp.x, lanternTopY - 5);
+    ctx.lineTo(lamp.x + lanternHalfWTop + 1.5, lanternTopY);
+    ctx.closePath();
+    ctx.fill();
+
+    // Pointed top finial spire
+    ctx.strokeStyle = '#262626';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(lamp.x, lanternTopY - 5);
+    ctx.lineTo(lamp.x, lanternTopY - 9);
+    ctx.stroke();
+
+    ctx.fillStyle = '#d4af37';
+    ctx.beginPath();
+    ctx.arc(lamp.x, lanternTopY - 7, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  // Provider method returning all active illumination emitters for environment lighting pass
+  getLightSources() {
+    const sources = [];
+
+    // 1. All registered streetlamps
+    if (this.streetlamps && Array.isArray(this.streetlamps)) {
+      for (const lamp of this.streetlamps) {
+        sources.push({
+          id: lamp.id,
+          x: lamp.x,
+          y: lamp.y,
+          radius: lamp.radius,
+          glowRadius: lamp.glowRadius,
+          intensity: lamp.intensity,
+          color: lamp.color
+        });
+      }
+    }
+
+    // 2. Landmark beacon for Durdham Down Water Tower
+    if (this.waterTower) {
+      sources.push({
+        id: 'water-tower-beacon',
+        x: this.waterTower.x,
+        y: this.waterTower.y - 20,
+        radius: 36,
+        glowRadius: 150,
+        intensity: 0.85,
+        color: '#fef3c7'
+      });
+    }
+
+    return sources;
   }
 
   renderCanopyHighlights(ctx, left, top, right, bottom) {

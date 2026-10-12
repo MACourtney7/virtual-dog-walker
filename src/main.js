@@ -13,6 +13,8 @@ import { ProximityChat } from './ui/proximity_chat.js';
 import { ChatTombstone } from './entities/tombstone.js';
 import { WalkerNPC, JoggerNPC } from './entities/npc.js';
 import { NavigationArrow } from './ui/navigation_arrow.js';
+import { weatherClient, WeatherType } from './systems/weather.js';
+import { environmentSystem, TimeOfDay } from './world/environment.js';
 
 export class CliftonDownGame {
   constructor() {
@@ -187,6 +189,17 @@ export class CliftonDownGame {
     // Audio tracking
     this.hasInteracted = false;
     this.lastFootstepTime = 0;
+
+    // Environment & Weather Systems
+    this.weatherClient = weatherClient;
+    this.environment = environmentSystem;
+    this.weatherClient.startAutoRefresh();
+    this.weatherClient.addListener((weather) => {
+      sound.setWeather(weather);
+    });
+    // Initial sync:
+    sound.setWeather(this.weatherClient.getWeather());
+    this.weatherClient.fetchWeather().catch(() => {});
 
     // Loop Timing
     this.lastTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -717,6 +730,14 @@ export class CliftonDownGame {
   }
 
   update(dt) {
+    // 0. Update Environment System & Audio Diurnal Sync
+    if (this.environment) {
+      this.environment.update(dt, this.weatherClient ? this.weatherClient.getWeather() : null);
+      if (sound && typeof sound.setTimeOfDay === 'function') {
+        sound.setTimeOfDay(this.environment.getTimeOfDay());
+      }
+    }
+
     // 1. Update Field & Ambient Particles
     this.field.update(dt);
 
@@ -907,6 +928,15 @@ export class CliftonDownGame {
 
     // Restore Camera
     this.camera.restore(this.ctx);
+
+    // Full-screen environment lighting pass and weather particles overlay
+    if (this.environment) {
+      const players = [this.owner, this.dog];
+      for (const p of this.remotePlayers.values()) {
+        players.push(p.owner, p.dog);
+      }
+      this.environment.render(this.ctx, this.camera, this.field, this.canvas.width, this.canvas.height, players);
+    }
 
     // Screen-Space HUD: Directional Navigation Arrow
     if (this.navArrow && this.ctx && this.camera && this.owner) {

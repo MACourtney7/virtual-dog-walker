@@ -164,6 +164,43 @@ class TestDownsMap(unittest.TestCase):
         self.assertIn("playBark", self.audio_code, "playBark missing in audio.js")
         self.assertIn("playWhistle", self.audio_code, "playWhistle missing in audio.js")
 
+        # Weather & diurnal audio modulation methods (brief-04-audio-weather)
+        self.assertIn("setWeather", self.audio_code, "setWeather method missing in audio.js")
+        self.assertIn("setTimeOfDay", self.audio_code, "setTimeOfDay method missing in audio.js")
+        self.assertIn("playThunderRumble", self.audio_code, "playThunderRumble method missing in audio.js")
+        self.assertIn("playWindGust", self.audio_code, "playWindGust method missing in audio.js")
+        self.assertIn("_initRainSynthesizer", self.audio_code, "_initRainSynthesizer method missing in audio.js")
+        self.assertIn("rainGainNode", self.audio_code, "rainGainNode property missing in audio.js")
+        self.assertIn("currentWeather", self.audio_code, "currentWeather state property missing in audio.js")
+        self.assertIn("currentTimeOfDay", self.audio_code, "currentTimeOfDay state property missing in audio.js")
+
+    def test_victorian_streetlamp_registry(self):
+        """Verify this.streetlamps contains >= 8 lamps with valid coordinates, depthY, isLamp, glowRadius, intensity, and color."""
+        self.assertIn("this.streetlamps", self.field_code, "this.streetlamps array missing in Field")
+
+        lamp_patterns = re.findall(
+            r"id:\s*['\"](streetlamp-\d+)['\"].*?x:\s*(\d+).*?y:\s*(\d+)",
+            self.field_code,
+            re.DOTALL
+        )
+        self.assertGreaterEqual(len(lamp_patterns), 8, f"Expected at least 8 streetlamps, found {len(lamp_patterns)}")
+
+        for lamp_id, x_str, y_str in lamp_patterns:
+            x, y = int(x_str), int(y_str)
+            self.assertTrue(0 < x < 3200, f"Lamp {lamp_id} x {x} out of bounds")
+            self.assertTrue(0 < y < 2400, f"Lamp {lamp_id} y {y} out of bounds")
+
+        self.assertIn("isLamp: true", self.field_code)
+        self.assertIn("glowRadius", self.field_code)
+        self.assertIn("intensity", self.field_code)
+        self.assertIn("renderStreetlamp", self.field_code)
+
+    def test_light_sources_provider(self):
+        """Verify getLightSources returns streetlamps and water tower landmark beacon."""
+        self.assertIn("getLightSources()", self.field_code, "getLightSources method missing in Field")
+        self.assertIn("water-tower-beacon", self.field_code, "water-tower-beacon missing in getLightSources")
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -11,6 +11,7 @@ def test_scaffold():
     assert os.path.exists("src/entities/owner.js"), "src/entities/owner.js missing"
     assert os.path.exists("src/entities/companion_dog.js"), "src/entities/companion_dog.js missing"
     assert os.path.exists("src/entities/toy.js"), "src/entities/toy.js missing"
+    assert os.path.exists("src/entities/npc.js"), "src/entities/npc.js missing"
     assert os.path.exists("src/net/network.js"), "src/net/network.js missing"
     assert os.path.exists("src/net/ws_network.js"), "src/net/ws_network.js missing"
     assert os.path.exists("src/ui/social_hud.js"), "src/ui/social_hud.js missing"
@@ -44,6 +45,7 @@ def run_all():
         "test/test_character_customization.py",
         "test/test_dog_personality_leash.py",
         "test/test_proximity_chat.py",
+        "test/test_npcs.py",
         "test/test_navigation_arrow.py",
         "test/test_stray_and_poop.py"
     ]

@@ -16,23 +16,34 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
     - **Clifton Down Woodland Copse**: Southern sweet chestnut and oak groves with curving woodland dirt footpaths.
   - Multi-tone procedural turf palette (`#3e6b2c`, `#335824`, `#4c8237`), grass blade flecks, and wildflower meadows (buttercups, white clover, bluebells).
   - 8 public park dog-waste bins strategically placed at path intersections and overlooks with collision resolution and depth-sorted rendering.
+  - 12 authentic Victorian cast-iron streetlamps with warm incandescent lighting cores (`#fef08a`, `glowRadius: 120px`).
+  - Active canine waste pile registry (`this.poopPiles`) and nearest-bin spatial queries (`getNearestBin(x, y)`).
   - Ambient particle system: floating dandelion seeds/pollen and wind streaks.
 - **Camera Viewport**:
   - Smooth exponential damping tracking (`Camera.follow`) centered on the player and clamped to 3200 × 2400 boundaries.
 - **Y-Sorted Depth Renderer**:
-  - Collects all scenery objects (trees, benches, bins, rocks, water tower) and dynamic entities (owners, dogs, tennis balls).
+  - Collects all scenery objects (trees, benches, bins, streetlamps, rocks, water tower), ambient NPCs, dynamic entities (owners, dogs, tennis balls), and terrain waste piles.
   - Sorts by base Y coordinate (`depthY`) so entities and scenery overlap with natural 2D depth.
+- **Atmospheric Environment & Diurnal Lighting Pass (`src/world/environment.js`)**:
+  - Full-screen real-time lighting pass based on local Bristol / Europe/London time:
+    - *Dawn* (`05:00–07:00`): Soft lavender-rose ambient wash.
+    - *Day* (`07:00–17:00`): Crisp, bright daylight sunlight wash.
+    - *Golden Hour* (`17:00–19:30`): Rich sepia-tinted amber twilight gradient.
+    - *Dusk* (`19:30–21:30`): Atmospheric indigo shadow.
+    - *Night* (`21:30–05:00`): Deep charcoal/navy shadow mask (`destination-out`) punctured by radial illumination halos around streetlamps, the Water Tower beacon, and walking players.
+  - Weather particle overlay system (angled rain streaks, ground splash ripples, mist specks, undulating horizontal fog sheets, and sun-glint dust motes).
 
 ---
 
-## 3. Entities & Canine Companion Mechanics
+## 3. Entities, Canine Companion & Ambient Life
 - **Owner Avatar (`src/entities/owner.js`)**:
   - 8-directional movement (<kbd>WASD</kbd> / touch joystick) with acceleration and deceleration.
   - Expressive 2D top-down / soft isometric vector rendering with directional facial cues, natural walking leg oscillation, dual-tone shoes, torso jacket with collar lapels, and arm swing.
   - Customizable hairstyles (`SHORT`, `WAVY`, `PONYTAIL`, `BEANIE`) with layered rear plumes and forehead bangs.
   - Diverse palette tokens for skin tones, hair colors, jacket colors, pants colors, and player names.
   - Clean baseline player naming: default name is `"Walker"` with local avatar nametag dynamically displaying `"${this.name} (You)"` in yellow (`#fde047`), while remote avatars display `"${this.name}"` in white (`#f8fafc`).
-  - Glassmorphic tabbed customizer modal with `localStorage` profile persistence and full multiplayer handshake synchronization.
+  - Glassmorphic tabbed customizer modal (👤 Walker, 🐕 Dog Companion) with `localStorage` profile persistence and full multiplayer handshake synchronization.
+  - Waste collection state (`hasPoopBag`): displays bag icon and routes player to nearest dog-waste bin.
   - Speech bubble and emote rendering above avatar heads.
 - **Companion Dog (`src/entities/companion_dog.js`)**:
   - 5 distinct canine breed coat presets:
@@ -42,96 +53,85 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
     - Jack Russell Terrier (`#F8FAFC` crisp white base with chestnut eye patches and ear markings)
     - Irish Red Setter (`#7C2D12` deep mahogany red with silky ear feathering)
   - Customizable collar colors (`teal`, `red`, `blue`, `gold`, `purple`) with a reflective metallic gold charm tag.
-  - Expressive canine snout catchlights, whisker dots, and catchlight iris rings.
-  - Floppy ear spring damper physics responding to trot speed inertia and lateral lag.
-  - Multi-state steering AI (`FOLLOWING`, `ROAMING`, `SOCIAL_GREET`, `PLAY_BOW`, `IDLE_SNIFF`, `SITTING`, `FETCHING`, `BARKING`, `RECALLED`):
-    - *On-Leash Close Heel*: Trots closely at the owner's side/heel (~38–48px) with natural slack, matching owner speed and decelerating smoothly.
-    - *Bounded Off-Leash Roaming*: When off-leash, explores and sniffs turf autonomously while remaining organically bounded to the human (150px return bias, 200px return trot, 230px outer perimeter clamp).
-    - *Canine Social Greetings*: Detects other dogs within 110px, initiating mutual snout/butt sniffing greetings, circular orbits, rapid tail wagging, emote bubbles (`🐾`, `🐶`, `❤️`), and playful play-bows (`PLAY_BOW`).
-    - *Whistle Recall & Timed Heel*: Whistle command triggers immediate sprint recall back to the owner (`290 px/s`), locking into close heel following for 10 seconds before returning to roaming.
-    - *Leash Dynamics*: Loose red nylon catenary lead; clamps distance to max 105px when leashed.
-    - *Floppy Ear Springs*: Secondary spring-damper inertia rotation responding to trot speed.
-    - *Tail Wagging*: Speed-dependent oscillation increasing during joy, fetching, or greetings.
-    - *Bark Pulse*: Expanding sonic rings with procedural audio and "Woof!" bubble.
-    - *Petting*: Heart particles emitter upon interaction.
+  - Canine Personality Engine (attributes 1–5):
+    - *Playfulness*: Scales trot/sprint speeds, tail wag frequencies, and play-bow inclinations.
+    - *Shyness*: Governs approach berthes and avoidance distances when passing other dogs or park pedestrians.
+    - *Barkyness*: Controls vocalization frequencies, greeting barks, and reactions to joggers.
+    - *Obedience*: Scales leash responsiveness, heel arrival deadband, and idle stray run-off probability.
+  - Overhauled Leash Dynamics:
+    - When leashed, dog strictly respects max 105px lead length and never breaks into ball fetching; looks towards thrown balls with eager pull and renders lead taut under tension.
+  - Multi-state steering AI (`FOLLOWING`, `ROAMING`, `SOCIAL_GREET`, `PLAY_BOW`, `IDLE_SNIFF`, `SITTING`, `FETCHING`, `BARKING`, `RECALLED`, `LOST`, `POOPING`):
+    - *Idle Stray Run-Off Engine*: Standing still without whistling for >35s triggers a stray roll inversely weighted by obedience (50% down to 1%). When triggered, dog sprints to a secluded park spot, enters `DogState.LOST`, and activates the HUD compass arrow. Approaching within 55px or whistling recalls the dog.
+    - *Poop Lifecycle*: Periodic event while walking (~150–240s); dog pauses in squatted posture (`DogState.POOPING`) and spawns a depth-sorted `PoopPile` entity on the turf.
+    - *Canine Social Greetings*: Detects other dogs within 110px, initiating mutual sniffing greetings, circular orbits, rapid tail wagging, and play-bows.
+    - *Whistle Recall & Timed Heel*: Whistle command triggers immediate sprint recall back to the owner (`290 px/s`), locking into close heel following for 10 seconds.
+- **Park Dog Waste & Bins (`src/entities/waste.js`, `src/world/field.js`)**:
+  - `PoopPile` entities render with organic layered coils and a proximity interaction pulse.
+  - Contextual interaction (<kbd>E</kbd> / touch tap): walking near waste (<38px) collects it in a poop bag and points the compass arrow to the nearest park bin.
+  - Walking to a dog bin (<42px) with a waste bag prompts disposal, clears the bag, plays a chime, and removes the navigation arrow.
+- **Directional Navigation Compass Arrow (`src/ui/navigation_arrow.js`)**:
+  - Reusable glassmorphic HUD indicator clamped to viewport margin perimeter.
+  - Smooth outward chevron rotation along bearing angle, pulse animation, dynamic emojis (`🐕` for lost dog, `🗑️` for nearest bin), and distance badge in meters (`dist / 20`).
+- **Park NPCs: Autonomous Walkers & Joggers (`src/entities/npc.js`)**:
+  - `WalkerNPC`: Strolls at leisure pace (~75–100 px/s) along park trail loops, pausing at teak benches and scenic overlooks.
+  - `JoggerNPC`: Runs athletic laps (~240–280 px/s) continuously along Ladies Mile avenue and the park perimeter with rhythmic stride bobbing.
+  - Mutual soft avoidance steering around players, dogs, and obstacles.
 - **Tennis Ball Toy (`src/entities/toy.js`)**:
   - 2.5D ballistic trajectory with gravity (720 px/s²), ground shadow scaling, bounce restitution (0.62), and rolling friction.
-  - Dogs detect thrown balls, sprint at 290 px/s, attach ball to mouth, and return it to the owner's feet.
+  - Off-leash dogs detect thrown balls, sprint at 290 px/s, attach ball to mouth, and return it to the owner's feet.
 
 ---
 
-## 4. Universal Networking Architecture
+## 4. Universal Networking & Social Architecture
+- **Ad-Hoc Proximity Group Chat (`src/ui/proximity_chat.js`)**:
+  - Clusters form dynamically when 2+ players walk within 200px of each other.
+  - Prominent conversation interface displays active participants and chat thread.
+  - Walking alongside keeps players continuously in the conversation thread.
+  - Parting "Tombstone" Chat Markers (`src/entities/tombstone.js`): when players exit proximity and disband, the conversation drops as a fading tombstone marker on the turf that dissolves over 10 seconds.
 - **Multi-Transport Network Engine (`src/net/network.js`, `src/net/protocol.js`, `src/net/ws_network.js`)**:
   - Transparent multi-mode polymorphic architecture:
-    1. **Cloudflare PartyServer Edge Mode**: Native Cloudflare Workers + Durable Objects (`party/server.js`), connecting canonically via `/parties/parkserver/${roomId}` with automatic aliasing for `/parties/park/` legacy paths. Scale-to-zero at $0 idle cost.
-    2. **Dedicated WebSocket Microserver Mode**: Connects via native WebSockets (`ws://` or `wss://`) when launched via local server or when `?server=...` parameter is present.
+    1. **Cloudflare PartyServer Edge Mode**: Native Cloudflare Workers + Durable Objects (`party/server.js`), connecting canonically via `/parties/parkserver/${roomId}`.
+    2. **Dedicated WebSocket Microserver Mode**: Connects via native WebSockets (`ws://` or `wss://`) when launched via local server or `?server=...`.
     3. **WebRTC P2P Fallback Mode**: Gracefully falls back to browser-to-browser PeerJS DataChannels if run without a server.
-  - **The Always-Open Public Commons**:
-    - Default room is `the-commons`. Anyone loading the site enters the same active park instance.
-    - `getShareUrl()` returns the clean base domain (`https://<domain>/`).
-    - Optional private rooms supported via `?room=<custom-code>`.
-  - **Packet Protocol Parity, Stateful Peer Registry & Bidirectional Handshake**:
-    - Uniform packet schemas: `HELLO`, `WELCOME`, `SYNC_STATE`, `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, `EMOTE`, `PEER_LEFT`, `WHISTLE`.
-    - Edge relay server enforces authoritative `conn.id` stamping on all broadcasts (`data.senderId = conn.id`).
-    - Server maintains active peer registry (`this.peers`) and transmits rich peer styling records (`{ id, name, jacketColor, coatName }`) in `WELCOME.peers`.
-    - Existing peers reply with bidirectional `HELLO` greetings when a new player arrives, ensuring zero placeholder fallbacks.
-    - Render loop dynamically synchronizes remote avatar styling from incoming peer metadata in real time.
-    - State broadcasts at 16Hz; `EntityInterpolator` provides smooth exponential damping (lerp) for remote positions at 60fps, while immediately propagating discrete non-spatial properties (`isLeashed`, `isMoving`, and dog behavior `state`).
-    - Leash toggle (<kbd>L</kbd> or touch button) broadcasts `SYNC_STATE` instantaneously for zero-latency removal or re-drawing of the red catenary lead across all connected peers.
-  - **Offline / Solo Mode**: Operates seamlessly in singleplayer sandbox mode when disconnected.
+  - Packet protocol: `HELLO`, `WELCOME`, `SYNC_STATE` (synchronizing position, leash state, and canine personality), `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, `EMOTE`, `PEER_LEFT`, `WHISTLE`.
+  - Edge relay server enforces authoritative `conn.id` stamping on all broadcasts.
+  - State broadcasts at 16Hz; `EntityInterpolator` provides smooth exponential damping (lerp) at 60fps while propagating discrete states instantly.
 
 ---
 
-## 5. Edge Server & Local Microserver
-- **Cloudflare PartyServer Room Relay (`party/server.js`, `wrangler.jsonc`)**:
-  - Implements `ParkServer` inheriting from `Server` in `partyserver`.
-  - In Worker `fetch`, aliases `env.park = env.ParkServer` and `env.parkserver = env.ParkServer` with defensive `try...catch` crash guard, eliminating Cloudflare Error 1101 exceptions.
-  - Ephemeral serverless Durable Object actors managing player handshakes (`WELCOME`), high-throughput state broadcasts, barking, tennis ball fetch, and disconnect cleanup.
-  - Serves static HTML/JS frontend assets and WSS endpoints under a single unified Cloudflare Worker URL.
-  - Automatic deployment via GitHub Actions CI/CD to Cloudflare Workers at $0 cost.
-- **Dedicated Local Python Microserver (`server/server.py`, `server/host.py`)**:
-  - Alternative local async WebSocket and HTTP static file server.
-  - Automatically provisions Cloudflare Quick Tunnels (`https://<subdomain>.trycloudflare.com`) for private self-hosted multiplayer.
-
----
-
-## 6. Sensory & Audio Polish
+## 5. Live Clifton Weather & Sensory Soundscape
+- **Live Clifton Downs Weather Client (`src/systems/weather.js`)**:
+  - Queries Open-Meteo API for real-time Clifton coordinates (`51.464, -2.628`).
+  - Translates WMO weather codes into domain states (`CLEAR`, `OVERCAST`, `DRIZZLE`, `RAIN`, `FOG`).
+  - Resilient offline fallback using pseudo-seeded diurnal heuristics when network is unavailable.
 - **Procedural Nature Soundscape (`src/systems/audio.js`)**:
-  - Dual-filter low-pass pink noise with 0.1 Hz LFO sweeping cutoff between 260 Hz and 440 Hz for organic breathing canopy wind.
-  - Multi-species authentic British birdsong synthesizer:
-    - Melodic flute-like Blackbird piping (`playBlackbird()`, 1800–2600 Hz motifs).
-    - Crystalline European Robin trills (`playRobin()`, 3200–4200 Hz with vibrato).
-    - Warm rhythmic Woodpigeon cooing (`playWoodpigeon()`, 380–420 Hz pulses).
-  - Soft procedural grass footstep rustles during movement.
-  - Formant-filtered canine barks and ball bounce pops.
-  - Dual-oscillator acoustic dog training whistle chirp (`playWhistle`) with 17Hz vibrato warble.
-- **Social HUD Overlay (`src/ui/social_hud.js`)**:
-  - Live status-driven diagnostic badge: green `🌳 The Downs` (or purple `🔒 Meadow`) when connected, amber `⏳ Connecting...` / `🔄 Reconnecting...`, and slate gray `Solo (Offline)` on disconnect.
-  - Player count badge and "Share Park" button with toast confirmation.
-  - Style customizer modal and quick chat bar (<kbd>Enter</kbd>) with emote buttons (👋, 🐾, ❤️, 🎾).
-  - Controls legend including <kbd>WASD</kbd> walk, <kbd>Space</kbd> throw, <kbd>L</kbd> leash, <kbd>B</kbd> bark, <kbd>E</kbd> pet, <kbd>H</kbd> whistle.
+  - Dual-filter low-pass pink noise with 0.1 Hz LFO for canopy wind.
+  - Multi-species authentic British birdsong synthesizer (Blackbird piping, European Robin trills, Woodpigeon cooing), diurnally modulated and suppressed during heavy rain or night.
+  - Procedural rain synthesis: dual-filter pink noise graph modulated dynamically by precipitation type (`DRIZZLE`, `RAIN`).
+  - Squall effects: low-frequency procedural thunder rumbles and modulated wind gusts.
+  - Formant-filtered canine barks, footsteps, and acoustic training whistle chirp.
 
 ---
 
-## 7. Mobile Ergonomics & Responsive Touch Architecture
+## 6. Mobile Ergonomics & Responsive Touch Architecture
 - **Virtual Touch Controller (`src/ui/touch_controls.js`)**:
-  - Virtual analog joystick with dynamic thumb tracking, 10% deadzone threshold, 50px maximum deflection clamp, and normalized `(vx, vy)` vector output for fluid 360° locomotion.
-  - Multi-touch isolation using explicit touch identifiers (`joystickTouchId`) ensuring left-thumb steering does not conflict with right-hand button taps or meadow interactions.
-  - Glassmorphic touch action pad (Throw 🎾, Pet ❤️, Bark 🐕, Leash 🦮/🐕, Whistle 📯, Chat 💬) with haptic feedback support (`navigator.vibrate`) and dynamic visual state toggling for active vs off-lead status.
-  - Direct canvas tap-to-throw: tapping any point on the open field translates screen coordinates to world coordinates via `Camera.screenToWorld` and throws the tennis ball with distance-proportional speed.
-  - Direct canvas tap-to-pet: tapping near the companion dog triggers affectionate petting.
-- **Mobile Viewport & Safe-Area Constraints (`index.html`, `src/style.css`)**:
-  - Viewport configured with `viewport-fit=cover, maximum-scale=1.0, user-scalable=no` and full-screen mobile web app capability tags.
-  - Canvas and container lock `touch-action: none` to eliminate accidental browser pinch-zoom, double-tap zoom delay, and rubber-band pull-to-refresh.
-  - Notched phone and dynamic island safe areas respected via `env(safe-area-inset-top)` and `env(safe-area-inset-bottom)`.
-  - Dynamic viewport height handled with `height: 100dvh` and visual viewport resize events.
-- **Touch Audio Auto-Unlock (`src/systems/audio.js`, `src/main.js`)**:
-  - Complies with iOS Safari and Android Chrome autoplay restrictions by unlocking and resuming Web Audio `AudioContext` on initial `touchstart` or `pointerdown`.
-- **Responsive UI Adaptation (`src/ui/social_hud.js`)**:
-  - Automatically hides desktop `<kbd>` controls guidance on touch/mobile devices while keeping desktop experience untouched.
+  - Virtual analog joystick with dynamic thumb tracking, 10% deadzone threshold, 50px maximum deflection clamp, and normalized `(vx, vy)` vector output.
+  - Multi-touch isolation using explicit touch identifiers (`joystickTouchId`).
+  - Glassmorphic touch action pad (Throw 🎾, Pet ❤️, Bark 🐕, Leash 🦮/🐕, Whistle 📯, Chat 💬, Pick up waste 🟤).
+  - Direct canvas tap interactions: tap-to-throw tennis ball, tap-to-pet dog, tap-to-pickup poop pile, tap-to-dispose bin.
+- **Mobile Viewport Constraints (`index.html`, `src/style.css`)**:
+  - Viewport configured with `viewport-fit=cover, maximum-scale=1.0, user-scalable=no`, `touch-action: none`, and dynamic safe-area insets (`env(safe-area-inset-top)` / `bottom`).
 
 ---
 
-## 8. Test Suite & CI/CD
-- `python3 test/run_tests.py`: Comprehensive test runner covering physics ballistics, arrival steering, leash clamping and off-lead rendering, real-time leash state synchronization, entity interpolator discrete property propagation, network packet schemas, microserver room routing, PartyServer contracts, viewport meta attributes, safe-area CSS rules, bounded camera projection math, and joystick analog vector normalization.
+## 7. Test Suite & CI/CD
+- `python3 test/run_tests.py`: Comprehensive test runner executing 17 test suites covering:
+  - Physics ballistics, arrival steering, leash clamping and off-lead rendering.
+  - Real-time leash synchronization, entity interpolator discrete propagation, network packet schemas.
+  - Dog personality scaling, obedience-weighted stray probability, leash pulling physics.
+  - Directional navigation arrow bearing math, viewport ray-box clamping, target lifecycle.
+  - Waste pile lifecycle, spatial bin querying, pickup/disposal interactions.
+  - Ambient NPC waypoint traversal, athletic jogger pacing, soft steering avoidance.
+  - Diurnal lighting calculation, Open-Meteo weather response decoding, particle overlays.
+  - Microserver room routing, PartyServer contracts, viewport meta attributes, safe-area CSS rules.
 - `.github/workflows/ci.yml`: Automated GitHub Actions pipeline running test suites on every push/PR with a 3-minute safety timeout, followed by auto-deploy to Cloudflare Workers on `main`.

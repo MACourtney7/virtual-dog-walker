@@ -4,6 +4,8 @@ milestone: "the-downs-expansion"
 title: "The Downs Social Sandbox Expansion"
 version: "1.0.0"
 created_at: "2026-10-11T19:20:00Z"
+completed_at: "2026-10-12T19:47:00Z"
+status: "COMPLETED"
 ---
 
 # Milestone Roadmap: The Downs Social Sandbox Expansion
@@ -64,4 +66,4 @@ flowchart TD
 - [x] Ticket-016 completed and merged to `main`.
 - [x] Ticket-017 completed and merged to `main`.
 - [x] End-to-end integration tests pass across combined deliverables.
-- [ ] Canonical specifications reconciled in `openspec/specs/`.
+- [x] Canonical specifications reconciled in `openspec/specs/`.

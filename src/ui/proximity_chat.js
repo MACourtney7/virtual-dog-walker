@@ -1,10 +1,13 @@
 // Spatial Proximity Clustering & Prominent Glassmorphic Conversation HUD
 export const PROXIMITY_RADIUS = 200;
+export const RETENTION_DURATION_MS = 5 * 60 * 1000; // 300,000 ms (5 minutes)
+export const PLAYER_PALETTE = ['#38bdf8', '#4ade80', '#fbbf24', '#fb7185', '#c084fc', '#2dd4bf', '#f97316', '#60a5fa'];
 
 export class ProximityChat {
   /**
    * @param {Object} options
    * @param {number} [options.radius=200] - Proximity threshold in pixels
+   * @param {number} [options.retentionDuration=300000] - Message retention duration in ms
    * @param {HTMLElement} [options.container] - Parent DOM container
    * @param {Function} [options.onClusterFormed] - Callback when cluster forms (participants)
    * @param {Function} [options.onClusterDissolved] - Callback when cluster dissolves (partingContext)
@@ -12,6 +15,9 @@ export class ProximityChat {
    */
   constructor(options = {}) {
     this.radius = typeof options.radius === 'number' ? options.radius : PROXIMITY_RADIUS;
+    this.retentionDuration = typeof options.retentionDuration === 'number' ? options.retentionDuration : RETENTION_DURATION_MS;
+    this.departureTimers = new Map(); // peerId -> departureTimestamp (ms)
+    this.playerColors = new Map(); // senderId -> colorHex
     this.activeCluster = null; // null when solo, or Set of active peer IDs
     this.participants = []; // array of participant objects { id, name, isLocal, toString() }
     this.messages = [];
@@ -222,12 +228,19 @@ export class ProximityChat {
     const sName = senderName || (isLocal ? 'You' : 'Walker');
     const strText = String(text !== undefined ? text : '');
 
+    if (!this.playerColors.has(sId)) {
+      const color = PLAYER_PALETTE[this.playerColors.size % PLAYER_PALETTE.length];
+      this.playerColors.set(sId, color);
+    }
+    const assignedColor = this.playerColors.get(sId);
+
     const msg = {
       senderId: sId,
       senderName: sName,
       text: strText,
       isLocal: Boolean(isLocal),
       timestamp: Date.now(),
+      color: assignedColor,
       toString() {
         return this.text;
       }
@@ -248,6 +261,8 @@ export class ProximityChat {
     if (this.messagesContainer && typeof document !== 'undefined') {
       const msgEl = document.createElement('div');
       msgEl.className = `proximity-message ${isLocal ? 'local' : 'peer'}`;
+      // data-sender-id="${this.escapeHTML(sId)}"
+      msgEl.setAttribute('data-sender-id', sId);
 
       const timeStr = new Date(msg.timestamp).toLocaleTimeString([], {
         hour: '2-digit',
@@ -256,10 +271,10 @@ export class ProximityChat {
 
       msgEl.innerHTML = `
         <div class="proximity-message-header">
-          <span class="proximity-message-sender">${this.escapeHTML(msg.senderName)}</span>
+          <span class="proximity-message-sender" style="color: ${assignedColor};">${this.escapeHTML(msg.senderName)}</span>
           <span class="proximity-message-time">${timeStr}</span>
         </div>
-        <div class="proximity-message-text">${this.escapeHTML(msg.text)}</div>
+        <div class="proximity-message-text" style="color: ${assignedColor};">${this.escapeHTML(msg.text)}</div>
       `;
       this.messagesContainer.appendChild(msgEl);
       this.scrollToBottom();
@@ -451,8 +466,21 @@ export class ProximityChat {
   update(dt, localOwner, remotePlayersMap) {
     const wasActive = this.isClusterActive();
 
+    // Expiration check:
+    const now = Date.now();
+    for (const [peerId, departureTimestamp] of this.departureTimers.entries()) {
+      if (now - departureTimestamp >= this.retentionDuration) {
+        this.purgePeerMessages(peerId);
+      }
+    }
+
     if (!localOwner || typeof localOwner.x !== 'number' || typeof localOwner.y !== 'number') {
       if (wasActive) {
+        if (this.activeCluster) {
+          for (const peerId of this.activeCluster) {
+            this.departureTimers.set(peerId, Date.now());
+          }
+        }
         const partingContext = {
           x: 0,
           y: 0,
@@ -517,6 +545,13 @@ export class ProximityChat {
       }));
       const newParticipants = [localNode, ...remoteParticipants];
 
+      // Reconnection / Join:
+      for (const peerId of currentPeerIds) {
+        if (this.departureTimers.has(peerId)) {
+          this.departureTimers.delete(peerId);
+        }
+      }
+
       if (!wasActive) {
         // Cluster FORMS: open/slide-in the prominent on-screen HUD if not manually hidden
         this.activeCluster = currentPeerIds;
@@ -546,6 +581,7 @@ export class ProximityChat {
         if (leftIds.length > 0) {
           membershipChanged = true;
           for (const id of leftIds) {
+            this.departureTimers.set(id, Date.now());
             const prevP = this.participants.find(p => p.id === id);
             const name = prevP ? prevP.name : 'A player';
             this.addSystemMessage(`${name} left the conversation.`);
@@ -561,6 +597,11 @@ export class ProximityChat {
     } else {
       // 0 remote players connected to local player
       if (wasActive) {
+        if (this.activeCluster) {
+          for (const peerId of this.activeCluster) {
+            this.departureTimers.set(peerId, Date.now());
+          }
+        }
         // Cluster DISSOLVES: close/slide-out HUD
         const partingContext = {
           x: localOwner.x,
@@ -579,6 +620,30 @@ export class ProximityChat {
         this.updateParticipantsBadge();
       }
     }
+
+    // Expiration check:
+    const checkNow = Date.now();
+    for (const [peerId, departureTimestamp] of this.departureTimers.entries()) {
+      if (checkNow - departureTimestamp >= this.retentionDuration) {
+        this.purgePeerMessages(peerId);
+      }
+    }
+  }
+
+  /**
+   * Purges messages sent by a departed peer after retention expiration.
+   * @param {string} peerId
+   */
+  purgePeerMessages(peerId) {
+    this.messages = this.messages.filter(m => m.senderId !== peerId);
+    if (this.lastMessage && this.lastMessage.senderId === peerId) {
+      this.lastMessage = this.messages.length > 0 ? this.messages[this.messages.length - 1] : null;
+    }
+    if (this.messagesContainer && typeof document !== 'undefined') {
+      const toRemove = this.messagesContainer.querySelectorAll(`[data-sender-id="${peerId}"]`);
+      toRemove.forEach(el => el.remove());
+    }
+    this.departureTimers.delete(peerId);
   }
 
   /**
@@ -623,6 +688,13 @@ export class ProximityChat {
     this.participants = [];
     this.messages = [];
     this.lastMessage = null;
+
+    if (this.departureTimers) {
+      this.departureTimers.clear();
+    }
+    if (this.playerColors) {
+      this.playerColors.clear();
+    }
   }
 }
 

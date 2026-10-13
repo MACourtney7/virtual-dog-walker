@@ -19,8 +19,8 @@ Overhaul the *Virtual Dog Walker* chat and social HUD system to prevent chat fro
 | `ticket-018` | Tombstone Subsystem Removal & Turf Cleanup | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-019` | HUD Top-Bar Reorganization & Button Relocation | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-020` | Top-Right Downward Chat Sidebar, Toggle Button & Auto-Unhide | `MEDIUM` | `["ticket-019"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
-| `ticket-021` | Proximity Chat Retention Expiry & Player Color Palette | `MEDIUM` | `["ticket-020"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
-| `ticket-022` | Speech Bubble Duality Routing & Comprehensive Test Suite | `HIGH` | `["ticket-018", "ticket-021"]` | `BLOCKED_ON_018_021` | `PLANNING` |
+| `ticket-021` | Proximity Chat Retention Expiry & Player Color Palette | `MEDIUM` | `["ticket-020"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-022` | Speech Bubble Duality Routing & Comprehensive Test Suite | `HIGH` | `["ticket-018", "ticket-021"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
 
 ## 3. Blast Radius & Scope Collision Matrix
 

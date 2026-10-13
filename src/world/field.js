@@ -96,7 +96,6 @@ export class Field {
     this.wildflowers = [];
     this.boundaries = [];
     this.ambientParticles = [];
-    this.tombstones = [];
     this.streetlamps = [];
     this.poopPiles = [];
     this.windTime = 0;
@@ -356,12 +355,6 @@ export class Field {
     }
   }
 
-  addTombstone(tombstone) {
-    if (tombstone) {
-      this.tombstones.push(tombstone);
-    }
-  }
-
   addPoopPile(poopPile) {
     if (poopPile) {
       this.poopPiles.push(poopPile);
@@ -408,17 +401,6 @@ export class Field {
 
   update(dt) {
     this.windTime += dt;
-
-    // Update active tombstones and cull dead ones
-    for (let i = this.tombstones.length - 1; i >= 0; i--) {
-      const tomb = this.tombstones[i];
-      if (typeof tomb.update === 'function') {
-        tomb.update(dt);
-      }
-      if (tomb.isDead) {
-        this.tombstones.splice(i, 1);
-      }
-    }
 
     // Update poop piles and cull cleaned ones
     for (let i = this.poopPiles.length - 1; i >= 0; i--) {
@@ -741,26 +723,6 @@ export class Field {
           type: 'streetlamp',
           y: lamp.depthY,
           data: lamp
-        });
-      }
-    }
-
-    // Add active tombstones
-    const renderedEntities = new Set(dynamicEntities);
-    for (const tomb of this.tombstones) {
-      if (renderedEntities.has(tomb)) continue;
-      if (
-        tomb.x + 50 > viewLeft &&
-        tomb.x - 50 < viewRight &&
-        tomb.y + 50 > viewTop &&
-        tomb.y - 50 < viewBottom
-      ) {
-        const ty = tomb.depthY !== undefined ? tomb.depthY : tomb.y + 8;
-        renderList.push({
-          type: 'entity',
-          y: ty,
-          depthY: ty,
-          data: tomb
         });
       }
     }

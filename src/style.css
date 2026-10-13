@@ -52,8 +52,8 @@ body {
   left: 16px;
   right: 16px;
   display: flex;
-  justify-content: space-between;
-  align-items: center;
+  justify-content: flex-start;
+  align-items: flex-start;
   pointer-events: none;
   z-index: 20;
 }
@@ -67,7 +67,9 @@ body {
   padding: 8px 16px;
   display: flex;
   align-items: center;
-  gap: 14px;
+  flex-wrap: wrap;
+  gap: 12px;
+  max-width: calc(100vw - 32px);
   font-weight: 600;
   box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
   pointer-events: auto;
@@ -929,12 +931,16 @@ body {
     top: max(10px, env(safe-area-inset-top));
     left: max(10px, env(safe-area-inset-left));
     right: max(10px, env(safe-area-inset-right));
+    justify-content: flex-start;
+    align-items: flex-start;
     gap: 8px;
   }
 
   .hud-panel {
     padding: 6px 10px;
+    flex-wrap: wrap;
     gap: 8px;
+    max-width: calc(100vw - 20px);
   }
 
   .hud-pill {

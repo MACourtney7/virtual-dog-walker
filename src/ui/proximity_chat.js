@@ -32,6 +32,10 @@ export class ProximityChat {
     this.sendBtn = null;
     this.emojiBtns = [];
 
+    this.isManuallyHidden = false;
+    this.toggleBtn = null;
+    this._boundOnToggleClick = null;
+
     this._boundOnKeyDown = null;
     this._boundOnSendClick = null;
     this._boundEmojiClicks = [];
@@ -130,6 +134,46 @@ export class ProximityChat {
       this.sendBtn.addEventListener('click', this._boundOnSendClick);
     }
 
+    // Check and clean up existing #chat-toggle-btn
+    const existingToggle = document.getElementById('chat-toggle-btn');
+    if (existingToggle && existingToggle.parentNode) {
+      existingToggle.parentNode.removeChild(existingToggle);
+    }
+
+    // Build #chat-toggle-btn
+    const toggleBtn = document.createElement('button');
+    toggleBtn.id = 'chat-toggle-btn';
+    toggleBtn.className = 'chat-toggle-btn collapsed';
+    toggleBtn.setAttribute('type', 'button');
+    toggleBtn.setAttribute('aria-label', 'Toggle Chat');
+    toggleBtn.setAttribute('title', 'Toggle Chat');
+    toggleBtn.innerHTML = '<span class="chat-toggle-icon">💬</span>';
+
+    const parentElem = this.container || document.body;
+    if (parentElem) {
+      parentElem.appendChild(toggleBtn);
+    }
+    this.toggleBtn = toggleBtn;
+
+    // Toggle button click handler
+    this._boundOnToggleClick = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const isVisible = this.panel && this.panel.classList.contains('active');
+      if (isVisible) {
+        this.hideHUD();
+        this.isManuallyHidden = true;
+      } else {
+        this.showHUD();
+        this.isManuallyHidden = false;
+      }
+      if (this.toggleBtn) {
+        this.toggleBtn.classList.toggle('active', !this.isManuallyHidden);
+        this.toggleBtn.classList.toggle('collapsed', this.isManuallyHidden);
+      }
+    };
+    this.toggleBtn.addEventListener('click', this._boundOnToggleClick);
+
     for (const btn of this.emojiBtns) {
       const handler = (e) => {
         e.preventDefault();
@@ -191,6 +235,15 @@ export class ProximityChat {
 
     this.messages.push(msg);
     this.lastMessage = msg;
+
+    // Auto-unhide logic: If in an active cluster, automatically unhide panel when message is added
+    if (this.isClusterActive() || this.activeCluster) {
+      const isPanelActive = this.panel && this.panel.classList.contains('active');
+      if (this.isManuallyHidden || !isPanelActive) {
+        this.showHUD();
+        this.isManuallyHidden = false;
+      }
+    }
 
     if (this.messagesContainer && typeof document !== 'undefined') {
       const msgEl = document.createElement('div');
@@ -281,9 +334,14 @@ export class ProximityChat {
    * Slides in HUD panel.
    */
   showHUD() {
-    if (!this.panel) return;
-    this.panel.classList.remove('hidden');
-    this.panel.classList.add('active');
+    if (this.panel) {
+      this.panel.classList.remove('hidden');
+      this.panel.classList.add('active');
+    }
+    if (this.toggleBtn) {
+      this.toggleBtn.classList.add('active');
+      this.toggleBtn.classList.remove('collapsed');
+    }
   }
 
   openHUD() {
@@ -294,9 +352,14 @@ export class ProximityChat {
    * Slides out HUD panel.
    */
   hideHUD() {
-    if (!this.panel) return;
-    this.panel.classList.remove('active');
-    this.panel.classList.add('hidden');
+    if (this.panel) {
+      this.panel.classList.remove('active');
+      this.panel.classList.add('hidden');
+    }
+    if (this.toggleBtn) {
+      this.toggleBtn.classList.remove('active');
+      this.toggleBtn.classList.add('collapsed');
+    }
   }
 
   closeHUD() {
@@ -398,6 +461,7 @@ export class ProximityChat {
           snippet: this.getSnippet()
         };
         this.hideHUD();
+        this.isManuallyHidden = false;
         if (typeof this.onClusterDissolved === 'function') {
           this.onClusterDissolved(partingContext);
         }
@@ -454,11 +518,13 @@ export class ProximityChat {
       const newParticipants = [localNode, ...remoteParticipants];
 
       if (!wasActive) {
-        // Cluster FORMS: open/slide-in the prominent on-screen HUD
+        // Cluster FORMS: open/slide-in the prominent on-screen HUD if not manually hidden
         this.activeCluster = currentPeerIds;
         this.participants = newParticipants;
         this.updateParticipantsBadge();
-        this.showHUD();
+        if (!this.isManuallyHidden) {
+          this.showHUD();
+        }
         if (typeof this.onClusterFormed === 'function') {
           this.onClusterFormed(this.participants);
         }
@@ -504,6 +570,7 @@ export class ProximityChat {
           snippet: this.getSnippet()
         };
         this.hideHUD();
+        this.isManuallyHidden = false;
         if (typeof this.onClusterDissolved === 'function') {
           this.onClusterDissolved(partingContext);
         }
@@ -528,6 +595,16 @@ export class ProximityChat {
       btn.removeEventListener('click', handler);
     }
     this._boundEmojiClicks = [];
+
+    if (this.toggleBtn && this._boundOnToggleClick) {
+      this.toggleBtn.removeEventListener('click', this._boundOnToggleClick);
+    }
+    this._boundOnToggleClick = null;
+
+    if (this.toggleBtn && this.toggleBtn.parentNode) {
+      this.toggleBtn.parentNode.removeChild(this.toggleBtn);
+    }
+    this.toggleBtn = null;
 
     if (this.panel && this.panel.parentNode) {
       this.panel.parentNode.removeChild(this.panel);

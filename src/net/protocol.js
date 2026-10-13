@@ -12,7 +12,6 @@ export const PacketType = {
   EMOTE: 'EMOTE',
   WHISTLE: 'WHISTLE',
   PROXIMITY_CHAT: 'PROXIMITY_CHAT',
-  TOMBSTONE_DROP: 'TOMBSTONE_DROP',
   PEER_LEFT: 'PEER_LEFT'
 };
 
@@ -154,18 +153,6 @@ export class Protocol {
       x: Math.round(x * 10) / 10,
       y: Math.round(y * 10) / 10,
       clusterPeers,
-      timestamp: Date.now()
-    };
-  }
-
-  static createTombstoneDrop(peerId, x, y, text, participants = []) {
-    return {
-      type: PacketType.TOMBSTONE_DROP,
-      senderId: peerId,
-      x: Math.round(x * 10) / 10,
-      y: Math.round(y * 10) / 10,
-      text,
-      participants,
       timestamp: Date.now()
     };
   }

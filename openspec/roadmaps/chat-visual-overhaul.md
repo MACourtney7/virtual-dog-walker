@@ -4,7 +4,7 @@ milestone: "chat-visual-overhaul"
 title: "Chat Visual Overhaul & Spatial HUD Streamlining"
 version: "1.0.0"
 created_at: "2026-10-12T20:10:00Z"
-status: "PLANNING"
+status: "COMPLETED"
 ---
 
 # Milestone Roadmap: Chat Visual Overhaul & Spatial HUD Streamlining
@@ -20,7 +20,7 @@ Overhaul the *Virtual Dog Walker* chat and social HUD system to prevent chat fro
 | `ticket-019` | HUD Top-Bar Reorganization & Button Relocation | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-020` | Top-Right Downward Chat Sidebar, Toggle Button & Auto-Unhide | `MEDIUM` | `["ticket-019"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-021` | Proximity Chat Retention Expiry & Player Color Palette | `MEDIUM` | `["ticket-020"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
-| `ticket-022` | Speech Bubble Duality Routing & Comprehensive Test Suite | `HIGH` | `["ticket-018", "ticket-021"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
+| `ticket-022` | Speech Bubble Duality Routing & Comprehensive Test Suite | `HIGH` | `["ticket-018", "ticket-021"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 
 ## 3. Blast Radius & Scope Collision Matrix
 
@@ -49,10 +49,10 @@ flowchart TD
 ```
 
 ## 5. Progress & Milestone Completion Criteria
-- [ ] Ticket-018 completed and merged to `main`.
-- [ ] Ticket-019 completed and merged to `main`.
-- [ ] Ticket-020 completed and merged to `main`.
-- [ ] Ticket-021 completed and merged to `main`.
-- [ ] Ticket-022 completed and merged to `main`.
-- [ ] End-to-end integration tests pass across combined deliverables (`python3 test/run_tests.py`).
+- [x] Ticket-018 completed and merged to `main`.
+- [x] Ticket-019 completed and merged to `main`.
+- [x] Ticket-020 completed and merged to `main`.
+- [x] Ticket-021 completed and merged to `main`.
+- [x] Ticket-022 completed and merged to `main`.
+- [x] End-to-end integration tests pass across combined deliverables (`python3 test/run_tests.py`).
 - [ ] Canonical specifications reconciled in `openspec/specs/`.

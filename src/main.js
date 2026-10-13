@@ -10,7 +10,6 @@ import { SocialHUD } from './ui/social_hud.js';
 import { sound } from './systems/audio.js';
 import { TouchControls } from './ui/touch_controls.js';
 import { ProximityChat } from './ui/proximity_chat.js';
-import { ChatTombstone } from './entities/tombstone.js';
 import { WalkerNPC, JoggerNPC } from './entities/npc.js';
 import { NavigationArrow } from './ui/navigation_arrow.js';
 import { weatherClient, WeatherType } from './systems/weather.js';
@@ -143,25 +142,10 @@ export class CliftonDownGame {
         }
       },
       onClusterDissolved: (partingContext) => {
-        const text = partingContext.snippet || (partingContext.lastMessage ? (typeof partingContext.lastMessage === 'string' ? partingContext.lastMessage : partingContext.lastMessage.text) : '');
-        const participants = (partingContext.participants || []).map(p => p.name || 'Walker');
-        const tombstone = new ChatTombstone(partingContext.x, partingContext.y, {
-          text,
-          participants
-        });
-        this.field.addTombstone(tombstone);
-        if (this.net && typeof this.net.broadcast === 'function') {
-          if (typeof Protocol.createTombstoneDrop === 'function') {
-            this.net.broadcast(Protocol.createTombstoneDrop(
-              this.net.peerId,
-              partingContext.x,
-              partingContext.y,
-              tombstone.text,
-              tombstone.participants
-            ));
-          }
+        // Parting no longer drops turf markers
+        if (this.hud && typeof this.hud.showToast === 'function') {
+          this.hud.showToast('💬 Conversation ended.');
         }
-        this.hud.showToast('💬 Conversation parted. Placed marker on the turf.');
       }
     });
 
@@ -380,7 +364,7 @@ export class CliftonDownGame {
       }
     };
 
-    // Proximity Chat & Parting Tombstone Handlers
+    // Proximity Chat Handlers
     this.net.onProximityChat = (data) => {
       if (!data) return;
       this.proximityChat.addMessage(data.senderId, data.name || 'Walker', data.text, false);
@@ -388,15 +372,6 @@ export class CliftonDownGame {
       if (p && p.owner) {
         p.owner.setChat(data.text);
       }
-    };
-
-    this.net.onTombstoneDrop = (data) => {
-      if (!data) return;
-      const tombstone = new ChatTombstone(data.x, data.y, {
-        text: data.text,
-        participants: data.participants
-      });
-      this.field.addTombstone(tombstone);
     };
 
     // Intercept packets on underlying network adapter if adapter lacks native dispatch
@@ -409,14 +384,6 @@ export class CliftonDownGame {
           if (packet.type === PacketType.PROXIMITY_CHAT || packet.type === 'PROXIMITY_CHAT') {
             const data = { ...packet, senderId: packet.senderId || senderId };
             this.net.onProximityChat(data);
-            if (this.net.isHost && typeof this.net.relayToOthers === 'function') {
-              this.net.relayToOthers(senderId, packet);
-            }
-            return;
-          }
-          if (packet.type === PacketType.TOMBSTONE_DROP || packet.type === 'TOMBSTONE_DROP') {
-            const data = { ...packet, senderId: packet.senderId || senderId };
-            this.net.onTombstoneDrop(data);
             if (this.net.isHost && typeof this.net.relayToOthers === 'function') {
               this.net.relayToOthers(senderId, packet);
             }
@@ -906,7 +873,7 @@ export class CliftonDownGame {
       dynamicEntities.push(p.dog);
     }
 
-    // Field renders background turf, then Y-sorts trees, benches, tombstones, owners, dogs, and balls
+    // Field renders background turf, then Y-sorts trees, benches, owners, dogs, and balls
     this.field.render(this.ctx, this.camera, dynamicEntities);
 
     // In-World Contextual Interaction Badges

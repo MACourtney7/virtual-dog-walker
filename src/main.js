@@ -134,7 +134,6 @@ export class CliftonDownGame {
             this.net.broadcast(Protocol.createChatMessage(this.net.peerId, text));
           }
         }
-        this.owner.setChat(text);
         if (sound && typeof sound.playChatChime === 'function') {
           sound.playChatChime();
         } else if (sound && typeof sound.playChat === 'function') {
@@ -148,6 +147,7 @@ export class CliftonDownGame {
         }
       }
     });
+    this.hud.proximityChat = this.proximityChat;
 
     // Touch Controls
     this.joystickActive = false;
@@ -352,8 +352,12 @@ export class CliftonDownGame {
 
     this.net.onChatMessage = (peerId, text) => {
       const p = this.remotePlayers.get(peerId);
-      if (p) {
-        p.owner.setChat(text);
+      if (this.proximityChat && this.proximityChat.getActivePeers().includes(peerId)) {
+        this.proximityChat.addMessage(peerId, (p && p.owner && p.owner.name) || 'Walker', text, false);
+      } else {
+        if (p && p.owner) {
+          p.owner.setChat(text);
+        }
       }
     };
 
@@ -368,10 +372,6 @@ export class CliftonDownGame {
     this.net.onProximityChat = (data) => {
       if (!data) return;
       this.proximityChat.addMessage(data.senderId, data.name || 'Walker', data.text, false);
-      const p = this.remotePlayers.get(data.senderId);
-      if (p && p.owner) {
-        p.owner.setChat(data.text);
-      }
     };
 
     // Intercept packets on underlying network adapter if adapter lacks native dispatch

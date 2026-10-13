@@ -82,12 +82,7 @@ export class ProximityChat {
       <div id="proximity-chat-messages" class="proximity-chat-messages"></div>
 
       <div id="proximity-chat-input-container" class="proximity-chat-input-container">
-        <div class="proximity-emoji-bar">
-          <button type="button" class="proximity-emoji-btn" data-emoji="👋" title="Wave">👋</button>
-          <button type="button" class="proximity-emoji-btn" data-emoji="🐾" title="Paws">🐾</button>
-          <button type="button" class="proximity-emoji-btn" data-emoji="❤️" title="Heart">❤️</button>
-          <button type="button" class="proximity-emoji-btn" data-emoji="☕" title="Coffee">☕</button>
-        </div>
+        <!-- Retired quick emoji bar: 👋, 🐾, ❤️, ☕ and send button in Ticket-023 in favor of streamlined text input -->
         <div id="proximity-chat-input-bar" class="proximity-input-row">
           <input
             type="text"
@@ -96,9 +91,6 @@ export class ProximityChat {
             maxlength="100"
             autocomplete="off"
           />
-          <button type="button" id="proximity-chat-send-btn" class="proximity-send-btn">
-            <span>💬 Send</span>
-          </button>
         </div>
       </div>
     `;
@@ -165,31 +157,22 @@ export class ProximityChat {
     this._boundOnToggleClick = (e) => {
       e.preventDefault();
       e.stopPropagation();
-      const isVisible = this.panel && this.panel.classList.contains('active');
-      if (isVisible) {
-        this.hideHUD();
-        this.isManuallyHidden = true;
-      } else {
-        this.showHUD();
-        this.isManuallyHidden = false;
-      }
-      if (this.toggleBtn) {
-        this.toggleBtn.classList.toggle('active', !this.isManuallyHidden);
-        this.toggleBtn.classList.toggle('collapsed', this.isManuallyHidden);
-      }
+      this.toggleVisibility();
     };
     this.toggleBtn.addEventListener('click', this._boundOnToggleClick);
 
-    for (const btn of this.emojiBtns) {
-      const handler = (e) => {
-        e.preventDefault();
-        const emoji = btn.getAttribute('data-emoji') || btn.textContent.trim();
-        if (emoji) {
-          this.submitMessage(emoji);
-        }
-      };
-      btn.addEventListener('click', handler);
-      this._boundEmojiClicks.push({ btn, handler });
+    if (this.emojiBtns && this.emojiBtns.length > 0) {
+      for (const btn of this.emojiBtns) {
+        const handler = (e) => {
+          e.preventDefault();
+          const emoji = btn.getAttribute('data-emoji') || btn.textContent.trim();
+          if (emoji) {
+            this.submitMessage(emoji);
+          }
+        };
+        btn.addEventListener('click', handler);
+        this._boundEmojiClicks.push({ btn, handler });
+      }
     }
   }
 
@@ -343,6 +326,27 @@ export class ProximityChat {
       return [...this.activeCluster];
     }
     return [];
+  }
+
+  /**
+   * Public API: Whether the proximity chat panel is currently visible.
+   * @returns {boolean}
+   */
+  isVisible() {
+    return Boolean(this.panel && this.panel.classList.contains('active'));
+  }
+
+  /**
+   * Public API: Toggles visibility between shown and hidden.
+   */
+  toggleVisibility() {
+    if (this.isVisible()) {
+      this.hideHUD();
+      this.isManuallyHidden = true;
+    } else {
+      this.showHUD();
+      this.isManuallyHidden = false;
+    }
   }
 
   /**
@@ -698,5 +702,6 @@ export class ProximityChat {
   }
 }
 
+export const ProximityChatHUD = ProximityChat;
 export const ProximityChatManager = ProximityChat;
 export default ProximityChat;

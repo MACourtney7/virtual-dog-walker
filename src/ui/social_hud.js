@@ -33,47 +33,25 @@ export class SocialHUD {
           <div class="hud-pill" id="hud-player-count">
             <span>🐾 1</span>
           </div>
-          <button class="btn-share" id="btn-room-action">
-            <span>🔗</span>
-            <span id="btn-room-label">Share Park</span>
-          </button>
-          <button class="btn-share" id="btn-customize" style="background: rgba(255, 255, 255, 0.12);">
-            <span>🎨</span>
-            <span>Style</span>
-          </button>
         </div>
+        <button id="btn-customize" class="style-toggle-btn" aria-label="Customize Style" title="Customize Style">
+          <span class="style-toggle-icon">⚙️</span>
+        </button>
       `;
     }
 
-    // 2. Build Controls Guidance
+    // 2. Build Controls Guidance (Retired bottom toolbar)
     if (this.controlsHint) {
-      if (TouchControls.isTouchDevice()) {
-        this.controlsHint.style.display = 'none';
-      } else {
-        this.controlsHint.innerHTML = `
-          <kbd>WASD</kbd> Walk &bull; 
-          <kbd>SPACE</kbd> Throw Ball &bull; 
-          <kbd>L</kbd> Leash &bull; 
-          <kbd>H</kbd> Whistle &bull; 
-          <kbd>B</kbd> Bark &bull; 
-          <kbd>E</kbd> Pet &bull; 
-          <kbd>ENTER</kbd> Chat
-        `;
-      }
+      this.controlsHint.innerHTML = '';
+      this.controlsHint.style.display = 'none';
     }
 
-    // 3. Build Chat Input Bar & Emotes
+    // 3. Build Chat Input Bar (without quick emotes)
     const chatBar = document.createElement('div');
     chatBar.id = 'chat-container';
     chatBar.innerHTML = `
       <div style="display: flex; gap: 8px; align-items: center;">
         <input type="text" id="chat-input" placeholder="Say something in the park... (Enter to send)" maxlength="60" autocomplete="off" />
-        <div id="quick-emotes" style="display: flex; gap: 4px;">
-          <button class="emote-btn" data-emote="👋" style="background: rgba(15,23,42,0.85); border: 1px solid rgba(255,255,255,0.2); border-radius: 12px; padding: 4px 8px; cursor: pointer; font-size: 1.1rem;">👋</button>
-          <button class="emote-btn" data-emote="🐾" style="background: rgba(15,23,42,0.85); border: 1px solid rgba(255,255,255,0.2); border-radius: 12px; padding: 4px 8px; cursor: pointer; font-size: 1.1rem;">🐾</button>
-          <button class="emote-btn" data-emote="❤️" style="background: rgba(15,23,42,0.85); border: 1px solid rgba(255,255,255,0.2); border-radius: 12px; padding: 4px 8px; cursor: pointer; font-size: 1.1rem;">❤️</button>
-          <button class="emote-btn" data-emote="🎾" style="background: rgba(15,23,42,0.85); border: 1px solid rgba(255,255,255,0.2); border-radius: 12px; padding: 4px 8px; cursor: pointer; font-size: 1.1rem;">🎾</button>
-        </div>
       </div>
     `;
     this.container.appendChild(chatBar);
@@ -417,6 +395,13 @@ export class SocialHUD {
     }, 2800);
   }
 
+  openModal() {
+    const modal = document.getElementById('customizer-modal');
+    if (!modal) return;
+    this.updateModalActiveSelections();
+    modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
+  }
+
   bindEvents() {
     // 1. Room Button action
     const btnRoomAction = document.getElementById('btn-room-action');
@@ -443,10 +428,9 @@ export class SocialHUD {
     const closeModal = document.getElementById('close-modal');
     const btnSaveCust = document.getElementById('btn-save-cust');
 
-    if (btnCustomize && modal) {
+    if (btnCustomize) {
       btnCustomize.addEventListener('click', () => {
-        this.updateModalActiveSelections();
-        modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
+        this.openModal();
       });
     }
 
@@ -610,17 +594,19 @@ export class SocialHUD {
       });
     }
 
-    // 3. Quick Emote buttons
+    // 3. Quick Emote buttons (guarded)
     const emoteBtns = document.querySelectorAll('.emote-btn');
-    emoteBtns.forEach(btn => {
-      btn.addEventListener('click', () => {
-        const emote = btn.getAttribute('data-emote');
-        this.owner.setEmote(emote);
-        this.net.broadcast({ type: 'EMOTE', senderId: this.net.peerId, emote });
-        const chatContainer = document.getElementById('chat-container');
-        if (chatContainer) chatContainer.style.display = 'none';
+    if (emoteBtns && emoteBtns.length > 0) {
+      emoteBtns.forEach(btn => {
+        btn.addEventListener('click', () => {
+          const emote = btn.getAttribute('data-emote');
+          this.owner.setEmote(emote);
+          this.net.broadcast({ type: 'EMOTE', senderId: this.net.peerId, emote });
+          const chatContainer = document.getElementById('chat-container');
+          if (chatContainer) chatContainer.style.display = 'none';
+        });
       });
-    });
+    }
 
     // 4. Chat Input
     const chatInput = document.getElementById('chat-input');
@@ -662,7 +648,7 @@ export class SocialHUD {
       const isCommons = !this.net.roomId || this.net.roomId === 'the-commons' || this.net.roomId === 'clifton-field';
       if (badge) {
         if (isCommons) {
-          badge.textContent = '🌳 Clifton Commons';
+          badge.textContent = 'Online';
           badge.style.background = '#059669';
         } else {
           badge.textContent = `🔒 Meadow (${this.net.roomId})`;

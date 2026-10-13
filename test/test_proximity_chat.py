@@ -642,10 +642,11 @@ class TestProximityChat(unittest.TestCase):
     # =========================================================================
     def test_ac019_1_top_left_button_grouping(self):
         """
-        AC-019.1: Inspect src/ui/social_hud.js to assert #btn-room-action and #btn-customize
-        are grouped in top-left HUD panel container.
+        AC-019.1 & Ticket-023: Inspect src/ui/social_hud.js:
         - Exactly 1 .hud-panel inside this.hudOverlay.innerHTML.
-        - #btn-room-action and #btn-customize reside within that .hud-panel.
+        - #btn-room-action is removed from the DOM template.
+        - #btn-customize is relocated to top-right cog button with icon ⚙️.
+        - Park name pill 'The Downs' is preserved in top-left panel.
         """
         overlay_match = re.search(r'this\.hudOverlay\.innerHTML\s*=\s*`([^`]+)`', self.hud_js)
         self.assertIsNotNone(overlay_match, "Could not find hudOverlay.innerHTML template in social_hud.js")
@@ -654,8 +655,9 @@ class TestProximityChat(unittest.TestCase):
         panel_occurrences = re.findall(r'class=["\'][^"\']*hud-panel[^"\']*["\']', overlay_html)
         self.assertEqual(len(panel_occurrences), 1, "Expected exactly 1 .hud-panel in hudOverlay template")
 
-        self.assertIn('id="btn-room-action"', overlay_html, "Missing #btn-room-action in top-left panel")
-        self.assertIn('id="btn-customize"', overlay_html, "Missing #btn-customize in top-left panel")
+        self.assertNotIn('id="btn-room-action"', overlay_html, "#btn-room-action must be removed from top-left panel")
+        self.assertIn('id="btn-customize"', overlay_html, "Missing #btn-customize in hudOverlay template")
+        self.assertIn('⚙️', overlay_html, "Missing cog icon in #btn-customize")
         self.assertIn('The Downs', overlay_html, "Missing park name pill in top-left panel")
 
     def test_ac019_2_top_right_corner_vacant(self):
@@ -805,12 +807,11 @@ class TestProximityChat(unittest.TestCase):
 
     def test_ac020_4_input_bar_and_emoji_preserved(self):
         """
-        AC-020.4: Message input bar and quick emoji buttons allow sending messages in the downward thread.
+        AC-020.4 & AC-023.8: Proximity chat input bar preserved while emoji buttons and send button are removed.
         """
         self.assertIn('id="proximity-chat-input"', self.chat_js)
-        self.assertIn('id="proximity-chat-send-btn"', self.chat_js)
-        for emoji in ['👋', '🐾', '❤️', '☕']:
-            self.assertIn(emoji, self.chat_js)
+        self.assertNotIn('id="proximity-chat-send-btn"', self.chat_js)
+        self.assertNotIn('class="proximity-emoji-bar"', self.chat_js)
 
     def test_ac020_5_test_suite_passes(self):
         """

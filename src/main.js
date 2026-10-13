@@ -156,7 +156,6 @@ export class CliftonDownGame {
       onThrow: () => this.throwBall(),
       onLeash: () => this.toggleLeash(),
       onWhistle: () => this.whistleDog(),
-      onBark: () => this.barkDog(),
       onPet: () => this.petDog(),
       onChat: () => {
         if (this.proximityChat && this.proximityChat.isClusterActive()) {
@@ -452,9 +451,12 @@ export class CliftonDownGame {
           this.toggleLeash();
           break;
 
-        case 'KeyB':
-          // Bark!
-          this.barkDog();
+        case 'KeyC':
+          // Toggle Proximity Group Chat
+          e.preventDefault();
+          if (this.proximityChat && typeof this.proximityChat.toggleVisibility === 'function') {
+            this.proximityChat.toggleVisibility();
+          }
           break;
 
         case 'KeyE':
@@ -615,9 +617,11 @@ export class CliftonDownGame {
     }
   }
 
+  /**
+   * @deprecated Manual barking is retired in Ticket-023 (AC-023.2). Dogs bark autonomously based on personality traits, NPC reactions, and peer responses.
+   */
   barkDog() {
-    this.dog.bark(sound);
-    this.net.broadcast(Protocol.createBark(this.net.peerId, this.dog.x, this.dog.y));
+    // Deprecated: manual barking retired in favor of autonomous canine behavior
   }
 
   petDog() {

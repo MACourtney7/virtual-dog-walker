@@ -83,11 +83,14 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 ---
 
 ## 4. Universal Networking & Social Architecture
-- **Ad-Hoc Proximity Group Chat (`src/ui/proximity_chat.js`)**:
+- **Ad-Hoc Proximity Group Chat & Spatial HUD (`src/ui/proximity_chat.js`, `src/ui/social_hud.js`, `src/style.css`)**:
   - Clusters form dynamically when 2+ players walk within 200px of each other.
-  - Prominent conversation interface displays active participants and chat thread.
-  - Walking alongside keeps players continuously in the conversation thread.
-  - Parting "Tombstone" Chat Markers (`src/entities/tombstone.js`): when players exit proximity and disband, the conversation drops as a fading tombstone marker on the turf that dissolves over 10 seconds.
+  - **Top-Bar HUD Consolidation**: "Share Park" (`#btn-room-action`) and "Style" (`#btn-customize`) buttons are relocated into the top-left title dock alongside "The Downs" badge, completely freeing the top-right screen corner.
+  - **Top-Right Downward Sidebar & Collapsible Toggle**: Fixed glassmorphic chat container (`#proximity-chat-panel`) anchored to the top-right viewport, expanding downward with quick emoji bar and input. Collapsible via top-right pill toggle button (`#chat-toggle-btn` with 💬 icon).
+  - **Auto-Unhide Trigger**: Any chat message sent or received while in proximity automatically expands and unhides the sidebar.
+  - **5-Minute Message Retention Engine**: When players leave proximity, a 300-second retention timer counts down per departed peer. Parted messages are cleanly purged from the sidebar history and DOM upon expiry; timers are automatically canceled if the player returns to proximity.
+  - **Accessible Speaker Palette**: Dynamic, high-contrast, accessible color tokens assigned to each player on their first message, persisting throughout the session for both sender name and message text.
+  - **Spatial Speech Bubble Duality**: When players are in proximity, messages route exclusively to the sidebar with overhead avatar speech bubbles suppressed. When outside proximity, chat appears as an overhead speech bubble above the avatar and is not routed to the sidebar. Turf tombstones and parting drops have been completely eliminated to keep park turf pristine.
 - **Multi-Transport Network Engine (`src/net/network.js`, `src/net/protocol.js`, `src/net/ws_network.js`)**:
   - Transparent multi-mode polymorphic architecture:
     1. **Cloudflare PartyServer Edge Mode**: Native Cloudflare Workers + Durable Objects (`party/server.js`), connecting canonically via `/parties/parkserver/${roomId}`.
@@ -125,7 +128,7 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 ---
 
 ## 7. Test Suite & CI/CD
-- `python3 test/run_tests.py`: Comprehensive test runner executing 17 test suites covering:
+- `python3 test/run_tests.py`: Comprehensive test runner executing 19 test suites covering:
   - Physics ballistics, arrival steering, leash clamping and off-lead rendering.
   - Real-time leash synchronization, entity interpolator discrete propagation, network packet schemas.
   - Dog personality scaling, obedience-weighted stray probability, leash pulling physics.
@@ -134,4 +137,7 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
   - Ambient NPC waypoint traversal, athletic jogger pacing, soft steering avoidance.
   - Diurnal lighting calculation, Open-Meteo weather response decoding, particle overlays.
   - Microserver room routing, PartyServer contracts, viewport meta attributes, safe-area CSS rules.
+  - Top-bar HUD reorganization, top-right downward chat sidebar, toggle and auto-unhide triggers.
+  - 5-Minute departure retention countdown, message purging, speaker color persistence.
+  - Avatar overhead speech bubble vs proximity sidebar exclusivity.
 - `.github/workflows/ci.yml`: Automated GitHub Actions pipeline running test suites on every push/PR with a 3-minute safety timeout, followed by auto-deploy to Cloudflare Workers on `main`.

@@ -5,6 +5,7 @@ title: "Chat Visual Overhaul & Spatial HUD Streamlining"
 version: "1.0.0"
 created_at: "2026-10-12T20:10:00Z"
 status: "COMPLETED"
+completed_at: "2026-10-13T18:48:41Z"
 ---
 
 # Milestone Roadmap: Chat Visual Overhaul & Spatial HUD Streamlining
@@ -55,4 +56,4 @@ flowchart TD
 - [x] Ticket-021 completed and merged to `main`.
 - [x] Ticket-022 completed and merged to `main`.
 - [x] End-to-end integration tests pass across combined deliverables (`python3 test/run_tests.py`).
-- [ ] Canonical specifications reconciled in `openspec/specs/`.
+- [x] Canonical specifications reconciled in `openspec/specs/`.

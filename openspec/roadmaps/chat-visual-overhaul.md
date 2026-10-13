@@ -17,8 +17,8 @@ Overhaul the *Virtual Dog Walker* chat and social HUD system to prevent chat fro
 | Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `ticket-018` | Tombstone Subsystem Removal & Turf Cleanup | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
-| `ticket-019` | HUD Top-Bar Reorganization & Button Relocation | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
-| `ticket-020` | Top-Right Downward Chat Sidebar, Toggle Button & Auto-Unhide | `MEDIUM` | `["ticket-019"]` | `BLOCKED_ON_019` | `PLANNING` |
+| `ticket-019` | HUD Top-Bar Reorganization & Button Relocation | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-020` | Top-Right Downward Chat Sidebar, Toggle Button & Auto-Unhide | `MEDIUM` | `["ticket-019"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
 | `ticket-021` | Proximity Chat Retention Expiry & Player Color Palette | `MEDIUM` | `["ticket-020"]` | `BLOCKED_ON_020` | `PLANNING` |
 | `ticket-022` | Speech Bubble Duality Routing & Comprehensive Test Suite | `HIGH` | `["ticket-018", "ticket-021"]` | `BLOCKED_ON_018_021` | `PLANNING` |
 

@@ -32,9 +32,6 @@ export class SocialHUD {
           <div class="hud-pill" id="hud-player-count">
             <span>🐾 1</span>
           </div>
-        </div>
-
-        <div class="hud-panel">
           <button class="btn-share" id="btn-room-action">
             <span>🔗</span>
             <span id="btn-room-label">Share Park</span>

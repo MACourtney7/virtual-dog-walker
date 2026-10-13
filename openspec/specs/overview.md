@@ -85,12 +85,18 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 ## 4. Universal Networking & Social Architecture
 - **Ad-Hoc Proximity Group Chat & Spatial HUD (`src/ui/proximity_chat.js`, `src/ui/social_hud.js`, `src/style.css`)**:
   - Clusters form dynamically when 2+ players walk within 200px of each other.
-  - **Top-Bar HUD Consolidation**: "Share Park" (`#btn-room-action`) and "Style" (`#btn-customize`) buttons are relocated into the top-left title dock alongside "The Downs" badge, completely freeing the top-right screen corner.
-  - **Top-Right Downward Sidebar & Collapsible Toggle**: Fixed glassmorphic chat container (`#proximity-chat-panel`) anchored to the top-right viewport, expanding downward with quick emoji bar and input. Collapsible via top-right pill toggle button (`#chat-toggle-btn` with 💬 icon).
+  - **Top-Left Header Purity**: "Share Park" button has been completely excised from the UI. The header strictly displays `🌳 The Downs`, and the status badge displays `Online` on connect (removing legacy "Clifton Commons" references).
+  - **Top-Right Action Dock**: Fixed glassmorphic dock containing the circular group chat toggle button (`#chat-toggle-btn` with 💬 icon) and the adjacent Style customizer cog button (`#btn-customize` with ⚙️ icon, 8px gutter).
+  - **Bottom Toolbar Removal**: The legacy `#controls-hint` keybinding toolbar has been removed from the bottom of the game viewport.
+  - **Hotkeys**: Pressing <kbd>C</kbd> toggles the proximity group chat sidebar open and closed (safely guarded so typing in chat inputs never triggers the hotkey).
+  - **Streamlined Chat Inputs**:
+    - Speech bubble chat input (`#chat-container`) displays exclusively `#chat-input` with quick emoji buttons removed.
+    - Proximity group chat window (`#proximity-chat-panel`) displays exclusively a full-width `#proximity-chat-input` text box with emoji buttons and the send button removed (Enter key submits messages).
   - **Auto-Unhide Trigger**: Any chat message sent or received while in proximity automatically expands and unhides the sidebar.
   - **5-Minute Message Retention Engine**: When players leave proximity, a 300-second retention timer counts down per departed peer. Parted messages are cleanly purged from the sidebar history and DOM upon expiry; timers are automatically canceled if the player returns to proximity.
   - **Accessible Speaker Palette**: Dynamic, high-contrast, accessible color tokens assigned to each player on their first message, persisting throughout the session for both sender name and message text.
   - **Spatial Speech Bubble Duality**: When players are in proximity, messages route exclusively to the sidebar with overhead avatar speech bubbles suppressed. When outside proximity, chat appears as an overhead speech bubble above the avatar and is not routed to the sidebar. Turf tombstones and parting drops have been completely eliminated to keep park turf pristine.
+  - **Autonomous Canine Barking**: Manual barking controls (<kbd>B</kbd> key and touch bark button) have been retired. Dogs vocalize exclusively of their own accord based on personality barkyness attributes, passerby proximity, and peer dog interactions.
 - **Multi-Transport Network Engine (`src/net/network.js`, `src/net/protocol.js`, `src/net/ws_network.js`)**:
   - Transparent multi-mode polymorphic architecture:
     1. **Cloudflare PartyServer Edge Mode**: Native Cloudflare Workers + Durable Objects (`party/server.js`), connecting canonically via `/parties/parkserver/${roomId}`.
@@ -120,7 +126,7 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 - **Virtual Touch Controller (`src/ui/touch_controls.js`)**:
   - Virtual analog joystick with dynamic thumb tracking, 10% deadzone threshold, 50px maximum deflection clamp, and normalized `(vx, vy)` vector output.
   - Multi-touch isolation using explicit touch identifiers (`joystickTouchId`).
-  - Glassmorphic touch action pad (Throw 🎾, Pet ❤️, Bark 🐕, Leash 🦮/🐕, Whistle 📯, Chat 💬, Pick up waste 🟤).
+  - Glassmorphic touch action pad (Throw 🎾, Pet ❤️, Leash 🦮/🐕, Whistle 📯, Chat 💬, Pick up waste 🟤).
   - Direct canvas tap interactions: tap-to-throw tennis ball, tap-to-pet dog, tap-to-pickup poop pile, tap-to-dispose bin.
 - **Mobile Viewport Constraints (`index.html`, `src/style.css`)**:
   - Viewport configured with `viewport-fit=cover, maximum-scale=1.0, user-scalable=no`, `touch-action: none`, and dynamic safe-area insets (`env(safe-area-inset-top)` / `bottom`).

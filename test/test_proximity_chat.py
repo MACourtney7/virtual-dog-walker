@@ -451,10 +451,9 @@ class TestProximityChat(unittest.TestCase):
         self.assertAlmostEqual(tomb.alpha, 0.0, places=3)
         self.assertTrue(tomb.isDead)
 
-        # Verify Field addTombstone and update culling logic in src/world/field.js
-        self.assertIn("addTombstone(tombstone)", self.field_js)
-        self.assertIn("this.tombstones.push(tombstone)", self.field_js)
-        self.assertIn("this.tombstones.splice(i, 1)", self.field_js)
+        # Verify Field does NOT maintain tombstones registry (superseded by ticket-018 / AC-018)
+        self.assertNotIn("addTombstone", self.field_js)
+        self.assertNotIn("this.tombstones", self.field_js)
 
     # =========================================================================
     # AC-015.6: Test Runner Integration

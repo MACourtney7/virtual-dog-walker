@@ -52,6 +52,7 @@ def run_all():
         "test/test_stray_and_poop.py",
         "test/test_weather_client.py",
         "test/test_environment_weather.py",
+        "test/test_tombstone_cleanup.py",
         "test/test_social_hud_layout.py"
     ]
     for t in test_suites:

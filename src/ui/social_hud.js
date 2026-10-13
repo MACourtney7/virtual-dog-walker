@@ -10,6 +10,7 @@ export class SocialHUD {
     this.owner = localOwner;
     this.dog = localDog;
     this.coatPresets = coatPresets;
+    this.proximityChat = null;
 
     this.container = document.getElementById('game-container');
     this.hudOverlay = document.getElementById('hud-overlay');
@@ -628,8 +629,12 @@ export class SocialHUD {
         if (e.key === 'Enter') {
           const text = chatInput.value.trim();
           if (text) {
-            this.owner.setChat(text);
-            this.net.broadcast({ type: 'CHAT_MESSAGE', senderId: this.net.peerId, text });
+            if (this.proximityChat && this.proximityChat.isClusterActive()) {
+              this.proximityChat.submitMessage(text);
+            } else {
+              this.owner.setChat(text);
+              this.net.broadcast({ type: 'CHAT_MESSAGE', senderId: this.net.peerId, text });
+            }
             chatInput.value = '';
           }
           const chatContainer = document.getElementById('chat-container');

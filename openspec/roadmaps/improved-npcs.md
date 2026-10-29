@@ -24,8 +24,8 @@ Overhaul ambient park NPCs (currently 5 per-client, locally spawned, fast, perma
 
 | Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
 | :--- | :--- | :---: | :--- | :--- | :--- |
-| `ticket-024` | NPC Content Tables (names, phrases, appearance, speeds, PRNG) | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `PLANNED` |
-| `ticket-025` | Obstacle-Free Precomputed NPC Path Library + Manifest | `MEDIUM` | `[]` | `PARALLEL_ELIGIBLE` | `PLANNED` |
+| `ticket-024` | NPC Content Tables (names, phrases, appearance, speeds, PRNG) | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-025` | Obstacle-Free Precomputed NPC Path Library + Manifest | `MEDIUM` | `[]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
 | `ticket-026` | NPC Entity Rewrite: Deterministic Sim, Lifecycle, Tag & Speech | `HIGH` | `["ticket-024", "ticket-025"]` | `BLOCKED_ON_024_025` | `PLANNED` |
 | `ticket-027` | Global NPC Protocol & Server Spawners (PartyServer + Python) | `HIGH` | `["ticket-025"]` | `BLOCKED_ON_025` | `PLANNED` |
 | `ticket-028` | Client Integration: Network NPC Sync & Game Wiring | `MEDIUM` | `["ticket-026", "ticket-027"]` | `BLOCKED_ON_026_027` | `PLANNED` |
@@ -62,7 +62,7 @@ flowchart TD
 ```
 
 ## 5. Progress & Milestone Completion Criteria
-- [ ] Ticket-024 completed and merged to `main`.
+- [x] Ticket-024 completed and merged to `main`.
 - [ ] Ticket-025 completed and merged to `main`.
 - [ ] Ticket-026 completed and merged to `main`.
 - [ ] Ticket-027 completed and merged to `main`.

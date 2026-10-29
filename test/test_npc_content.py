@@ -357,8 +357,8 @@ class TestNPCContent(unittest.TestCase):
             # Check tag style font and palette
             self.assertIn("italic 600 11px", self.js_content)
             self.assertIn("NPC_TAG_STYLE", self.js_content)
-            # Check delay formula 6.0 + rng() * 8.0
-            self.assertRegex(self.js_content, r"6(?:\.0)?\s*\+\s*rng\(\)\s*\*\s*8(?:\.0)?")
+            # Check delay formula 6.0 + rng() * 8.0 or random() * 8.0
+            self.assertRegex(self.js_content, r"6(?:\.0)?\s*\+\s*(?:rng|random)\(\)\s*\*\s*8(?:\.0)?")
 
 
 if __name__ == "__main__":

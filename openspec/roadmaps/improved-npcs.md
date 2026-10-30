@@ -26,9 +26,9 @@ Overhaul ambient park NPCs (currently 5 per-client, locally spawned, fast, perma
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `ticket-024` | NPC Content Tables (names, phrases, appearance, speeds, PRNG) | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-025` | Obstacle-Free Precomputed NPC Path Library + Manifest | `MEDIUM` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
-| `ticket-026` | NPC Entity Rewrite: Deterministic Sim, Lifecycle, Tag & Speech | `HIGH` | `["ticket-024", "ticket-025"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
-| `ticket-027` | Global NPC Protocol & Server Spawners (PartyServer + Python) | `HIGH` | `["ticket-025"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
-| `ticket-028` | Client Integration: Network NPC Sync & Game Wiring | `MEDIUM` | `["ticket-026", "ticket-027"]` | `BLOCKED_ON_026_027` | `PLANNED` |
+| `ticket-026` | NPC Entity Rewrite: Deterministic Sim, Lifecycle, Tag & Speech | `HIGH` | `["ticket-024", "ticket-025"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-027` | Global NPC Protocol & Server Spawners (PartyServer + Python) | `HIGH` | `["ticket-025"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-028` | Client Integration: Network NPC Sync & Game Wiring | `MEDIUM` | `["ticket-026", "ticket-027"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
 | `ticket-029` | NPC Regression Suite & Spec Reconciliation | `MEDIUM` | `["ticket-028"]` | `BLOCKED_ON_028` | `PLANNED` |
 
 ## 3. Blast Radius & Scope Collision Matrix
@@ -64,8 +64,8 @@ flowchart TD
 ## 5. Progress & Milestone Completion Criteria
 - [x] Ticket-024 completed and merged to `main`.
 - [x] Ticket-025 completed and merged to `main`.
-- [ ] Ticket-026 completed and merged to `main`.
-- [ ] Ticket-027 completed and merged to `main`.
+- [x] Ticket-026 completed and merged to `main`.
+- [x] Ticket-027 completed and merged to `main`.
 - [ ] Ticket-028 completed and merged to `main`.
 - [ ] Ticket-029 completed and merged to `main`.
 - [ ] End-to-end tests pass (`python3 test/run_tests.py`).

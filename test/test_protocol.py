@@ -139,9 +139,96 @@ def test_entity_interpolator_discrete_propagation():
 
     print("✅ test_entity_interpolator_discrete_propagation passed")
 
+def test_npc_spawn_schema():
+    now = int(time.time() * 1000)
+    packet = {
+        "type": "NPC_SPAWN",
+        "id": "npc-101",
+        "pathId": "path_perimeter_main",
+        "npcType": "walker",
+        "seed": 42,
+        "spawnTime": now,
+        "npc": {
+            "id": "npc-101",
+            "pathId": "path_perimeter_main",
+            "type": "walker",
+            "npcType": "walker",
+            "seed": 42,
+            "spawnTime": now
+        },
+        "timestamp": now
+    }
+
+    assert packet["type"] == "NPC_SPAWN"
+    assert isinstance(packet["id"], str) and len(packet["id"]) > 0
+    assert isinstance(packet["pathId"], str) and len(packet["pathId"]) > 0
+    assert packet["npcType"] in ("walker", "jogger")
+    assert isinstance(packet["seed"], (int, float))
+    assert isinstance(packet["spawnTime"], (int, float))
+    assert packet["npc"]["id"] == packet["id"]
+    assert packet["npc"]["pathId"] == packet["pathId"]
+    assert packet["npc"]["type"] == packet["npcType"]
+    assert packet["npc"]["seed"] == packet["seed"]
+    assert packet["npc"]["spawnTime"] == packet["spawnTime"]
+    print("✅ test_npc_spawn_schema passed")
+
+def test_npc_despawn_schema():
+    now = int(time.time() * 1000)
+    packet = {
+        "type": "NPC_DESPAWN",
+        "id": "npc-101",
+        "timestamp": now
+    }
+
+    assert packet["type"] == "NPC_DESPAWN"
+    assert isinstance(packet["id"], str) and len(packet["id"]) > 0
+    assert "timestamp" in packet
+    print("✅ test_npc_despawn_schema passed")
+
+def test_npc_snapshot_schema():
+    now = int(time.time() * 1000)
+    packet = {
+        "type": "NPC_SNAPSHOT",
+        "npcs": [
+            {
+                "id": "npc-101",
+                "pathId": "path_perimeter_main",
+                "type": "walker",
+                "npcType": "walker",
+                "seed": 42,
+                "spawnTime": now - 5000
+            },
+            {
+                "id": "npc-102",
+                "pathId": "path_promenade_loop",
+                "type": "jogger",
+                "npcType": "jogger",
+                "seed": 103,
+                "spawnTime": now - 2000
+            }
+        ],
+        "serverTime": now,
+        "timestamp": now
+    }
+
+    assert packet["type"] == "NPC_SNAPSHOT"
+    assert isinstance(packet["npcs"], list)
+    assert len(packet["npcs"]) == 2
+    assert isinstance(packet["serverTime"], (int, float))
+    for npc in packet["npcs"]:
+        assert isinstance(npc["id"], str)
+        assert isinstance(npc["pathId"], str)
+        assert npc["type"] in ("walker", "jogger")
+        assert isinstance(npc["seed"], (int, float))
+        assert isinstance(npc["spawnTime"], (int, float))
+    print("✅ test_npc_snapshot_schema passed")
+
 if __name__ == "__main__":
     test_sync_state_schema()
     test_ball_throw_schema()
     test_chat_and_emote_schema()
     test_whistle_schema()
     test_entity_interpolator_discrete_propagation()
+    test_npc_spawn_schema()
+    test_npc_despawn_schema()
+    test_npc_snapshot_schema()

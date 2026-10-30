@@ -1,19 +1,47 @@
 #!/usr/bin/env python3
 """
-Unit and integration tests for Cloudflare PartyServer Room Server, Commons Default routing, and Wrangler configuration.
+Unit and integration tests for Cloudflare PartyServer Room Server, Commons Default routing,
+Wrangler configuration, and server-authoritative NPC Spawner lifecycle.
 """
 
 import json
 import os
+import random
+import time
 import unittest
+
+MANIFEST_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "world", "npc_path_manifest.json")
+try:
+    with open(MANIFEST_PATH, "r") as f:
+        DEFAULT_PATH_MANIFEST = json.load(f)
+except Exception:
+    DEFAULT_PATH_MANIFEST = [
+        {"id": "ladies-mile-loop", "type": "both", "lengthPx": 5726.1},
+        {"id": "sea-walls-promenade", "type": "both", "lengthPx": 1789.1},
+        {"id": "durdham-down-circuit", "type": "jogger", "lengthPx": 3103.1},
+        {"id": "woodland-trail-loop", "type": "walker", "lengthPx": 2091.7},
+        {"id": "central-meadow-ramble", "type": "walker", "lengthPx": 2104.2},
+        {"id": "trans-downs-express", "type": "jogger", "lengthPx": 3462.8},
+        {"id": "sea-walls-to-water-tower", "type": "walker", "lengthPx": 2920.2},
+        {"id": "clifton-woodland-traverse", "type": "walker", "lengthPx": 2137.7},
+        {"id": "north-meadow-diagonal", "type": "both", "lengthPx": 2646.5},
+        {"id": "perimeter-grand-loop", "type": "jogger", "lengthPx": 9527.3}
+    ]
 
 
 class MockPartyServerRoom:
-    """Mock PartyServer room environment for testing lifecycle and message relaying."""
-    def __init__(self, room_name="the-commons"):
+    """Mock PartyServer room environment for testing lifecycle, message relaying, and NPC spawner."""
+    def __init__(self, room_name="the-commons", paths=None, target_npc_count=5):
         self.name = room_name
         self.connections = {}
+        self.peers = {}  # pid -> metadata dict
         self.broadcast_log = []
+        self.paths = list(paths if paths is not None else DEFAULT_PATH_MANIFEST)
+        self.target_npc_count = target_npc_count
+        self.active_npcs = {}  # id -> npc_dict
+        self.despawn_timers = {}  # id -> delay_ms
+        self.replacement_timers = []  # list of delays
+        self._next_npc_seq = 1
 
     def add_connection(self, conn_id):
         conn = MockPartyServerConnection(conn_id)
@@ -23,9 +51,14 @@ class MockPartyServerRoom:
     def remove_connection(self, conn_id):
         if conn_id in self.connections:
             del self.connections[conn_id]
+        if conn_id in self.peers:
+            del self.peers[conn_id]
 
     def get_connections(self):
         return list(self.connections.values())
+
+    def has_active_clients(self):
+        return len(self.connections) > 0 or len(self.peers) > 0
 
     def broadcast(self, message, exclude=None):
         exclude = exclude or []
@@ -35,14 +68,167 @@ class MockPartyServerRoom:
             if cid not in exclude:
                 conn.messages_received.append(parsed)
 
+    def on_connect(self, conn):
+        self.connections[conn.id] = conn
+        if len(self.active_npcs) == 0:
+            self.init_spawner()
+
+        existing_peers = []
+        for pid, peer_data in self.peers.items():
+            if pid != conn.id:
+                existing_peers.append({
+                    "id": peer_data.get("id", pid),
+                    "name": peer_data.get("name", "Walker"),
+                    "jacketColor": peer_data.get("jacketColor", "#1e3a8a"),
+                    "coatName": peer_data.get("coatName", peer_data.get("dogCoatName", "Chocolate & Tan (Ziggy)"))
+                })
+
+        welcome_packet = {
+            "type": "WELCOME",
+            "peerId": conn.id,
+            "roomId": self.name,
+            "peers": existing_peers,
+            "serverTime": int(time.time() * 1000)
+        }
+        conn.send(welcome_packet)
+
+        snapshot_packet = {
+            "type": "NPC_SNAPSHOT",
+            "npcs": [
+                {
+                    "id": npc["id"],
+                    "pathId": npc["pathId"],
+                    "type": npc["type"],
+                    "npcType": npc["type"],
+                    "seed": npc["seed"],
+                    "spawnTime": npc["spawnTime"]
+                }
+                for npc in self.active_npcs.values()
+            ],
+            "serverTime": int(time.time() * 1000),
+            "timestamp": int(time.time() * 1000)
+        }
+        conn.send(snapshot_packet)
+
+    def on_close(self, conn):
+        self.remove_connection(conn.id)
+        if not self.has_active_clients():
+            self.stop_spawner()
+
+        left_packet = {
+            "type": "PEER_LEFT",
+            "peerId": conn.id,
+            "timestamp": int(time.time() * 1000)
+        }
+        self.broadcast(json.dumps(left_packet))
 
     def on_message(self, conn, message):
         """Simulate ParkServer.onMessage with authoritative senderId stamping."""
         parsed = json.loads(message) if isinstance(message, str) else dict(message)
+        if parsed.get("type") == "HELLO":
+            self.peers[conn.id] = {
+                "id": conn.id,
+                "name": parsed.get("name", "Walker"),
+                "jacketColor": parsed.get("jacketColor", "#1e3a8a"),
+                "coatName": parsed.get("dogCoatName", parsed.get("coatName", "Chocolate & Tan (Ziggy)"))
+            }
         parsed["senderId"] = conn.id
         parsed["peerId"] = conn.id
         self.broadcast(json.dumps(parsed), exclude=[conn.id])
         return parsed
+
+    def init_spawner(self):
+        while len(self.active_npcs) < self.target_npc_count:
+            self.spawn_npc()
+
+    def spawn_npc(self):
+        if not self.paths:
+            return None
+
+        used_path_ids = {npc["pathId"] for npc in self.active_npcs.values()}
+        available_paths = [p for p in self.paths if p["id"] not in used_path_ids]
+        pool = available_paths if available_paths else self.paths
+        path = random.choice(pool)
+
+        if path["type"] == "walker":
+            npc_type = "walker"
+        elif path["type"] == "jogger":
+            npc_type = "jogger"
+        else:
+            npc_type = random.choice(["walker", "jogger"])
+
+        speed = 80 if npc_type == "jogger" else 35
+        lifetime_ms = round((path["lengthPx"] / speed) * 1000)
+        seed = random.randint(0, 0xFFFFFFFF)
+        spawn_time = int(time.time() * 1000)
+        npc_id = f"npc-mock-{self._next_npc_seq}-{spawn_time}"
+        self._next_npc_seq += 1
+
+        npc_data = {
+            "id": npc_id,
+            "pathId": path["id"],
+            "type": npc_type,
+            "npcType": npc_type,
+            "seed": seed,
+            "spawnTime": spawn_time,
+            "lifetimeMs": lifetime_ms
+        }
+        self.active_npcs[npc_id] = npc_data
+        self.despawn_timers[npc_id] = lifetime_ms
+        return npc_data
+
+    def despawn_npc(self, npc_id):
+        if npc_id not in self.active_npcs:
+            return None
+        npc = self.active_npcs.pop(npc_id)
+        if npc_id in self.despawn_timers:
+            del self.despawn_timers[npc_id]
+
+        despawn_packet = {
+            "type": "NPC_DESPAWN",
+            "id": npc["id"],
+            "timestamp": int(time.time() * 1000)
+        }
+        self.broadcast(json.dumps(despawn_packet))
+
+        if self.has_active_clients():
+            delay = 1000 + random.randint(0, 4000)
+            self.replacement_timers.append(delay)
+        return npc
+
+    def trigger_replacement(self):
+        if not self.has_active_clients():
+            return None
+        if len(self.active_npcs) >= self.target_npc_count:
+            return None
+        new_npc = self.spawn_npc()
+        if new_npc:
+            spawn_packet = {
+                "type": "NPC_SPAWN",
+                "id": new_npc["id"],
+                "pathId": new_npc["pathId"],
+                "npcType": new_npc["type"],
+                "seed": new_npc["seed"],
+                "spawnTime": new_npc["spawnTime"],
+                "npc": {
+                    "id": new_npc["id"],
+                    "pathId": new_npc["pathId"],
+                    "type": new_npc["type"],
+                    "npcType": new_npc["type"],
+                    "seed": new_npc["seed"],
+                    "spawnTime": new_npc["spawnTime"]
+                },
+                "timestamp": int(time.time() * 1000)
+            }
+            self.broadcast(json.dumps(spawn_packet))
+        if self.replacement_timers:
+            self.replacement_timers.pop(0)
+        return new_npc
+
+    def stop_spawner(self):
+        self.active_npcs.clear()
+        self.despawn_timers.clear()
+        self.replacement_timers.clear()
 
 
 class MockPartyServerConnection:
@@ -137,6 +323,162 @@ class TestPartyServerLifecycle(unittest.TestCase):
         self.assertEqual(len(c2.messages_received), 1)
         self.assertEqual(c2.messages_received[0]["type"], "PEER_LEFT")
         self.assertEqual(c2.messages_received[0]["peerId"], "walker-1001")
+
+
+class TestPartyServerNpcSpawner(unittest.TestCase):
+    def setUp(self):
+        self.room = MockPartyServerRoom("the-commons")
+
+    def test_npc_snapshot_sent_on_connect(self):
+        """First peer connection starts spawner and receives WELCOME then NPC_SNAPSHOT."""
+        c1 = MockPartyServerConnection("client-1")
+        self.room.on_connect(c1)
+
+        self.assertEqual(len(c1.messages_received), 2)
+        welcome = c1.messages_received[0]
+        snapshot = c1.messages_received[1]
+
+        self.assertEqual(welcome["type"], "WELCOME")
+        self.assertEqual(snapshot["type"], "NPC_SNAPSHOT")
+        self.assertIn("serverTime", snapshot)
+        self.assertIn("timestamp", snapshot)
+        self.assertEqual(len(snapshot["npcs"]), 5)
+
+        for npc in snapshot["npcs"]:
+            self.assertTrue(npc["id"].startswith("npc-"))
+            self.assertIn("pathId", npc)
+            self.assertIn(npc["type"], ["walker", "jogger"])
+            self.assertEqual(npc["type"], npc["npcType"])
+            self.assertIsInstance(npc["seed"], int)
+            self.assertGreaterEqual(npc["seed"], 0)
+            self.assertLessEqual(npc["seed"], 0xFFFFFFFF)
+            self.assertIsInstance(npc["spawnTime"], int)
+
+    def test_late_joiner_receives_identical_snapshot(self):
+        """Late joiner receives snapshot containing all active NPCs with original spawnTime (AC-027.2)."""
+        c1 = MockPartyServerConnection("client-1")
+        self.room.on_connect(c1)
+        snapshot1 = c1.messages_received[1]
+
+        # Simulate small time delay
+        time.sleep(0.01)
+
+        c2 = MockPartyServerConnection("client-2-late")
+        self.room.on_connect(c2)
+        snapshot2 = c2.messages_received[1]
+
+        self.assertEqual(len(snapshot1["npcs"]), len(snapshot2["npcs"]))
+        s1_map = {npc["id"]: npc for npc in snapshot1["npcs"]}
+        s2_map = {npc["id"]: npc for npc in snapshot2["npcs"]}
+
+        self.assertEqual(set(s1_map.keys()), set(s2_map.keys()))
+        for npc_id, npc1 in s1_map.items():
+            npc2 = s2_map[npc_id]
+            self.assertEqual(npc1["spawnTime"], npc2["spawnTime"], "Spawn times must be preserved for late joiner")
+            self.assertEqual(npc1["pathId"], npc2["pathId"])
+            self.assertEqual(npc1["seed"], npc2["seed"])
+            self.assertEqual(npc1["type"], npc2["type"])
+
+    def test_pool_size_and_unused_paths(self):
+        """Active pool size maintained at target 5 (within 4-6) and only a subset of paths are active (AC-027.3, AC-027.4)."""
+        c1 = MockPartyServerConnection("client-1")
+        self.room.on_connect(c1)
+
+        self.assertEqual(len(self.room.active_npcs), 5)
+        self.assertTrue(4 <= len(self.room.active_npcs) <= 6)
+
+        active_path_ids = [npc["pathId"] for npc in self.room.active_npcs.values()]
+        # Distinct paths used (no duplicates)
+        self.assertEqual(len(active_path_ids), len(set(active_path_ids)))
+        # Only a subset (5 out of 10) of manifest paths are active
+        self.assertEqual(len(self.room.paths), 10)
+        self.assertEqual(len(set(active_path_ids)), 5)
+        self.assertLess(len(set(active_path_ids)), len(self.room.paths))
+
+    def test_npc_despawn_and_replacement_broadcast(self):
+        """Expiring NPC triggers NPC_DESPAWN and replacement broadcasts NPC_SPAWN to connected clients (AC-027.1, AC-027.3)."""
+        c1 = MockPartyServerConnection("client-1")
+        c2 = MockPartyServerConnection("client-2")
+        self.room.on_connect(c1)
+        self.room.on_connect(c2)
+
+        # Clear handshake messages
+        c1.messages_received.clear()
+        c2.messages_received.clear()
+
+        # Despawn an NPC
+        despawn_id = list(self.room.active_npcs.keys())[0]
+        despawned_path = self.room.active_npcs[despawn_id]["pathId"]
+        self.room.despawn_npc(despawn_id)
+
+        # Verify DESPAWN broadcast to all connected clients
+        self.assertEqual(len(c1.messages_received), 1)
+        self.assertEqual(len(c2.messages_received), 1)
+        self.assertEqual(c1.messages_received[0]["type"], "NPC_DESPAWN")
+        self.assertEqual(c1.messages_received[0]["id"], despawn_id)
+        self.assertEqual(c2.messages_received[0]["type"], "NPC_DESPAWN")
+        self.assertEqual(c2.messages_received[0]["id"], despawn_id)
+
+        # Active pool drops by 1
+        self.assertEqual(len(self.room.active_npcs), 4)
+
+        # Trigger replacement
+        self.room.trigger_replacement()
+
+        # Both clients receive identical NPC_SPAWN broadcast (AC-027.1)
+        self.assertEqual(len(c1.messages_received), 2)
+        self.assertEqual(len(c2.messages_received), 2)
+        spawn_pkt1 = c1.messages_received[1]
+        spawn_pkt2 = c2.messages_received[1]
+
+        self.assertEqual(spawn_pkt1["type"], "NPC_SPAWN")
+        self.assertEqual(spawn_pkt2["type"], "NPC_SPAWN")
+        self.assertEqual(spawn_pkt1["id"], spawn_pkt2["id"])
+        self.assertEqual(spawn_pkt1["pathId"], spawn_pkt2["pathId"])
+        self.assertEqual(spawn_pkt1["seed"], spawn_pkt2["seed"])
+        self.assertEqual(spawn_pkt1["spawnTime"], spawn_pkt2["spawnTime"])
+        self.assertIn("npc", spawn_pkt1)
+        self.assertEqual(spawn_pkt1["npc"]["id"], spawn_pkt1["id"])
+
+        # Active pool restored to 5
+        self.assertEqual(len(self.room.active_npcs), 5)
+
+    def test_spawner_idles_when_room_empty(self):
+        """Spawner clears all active NPCs and timers when room empties (AC-027.5)."""
+        c1 = MockPartyServerConnection("client-1")
+        self.room.on_connect(c1)
+        self.assertEqual(len(self.room.active_npcs), 5)
+
+        # Client disconnects -> room empties
+        self.room.on_close(c1)
+        self.assertEqual(len(self.room.active_npcs), 0)
+        self.assertEqual(len(self.room.despawn_timers), 0)
+        self.assertEqual(len(self.room.replacement_timers), 0)
+
+        # Reconnection starts a fresh pool
+        c2 = MockPartyServerConnection("client-2")
+        self.room.on_connect(c2)
+        self.assertEqual(len(self.room.active_npcs), 5)
+
+    def test_npc_speed_and_lifetime_accuracy(self):
+        """Walker (35 px/s) and jogger (80 px/s) lifetimes match lengthPx / speed."""
+        path_manifest = [
+            {"id": "p-walker", "type": "walker", "lengthPx": 3500.0},
+            {"id": "p-jogger", "type": "jogger", "lengthPx": 8000.0}
+        ]
+        room = MockPartyServerRoom("test-room", paths=path_manifest, target_npc_count=2)
+        c = MockPartyServerConnection("walker-1")
+        room.on_connect(c)
+
+        for npc in room.active_npcs.values():
+            if npc["pathId"] == "p-walker":
+                self.assertEqual(npc["type"], "walker")
+                # 3500 / 35 = 100s = 100000ms
+                self.assertEqual(npc["lifetimeMs"], 100000)
+            elif npc["pathId"] == "p-jogger":
+                self.assertEqual(npc["type"], "jogger")
+                # 8000 / 80 = 100s = 100000ms
+                self.assertEqual(npc["lifetimeMs"], 100000)
 
 
 class TestPartyServerRouteBuilder(unittest.TestCase):

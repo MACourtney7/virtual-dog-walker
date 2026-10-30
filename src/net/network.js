@@ -86,6 +86,11 @@ export class PeerNetworkManager {
     this.onChatMessage = null;
     this.onEmote = null;
     this.onStatusChange = null;
+    this.onNpcSpawn = null;
+    this.onNpcDespawn = null;
+    this.onNpcSnapshot = null;
+
+    this.serverClockOffset = 0;
 
     this.syncInterval = null;
     this.syncHz = 16;
@@ -93,6 +98,16 @@ export class PeerNetworkManager {
 
   setLocalMeta(meta) {
     this.localMeta = { ...this.localMeta, ...meta };
+  }
+
+  updateServerClock(serverTime) {
+    if (typeof serverTime === 'number' && !isNaN(serverTime)) {
+      this.serverClockOffset = serverTime - Date.now();
+    }
+  }
+
+  getServerTime() {
+    return Date.now() + (this.serverClockOffset || 0);
   }
 
   setStatus(newStatus, msg = '') {
@@ -411,6 +426,38 @@ export class PeerNetworkManager {
         if (this.onPeerLeave) this.onPeerLeave(leftId);
         break;
       }
+
+      case PacketType.NPC_SPAWN: {
+        if (typeof packet.serverTime === 'number') {
+          this.updateServerClock(packet.serverTime);
+        } else if (typeof packet.timestamp === 'number') {
+          this.updateServerClock(packet.timestamp);
+        }
+        if (this.onNpcSpawn) this.onNpcSpawn(packet.npc || packet);
+        if (this.isHost) this.relayToOthers(senderId, packet);
+        break;
+      }
+
+      case PacketType.NPC_DESPAWN: {
+        if (typeof packet.serverTime === 'number') {
+          this.updateServerClock(packet.serverTime);
+        } else if (typeof packet.timestamp === 'number') {
+          this.updateServerClock(packet.timestamp);
+        }
+        if (this.onNpcDespawn) this.onNpcDespawn(packet.id, packet);
+        if (this.isHost) this.relayToOthers(senderId, packet);
+        break;
+      }
+
+      case PacketType.NPC_SNAPSHOT: {
+        if (typeof packet.serverTime === 'number') {
+          this.updateServerClock(packet.serverTime);
+        } else if (typeof packet.timestamp === 'number') {
+          this.updateServerClock(packet.timestamp);
+        }
+        if (this.onNpcSnapshot) this.onNpcSnapshot(packet.npcs || [], packet.serverTime || this.getServerTime(), packet);
+        break;
+      }
     }
   }
 
@@ -459,6 +506,11 @@ export class PeerNetworkManager {
 // Universal Network Manager Factory & Polymorphic Wrapper
 export class NetworkManager {
   constructor() {
+    this._serverClockOffset = 0;
+    this._onNpcSpawn = null;
+    this._onNpcDespawn = null;
+    this._onNpcSnapshot = null;
+
     const urlParams = new URLSearchParams(window.location.search);
     const serverParam = urlParams.get('server');
     const partyParam = urlParams.get('party') || urlParams.get('partykit');
@@ -536,5 +588,65 @@ export class NetworkManager {
     } else if (urlParams.get('room')) {
       this.adapter.joinRoom(targetRoom);
     }
+  }
+
+  get serverClockOffset() {
+    return this.adapter ? this.adapter.serverClockOffset : (this._serverClockOffset || 0);
+  }
+
+  set serverClockOffset(val) {
+    this._serverClockOffset = val;
+    if (this.adapter) {
+      this.adapter.serverClockOffset = val;
+    }
+  }
+
+  get onNpcSpawn() {
+    return this.adapter ? this.adapter.onNpcSpawn : this._onNpcSpawn;
+  }
+
+  set onNpcSpawn(val) {
+    this._onNpcSpawn = val;
+    if (this.adapter) {
+      this.adapter.onNpcSpawn = val;
+    }
+  }
+
+  get onNpcDespawn() {
+    return this.adapter ? this.adapter.onNpcDespawn : this._onNpcDespawn;
+  }
+
+  set onNpcDespawn(val) {
+    this._onNpcDespawn = val;
+    if (this.adapter) {
+      this.adapter.onNpcDespawn = val;
+    }
+  }
+
+  get onNpcSnapshot() {
+    return this.adapter ? this.adapter.onNpcSnapshot : this._onNpcSnapshot;
+  }
+
+  set onNpcSnapshot(val) {
+    this._onNpcSnapshot = val;
+    if (this.adapter) {
+      this.adapter.onNpcSnapshot = val;
+    }
+  }
+
+  updateServerClock(serverTime) {
+    if (this.adapter && typeof this.adapter.updateServerClock === 'function') {
+      return this.adapter.updateServerClock(serverTime);
+    }
+    if (typeof serverTime === 'number' && !isNaN(serverTime)) {
+      this.serverClockOffset = serverTime - Date.now();
+    }
+  }
+
+  getServerTime() {
+    if (this.adapter && typeof this.adapter.getServerTime === 'function') {
+      return this.adapter.getServerTime();
+    }
+    return Date.now() + (this.serverClockOffset || 0);
   }
 }

@@ -42,6 +42,12 @@ export class WebSocketNetworkManager {
     this.onChatMessage = null;
     this.onEmote = null;
     this.onStatusChange = null;
+    this.onNpcSpawn = null;
+    this.onNpcDespawn = null;
+    this.onNpcSnapshot = null;
+
+    // Authoritative server clock estimation
+    this.serverClockOffset = 0;
 
     // Sync broadcast ticker
     this.syncInterval = null;
@@ -112,6 +118,16 @@ export class WebSocketNetworkManager {
 
   setLocalMeta(meta) {
     this.localMeta = { ...this.localMeta, ...meta };
+  }
+
+  updateServerClock(serverTime) {
+    if (typeof serverTime === 'number' && !isNaN(serverTime)) {
+      this.serverClockOffset = serverTime - Date.now();
+    }
+  }
+
+  getServerTime() {
+    return Date.now() + (this.serverClockOffset || 0);
   }
 
   setStatus(newStatus, msg = '') {
@@ -367,6 +383,42 @@ export class WebSocketNetworkManager {
         const leftId = packet.peerId || senderId;
         this.remotePeers.delete(leftId);
         if (this.onPeerLeave) this.onPeerLeave(leftId);
+        break;
+      }
+
+      case PacketType.NPC_SPAWN: {
+        if (typeof packet.serverTime === 'number') {
+          this.updateServerClock(packet.serverTime);
+        } else if (typeof packet.timestamp === 'number') {
+          this.updateServerClock(packet.timestamp);
+        }
+        if (this.onNpcSpawn) {
+          this.onNpcSpawn(packet.npc || packet);
+        }
+        break;
+      }
+
+      case PacketType.NPC_DESPAWN: {
+        if (typeof packet.serverTime === 'number') {
+          this.updateServerClock(packet.serverTime);
+        } else if (typeof packet.timestamp === 'number') {
+          this.updateServerClock(packet.timestamp);
+        }
+        if (this.onNpcDespawn) {
+          this.onNpcDespawn(packet.id, packet);
+        }
+        break;
+      }
+
+      case PacketType.NPC_SNAPSHOT: {
+        if (typeof packet.serverTime === 'number') {
+          this.updateServerClock(packet.serverTime);
+        } else if (typeof packet.timestamp === 'number') {
+          this.updateServerClock(packet.timestamp);
+        }
+        if (this.onNpcSnapshot) {
+          this.onNpcSnapshot(packet.npcs || [], packet.serverTime || this.getServerTime(), packet);
+        }
         break;
       }
     }

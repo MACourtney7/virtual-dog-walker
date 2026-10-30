@@ -12,7 +12,10 @@ export const PacketType = {
   EMOTE: 'EMOTE',
   WHISTLE: 'WHISTLE',
   PROXIMITY_CHAT: 'PROXIMITY_CHAT',
-  PEER_LEFT: 'PEER_LEFT'
+  PEER_LEFT: 'PEER_LEFT',
+  NPC_SPAWN: 'NPC_SPAWN',
+  NPC_DESPAWN: 'NPC_DESPAWN',
+  NPC_SNAPSHOT: 'NPC_SNAPSHOT'
 };
 
 export class Protocol {
@@ -155,6 +158,76 @@ export class Protocol {
       clusterPeers,
       timestamp: Date.now()
     };
+  }
+
+  static createNpcSpawn(id, pathId, npcType, seed, spawnTime) {
+    const now = Date.now();
+    return {
+      type: PacketType.NPC_SPAWN,
+      id,
+      pathId,
+      npcType,
+      seed: typeof seed === 'number' ? seed : 0,
+      spawnTime: typeof spawnTime === 'number' ? spawnTime : now,
+      npc: {
+        id,
+        pathId,
+        type: npcType,
+        npcType,
+        seed: typeof seed === 'number' ? seed : 0,
+        spawnTime: typeof spawnTime === 'number' ? spawnTime : now
+      },
+      timestamp: now
+    };
+  }
+
+  static createNpcDespawn(id) {
+    return {
+      type: PacketType.NPC_DESPAWN,
+      id,
+      timestamp: Date.now()
+    };
+  }
+
+  static createNpcSnapshot(npcs = [], serverTime = Date.now()) {
+    return {
+      type: PacketType.NPC_SNAPSHOT,
+      npcs: (npcs || []).map(n => ({
+        id: n.id,
+        pathId: n.pathId,
+        type: n.type || n.npcType,
+        npcType: n.npcType || n.type,
+        seed: n.seed,
+        spawnTime: n.spawnTime
+      })),
+      serverTime,
+      timestamp: Date.now()
+    };
+  }
+
+  static validateNpcSpawn(packet) {
+    if (!packet || packet.type !== PacketType.NPC_SPAWN) return false;
+    if (typeof packet.id !== 'string') return false;
+    if (typeof packet.pathId !== 'string') return false;
+    const typeValid = (packet.npcType === 'walker' || packet.npcType === 'jogger' ||
+      (packet.npc && (packet.npc.type === 'walker' || packet.npc.type === 'jogger')));
+    if (!typeValid) return false;
+    if (typeof packet.seed !== 'number') return false;
+    if (typeof packet.spawnTime !== 'number') return false;
+    return true;
+  }
+
+  static validateNpcDespawn(packet) {
+    if (!packet || packet.type !== PacketType.NPC_DESPAWN) return false;
+    if (typeof packet.id !== 'string' || packet.id.length === 0) return false;
+    return true;
+  }
+
+  static validateNpcSnapshot(packet) {
+    if (!packet || packet.type !== PacketType.NPC_SNAPSHOT) return false;
+    if (!Array.isArray(packet.npcs)) return false;
+    if (typeof packet.serverTime !== 'number') return false;
+    return true;
   }
 }
 

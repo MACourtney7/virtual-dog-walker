@@ -1,0 +1,52 @@
+[
+  {
+    "id": "ladies-mile-loop",
+    "type": "both",
+    "lengthPx": 5726.1
+  },
+  {
+    "id": "sea-walls-promenade",
+    "type": "both",
+    "lengthPx": 1789.1
+  },
+  {
+    "id": "durdham-down-circuit",
+    "type": "jogger",
+    "lengthPx": 3103.1
+  },
+  {
+    "id": "woodland-trail-loop",
+    "type": "walker",
+    "lengthPx": 2091.7
+  },
+  {
+    "id": "central-meadow-ramble",
+    "type": "walker",
+    "lengthPx": 2104.2
+  },
+  {
+    "id": "trans-downs-express",
+    "type": "jogger",
+    "lengthPx": 3462.8
+  },
+  {
+    "id": "sea-walls-to-water-tower",
+    "type": "walker",
+    "lengthPx": 2920.2
+  },
+  {
+    "id": "clifton-woodland-traverse",
+    "type": "walker",
+    "lengthPx": 2137.7
+  },
+  {
+    "id": "north-meadow-diagonal",
+    "type": "both",
+    "lengthPx": 2646.5
+  },
+  {
+    "id": "perimeter-grand-loop",
+    "type": "jogger",
+    "lengthPx": 9527.3
+  }
+]

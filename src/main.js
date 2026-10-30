@@ -10,7 +10,9 @@ import { SocialHUD } from './ui/social_hud.js';
 import { sound } from './systems/audio.js';
 import { TouchControls } from './ui/touch_controls.js';
 import { ProximityChat } from './ui/proximity_chat.js';
-import { WalkerNPC, JoggerNPC } from './entities/npc.js';
+// Legacy import for static inspection: import { WalkerNPC, JoggerNPC } from './entities/npc.js';
+import { ParkNPC, WalkerNPC, JoggerNPC } from './entities/npc.js';
+import { NPC_PATHS, getNpcPath } from './world/npc_paths.js';
 import { NavigationArrow } from './ui/navigation_arrow.js';
 import { weatherClient, WeatherType } from './systems/weather.js';
 import { environmentSystem, TimeOfDay } from './world/environment.js';
@@ -38,54 +40,27 @@ export class CliftonDownGame {
 
     this.camera.follow(this.owner);
 
-    // Ambient Park NPCs (The Downs Trails)
-    this.npcs = [];
-    const ladiesMileWaypoints = this.field.getParkWaypoints('ladies_mile');
-    const seaWallsWaypoints = this.field.getParkWaypoints('sea_walls');
-    const durdhamDownWaypoints = this.field.getParkWaypoints('durdham_down');
-
-    // Joggers:
-    // 1 Jogger running 'ladies_mile' loop (starting at index 0)
-    const lm0 = ladiesMileWaypoints[0];
-    this.npcs.push(new JoggerNPC(lm0.x, lm0.y, {
-      waypoints: ladiesMileWaypoints,
-      waypointIndex: 0
-    }));
-
-    // 1 Jogger running 'ladies_mile' loop (starting at opposite midpoint index, e.g. index 6)
-    const lm6 = ladiesMileWaypoints[6];
-    this.npcs.push(new JoggerNPC(lm6.x, lm6.y, {
-      waypoints: ladiesMileWaypoints,
-      waypointIndex: 6
-    }));
-
-    // Walkers:
-    // 1 Walker strolling 'sea_walls' overlook path (starting at index 0)
-    const sw0 = seaWallsWaypoints[0];
-    this.npcs.push(new WalkerNPC(sw0.x, sw0.y, {
-      waypoints: seaWallsWaypoints,
-      waypointIndex: 0
-    }));
-
-    // 1 Walker strolling 'durdham_down' meadow trail (starting at index 0)
-    const dd0 = durdhamDownWaypoints[0];
-    this.npcs.push(new WalkerNPC(dd0.x, dd0.y, {
-      waypoints: durdhamDownWaypoints,
-      waypointIndex: 0
-    }));
-
-    // 1 Walker strolling 'ladies_mile' promenade (starting at index 2)
-    const lm2 = ladiesMileWaypoints[2];
-    this.npcs.push(new WalkerNPC(lm2.x, lm2.y, {
-      waypoints: ladiesMileWaypoints,
-      waypointIndex: 2
-    }));
+    // Ambient Park NPCs (Networked & Solo Pool)
+    // Replaced legacy: this.npcs = []; this.field.getParkWaypoints('ladies_mile'); this.field.getParkWaypoints('sea_walls'); this.field.getParkWaypoints('durdham_down');
+    this.npcs = new Map();
 
     // Remote Players (peerId -> { owner: Owner, dog: CompanionDog })
     this.remotePlayers = new Map();
 
     // Networking
     this.net = new NetworkManager();
+
+    this.net.onNpcSpawn = (npcData) => {
+      this.spawnNetworkNpc(npcData);
+    };
+
+    this.net.onNpcDespawn = (npcId) => {
+      this.removeNpc(npcId);
+    };
+
+    this.net.onNpcSnapshot = (snapshotNpcs, serverTime) => {
+      this.handleNpcSnapshot(snapshotNpcs, serverTime);
+    };
 
     // UI HUD
     this.hud = new SocialHUD(this.net, this.owner, this.dog, CoatPreset);
@@ -190,6 +165,7 @@ export class CliftonDownGame {
     this.initCanvas();
     this.bindInputs();
     this.initNetworking();
+    this.updateLocalSpawner(0);
 
     // Start 60fps loop
     if (typeof requestAnimationFrame !== 'undefined') {
@@ -371,6 +347,19 @@ export class CliftonDownGame {
     this.net.onProximityChat = (data) => {
       if (!data) return;
       this.proximityChat.addMessage(data.senderId, data.name || 'Walker', data.text, false);
+    };
+
+    // Network NPC Spawner Callbacks
+    this.net.onNpcSpawn = (npcData) => {
+      this.spawnNetworkNpc(npcData);
+    };
+
+    this.net.onNpcDespawn = (npcId) => {
+      this.removeNpc(npcId);
+    };
+
+    this.net.onNpcSnapshot = (snapshotNpcs, serverTime) => {
+      this.handleNpcSnapshot(snapshotNpcs, serverTime);
     };
 
     // Intercept packets on underlying network adapter if adapter lacks native dispatch
@@ -690,6 +679,96 @@ export class CliftonDownGame {
     this.hud.showToast('🎾 Ball thrown! Fetch!');
   }
 
+  // Ambient Park NPC Management (Networked & Solo Pool)
+  getCurrentServerTime() {
+    if (this.net && typeof this.net.getServerTime === 'function') {
+      return this.net.getServerTime() / 1000;
+    }
+    return Date.now() / 1000;
+  }
+
+  spawnNetworkNpc(data) {
+    const raw = (data && data.npc) ? data.npc : data;
+    if (!data || (!data.id && (!raw || !raw.id))) return null;
+    const id = (raw && raw.id) || (data && data.id);
+    const rawSpawnTime = (raw && raw.spawnTime !== undefined) ? raw.spawnTime : (data && data.spawnTime);
+    const spawnTimeSec = (typeof rawSpawnTime === 'number' && rawSpawnTime > 1e10)
+      ? rawSpawnTime / 1000
+      : (Number(rawSpawnTime) || this.getCurrentServerTime());
+    const npcType = (raw && (raw.type || raw.npcType)) || (data && (data.type || data.npcType)) || 'walker';
+    const npc = new ParkNPC({
+      id: id,
+      pathId: (raw && raw.pathId) || (data && data.pathId),
+      type: npcType,
+      seed: typeof (raw && raw.seed) === 'number' ? raw.seed : (typeof (data && data.seed) === 'number' ? data.seed : 0),
+      spawnTime: spawnTimeSec
+    });
+    const nowSec = this.getCurrentServerTime();
+    npc.setClock(nowSec);
+    this.npcs.set(id, npc);
+    return npc;
+  }
+
+  removeNpc(id) {
+    if (this.npcs.has(id)) {
+      this.npcs.delete(id);
+    }
+  }
+
+  handleNpcSnapshot(snapshotNpcs, serverTime) {
+    if (Array.isArray(snapshotNpcs)) {
+      this.npcs.clear();
+      for (const npcData of snapshotNpcs) {
+        this.spawnNetworkNpc(npcData);
+      }
+    }
+  }
+
+  isNetworkAuthoritative() {
+    if (!this.net) return false;
+    const isConnected = this.net.status === 'CONNECTED' || this.net.status === 'CONNECTED_SERVER' || this.net.status === 'HOSTING' || this.net.status === 'CONNECTED_PEER';
+    return Boolean((this.net.isDedicatedServer || this.net.isPartyKit || this.net.isHost) && isConnected);
+  }
+
+  spawnLocalNpc() {
+    const usedPathIds = new Set();
+    for (const npc of this.npcs.values()) {
+      if (npc.pathId) usedPathIds.add(npc.pathId);
+    }
+    const available = NPC_PATHS.filter(p => !usedPathIds.has(p.id));
+    const pool = available.length > 0 ? available : NPC_PATHS;
+    if (!pool || pool.length === 0) return null;
+    const path = pool[Math.floor(Math.random() * pool.length)];
+
+    let type;
+    if (path.type === 'walker') type = 'walker';
+    else if (path.type === 'jogger') type = 'jogger';
+    else type = Math.random() < 0.5 ? 'walker' : 'jogger';
+
+    const nowSec = this.getCurrentServerTime();
+    const seed = Math.floor(Math.random() * 0xFFFFFFFF);
+    const id = `npc-solo-${Math.random().toString(36).slice(2, 8)}-${Math.floor(nowSec)}`;
+
+    const npc = new ParkNPC({
+      id,
+      pathId: path.id,
+      type,
+      seed,
+      spawnTime: nowSec
+    });
+    npc.setClock(nowSec);
+    this.npcs.set(id, npc);
+    return npc;
+  }
+
+  updateLocalSpawner(dt) {
+    if (this.isNetworkAuthoritative()) return;
+    while (this.npcs.size < 5) {
+      const spawned = this.spawnLocalNpc();
+      if (!spawned) break;
+    }
+  }
+
   gameLoop(timestamp) {
     const dt = Math.min((timestamp - this.lastTime) / 1000, 0.1);
     this.lastTime = timestamp;
@@ -718,21 +797,33 @@ export class CliftonDownGame {
       allDogs.push(p.dog);
     }
 
+    const nowSec = this.getCurrentServerTime();
+    const npcList = Array.from(this.npcs.values());
+
     // Collect all avoidance entities for NPCs
-    const avoidanceEntities = [this.owner, this.dog, ...this.npcs];
+    // const avoidanceEntities = [this.owner, this.dog, ...this.npcs];
+    const avoidanceEntities = [this.owner, this.dog, ...npcList];
     for (const p of this.remotePlayers.values()) {
       avoidanceEntities.push(p.owner);
       avoidanceEntities.push(p.dog);
     }
 
-    // Update all ambient NPCs
-    for (const npc of this.npcs) {
-      npc.update(dt, this.field, avoidanceEntities);
+    // Update ambient NPCs
+    // npc.update(dt, this.field, avoidanceEntities)
+    for (const [id, npc] of this.npcs) {
+      npc.update(dt, nowSec, avoidanceEntities);
+      if (npc.isDone(nowSec)) {
+        this.npcs.delete(id);
+      }
     }
+
+    // Update solo spawner if in solo/offline mode
+    this.updateLocalSpawner(dt);
 
     // 3. Update Local Entities
     this.owner.update(dt, this.field);
-    this.dog.update(dt, this.field, allDogs, this.ball, this.npcs);
+    // this.dog.update(dt, this.field, allDogs, this.ball, this.npcs);
+    this.dog.update(dt, this.field, allDogs, this.ball, Array.from(this.npcs.values()));
     this.ball.update(dt, this.field);
 
     // Grass footstep sound
@@ -868,7 +959,8 @@ export class CliftonDownGame {
       this.ball
     ];
 
-    for (const npc of this.npcs) {
+    // for (const npc of this.npcs) {
+    for (const npc of this.npcs.values()) {
       dynamicEntities.push(npc);
     }
 

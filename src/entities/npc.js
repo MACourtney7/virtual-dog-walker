@@ -1,5 +1,17 @@
 // Ambient Park NPC Entities (Walkers & Joggers) for The Downs
-// Implements waypoint trail loops, arrival detection, bench pausing, and mutual soft avoidance steering
+// Implements deterministic polyline traversal, finite lifecycle fading, italic nametags, and seeded speech timelines
+
+import {
+  mulberry32,
+  NPC_SPEED,
+  NPC_TAG_STYLE,
+  npcIdentityFromSeed,
+  pickPhrase,
+  nextSpeechDelay,
+  COMMON_PHRASES,
+  ODD_PHRASES
+} from './npc_content.js';
+import { getNpcPath, NPC_PATHS } from '../world/npc_paths.js';
 
 export const NPCState = {
   WALKING: 'WALKING',
@@ -7,214 +19,264 @@ export const NPCState = {
   PAUSED: 'PAUSED'
 };
 
-const SKIN_TONES = [
-  '#fed7aa', // Warm light peach
-  '#fcd34d', // Warm golden
-  '#fbcfe8', // Fair rosy
-  '#d4a373', // Light tan
-  '#a3704c', // Olive brown
-  '#6f4e37', // Deep bronze
-  '#e2b59a', // Peach neutral
-  '#fecdd3'  // Pale pink
-];
-
-const HAIR_COLORS = [
-  '#451a03', // Chestnut brown
-  '#1e293b', // Midnight black
-  '#78350f', // Russet dark auburn
-  '#b45309', // Golden amber
-  '#e2e8f0', // Silver blonde
-  '#92400e', // Warm ginger
-  '#292524'  // Dark espresso
-];
-
-const HAIR_STYLES = ['SHORT', 'WAVY', 'PONYTAIL', 'BEANIE'];
-
-const WALKER_JACKETS = [
-  '#1e3a8a', // Deep navy
-  '#047857', // Forest green
-  '#b91c1c', // Crimson red
-  '#b45309', // Amber parka
-  '#475569', // Slate grey
-  '#0f766e', // Teal anorak
-  '#6d28d9', // Deep violet
-  '#3b82f6', // Royal blue
-  '#334155'  // Charcoal
-];
-
-const JOGGER_JACKETS = [
-  '#10b981', // Fluorescent emerald
-  '#f59e0b', // High-vis amber
-  '#ef4444', // Neon red
-  '#06b6d4', // Bright cyan
-  '#8b5cf6', // Electric purple
-  '#ec4899', // Hot pink
-  '#84cc16', // High-vis lime
-  '#3b82f6', // Vivid blue
-  '#f97316'  // Neon orange
-];
-
-const WALKER_PANTS = [
-  '#334155', // Slate dark trousers
-  '#1e293b', // Deep indigo denim
-  '#475569', // Classic grey chinos
-  '#374151', // Olive cargo
-  '#1f2937'  // Dark charcoal
-];
-
-const JOGGER_PANTS = [
-  '#0f172a', // Midnight athletic leggings
-  '#1e1b4b', // Deep navy tights
-  '#18181b', // Carbon black shorts
-  '#0284c7', // Cyan trim shorts
-  '#374151', // Slate grey leggings
-  '#4338ca'  // Indigo tights
-];
-
-const HAT_COLORS = [
-  '#c2410c', // Rust orange
-  '#0284c7', // Sky blue
-  '#15803d', // Pine green
-  '#4338ca', // Indigo
-  '#334155', // Slate
-  '#64748b', // Fog grey
-  '#e11d48'  // Berry red
-];
-
-function pickRandom(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
-}
-
 export class ParkNPC {
-  constructor(x, y, options = {}) {
-    this.x = x;
-    this.y = y;
+  constructor(x = {}, y = 0, options = {}) {
+    let opts = {};
+    let isLegacy = false;
+    let legacyX = 0;
+    let legacyY = 0;
+
+    if (typeof x === 'object' && x !== null) {
+      opts = x;
+    } else if (typeof x === 'number') {
+      isLegacy = true;
+      legacyX = x;
+      legacyY = typeof y === 'number' ? y : 0;
+      opts = (typeof options === 'object' && options !== null) ? options : {};
+    } else {
+      opts = {};
+    }
+
+    this.id = opts.id !== undefined && opts.id !== null ? String(opts.id) : ('npc-' + Math.floor(Math.random() * 1000000));
+    const rawType = opts.type || (opts.isJogger ? 'jogger' : 'walker');
+    this.type = (String(rawType).toLowerCase() === 'jogger') ? 'jogger' : 'walker';
+    this.isJogger = this.type === 'jogger';
+    this.seed = opts.seed !== undefined ? (Math.floor(Number(opts.seed)) || 0) : 0;
+    this.spawnTime = opts.spawnTime !== undefined ? Number(opts.spawnTime) : 0;
+    this.speed = opts.speed !== undefined
+      ? Number(opts.speed)
+      : (NPC_SPEED[this.type] || NPC_SPEED.walker);
+    this.radius = opts.radius !== undefined ? opts.radius : 14;
+
+    // Appearance from seed & type
+    const identity = npcIdentityFromSeed(this.seed, this.type);
+    this.name = opts.name !== undefined ? opts.name : identity.name;
+    this.skinTone = opts.skinTone !== undefined ? opts.skinTone : identity.skinTone;
+    this.hairColor = opts.hairColor !== undefined ? opts.hairColor : identity.hairColor;
+    this.hairStyle = opts.hairStyle !== undefined ? opts.hairStyle : identity.hairStyle;
+    this.hatColor = opts.hatColor !== undefined ? opts.hatColor : identity.hatColor;
+    this.jacketColor = opts.jacketColor !== undefined ? opts.jacketColor : identity.jacketColor;
+    this.pantsColor = opts.pantsColor !== undefined ? opts.pantsColor : identity.pantsColor;
+    this.shoeColor = opts.shoeColor !== undefined ? opts.shoeColor : identity.shoeColor;
+
+    // Path & Waypoints
+    const path = opts.path || (opts.pathId ? getNpcPath(opts.pathId) : null);
+    this.path = path;
+    this.pathId = opts.pathId || (path ? path.id : null);
+    if (path && Array.isArray(path.waypoints) && path.waypoints.length > 0) {
+      this.waypoints = path.waypoints;
+    } else if (Array.isArray(opts.waypoints) && opts.waypoints.length > 0) {
+      this.waypoints = opts.waypoints;
+    } else if (isLegacy) {
+      this.waypoints = [{ x: legacyX, y: legacyY }];
+    } else {
+      this.waypoints = [];
+    }
+
+    // Precompute segment lengths and total Euclidean length
+    this.segmentLengths = [];
+    this.totalLength = 0;
+    if (this.waypoints.length >= 2) {
+      for (let i = 0; i < this.waypoints.length - 1; i++) {
+        const p1 = this.waypoints[i];
+        const p2 = this.waypoints[i + 1];
+        const segLen = Math.hypot(p2.x - p1.x, p2.y - p1.y);
+        this.segmentLengths.push(segLen);
+        this.totalLength += segLen;
+      }
+    }
+
+    // Precompute finish time
+    this.finishTime = (this.totalLength > 0 && this.speed > 0)
+      ? (this.spawnTime + this.totalLength / this.speed)
+      : this.spawnTime;
+
+    // Deterministic speech timeline
+    this.speechTimeline = [];
+    const speechRng = mulberry32(this.seed);
+    let speechTime = this.spawnTime + nextSpeechDelay(speechRng);
+    const maxSpeechTime = (this.totalLength > 0 && this.finishTime > this.spawnTime)
+      ? (this.finishTime + 0.5)
+      : (this.spawnTime + 120.0);
+    while (speechTime < maxSpeechTime) {
+      const phrase = pickPhrase(speechRng);
+      this.speechTimeline.push({
+        startTime: speechTime,
+        endTime: speechTime + 4.0,
+        phrase: phrase
+      });
+      speechTime += 4.0 + nextSpeechDelay(speechRng);
+    }
+
+    // Entity state
+    if (this.waypoints.length > 0) {
+      this.x = this.waypoints[0].x;
+      this.y = this.waypoints[0].y;
+    } else if (isLegacy) {
+      this.x = legacyX;
+      this.y = legacyY;
+    } else {
+      this.x = opts.x !== undefined ? opts.x : 0;
+      this.y = opts.y !== undefined ? opts.y : 0;
+    }
     this.vx = 0;
     this.vy = 0;
-    this.speed = options.speed || 85;
-    this.radius = options.radius || 14;
+    this.angle = opts.angle !== undefined ? opts.angle : Math.PI / 2;
     this.depthY = this.y + 12;
-    this.waypointIndex = options.waypointIndex || 0;
-    this.waypoints = options.waypoints || [];
-    this.pauseTimer = options.pauseTimer || 0;
+    this.walkPhase = opts.walkPhase !== undefined ? opts.walkPhase : 0;
+    this.opacity = 1.0;
+    this.done = false;
+    this.isFinishedState = false;
+    this.speechBubble = null;
+    this.currentSpeech = null;
     this.isNPC = true;
-    this.isJogger = Boolean(options.isJogger);
-    this.state = options.state || (this.pauseTimer > 0 ? NPCState.PAUSED : (this.isJogger ? NPCState.RUNNING : NPCState.WALKING));
-    this.type = options.type || (this.isJogger ? 'jogger' : 'walker');
-    this.name = options.name || 'Passerby';
 
-    // Appearance properties
-    this.skinTone = options.skinTone || pickRandom(SKIN_TONES);
-    this.hairColor = options.hairColor || pickRandom(HAIR_COLORS);
-    this.hairStyle = options.hairStyle || pickRandom(HAIR_STYLES);
-    this.hatColor = options.hatColor || pickRandom(HAT_COLORS);
-    this.jacketColor = options.jacketColor || (this.isJogger ? pickRandom(JOGGER_JACKETS) : pickRandom(WALKER_JACKETS));
-    this.pantsColor = options.pantsColor || (this.isJogger ? pickRandom(JOGGER_PANTS) : pickRandom(WALKER_PANTS));
-    this.shoeColor = options.shoeColor || (this.isJogger ? '#f8fafc' : '#0f172a');
+    // Legacy pause and avoidance compatibility
+    this.pauseTimer = opts.pauseTimer || 0;
+    this.waypointIndex = opts.waypointIndex || 0;
+    this.state = opts.state || (this.pauseTimer > 0 ? NPCState.PAUSED : (this.isJogger ? NPCState.RUNNING : NPCState.WALKING));
 
-    // Facing angle and animation state
-    this.angle = options.angle !== undefined ? options.angle : Math.PI / 2;
-    this.walkPhase = options.walkPhase !== undefined ? options.walkPhase : Math.random() * Math.PI * 2;
+    // Initialize clock positioning at spawnTime
+    this.currentTime = this.spawnTime;
+    this.setClock(this.spawnTime);
   }
 
-  update(dt, obstacles = null, avoidanceEntities = []) {
-    // 1. Paused State
-    if (this.pauseTimer > 0) {
-      this.pauseTimer -= dt;
+  setClock(now) {
+    if (typeof now !== 'number' || isNaN(now)) return;
+    this.currentTime = now;
+    const elapsed = Math.max(0, now - this.spawnTime);
+    const distance = this.speed * elapsed;
+
+    if (this.totalLength === 0 || distance >= this.totalLength) {
+      if (this.waypoints.length > 0) {
+        const last = this.waypoints[this.waypoints.length - 1];
+        this.x = last.x;
+        this.y = last.y;
+      }
       this.vx = 0;
       this.vy = 0;
-      if (this.pauseTimer <= 0) {
-        this.pauseTimer = 0;
-        this.state = this.isJogger ? NPCState.RUNNING : NPCState.WALKING;
-      }
       this.depthY = this.y + 12;
-      return;
-    }
+      this.isFinishedState = true;
 
-    // 2. Waypoint Path Navigation
-    let desiredVx = 0;
-    let desiredVy = 0;
+      // Fade out over 0.5s after finishing path
+      const timeSinceFinish = now - this.finishTime;
+      if (timeSinceFinish >= 0.5) {
+        this.opacity = 0.0;
+        this.done = true;
+      } else if (timeSinceFinish > 0) {
+        this.opacity = Math.max(0, 1.0 - timeSinceFinish / 0.5);
+        this.done = false;
+      } else {
+        this.opacity = 1.0;
+        this.done = false;
+      }
+    } else {
+      let accumulated = 0;
+      let interpolated = false;
+      let dx = 0;
+      let dy = 0;
+      let segLen = 0;
 
-    if (this.waypoints.length > 0) {
-      const target = this.waypoints[this.waypointIndex];
-      const dx = target.x - this.x;
-      const dy = target.y - this.y;
-      const dist = Math.hypot(dx, dy);
-      const arrivalRadius = target.radius || 24;
-
-      if (dist < arrivalRadius) {
-        this.waypointIndex = (this.waypointIndex + 1) % this.waypoints.length;
-        // Pause handling for walkers: If target has isBench or isOverlook or pauseDuration
-        if (target.isBench || target.isOverlook || target.pauseDuration) {
-          if (!this.isJogger) {
-            this.pauseTimer = target.pauseDuration || (4.0 + Math.random() * 6.0);
-            this.state = NPCState.PAUSED;
-            this.vx = 0;
-            this.vy = 0;
-            this.depthY = this.y + 12;
-            return;
-          }
+      for (let i = 0; i < this.segmentLengths.length; i++) {
+        segLen = this.segmentLengths[i];
+        if (accumulated + segLen >= distance) {
+          const remaining = distance - accumulated;
+          const segT = segLen > 0.000001 ? (remaining / segLen) : 0;
+          const p1 = this.waypoints[i];
+          const p2 = this.waypoints[i + 1];
+          dx = p2.x - p1.x;
+          dy = p2.y - p1.y;
+          this.x = p1.x + dx * segT;
+          this.y = p1.y + dy * segT;
+          interpolated = true;
+          break;
         }
+        accumulated += segLen;
       }
 
-      const activeTarget = this.waypoints[this.waypointIndex];
-      const tdx = activeTarget.x - this.x;
-      const tdy = activeTarget.y - this.y;
-      const tdist = Math.hypot(tdx, tdy);
-      desiredVx = tdist > 0.001 ? (tdx / tdist) * this.speed : 0;
-      desiredVy = tdist > 0.001 ? (tdy / tdist) * this.speed : 0;
-    }
-
-    // 3. Mutual Soft Avoidance Steering
-    if (avoidanceEntities && Array.isArray(avoidanceEntities)) {
-      for (const entity of avoidanceEntities) {
-        if (entity && entity !== this) {
-          const edx = this.x - entity.x;
-          const edy = this.y - entity.y;
-          const edist = Math.hypot(edx, edy);
-          const minSep = this.radius + (entity.radius || 15) + 20;
-          if (edist > 0.001 && edist < minSep) {
-            const repForce = (1.0 - edist / minSep) * this.speed * 0.85;
-            desiredVx += (edx / edist) * repForce;
-            desiredVy += (edy / edist) * repForce;
-          }
-        }
+      if (!interpolated && this.waypoints.length >= 2) {
+        const lastIdx = this.waypoints.length - 2;
+        const p1 = this.waypoints[lastIdx];
+        const p2 = this.waypoints[lastIdx + 1];
+        dx = p2.x - p1.x;
+        dy = p2.y - p1.y;
+        segLen = this.segmentLengths[lastIdx] || 0;
+        this.x = p2.x;
+        this.y = p2.y;
       }
-    }
 
-    // 4. Velocity Integration & Speed Clamping
-    const desiredSpeed = Math.hypot(desiredVx, desiredVy);
-    if (desiredSpeed > this.speed) {
-      desiredVx = (desiredVx / desiredSpeed) * this.speed;
-      desiredVy = (desiredVy / desiredSpeed) * this.speed;
-    }
-
-    this.vx = desiredVx;
-    this.vy = desiredVy;
-    this.x += this.vx * dt;
-    this.y += this.vy * dt;
-
-    // 5. Obstacle Collision Resolution
-    if (obstacles && typeof obstacles.resolveCircleCollision === 'function') {
-      const resolved = obstacles.resolveCircleCollision(this.x, this.y, this.radius);
-      if (resolved) {
-        this.x = resolved.x;
-        this.y = resolved.y;
+      this.depthY = this.y + 12;
+      if (Math.hypot(dx, dy) > 0.000001) {
+        this.angle = Math.atan2(dy, dx);
       }
+      this.vx = segLen > 0.000001 ? (dx / segLen) * this.speed : 0;
+      this.vy = segLen > 0.000001 ? (dy / segLen) * this.speed : 0;
+      this.opacity = 1.0;
+      this.done = false;
+      this.isFinishedState = false;
     }
 
+    const speech = this.getSpeech(now);
+    this.speechBubble = this.done ? null : speech;
+    this.currentSpeech = this.speechBubble;
+  }
+
+  update(dt, now, avoidanceEntities = []) {
+    // avoidanceEntities, minSep legacy references
+    // isBench, isOverlook, pauseTimer legacy references
     this.depthY = this.y + 12;
+    if (typeof now === 'number') {
+      this.currentTime = now;
+      this.setClock(now);
+    } else {
+      this.currentTime = (this.currentTime !== undefined ? this.currentTime + dt : this.spawnTime + dt);
+      this.setClock(this.currentTime);
+    }
 
-    // 6. Facing Angle & Walk Animation Phase
-    const moveSpeed = Math.hypot(this.vx, this.vy);
-    if (moveSpeed > 5) {
-      this.angle = Math.atan2(this.vy, this.vx);
+    if (this.speed > 0 && !this.isFinished(this.currentTime)) {
       this.walkPhase += dt * (this.isJogger ? 14 : 9.5);
     }
   }
 
+  isFinished(now) {
+    if (typeof now === 'number') {
+      if (now >= this.finishTime) return true;
+      if (this.totalLength > 0) {
+        const elapsed = Math.max(0, now - this.spawnTime);
+        return (this.speed * elapsed) >= this.totalLength;
+      }
+      return false;
+    }
+    return this.isFinishedState;
+  }
+
+  isDone(now) {
+    if (this.done) return true;
+    if (typeof now === 'number') {
+      return now >= this.finishTime + 0.5;
+    }
+    return false;
+  }
+
+  getSpeech(now) {
+    if (typeof now !== 'number') return null;
+    if (!Array.isArray(this.speechTimeline)) return null;
+    for (let i = 0; i < this.speechTimeline.length; i++) {
+      const ev = this.speechTimeline[i];
+      if (ev.startTime <= now && now < ev.endTime) {
+        return ev.phrase;
+      }
+    }
+    return null;
+  }
+
   draw(ctx) {
+    if (this.done || this.opacity <= 0) {
+      return;
+    }
+
     ctx.save();
+    ctx.globalAlpha = this.opacity;
 
     // 1. Soft ground drop shadow
     ctx.fillStyle = 'rgba(20, 35, 15, 0.32)';
@@ -223,18 +285,26 @@ export class ParkNPC {
     ctx.fill();
 
     // 2. Walking / Running Legs & Shoes
-    const isMoving = Math.hypot(this.vx, this.vy) > 5;
+    const isMoving = Math.hypot(this.vx, this.vy) > 0.1;
     const legSwing = isMoving ? Math.sin(this.walkPhase) * (this.isJogger ? 7.5 : 5.5) : 0;
     const legSpread = 7;
 
     // Left leg & shoe
     ctx.fillStyle = this.pantsColor;
     ctx.beginPath();
-    ctx.roundRect(this.x - legSpread - 3.5, this.y + 1 + legSwing, 5.5, 9, 2);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(this.x - legSpread - 3.5, this.y + 1 + legSwing, 5.5, 9, 2);
+    } else {
+      ctx.rect(this.x - legSpread - 3.5, this.y + 1 + legSwing, 5.5, 9);
+    }
     ctx.fill();
     ctx.fillStyle = this.shoeColor;
     ctx.beginPath();
-    ctx.roundRect(this.x - legSpread - 4, this.y + 9 + legSwing, 6.8, 5, 2.5);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(this.x - legSpread - 4, this.y + 9 + legSwing, 6.8, 5, 2.5);
+    } else {
+      ctx.rect(this.x - legSpread - 4, this.y + 9 + legSwing, 6.8, 5);
+    }
     ctx.fill();
     ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
     ctx.fillRect(this.x - legSpread - 4, this.y + 13 + legSwing, 6.8, 1.2);
@@ -242,11 +312,19 @@ export class ParkNPC {
     // Right leg & shoe
     ctx.fillStyle = this.pantsColor;
     ctx.beginPath();
-    ctx.roundRect(this.x + legSpread - 2, this.y + 1 - legSwing, 5.5, 9, 2);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(this.x + legSpread - 2, this.y + 1 - legSwing, 5.5, 9, 2);
+    } else {
+      ctx.rect(this.x + legSpread - 2, this.y + 1 - legSwing, 5.5, 9);
+    }
     ctx.fill();
     ctx.fillStyle = this.shoeColor;
     ctx.beginPath();
-    ctx.roundRect(this.x + legSpread - 2.5, this.y + 9 - legSwing, 6.8, 5, 2.5);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(this.x + legSpread - 2.5, this.y + 9 - legSwing, 6.8, 5, 2.5);
+    } else {
+      ctx.rect(this.x + legSpread - 2.5, this.y + 9 - legSwing, 6.8, 5);
+    }
     ctx.fill();
     ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
     ctx.fillRect(this.x + legSpread - 2.5, this.y + 13 - legSwing, 6.8, 1.2);
@@ -256,7 +334,11 @@ export class ParkNPC {
       // Athletic technical running top
       ctx.fillStyle = this.jacketColor;
       ctx.beginPath();
-      ctx.roundRect(this.x - 10.5, this.y - 12, 21, 17, 4.5);
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(this.x - 10.5, this.y - 12, 21, 17, 4.5);
+      } else {
+        ctx.rect(this.x - 10.5, this.y - 12, 21, 17);
+      }
       ctx.fill();
 
       // Reflective chest stripe
@@ -266,7 +348,11 @@ export class ParkNPC {
       // Sport bib / accent
       ctx.fillStyle = '#ffffff';
       ctx.beginPath();
-      ctx.roundRect(this.x - 4, this.y - 2, 8, 6.5, 1.5);
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(this.x - 4, this.y - 2, 8, 6.5, 1.5);
+      } else {
+        ctx.rect(this.x - 4, this.y - 2, 8, 6.5);
+      }
       ctx.fill();
       ctx.fillStyle = '#0f172a';
       ctx.fillRect(this.x - 2.5, this.y, 5, 1.2);
@@ -274,7 +360,11 @@ export class ParkNPC {
       // Casual outdoor jacket / windbreaker
       ctx.fillStyle = this.jacketColor;
       ctx.beginPath();
-      ctx.roundRect(this.x - 11, this.y - 12, 22, 18, 5);
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(this.x - 11, this.y - 12, 22, 18, 5);
+      } else {
+        ctx.rect(this.x - 11, this.y - 12, 22, 18);
+      }
       ctx.fill();
 
       // Lapels & collar
@@ -318,7 +408,11 @@ export class ParkNPC {
     // Left arm
     ctx.fillStyle = this.jacketColor;
     ctx.beginPath();
-    ctx.roundRect(this.x - 15.5, this.y - 10 - armSwing, 4.5, 12, 2);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(this.x - 15.5, this.y - 10 - armSwing, 4.5, 12, 2);
+    } else {
+      ctx.rect(this.x - 15.5, this.y - 10 - armSwing, 4.5, 12);
+    }
     ctx.fill();
     ctx.fillStyle = this.skinTone;
     ctx.beginPath();
@@ -328,7 +422,11 @@ export class ParkNPC {
     // Right arm
     ctx.fillStyle = this.jacketColor;
     ctx.beginPath();
-    ctx.roundRect(this.x + 11, this.y - 10 + armSwing, 4.5, 12, 2);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(this.x + 11, this.y - 10 + armSwing, 4.5, 12, 2);
+    } else {
+      ctx.rect(this.x + 11, this.y - 10 + armSwing, 4.5, 12);
+    }
     ctx.fill();
     ctx.fillStyle = this.skinTone;
     ctx.beginPath();
@@ -401,27 +499,84 @@ export class ParkNPC {
     if (this.isJogger) {
       ctx.fillStyle = this.hatColor;
       ctx.beginPath();
-      ctx.roundRect(this.x - 8.5, this.y - 24, 17, 3.8, 1.9);
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(this.x - 8.5, this.y - 24, 17, 3.8, 1.9);
+      } else {
+        ctx.rect(this.x - 8.5, this.y - 24, 17, 3.8);
+      }
       ctx.fill();
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
       ctx.lineWidth = 0.8;
       ctx.stroke();
     }
 
-    // 7. Nametag Display Badge
-    ctx.font = '600 11px Outfit, sans-serif';
+    // 7. Overhead Nametag Badge
+    ctx.font = NPC_TAG_STYLE.font;
     ctx.textAlign = 'center';
-    const displayNametag = this.isJogger ? `${this.name} (Jogger)` : this.name;
+    const displayNametag = this.name || (this.isJogger ? 'Jogger' : 'Walker');
     const textWidth = ctx.measureText(displayNametag).width;
+    const pillW = textWidth + 14;
+    const pillH = 16;
+    const pillX = this.x - pillW / 2;
+    const pillY = this.y - 42;
 
-    ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+    ctx.fillStyle = NPC_TAG_STYLE.background;
     ctx.beginPath();
-    ctx.roundRect(this.x - textWidth / 2 - 6, this.y - 42, textWidth + 12, 16, 8);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(pillX, pillY, pillW, pillH, 8);
+    } else {
+      ctx.rect(pillX, pillY, pillW, pillH);
+    }
     ctx.fill();
 
-    ctx.fillStyle = this.isJogger ? '#67e8f9' : '#f8fafc';
+    ctx.strokeStyle = NPC_TAG_STYLE.border;
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.fillStyle = NPC_TAG_STYLE.text;
     ctx.fillText(displayNametag, this.x, this.y - 30);
 
+    // 8. Speech Bubble
+    if (this.speechBubble) {
+      this.drawSpeechBubble(ctx, this.speechBubble);
+    }
+
+    ctx.restore();
+  }
+
+  drawSpeechBubble(ctx, text) {
+    if (!text) return;
+    ctx.save();
+    ctx.font = '500 12px Outfit, sans-serif';
+    ctx.textAlign = 'center';
+    const textWidth = Math.min(260, ctx.measureText(text).width);
+    const bubbleW = textWidth + 16;
+    const bubbleH = 24;
+    const bx = this.x - bubbleW / 2;
+    const by = this.y - 68;
+
+    // Bubble body
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+    ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(bx, by, bubbleW, bubbleH, 8);
+    } else {
+      ctx.rect(bx, by, bubbleW, bubbleH);
+    }
+    ctx.fill();
+
+    // Small triangle pointer pointing down
+    ctx.beginPath();
+    ctx.moveTo(this.x - 4, by + bubbleH);
+    ctx.lineTo(this.x, by + bubbleH + 6);
+    ctx.lineTo(this.x + 4, by + bubbleH);
+    ctx.fill();
+
+    ctx.shadowBlur = 0;
+    ctx.fillStyle = '#0f172a';
+    ctx.fillText(text, this.x, by + 16);
     ctx.restore();
   }
 
@@ -496,7 +651,11 @@ export class ParkNPC {
 
         ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
         ctx.beginPath();
-        ctx.roundRect(this.x - 9.5, this.y - 23, 19, 5.5, 2.5);
+        if (typeof ctx.roundRect === 'function') {
+          ctx.roundRect(this.x - 9.5, this.y - 23, 19, 5.5, 2.5);
+        } else {
+          ctx.rect(this.x - 9.5, this.y - 23, 19, 5.5);
+        }
         ctx.fill();
         break;
       }
@@ -536,13 +695,31 @@ export class ParkNPC {
 }
 
 export class WalkerNPC extends ParkNPC {
+  // Legacy default speed: 85
   constructor(x, y, options = {}) {
-    super(x, y, { speed: 85, ...options, type: 'walker', isJogger: false });
+    if (typeof x === 'object' && x !== null) {
+      const opts = { type: 'walker', ...x };
+      if (opts.speed === undefined) {
+        opts.speed = NPC_SPEED.walker;
+      }
+      super(opts);
+    } else {
+      super(x, y, { speed: 85, type: 'walker', isJogger: false, ...options });
+    }
   }
 }
 
 export class JoggerNPC extends ParkNPC {
+  // Legacy default speed: 260
   constructor(x, y, options = {}) {
-    super(x, y, { speed: 260, ...options, type: 'jogger', isJogger: true });
+    if (typeof x === 'object' && x !== null) {
+      const opts = { type: 'jogger', ...x };
+      if (opts.speed === undefined) {
+        opts.speed = NPC_SPEED.jogger;
+      }
+      super(opts);
+    } else {
+      super(x, y, { speed: 260, type: 'jogger', isJogger: true, ...options });
+    }
   }
 }

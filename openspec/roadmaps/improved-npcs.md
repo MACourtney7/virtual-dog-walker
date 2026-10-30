@@ -26,8 +26,8 @@ Overhaul ambient park NPCs (currently 5 per-client, locally spawned, fast, perma
 | :--- | :--- | :---: | :--- | :--- | :--- |
 | `ticket-024` | NPC Content Tables (names, phrases, appearance, speeds, PRNG) | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 | `ticket-025` | Obstacle-Free Precomputed NPC Path Library + Manifest | `MEDIUM` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
-| `ticket-026` | NPC Entity Rewrite: Deterministic Sim, Lifecycle, Tag & Speech | `HIGH` | `["ticket-024", "ticket-025"]` | `BLOCKED_ON_024_025` | `PLANNED` |
-| `ticket-027` | Global NPC Protocol & Server Spawners (PartyServer + Python) | `HIGH` | `["ticket-025"]` | `BLOCKED_ON_025` | `PLANNED` |
+| `ticket-026` | NPC Entity Rewrite: Deterministic Sim, Lifecycle, Tag & Speech | `HIGH` | `["ticket-024", "ticket-025"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
+| `ticket-027` | Global NPC Protocol & Server Spawners (PartyServer + Python) | `HIGH` | `["ticket-025"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
 | `ticket-028` | Client Integration: Network NPC Sync & Game Wiring | `MEDIUM` | `["ticket-026", "ticket-027"]` | `BLOCKED_ON_026_027` | `PLANNED` |
 | `ticket-029` | NPC Regression Suite & Spec Reconciliation | `MEDIUM` | `["ticket-028"]` | `BLOCKED_ON_028` | `PLANNED` |
 

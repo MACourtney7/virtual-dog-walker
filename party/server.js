@@ -3,16 +3,16 @@ import { Server, routePartykitRequest } from "partyserver";
 import npcManifest from "../src/world/npc_path_manifest.json";
 
 const FALLBACK_MANIFEST = [
-  { id: "ladies-mile-loop", type: "both", lengthPx: 3817.4 },
-  { id: "sea-walls-promenade", type: "both", lengthPx: 1546.4 },
-  { id: "durdham-down-circuit", type: "jogger", lengthPx: 1977.0 },
-  { id: "woodland-trail-loop", type: "walker", lengthPx: 1947.2 },
-  { id: "central-meadow-ramble", type: "walker", lengthPx: 3195.6 },
-  { id: "trans-downs-express", type: "jogger", lengthPx: 3792.8 },
-  { id: "sea-walls-to-water-tower", type: "walker", lengthPx: 3110.2 },
-  { id: "clifton-woodland-traverse", type: "walker", lengthPx: 2357.7 },
-  { id: "north-meadow-diagonal", type: "both", lengthPx: 2856.5 },
-  { id: "perimeter-grand-loop", type: "jogger", lengthPx: 7995.2 }
+  { id: "ladies-mile-loop", type: "both", lengthPx: 3637.4 },
+  { id: "sea-walls-promenade", type: "both", lengthPx: 1478.2 },
+  { id: "durdham-down-circuit", type: "jogger", lengthPx: 1684.0 },
+  { id: "woodland-trail-loop", type: "walker", lengthPx: 1747.6 },
+  { id: "central-meadow-ramble", type: "walker", lengthPx: 3054.1 },
+  { id: "trans-downs-express", type: "jogger", lengthPx: 3770.3 },
+  { id: "sea-walls-to-water-tower", type: "walker", lengthPx: 2966.6 },
+  { id: "clifton-woodland-traverse", type: "walker", lengthPx: 2289.4 },
+  { id: "north-meadow-diagonal", type: "both", lengthPx: 2656.5 },
+  { id: "perimeter-grand-loop", type: "jogger", lengthPx: 7886.1 }
 ];
 
 const MANIFEST = (Array.isArray(npcManifest) && npcManifest.length > 0)

@@ -30,8 +30,8 @@ This roadmap addresses three key initiatives originating from gameplay observati
 
 | Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
 | :--- | :--- | :---: | :--- | :--- | :--- |
-| `ticket-030` | Edge-to-Edge Global NPC Paths, Relaxed Pacing, and Authoritative Sync Hardening | `HIGH` | `[]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
-| `ticket-031` | Static Ground & Path Offscreen Baking (Render Optimization) | `LOW` | `["ticket-030"]` | `BLOCKED_ON_030` | `PLANNING` |
+| `ticket-030` | Edge-to-Edge Global NPC Paths, Relaxed Pacing, and Authoritative Sync Hardening | `HIGH` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-031` | Static Ground & Path Offscreen Baking (Render Optimization) | `LOW` | `["ticket-030"]` | `PARALLEL_ELIGIBLE` | `PLANNING` |
 | `ticket-032` | Dead Platformer Code Pruning | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
 
 ---
@@ -63,7 +63,7 @@ flowchart TD
 ---
 
 ## 5. Progress & Milestone Completion Criteria
-- [ ] Ticket-030 completed and merged to `main`.
+- [x] Ticket-030 completed and merged to `main`.
 - [ ] Ticket-031 completed and merged to `main`.
 - [x] Ticket-032 completed and merged to `main`.
 - [ ] Full automated test suite passes (`python3 test/run_tests.py`).

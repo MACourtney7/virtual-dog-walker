@@ -23,8 +23,8 @@ logging.basicConfig(
 )
 logger = logging.getLogger("CliftonServer")
 
-WALKER_SPEED = 35.0  # px/s
-JOGGER_SPEED = 80.0  # px/s
+WALKER_SPEED = 22.0  # px/s
+JOGGER_SPEED = 48.0  # px/s
 TARGET_ACTIVE_NPCS = 5
 MIN_ACTIVE_NPCS = 4
 MAX_ACTIVE_NPCS = 6
@@ -77,7 +77,7 @@ class RoomNpcSpawner:
         self.tasks: Set[asyncio.Task] = set()
         self.is_running: bool = False
 
-    def _create_npc(self) -> Tuple[Optional[dict], float]:
+    def _create_npc(self, prewarm_fraction: float = 0.0) -> Tuple[Optional[dict], float]:
         if not self.manifest:
             return None, 0.0
 
@@ -99,7 +99,8 @@ class RoomNpcSpawner:
         length_px = float(path.get("lengthPx", 2000.0))
         lifetime = max(1.0, length_px / speed)
 
-        spawn_time = int(time.time() * 1000)
+        offset_sec = lifetime * min(0.9, max(0.0, prewarm_fraction))
+        spawn_time = int((time.time() - offset_sec) * 1000)
         npc_id = f"npc-{uuid.uuid4().hex[:8]}-{spawn_time}"
         seed = random.randint(0, 0xFFFFFFFF)
 
@@ -119,12 +120,15 @@ class RoomNpcSpawner:
         self.is_running = True
         logger.info(f"Starting NPC spawner for room '{self.room_id}'")
 
-        # Initialize pool (target 5 active NPCs)
-        for _ in range(TARGET_ACTIVE_NPCS):
-            npc, lifetime = self._create_npc()
+        # Initialize pool (target 5 active NPCs) with pre-warmed spawn times
+        for i in range(TARGET_ACTIVE_NPCS):
+            prewarm_fraction = 0.15 + (i / TARGET_ACTIVE_NPCS) * 0.70
+            npc, lifetime = self._create_npc(prewarm_fraction=prewarm_fraction)
             if npc:
                 self.active_npcs[npc["id"]] = npc
-                task = asyncio.create_task(self._handle_npc_lifecycle(npc, lifetime))
+                offset_sec = lifetime * prewarm_fraction
+                remaining_lifetime = max(0.5, lifetime - offset_sec)
+                task = asyncio.create_task(self._handle_npc_lifecycle(npc, remaining_lifetime))
                 self.tasks.add(task)
                 task.add_done_callback(self.tasks.discard)
 

@@ -185,9 +185,10 @@ export class Field {
           ctx.lineTo(x + 42, y + 37);
           ctx.stroke();
         } else if (noise < 0.28) {
-          ctx.fillStyle = this.grassDark;
+          // Soft wide low-opacity turf texture patch (eliminates dark orphaned ground shadow artifacts)
+          ctx.fillStyle = 'rgba(52, 98, 42, 0.06)';
           ctx.beginPath();
-          ctx.ellipse(x + 40, y + 40, 22, 15, 0, 0, Math.PI * 2);
+          ctx.ellipse(x + 40, y + 40, 70, 38, 0, 0, Math.PI * 2);
           ctx.fill();
         }
       }
@@ -1133,9 +1134,10 @@ export class Field {
           ctx.lineTo(x + 42, y + 37);
           ctx.stroke();
         } else if (noise < 0.28) {
-          ctx.fillStyle = this.grassDark;
+          // Soft wide low-opacity turf texture patch (eliminates dark orphaned ground shadow artifacts)
+          ctx.fillStyle = 'rgba(52, 98, 42, 0.06)';
           ctx.beginPath();
-          ctx.ellipse(x + 40, y + 40, 22, 15, 0, 0, Math.PI * 2);
+          ctx.ellipse(x + 40, y + 40, 70, 38, 0, 0, Math.PI * 2);
           ctx.fill();
         }
       }

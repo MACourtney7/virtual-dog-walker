@@ -35,11 +35,17 @@ import sys
 import unittest
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
+TEST_DIR = os.path.dirname(__file__)
+for p in [ROOT_DIR, TEST_DIR]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
-from test.test_npc_paths import load_npc_paths, load_manifest
-from test.test_npc_entity import SimulatedDeterministicParkNPC
+try:
+    from test.test_npc_paths import load_npc_paths, load_manifest
+    from test.test_npc_entity import SimulatedDeterministicParkNPC
+except ImportError:
+    from test_npc_paths import load_npc_paths, load_manifest
+    from test_npc_entity import SimulatedDeterministicParkNPC
 
 MAIN_JS = os.path.join(ROOT_DIR, "src", "main.js")
 WS_NETWORK_JS = os.path.join(ROOT_DIR, "src", "net", "ws_network.js")

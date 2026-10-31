@@ -17,11 +17,17 @@ import sys
 import unittest
 
 ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-if ROOT_DIR not in sys.path:
-    sys.path.insert(0, ROOT_DIR)
+TEST_DIR = os.path.dirname(__file__)
+for p in [ROOT_DIR, TEST_DIR]:
+    if p not in sys.path:
+        sys.path.insert(0, p)
 
-from test.test_server import TestRoomNpcSpawner
-from test.test_partyserver import TestPartyServerNpcSpawner
+try:
+    from test.test_server import TestRoomNpcSpawner
+    from test.test_partyserver import TestPartyServerNpcSpawner
+except ImportError:
+    from test_server import TestRoomNpcSpawner
+    from test_partyserver import TestPartyServerNpcSpawner
 
 
 def run_tests():

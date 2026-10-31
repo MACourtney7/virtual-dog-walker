@@ -79,6 +79,7 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
   - **Global Server-Authoritative Spawning**:
     - Server authority (PartyServer Durable Objects & dedicated microserver fallback) orchestrates NPC spawn schedules, emitting `NPC_SPAWN`, `NPC_DESPAWN`, and `NPC_SNAPSHOT` packets.
     - Server maintains an active subset of 5 concurrent NPCs across available precomputed paths.
+    - `ParkServer.onConnect()` triggers `initSpawner()` whenever `activeNpcs.size === 0`, ensuring resilient pre-warmed pool creation regardless of underlying connection registration ordering in the server runtime.
     - Late-joining clients receive `NPC_SNAPSHOT` with original `spawnTime` and immediately simulate current mid-path placement.
     - Solo / offline fallback: when uncoordinated or offline, client autonomously runs a local spawner maintaining 5 active NPCs.
   - **Deterministic Client Simulation**:

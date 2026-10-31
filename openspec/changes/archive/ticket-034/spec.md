@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-034"
 title: "Fix Cloudflare PartyServer NPC Spawner Initialization Guard Condition"
-state: "PLANNING"
+state: "COMPLETED"
 roadmap: null
 depends_on: []
 created_at: "2026-10-31T16:45:00Z"

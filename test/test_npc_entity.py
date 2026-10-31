@@ -75,10 +75,18 @@ def py_pick_phrase(rng, common_phrases, odd_phrases):
         return common_phrases[idx], "COMMON"
 
 
+def py_to_seconds(t):
+    try:
+        n = float(t)
+    except (ValueError, TypeError):
+        n = 0.0
+    return n / 1000.0 if n > 1e10 else n
+
+
 class SimulatedDeterministicParkNPC:
     """
     Python reference simulation of ParkNPC deterministic simulation and lifecycle
-    matching the specification in ticket-026.
+    matching the specification in ticket-026 and ticket-033.
     """
     def __init__(self, options=None, common_phrases=None, odd_phrases=None, **kwargs):
         opts = dict(options or {})
@@ -90,7 +98,7 @@ class SimulatedDeterministicParkNPC:
         if self.isJogger and self.type != "jogger":
             self.type = "jogger"
         self.seed = opts.get("seed", 0)
-        self.spawnTime = float(opts.get("spawnTime", 0.0))
+        self.spawnTime = py_to_seconds(opts.get("spawnTime", 0.0))
 
         # Speed default matching NPC_SPEED
         if "speed" in opts:
@@ -150,10 +158,11 @@ class SimulatedDeterministicParkNPC:
             t += 4.0 + py_next_speech_delay(rng)
 
     def setClock(self, now):
-        elapsed = max(0.0, now - self.spawnTime)
+        now_sec = py_to_seconds(now)
+        elapsed = max(0.0, now_sec - self.spawnTime)
         distance = self.speed * elapsed
 
-        if self.totalLength > 0 and (distance >= self.totalLength - 1e-9 or now >= self.finishTime - 1e-9):
+        if self.totalLength > 0 and (distance >= self.totalLength - 1e-9 or now_sec >= self.finishTime - 1e-9):
             last = self.waypoints[-1]
             self.x = last["x"]
             self.y = last["y"]
@@ -162,7 +171,7 @@ class SimulatedDeterministicParkNPC:
             self.depthY = self.y + 12.0
             self.isFinishedState = True
 
-            time_since_finish = now - self.finishTime
+            time_since_finish = now_sec - self.finishTime
             if time_since_finish >= 0.5:
                 self.opacity = 0.0
                 self.done = True
@@ -174,8 +183,8 @@ class SimulatedDeterministicParkNPC:
                 self.done = False
         else:
             self.isFinishedState = False
-            if elapsed < 0.5:
-                self.opacity = max(0.0, min(1.0, elapsed / 0.5))
+            if 0.0 < elapsed < 0.5:
+                self.opacity = 0.25 + 0.75 * (elapsed / 0.5)
             else:
                 self.opacity = 1.0
             self.done = False
@@ -205,21 +214,24 @@ class SimulatedDeterministicParkNPC:
 
             self.depthY = self.y + 12.0
 
-        speech = self.getSpeech(now)
+        speech = self.getSpeech(now_sec)
         self.speechBubble = speech
         self.currentSpeech = speech
 
     def isFinished(self, now):
-        return now >= self.finishTime or (self.totalLength > 0 and (self.speed * max(0.0, now - self.spawnTime)) >= self.totalLength)
+        now_sec = py_to_seconds(now)
+        return now_sec >= self.finishTime or (self.totalLength > 0 and (self.speed * max(0.0, now_sec - self.spawnTime)) >= self.totalLength)
 
     def isDone(self, now=None):
         if now is not None:
-            return self.done or (now >= self.finishTime + 0.5)
+            now_sec = py_to_seconds(now)
+            return self.done or (now_sec >= self.finishTime + 0.5)
         return self.done
 
     def getSpeech(self, now):
+        now_sec = py_to_seconds(now)
         for ev in self.speechTimeline:
-            if ev["startTime"] <= now < ev["endTime"]:
+            if ev["startTime"] <= now_sec < ev["endTime"]:
                 return ev["phrase"]
         return None
 
@@ -537,8 +549,8 @@ class TestNPCEntity(unittest.TestCase):
     def test_entry_fade_in(self):
         """
         Verify entry fade-in:
-        - At now = spawnTime, npc.opacity == 0.0.
-        - At now = spawnTime + 0.25, 0.45 <= npc.opacity <= 0.55.
+        - At now = spawnTime, npc.opacity >= 0.25 (specifically 1.0, never 0.0).
+        - At now = spawnTime + 0.25, 0.55 <= npc.opacity <= 0.70.
         - At now = spawnTime + 0.5, npc.opacity == 1.0.
         """
         waypoints = [{"x": 0.0, "y": 0.0}, {"x": 1000.0, "y": 0.0}]
@@ -550,17 +562,59 @@ class TestNPCEntity(unittest.TestCase):
             odd_phrases=self.odd_phrases
         )
 
-        # At now = spawnTime
+        # At now = spawnTime (elapsed == 0)
         npc.setClock(spawn_time)
-        self.assertEqual(npc.opacity, 0.0)
+        self.assertGreaterEqual(npc.opacity, 0.25)
+        self.assertNotEqual(npc.opacity, 0.0)
 
         # At now = spawnTime + 0.25
         npc.setClock(spawn_time + 0.25)
-        self.assertTrue(0.45 <= npc.opacity <= 0.55, f"Opacity {npc.opacity} not in [0.45, 0.55]")
+        self.assertTrue(0.55 <= npc.opacity <= 0.70, f"Opacity {npc.opacity} not in [0.55, 0.70]")
 
         # At now = spawnTime + 0.5
         npc.setClock(spawn_time + 0.5)
         self.assertEqual(npc.opacity, 1.0)
+
+    def test_millisecond_timestamp_sync_and_visibility(self):
+        """
+        AC-033.1: Passing a millisecond spawnTime (e.g. 1793461296000) and calling
+        npc.setClock(1793461306.0) (10 seconds later in seconds) advances distance = 10 * speed
+        and has opacity === 1.0. At elapsed === 0, opacity is at least 0.25 (never 0.0).
+        """
+        waypoints = [{"x": 0.0, "y": 0.0}, {"x": 1000.0, "y": 0.0}]
+        speed = 22.0
+        ms_spawn_time = 1793461296000
+        npc = SimulatedDeterministicParkNPC(
+            waypoints=waypoints,
+            speed=speed,
+            spawnTime=ms_spawn_time,
+            common_phrases=self.common_phrases,
+            odd_phrases=self.odd_phrases
+        )
+
+        # At elapsed === 0 (spawnTime in ms or in s)
+        npc.setClock(ms_spawn_time)
+        self.assertGreaterEqual(npc.opacity, 0.25)
+        self.assertNotEqual(npc.opacity, 0.0)
+        self.assertAlmostEqual(npc.x, 0.0)
+
+        npc.setClock(1793461296.0)
+        self.assertGreaterEqual(npc.opacity, 0.25)
+        self.assertNotEqual(npc.opacity, 0.0)
+        self.assertAlmostEqual(npc.x, 0.0)
+
+        # 10 seconds later in seconds
+        now_sec = 1793461306.0
+        npc.setClock(now_sec)
+        expected_distance = 10.0 * speed  # 220.0 px
+        self.assertAlmostEqual(npc.x, expected_distance)
+        self.assertEqual(npc.opacity, 1.0)
+
+    def test_npc_js_timestamp_normalizer_and_opacity_source_inspection(self):
+        """Verify toSeconds normalizer and non-zero opacity logic in src/entities/npc.js."""
+        self.assertIn("toSeconds", self.npc_code)
+        self.assertRegex(self.npc_code, r"function\s+toSeconds\s*\(")
+        self.assertIn("0.25", self.npc_code)
 
     # -------------------------------------------------------------------------
     # AC-026.4: Overhead Tag Styling and Name Formatting

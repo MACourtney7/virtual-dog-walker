@@ -51,7 +51,7 @@ export class CliftonDownGame {
     this.net = new NetworkManager();
 
     this.net.onNpcSpawn = (npcData) => {
-      this.spawnNetworkNpc(npcData);
+      this.handleNpcSpawn(npcData);
     };
 
     this.net.onNpcDespawn = (npcId) => {
@@ -353,7 +353,7 @@ export class CliftonDownGame {
 
     // Network NPC Spawner Callbacks
     this.net.onNpcSpawn = (npcData) => {
-      this.spawnNetworkNpc(npcData);
+      this.handleNpcSpawn(npcData);
     };
 
     this.net.onNpcDespawn = (npcId) => {
@@ -684,9 +684,15 @@ export class CliftonDownGame {
   // Ambient Park NPC Management (Networked & Solo Pool)
   getCurrentServerTime() {
     if (this.net && typeof this.net.getServerTime === 'function') {
-      return this.net.getServerTime() / 1000;
+      const t = this.net.getServerTime();
+      return (typeof t === 'number' && t > 1e10) ? t / 1000 : t;
     }
-    return Date.now() / 1000;
+    const now = Date.now();
+    return now > 1e10 ? now / 1000 : now;
+  }
+
+  handleNpcSpawn(data) {
+    return this.spawnNetworkNpc(data);
   }
 
   spawnNetworkNpc(data) {
@@ -694,9 +700,13 @@ export class CliftonDownGame {
     if (!data || (!data.id && (!raw || !raw.id))) return null;
     const id = (raw && raw.id) || (data && data.id);
     const rawSpawnTime = (raw && raw.spawnTime !== undefined) ? raw.spawnTime : (data && data.spawnTime);
-    const spawnTimeSec = (typeof rawSpawnTime === 'number' && rawSpawnTime > 1e10)
-      ? rawSpawnTime / 1000
-      : (Number(rawSpawnTime) || this.getCurrentServerTime());
+    let spawnTimeSec;
+    if (rawSpawnTime !== undefined && rawSpawnTime !== null && rawSpawnTime !== '') {
+      const n = Number(rawSpawnTime);
+      spawnTimeSec = n > 1e10 ? n / 1000 : n;
+    } else {
+      spawnTimeSec = this.getCurrentServerTime();
+    }
     const npcType = (raw && (raw.type || raw.npcType)) || (data && (data.type || data.npcType)) || 'walker';
     const npc = new ParkNPC({
       id: id,
@@ -719,9 +729,15 @@ export class CliftonDownGame {
 
   handleNpcSnapshot(snapshotNpcs, serverTime) {
     this.npcs.clear();
+    const effectiveNow = (serverTime !== undefined && serverTime !== null)
+      ? (Number(serverTime) > 1e10 ? Number(serverTime) / 1000 : Number(serverTime))
+      : this.getCurrentServerTime();
     if (Array.isArray(snapshotNpcs)) {
       for (const npcData of snapshotNpcs) {
-        this.spawnNetworkNpc(npcData);
+        const npc = this.spawnNetworkNpc(npcData);
+        if (npc && typeof effectiveNow === 'number' && !isNaN(effectiveNow)) {
+          npc.setClock(effectiveNow);
+        }
       }
     }
   }
@@ -737,7 +753,7 @@ export class CliftonDownGame {
     return Boolean((this.net.isDedicatedServer || this.net.isPartyKit || this.net.isHost) && isConnected);
   }
 
-  spawnLocalNpc() {
+  spawnLocalNpc(prewarmFraction = 0.0) {
     const usedPathIds = new Set();
     for (const npc of this.npcs.values()) {
       if (npc.pathId) usedPathIds.add(npc.pathId);
@@ -752,7 +768,20 @@ export class CliftonDownGame {
     else if (path.type === 'jogger') type = 'jogger';
     else type = Math.random() < 0.5 ? 'walker' : 'jogger';
 
+    const speed = type === 'jogger' ? 48 : 22;
+    let pathLength = path.lengthPx;
+    if (!pathLength && Array.isArray(path.waypoints) && path.waypoints.length > 1) {
+      pathLength = 0;
+      for (let i = 0; i < path.waypoints.length - 1; i++) {
+        pathLength += Math.hypot(path.waypoints[i+1].x - path.waypoints[i].x, path.waypoints[i+1].y - path.waypoints[i].y);
+      }
+    }
+    pathLength = pathLength || 1000;
+    const lifetimeSec = pathLength / speed;
+    const offsetSec = lifetimeSec * Math.max(0, Math.min(0.9, prewarmFraction));
+
     const nowSec = this.getCurrentServerTime();
+    const spawnTimeSec = nowSec - offsetSec;
     const seed = Math.floor(Math.random() * 0xFFFFFFFF);
     const id = `npc-solo-${Math.random().toString(36).slice(2, 8)}-${Math.floor(nowSec)}`;
 
@@ -761,7 +790,7 @@ export class CliftonDownGame {
       pathId: path.id,
       type,
       seed,
-      spawnTime: nowSec
+      spawnTime: spawnTimeSec
     });
     npc.setClock(nowSec);
     this.npcs.set(id, npc);
@@ -770,8 +799,11 @@ export class CliftonDownGame {
 
   updateLocalSpawner(dt) {
     if (this.isNetworkAuthoritative() || this.isNetworkConnecting()) return;
-    while (this.npcs.size < 5) {
-      const spawned = this.spawnLocalNpc();
+    const targetCount = 8;
+    while (this.npcs.size < targetCount) {
+      const i = this.npcs.size;
+      const prewarmFraction = (i + 0.2) / targetCount;
+      const spawned = this.spawnLocalNpc(prewarmFraction);
       if (!spawned) break;
     }
   }

@@ -19,6 +19,11 @@ export const NPCState = {
   PAUSED: 'PAUSED'
 };
 
+export function toSeconds(t) {
+  const n = Number(t) || 0;
+  return n > 1e10 ? n / 1000 : n;
+}
+
 export class ParkNPC {
   constructor(x = {}, y = 0, options = {}) {
     let opts = {};
@@ -42,7 +47,7 @@ export class ParkNPC {
     this.type = (String(rawType).toLowerCase() === 'jogger') ? 'jogger' : 'walker';
     this.isJogger = this.type === 'jogger';
     this.seed = opts.seed !== undefined ? (Math.floor(Number(opts.seed)) || 0) : 0;
-    this.spawnTime = opts.spawnTime !== undefined ? Number(opts.spawnTime) : 0;
+    this.spawnTime = toSeconds(opts.spawnTime !== undefined ? opts.spawnTime : 0);
     this.speed = opts.speed !== undefined
       ? Number(opts.speed)
       : (NPC_SPEED[this.type] || NPC_SPEED.walker);
@@ -143,8 +148,9 @@ export class ParkNPC {
 
   setClock(now) {
     if (typeof now !== 'number' || isNaN(now)) return;
-    this.currentTime = now;
-    const elapsed = Math.max(0, now - this.spawnTime);
+    const nowSec = toSeconds(now);
+    this.currentTime = nowSec;
+    const elapsed = Math.max(0, nowSec - this.spawnTime);
     const distance = this.speed * elapsed;
 
     if (this.totalLength === 0 || distance >= this.totalLength) {
@@ -159,7 +165,7 @@ export class ParkNPC {
       this.isFinishedState = true;
 
       // Fade out over 0.5s after finishing path
-      const timeSinceFinish = now - this.finishTime;
+      const timeSinceFinish = nowSec - this.finishTime;
       if (timeSinceFinish >= 0.5) {
         this.opacity = 0.0;
         this.done = true;
@@ -230,8 +236,8 @@ export class ParkNPC {
       }
       this.vx = segLen > 0.000001 ? (dx / segLen) * this.speed : 0;
       this.vy = segLen > 0.000001 ? (dy / segLen) * this.speed : 0;
-      if (elapsed < 0.5) {
-        this.opacity = Math.max(0.0, Math.min(1.0, elapsed / 0.5));
+      if (elapsed > 0 && elapsed < 0.5) {
+        this.opacity = 0.25 + 0.75 * (elapsed / 0.5);
       } else {
         this.opacity = 1.0;
       }
@@ -239,7 +245,7 @@ export class ParkNPC {
       this.isFinishedState = false;
     }
 
-    const speech = this.getSpeech(now);
+    const speech = this.getSpeech(nowSec);
     this.speechBubble = this.done ? null : speech;
     this.currentSpeech = this.speechBubble;
   }
@@ -249,8 +255,9 @@ export class ParkNPC {
     // isBench, isOverlook, pauseTimer legacy references
     this.depthY = this.y + 12;
     if (typeof now === 'number') {
-      this.currentTime = now;
-      this.setClock(now);
+      const nowSec = toSeconds(now);
+      this.currentTime = nowSec;
+      this.setClock(nowSec);
     } else {
       this.currentTime = (this.currentTime !== undefined ? this.currentTime + dt : this.spawnTime + dt);
       this.setClock(this.currentTime);
@@ -263,9 +270,10 @@ export class ParkNPC {
 
   isFinished(now) {
     if (typeof now === 'number') {
-      if (now >= this.finishTime) return true;
+      const nowSec = toSeconds(now);
+      if (nowSec >= this.finishTime) return true;
       if (this.totalLength > 0) {
-        const elapsed = Math.max(0, now - this.spawnTime);
+        const elapsed = Math.max(0, nowSec - this.spawnTime);
         return (this.speed * elapsed) >= this.totalLength;
       }
       return false;
@@ -276,17 +284,19 @@ export class ParkNPC {
   isDone(now) {
     if (this.done) return true;
     if (typeof now === 'number') {
-      return now >= this.finishTime + 0.5;
+      const nowSec = toSeconds(now);
+      return nowSec >= this.finishTime + 0.5;
     }
     return false;
   }
 
   getSpeech(now) {
     if (typeof now !== 'number') return null;
+    const nowSec = toSeconds(now);
     if (!Array.isArray(this.speechTimeline)) return null;
     for (let i = 0; i < this.speechTimeline.length; i++) {
       const ev = this.speechTimeline[i];
-      if (ev.startTime <= now && now < ev.endTime) {
+      if (ev.startTime <= nowSec && nowSec < ev.endTime) {
         return ev.phrase;
       }
     }

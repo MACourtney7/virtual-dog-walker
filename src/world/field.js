@@ -102,6 +102,236 @@ export class Field {
 
     this.initScenery();
     this.initParticles();
+
+    this.bakedCanvas = this.createOffscreenCanvas(this.width, this.height);
+    this.bakeGround();
+  }
+
+  createOffscreenCanvas(width, height) {
+    if (typeof OffscreenCanvas !== 'undefined') {
+      return new OffscreenCanvas(width, height);
+    } else if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      return canvas;
+    }
+    return null;
+  }
+
+  bakeGround() {
+    if (!this.bakedCanvas) return;
+    const ctx = this.bakedCanvas.getContext('2d');
+    if (!ctx) return;
+
+    // 1. Base turf fill
+    ctx.fillStyle = this.grassBase;
+    ctx.fillRect(0, 0, this.width, this.height);
+
+    // 2. Avon Gorge Cliff Edge Backdrop (beyond West perimeter wall)
+    const cliffGrad = ctx.createLinearGradient(0, 0, 80, 0);
+    cliffGrad.addColorStop(0, '#1a2332');
+    cliffGrad.addColorStop(0.5, '#2e3d4f');
+    cliffGrad.addColorStop(1, 'transparent');
+    ctx.fillStyle = cliffGrad;
+    ctx.fillRect(0, 0, 80, this.height);
+
+    // 3. Durdham Down Meadow Mown Stripes (x: 1800-3050, y: 200-850)
+    ctx.save();
+    const stripeAngle = -0.22;
+    const mownLeft = 1750;
+    const mownRight = 3050;
+    const mownTop = 180;
+    const mownBottom = 880;
+
+    ctx.beginPath();
+    ctx.rect(mownLeft, mownTop, mownRight - mownLeft, mownBottom - mownTop);
+    ctx.clip();
+
+    const stripeWidth = 44;
+    for (let sx = mownLeft - 200; sx < mownRight + 200; sx += stripeWidth * 2) {
+      ctx.fillStyle = 'rgba(76, 130, 55, 0.14)';
+      ctx.beginPath();
+      ctx.moveTo(sx, mownTop);
+      ctx.lineTo(sx + Math.tan(stripeAngle) * (mownBottom - mownTop) + stripeWidth, mownTop);
+      ctx.lineTo(sx + Math.tan(stripeAngle) * (mownBottom - mownTop), mownBottom);
+      ctx.lineTo(sx - stripeWidth, mownBottom);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // 4. Procedural Grass Variations & Subtle Blade Flecks
+    ctx.save();
+    const patchSize = 80;
+    for (let x = 0; x <= this.width; x += patchSize) {
+      for (let y = 0; y <= this.height; y += patchSize) {
+        const hash = Math.sin(x * 12.9898 + y * 78.233) * 43758.5453;
+        const noise = hash - Math.floor(hash);
+
+        if (noise > 0.62) {
+          ctx.fillStyle = this.grassLight;
+          ctx.beginPath();
+          ctx.ellipse(x + 40, y + 40, 26, 18, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Subtle grass blade flecks
+          ctx.strokeStyle = '#5da347';
+          ctx.lineWidth = 1.2;
+          ctx.beginPath();
+          ctx.moveTo(x + 36, y + 44);
+          ctx.lineTo(x + 34, y + 38);
+          ctx.moveTo(x + 40, y + 45);
+          ctx.lineTo(x + 42, y + 37);
+          ctx.stroke();
+        } else if (noise < 0.28) {
+          ctx.fillStyle = this.grassDark;
+          ctx.beginPath();
+          ctx.ellipse(x + 40, y + 40, 22, 15, 0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+      }
+    }
+    ctx.restore();
+
+    // 5. Pathways & Avenues
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    // A. Central Boulevard: Ladies Mile Avenue (Broad diagonal gravel avenue, width ~54px)
+    // Southwest (400, 1900) to Northeast (2700, 500)
+    // Soft grass edging
+    ctx.strokeStyle = 'rgba(68, 115, 51, 0.45)';
+    ctx.lineWidth = 64;
+    ctx.beginPath();
+    ctx.moveTo(400, 1900);
+    ctx.bezierCurveTo(1150, 1450, 1950, 950, 2700, 500);
+    ctx.stroke();
+
+    // Cotswold gravel bed
+    ctx.strokeStyle = this.pathColor;
+    ctx.lineWidth = 54;
+    ctx.beginPath();
+    ctx.moveTo(400, 1900);
+    ctx.bezierCurveTo(1150, 1450, 1950, 950, 2700, 500);
+    ctx.stroke();
+
+    // Fine inner gravel walking track
+    ctx.strokeStyle = this.pathDetail;
+    ctx.lineWidth = 36;
+    ctx.beginPath();
+    ctx.moveTo(400, 1900);
+    ctx.bezierCurveTo(1150, 1450, 1950, 950, 2700, 500);
+    ctx.stroke();
+
+    // B. Water Tower Landmark Clearing Plaza (x: 2400, y: 450)
+    ctx.fillStyle = 'rgba(72, 118, 55, 0.4)';
+    ctx.beginPath();
+    ctx.arc(2400, 450, 74, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = this.pathColor;
+    ctx.beginPath();
+    ctx.arc(2400, 450, 66, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = this.pathDetail;
+    ctx.beginPath();
+    ctx.arc(2400, 450, 54, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Spur from Ladies Mile junction (2500, 620) to Water Tower (2400, 450)
+    ctx.strokeStyle = this.pathColor;
+    ctx.lineWidth = 38;
+    ctx.beginPath();
+    ctx.moveTo(2500, 620);
+    ctx.lineTo(2400, 450);
+    ctx.stroke();
+
+    // C. Secondary Woodland Dirt Trails (width ~30px) linking to Ladies Mile
+    // Trail 1: South woodland trail connecting to Ladies Mile SW entry (520, 1850)
+    ctx.strokeStyle = this.dirtPathEdge;
+    ctx.lineWidth = 34;
+    ctx.beginPath();
+    ctx.moveTo(760, 2240);
+    ctx.bezierCurveTo(680, 2080, 560, 1950, 520, 1850);
+    ctx.stroke();
+
+    ctx.strokeStyle = this.dirtPathColor;
+    ctx.lineWidth = 28;
+    ctx.beginPath();
+    ctx.moveTo(760, 2240);
+    ctx.bezierCurveTo(680, 2080, 560, 1950, 520, 1850);
+    ctx.stroke();
+
+    // Trail 2: South woodland trail winding through junction (1080, 1750) to Ladies Mile midpoint (1550, 1200)
+    ctx.strokeStyle = this.dirtPathEdge;
+    ctx.lineWidth = 34;
+    ctx.beginPath();
+    ctx.moveTo(1350, 2200);
+    ctx.bezierCurveTo(1240, 1980, 1120, 1820, 1080, 1750);
+    ctx.bezierCurveTo(1040, 1620, 1380, 1400, 1550, 1200);
+    ctx.stroke();
+
+    ctx.strokeStyle = this.dirtPathColor;
+    ctx.lineWidth = 28;
+    ctx.beginPath();
+    ctx.moveTo(1350, 2200);
+    ctx.bezierCurveTo(1240, 1980, 1120, 1820, 1080, 1750);
+    ctx.bezierCurveTo(1040, 1620, 1380, 1400, 1550, 1200);
+    ctx.stroke();
+
+    // Trail 3: Cross-meadow trail linking Ladies Mile midpoint (1550, 1200) to Sea Walls lookout (280, 1200)
+    ctx.strokeStyle = this.dirtPathEdge;
+    ctx.lineWidth = 32;
+    ctx.beginPath();
+    ctx.moveTo(1550, 1200);
+    ctx.bezierCurveTo(1150, 1220, 680, 1180, 280, 1200);
+    ctx.stroke();
+
+    ctx.strokeStyle = this.dirtPathColor;
+    ctx.lineWidth = 26;
+    ctx.beginPath();
+    ctx.moveTo(1550, 1200);
+    ctx.bezierCurveTo(1150, 1220, 680, 1180, 280, 1200);
+    ctx.stroke();
+
+    // Trail 4: Sea Walls panoramic cliff-top trail (north-south along x: 280)
+    ctx.strokeStyle = this.pathColor;
+    ctx.lineWidth = 30;
+    ctx.beginPath();
+    ctx.moveTo(280, 780);
+    ctx.bezierCurveTo(260, 1050, 270, 1350, 320, 1550);
+    ctx.stroke();
+
+    // Trail 5: Trail branch to central meadow grove (1420, 820)
+    ctx.strokeStyle = this.dirtPathColor;
+    ctx.lineWidth = 24;
+    ctx.beginPath();
+    ctx.moveTo(1797, 984);
+    ctx.bezierCurveTo(1620, 920, 1520, 850, 1420, 820);
+    ctx.stroke();
+
+    ctx.restore();
+
+    // 6. Wildflowers
+    ctx.save();
+    for (const f of this.wildflowers) {
+      if (f.type === 'buttercup') {
+        ctx.fillStyle = '#f3c948';
+      } else if (f.type === 'clover') {
+        ctx.fillStyle = '#f8fafc';
+      } else if (f.type === 'bluebell') {
+        ctx.fillStyle = '#6b8be8';
+      } else {
+        ctx.fillStyle = '#e879a8';
+      }
+      ctx.beginPath();
+      ctx.arc(f.x, f.y, f.size, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   initScenery() {
@@ -776,8 +1006,8 @@ export class Field {
     const viewRight = camera.x + camera.viewportWidth;
     const viewBottom = camera.y + camera.viewportHeight;
 
-    // 1. Procedural Background Turf & Pathways
-    this.renderGround(ctx, viewLeft, viewTop, viewRight, viewBottom);
+    // 1. Procedural/Baked Background Turf & Pathways
+    this.renderGround(ctx, camera);
 
     // 2. Gather Scenery and Dynamic Entities for Depth-Sorted Pass
     const renderList = this.getDepthSortedRenderList(viewLeft, viewRight, viewTop, viewBottom, dynamicEntities);
@@ -797,7 +1027,44 @@ export class Field {
     this.renderPerimeterWalls(ctx);
   }
 
-  renderGround(ctx, left, top, right, bottom) {
+  renderGround(ctx, cameraOrLeft, top, right, bottom) {
+    let left = 0;
+    let topPos = 0;
+    let rightPos = this.width;
+    let bottomPos = this.height;
+
+    if (cameraOrLeft && typeof cameraOrLeft === 'object') {
+      left = cameraOrLeft.x !== undefined ? cameraOrLeft.x : 0;
+      topPos = cameraOrLeft.y !== undefined ? cameraOrLeft.y : 0;
+      const w = cameraOrLeft.viewportWidth !== undefined ? cameraOrLeft.viewportWidth : (cameraOrLeft.width || 0);
+      const h = cameraOrLeft.viewportHeight !== undefined ? cameraOrLeft.viewportHeight : (cameraOrLeft.height || 0);
+      rightPos = left + w;
+      bottomPos = topPos + h;
+    } else {
+      if (cameraOrLeft !== undefined) left = cameraOrLeft;
+      if (top !== undefined) topPos = top;
+      if (right !== undefined) rightPos = right;
+      if (bottom !== undefined) bottomPos = bottom;
+    }
+
+    if (this.bakedCanvas) {
+      const sx = Math.max(0, Math.min(this.width, Math.floor(left)));
+      const sy = Math.max(0, Math.min(this.height, Math.floor(topPos)));
+      const sw = Math.max(0, Math.min(this.width - sx, Math.ceil(rightPos - sx)));
+      const sh = Math.max(0, Math.min(this.height - sy, Math.ceil(bottomPos - sy)));
+
+      if (sw > 0 && sh > 0) {
+        ctx.drawImage(this.bakedCanvas, sx, sy, sw, sh, sx, sy, sw, sh);
+      }
+      return;
+    }
+
+    // Fallback when canvas is unavailable in headless tests
+    this.renderProceduralGround(ctx, left, topPos, rightPos, bottomPos);
+  }
+
+  renderProceduralGround(ctx, left, top, right, bottom) {
+    if (!ctx) return;
     // 1. Fill base turf
     ctx.fillStyle = this.grassBase;
     ctx.fillRect(left, top, right - left, bottom - top);

@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-031"
 title: "Static Ground & Path Offscreen Baking (Render Optimization)"
-state: "PLANNING"
+state: "COMPLETED"
 roadmap: "npc-polish-and-cleanup"
 depends_on: ["ticket-030"]
 created_at: "2026-10-31T14:37:00Z"

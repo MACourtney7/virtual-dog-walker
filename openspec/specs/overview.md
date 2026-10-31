@@ -19,6 +19,9 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
   - 12 authentic Victorian cast-iron streetlamps with warm incandescent lighting cores (`#fef08a`, `glowRadius: 120px`).
   - Active canine waste pile registry (`this.poopPiles`) and nearest-bin spatial queries (`getNearestBin(x, y)`).
   - Ambient particle system: floating dandelion seeds/pollen and wind streaks.
+  - **Static Ground & Path Offscreen Canvas Baking (Render Optimization)**:
+    - Complete static park background (base turf, Avon cliff gradient, mown stripes, procedural grass blade flecks, gravel pathways, and wildflowers) is pre-rendered once at initialization into a 3200 × 2400 `OffscreenCanvas` (`this.bakedCanvas`, with DOM `<canvas>` fallback).
+    - `renderGround(ctx, camera)` executes a single `ctx.drawImage()` call blitting only the visible camera viewport window from the baked canvas, eliminating per-frame `Math.sin()` noise loops and Bezier path stroking operations at 60 FPS.
 - **Camera Viewport**:
   - Smooth exponential damping tracking (`Camera.follow`) centered on the player and clamped to 3200 × 2400 boundaries.
 - **Y-Sorted Depth Renderer**:

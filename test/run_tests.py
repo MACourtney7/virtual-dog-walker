@@ -62,7 +62,8 @@ def run_all():
         "test/test_npc_paths.py",
         "test/test_npc_entity.py",
         "test/test_npc_server.py",
-        "test/test_npc_client.py"
+        "test/test_npc_client.py",
+        "test/test_field.py"
     ]
     for t in test_suites:
         res = subprocess.run([sys.executable, t])

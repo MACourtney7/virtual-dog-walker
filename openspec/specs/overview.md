@@ -72,10 +72,32 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 - **Directional Navigation Compass Arrow (`src/ui/navigation_arrow.js`)**:
   - Reusable glassmorphic HUD indicator clamped to viewport margin perimeter.
   - Smooth outward chevron rotation along bearing angle, pulse animation, dynamic emojis (`🐕` for lost dog, `🗑️` for nearest bin), and distance badge in meters (`dist / 20`).
-- **Park NPCs: Autonomous Walkers & Joggers (`src/entities/npc.js`)**:
-  - `WalkerNPC`: Strolls at leisure pace (~75–100 px/s) along park trail loops, pausing at teak benches and scenic overlooks.
-  - `JoggerNPC`: Runs athletic laps (~240–280 px/s) continuously along Ladies Mile avenue and the park perimeter with rhythmic stride bobbing.
-  - Mutual soft avoidance steering around players, dogs, and obstacles.
+- **Park NPCs: Autonomous Walkers & Joggers (`src/entities/npc.js`, `src/entities/npc_content.js`, `src/world/npc_paths.js`, `src/world/npc_path_manifest.json`)**:
+  - **Global Server-Authoritative Spawning**:
+    - Server authority (PartyServer Durable Objects & dedicated microserver fallback) orchestrates NPC spawn schedules, emitting `NPC_SPAWN`, `NPC_DESPAWN`, and `NPC_SNAPSHOT` packets.
+    - Server maintains an active subset of 5 concurrent NPCs across available precomputed paths.
+    - Late-joining clients receive `NPC_SNAPSHOT` with original `spawnTime` and immediately simulate current mid-path placement.
+    - Solo / offline fallback: when uncoordinated or offline, client autonomously runs a local spawner maintaining 5 active NPCs.
+  - **Deterministic Client Simulation**:
+    - Zero per-frame network traffic; clients simulate movement deterministically from `spawnTime`, path speed, and PRNG (`mulberry32`).
+    - Finite lifecycle: spawn -> deterministic path traversal -> 0.5s fade out -> despawn -> automatic replacement spawn.
+  - **Obstacle-Free Precomputed Path Library**:
+    - Multi-segment paths verified completely clear of trees, benches, dog-waste bins, and streetlamps across The Downs.
+    - NPCs traverse paths smoothly without getting stuck on terrain or pausing at benches.
+  - **Distinctive Naming & Nametag Styling**:
+    - Naming convention: `<First> the <Walker|Jogger>` (e.g. "Mary the Walker", "Steve the Jogger") derived deterministically from `seed`.
+    - Distinctive visual styling (`NPC_TAG_STYLE`): italic font (`italic 11px 'Outfit', sans-serif`), translucent dark pill backdrop, and warm golden border and text (`#fef08a`), clearly distinguishing NPCs from player avatars.
+  - **Authentic Walking & Jogging Speeds**:
+    - Natural, grounded movement velocities:
+      - `Walker`: 35 px/s.
+      - `Jogger`: 80 px/s with athletic stride bobbing.
+  - **Ambient Seeded Speech Bubbles**:
+    - Seeded deterministic speech timeline firing every 6–14 seconds.
+    - Overhead speech bubbles render for ~4.0 seconds.
+    - Phrase palette: 85% common park/weather remarks and 15% whimsical/quirky observations.
+  - **Canine Companion Reactions & Depth Sorting**:
+    - Dogs react according to personality traits: high barkyness (>= 3) barks at passing joggers, high shyness (>= 3) steers to maintain avoidance berth, high playfulness (>= 4) elicits tail wags and play-bows.
+    - Continuous Y-sorted depth rendering (`depthY = y + 12`) seamlessly interleaves NPCs with scenery, owners, dogs, and tennis balls.
 - **Tennis Ball Toy (`src/entities/toy.js`)**:
   - 2.5D ballistic trajectory with gravity (720 px/s²), ground shadow scaling, bounce restitution (0.62), and rolling friction.
   - Off-leash dogs detect thrown balls, sprint at 290 px/s, attach ball to mouth, and return it to the owner's feet.
@@ -134,13 +156,18 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 ---
 
 ## 7. Test Suite & CI/CD
-- `python3 test/run_tests.py`: Comprehensive test runner executing 19 test suites covering:
+- `python3 test/run_tests.py`: Comprehensive test runner executing 26 test suites covering:
   - Physics ballistics, arrival steering, leash clamping and off-lead rendering.
   - Real-time leash synchronization, entity interpolator discrete propagation, network packet schemas.
   - Dog personality scaling, obedience-weighted stray probability, leash pulling physics.
   - Directional navigation arrow bearing math, viewport ray-box clamping, target lifecycle.
   - Waste pile lifecycle, spatial bin querying, pickup/disposal interactions.
-  - Ambient NPC waypoint traversal, athletic jogger pacing, soft steering avoidance.
+  - Ambient NPC deterministic polyline simulation, finite lifecycle fading, speech timelines, and nametag styling (`test_npc_entity.py`).
+  - Obstacle-free path verification, manifest integrity, and coordinate bounds (`test_npc_paths.py`).
+  - NPC content tables, name generation, speeds, mulberry32 PRNG, and speech phrases (`test_npc_content.py`).
+  - Global server spawner, snapshot broadcasts, pool maintenance, and room cleanup (`test_npc_server.py`, `test_partyserver.py`).
+  - Multi-client synchronization, late joiner placement, solo fallback spawner, and network event wiring (`test_npc_client.py`).
+  - Full NPC regression suite and end-to-end multi-client synchronization (`test_npcs.py`).
   - Diurnal lighting calculation, Open-Meteo weather response decoding, particle overlays.
   - Microserver room routing, PartyServer contracts, viewport meta attributes, safe-area CSS rules.
   - Top-bar HUD reorganization, top-right downward chat sidebar, toggle and auto-unhide triggers.

@@ -500,6 +500,23 @@ class TestPartyServerNpcSpawner(unittest.TestCase):
             self.assertLess(npc["remainingLifetimeMs"], npc["lifetimeMs"], "Remaining lifetime should be less than total lifetime")
             self.assertGreater(npc["remainingLifetimeMs"], 0, "Remaining lifetime must be positive")
 
+    def test_spawner_initializes_when_connections_already_present(self):
+        """Regression test: on_connect initializes spawner even if get_connections() already reports active connections."""
+        # Simulate Cloudflare PartyServer runtime lifecycle where connection is registered before on_connect
+        conn = self.room.add_connection("cf-pre-registered-client")
+        self.assertTrue(self.room.has_active_clients(), "Connections already exist prior to on_connect")
+        self.assertEqual(len(self.room.active_npcs), 0, "No NPCs should exist before spawner is triggered")
+
+        self.room.on_connect(conn)
+
+        self.assertEqual(len(self.room.active_npcs), 5, "Spawner must initialize 5 active NPCs")
+        # Ensure client received WELCOME and NPC_SNAPSHOT containing 5 active pre-warmed NPCs
+        self.assertEqual(len(conn.messages_received), 2)
+        snapshot = conn.messages_received[1]
+        self.assertEqual(snapshot["type"], "NPC_SNAPSHOT")
+        self.assertEqual(len(snapshot["npcs"]), 5)
+
+
 
 class TestPartyServerRouteBuilder(unittest.TestCase):
     def _build_url(self, base, room):

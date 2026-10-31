@@ -182,7 +182,7 @@ export class ParkServer extends Server {
     const isFirstPeer = !this.hasActiveClients();
     this.connections.add(conn.id);
 
-    if (this.activeNpcs.size === 0 && isFirstPeer) {
+    if (this.activeNpcs.size === 0) {
       this.initSpawner();
     }
 

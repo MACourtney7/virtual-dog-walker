@@ -4,7 +4,8 @@ milestone: "npc-polish-and-cleanup"
 title: "Global NPC Polish, Render Optimization & Platformer Pruning"
 version: "1.0.0"
 created_at: "2026-10-31T14:37:00Z"
-status: "PLANNING"
+status: "COMPLETED"
+completed_at: "2026-10-31T15:24:00Z"
 ---
 
 # Milestone Roadmap: Global NPC Polish, Render Optimization & Platformer Pruning

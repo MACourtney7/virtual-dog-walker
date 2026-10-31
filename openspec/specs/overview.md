@@ -84,16 +84,20 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
   - **Deterministic Client Simulation**:
     - Zero per-frame network traffic; clients simulate movement deterministically from `spawnTime`, path speed, and PRNG (`mulberry32`).
     - Finite lifecycle: spawn -> deterministic path traversal -> 0.5s fade out -> despawn -> automatic replacement spawn.
-  - **Obstacle-Free Precomputed Path Library**:
-    - Multi-segment paths verified completely clear of trees, benches, dog-waste bins, and streetlamps across The Downs.
-    - NPCs traverse paths smoothly without getting stuck on terrain or pausing at benches.
+  - **Obstacle-Free Edge-to-Edge Precomputed Path Library**:
+    - 10 point-to-point routes verified completely clear of trees, benches, dog-waste bins, and streetlamps across The Downs.
+    - All paths strictly originate at perimeter map boundaries (`x <= 20`, `x >= 3180`, `y <= 20`, or `y >= 2380`) and terminate at opposing perimeter map boundaries, eliminating mid-meadow popping.
+    - Symmetrical 0.5s entry fade-in and 0.5s exit fade-out with smooth tangent heading angle interpolation on waypoint turns.
   - **Distinctive Naming & Nametag Styling**:
     - Naming convention: `<First> the <Walker|Jogger>` (e.g. "Mary the Walker", "Steve the Jogger") derived deterministically from `seed`.
     - Distinctive visual styling (`NPC_TAG_STYLE`): italic font (`italic 11px 'Outfit', sans-serif`), translucent dark pill backdrop, and warm golden border and text (`#fef08a`), clearly distinguishing NPCs from player avatars.
-  - **Authentic Walking & Jogging Speeds**:
-    - Natural, grounded movement velocities:
-      - `Walker`: 35 px/s.
-      - `Jogger`: 80 px/s with athletic stride bobbing.
+  - **Relaxed Walking & Jogging Speeds**:
+    - Grounded, relaxed movement velocities and natural leg-stride stepping multipliers:
+      - `Walker`: 22 px/s (`walkPhase` multiplier 6.2).
+      - `Jogger`: 48 px/s (`walkPhase` multiplier 9.8) with athletic stride bobbing.
+  - **Pre-Warmed Staggered Spawning**:
+    - Server spawners pre-warm initial NPCs with staggered negative offsets (15% to 85% of path length) so initial NPCs spawn distributed mid-path across distinct routes rather than emerging simultaneously at distance 0.
+    - Local fallback spawner is guarded against connection race conditions during initial socket negotiation.
   - **Ambient Seeded Speech Bubbles**:
     - Seeded deterministic speech timeline firing every 6–14 seconds.
     - Overhead speech bubbles render for ~4.0 seconds.

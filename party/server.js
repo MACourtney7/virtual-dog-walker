@@ -1,6 +1,6 @@
 // party/server.js - Cloudflare PartyServer Room Relay & Asset Server
 import { Server, routePartykitRequest } from "partyserver";
-import npcManifest from "../src/world/npc_path_manifest.json" with { type: "json" };
+import npcManifest from "../src/world/npc_path_manifest.json";
 
 const FALLBACK_MANIFEST = [
   { id: "ladies-mile-loop", type: "both", lengthPx: 3817.4 },

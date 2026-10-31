@@ -82,7 +82,23 @@ def extract_field_obstacles():
             "trunkRadius": float(round(r * 0.28))
         })
 
-    return {"bins": bins, "benches": benches, "trees": trees}
+    # Rocks
+    rocks = []
+    rocks_match = re.search(r"// 3\. West Zone: Sea Walls Rocky Limestone Outcrops.*?this\.rockOutcrops = \[(.*?)\];", content, re.DOTALL)
+    if rocks_match:
+        for m in re.finditer(r"\{\s*id:\s*['\"]([^'\"]+)['\"],\s*x:\s*(\d+),\s*y:\s*(\d+).*?depthY:\s*(\d+),\s*r:\s*(\d+)", rocks_match.group(1)):
+            rocks.append({
+                "id": m.group(1),
+                "x": float(m.group(2)),
+                "y": float(m.group(3)),
+                "depthY": float(m.group(4)),
+                "r": float(m.group(5))
+            })
+
+    # Water Tower Landmark
+    water_tower = {"x": 2400.0, "y": 450.0, "radius": 42.0}
+
+    return {"bins": bins, "benches": benches, "trees": trees, "rocks": rocks, "waterTower": water_tower}
 
 
 class TestNpcPaths(unittest.TestCase):
@@ -123,13 +139,20 @@ class TestNpcPaths(unittest.TestCase):
         self.assertEqual(len(loops), 0, "Expected all paths to be point-to-point (0 closed loops)")
         self.assertEqual(len(p2p), 10, "Expected all 10 paths to be point-to-point edge-to-edge routes")
 
+        def is_perimeter_boundary(wp):
+            return (
+                (75 <= wp['x'] <= 140 or 3060 <= wp['x'] <= 3125 or
+                 75 <= wp['y'] <= 140 or 2260 <= wp['y'] <= 2325) and
+                (0 <= wp['x'] <= 3200 and 0 <= wp['y'] <= 2400)
+            )
+
         for p in self.paths:
             start_wp = p["waypoints"][0]
             end_wp = p["waypoints"][-1]
-            start_at_edge = (start_wp['x'] <= 20 or start_wp['x'] >= 3180 or start_wp['y'] <= 20 or start_wp['y'] >= 2380)
-            end_at_edge = (end_wp['x'] <= 20 or end_wp['x'] >= 3180 or end_wp['y'] <= 20 or end_wp['y'] >= 2380)
-            self.assertTrue(start_at_edge, f"Path {p['id']} start waypoint {start_wp} not on perimeter edge")
-            self.assertTrue(end_at_edge, f"Path {p['id']} end waypoint {end_wp} not on perimeter edge")
+            self.assertTrue(is_perimeter_boundary(start_wp), f"Path {p['id']} start waypoint {start_wp} not inside perimeter wall boundary")
+            self.assertTrue(is_perimeter_boundary(end_wp), f"Path {p['id']} end waypoint {end_wp} not inside perimeter wall boundary")
+            span = math.hypot(end_wp['x'] - start_wp['x'], end_wp['y'] - start_wp['y'])
+            self.assertGreaterEqual(span, 1200.0, f"Path {p['id']} span {span:.1f} < 1200.0 px")
 
     def test_ac_025_2_obstacle_clearance_and_world_bounds(self):
         """AC-025.2: Sample every segment at <= 8 px steps and assert clearance and bounds."""
@@ -191,6 +214,34 @@ class TestNpcPaths(unittest.TestCase):
                             has_clearance,
                             f"{pid} seg {i} step {s}/{steps} collides with bench {bench['id']}: box_d={box_d:.1f}, cd={cd:.1f}"
                         )
+
+                    # 5. Rock outcrops clearance: hypot >= rock.r + 20 px
+                    for rock in self.obstacles.get("rocks", []):
+                        rd = math.hypot(sx - rock["x"], sy - rock.get("depthY", rock["y"]))
+                        min_rd = rock["r"] + 20.0
+                        self.assertGreaterEqual(
+                            rd, min_rd,
+                            f"{pid} seg {i} step {s}/{steps} collides with rock {rock['id']}: {rd:.1f} < {min_rd:.1f}"
+                        )
+
+                    # 6. Water Tower clearance: hypot >= wt.radius + 20 px (62 px)
+                    wt = self.obstacles.get("waterTower", {"x": 2400.0, "y": 450.0, "radius": 42.0})
+                    wtd = math.hypot(sx - wt["x"], sy - wt["y"])
+                    self.assertGreaterEqual(
+                        wtd, wt["radius"] + 20.0,
+                        f"{pid} seg {i} step {s}/{steps} collides with water tower: {wtd:.1f} < {wt['radius'] + 20.0:.1f}"
+                    )
+
+    def test_ac_033_2_central_interior_traversal(self):
+        """AC-033.2: At least 6 of the 10 paths have intermediate waypoints traversing the central region (900 <= x <= 2500, 450 <= y <= 1450)."""
+        def traverses_central(p):
+            return any(900 <= wp['x'] <= 2500 and 450 <= wp['y'] <= 1450 for wp in p["waypoints"][1:-1])
+
+        central_paths = [p for p in self.paths if traverses_central(p)]
+        self.assertGreaterEqual(
+            len(central_paths), 6,
+            f"Expected >= 6 paths traversing central region, got {len(central_paths)}: {[p['id'] for p in central_paths]}"
+        )
 
     def test_ac_025_3_manifest_lengths_match_polylines(self):
         """AC-025.3: Manifest lengths match computed polyline lengths within 1.0 px."""

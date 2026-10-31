@@ -165,7 +165,9 @@ export class CliftonDownGame {
     this.initCanvas();
     this.bindInputs();
     this.initNetworking();
-    this.updateLocalSpawner(0);
+    if (!this.isNetworkConnecting()) {
+      this.updateLocalSpawner(0);
+    }
 
     // Start 60fps loop
     if (typeof requestAnimationFrame !== 'undefined') {
@@ -716,12 +718,17 @@ export class CliftonDownGame {
   }
 
   handleNpcSnapshot(snapshotNpcs, serverTime) {
+    this.npcs.clear();
     if (Array.isArray(snapshotNpcs)) {
-      this.npcs.clear();
       for (const npcData of snapshotNpcs) {
         this.spawnNetworkNpc(npcData);
       }
     }
+  }
+
+  isNetworkConnecting() {
+    if (!this.net) return false;
+    return this.net.status === 'CONNECTING' || this.net.status === 'RECONNECTING';
   }
 
   isNetworkAuthoritative() {
@@ -762,7 +769,7 @@ export class CliftonDownGame {
   }
 
   updateLocalSpawner(dt) {
-    if (this.isNetworkAuthoritative()) return;
+    if (this.isNetworkAuthoritative() || this.isNetworkConnecting()) return;
     while (this.npcs.size < 5) {
       const spawned = this.spawnLocalNpc();
       if (!spawned) break;

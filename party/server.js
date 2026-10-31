@@ -3,24 +3,24 @@ import { Server, routePartykitRequest } from "partyserver";
 import npcManifest from "../src/world/npc_path_manifest.json" with { type: "json" };
 
 const FALLBACK_MANIFEST = [
-  { id: "ladies-mile-loop", type: "both", lengthPx: 5726.1 },
-  { id: "sea-walls-promenade", type: "both", lengthPx: 1789.1 },
-  { id: "durdham-down-circuit", type: "jogger", lengthPx: 3103.1 },
-  { id: "woodland-trail-loop", type: "walker", lengthPx: 2091.7 },
-  { id: "central-meadow-ramble", type: "walker", lengthPx: 2104.2 },
-  { id: "trans-downs-express", type: "jogger", lengthPx: 3462.8 },
-  { id: "sea-walls-to-water-tower", type: "walker", lengthPx: 2920.2 },
-  { id: "clifton-woodland-traverse", type: "walker", lengthPx: 2137.7 },
-  { id: "north-meadow-diagonal", type: "both", lengthPx: 2646.5 },
-  { id: "perimeter-grand-loop", type: "jogger", lengthPx: 9527.3 }
+  { id: "ladies-mile-loop", type: "both", lengthPx: 3817.4 },
+  { id: "sea-walls-promenade", type: "both", lengthPx: 1546.4 },
+  { id: "durdham-down-circuit", type: "jogger", lengthPx: 1977.0 },
+  { id: "woodland-trail-loop", type: "walker", lengthPx: 1947.2 },
+  { id: "central-meadow-ramble", type: "walker", lengthPx: 3195.6 },
+  { id: "trans-downs-express", type: "jogger", lengthPx: 3792.8 },
+  { id: "sea-walls-to-water-tower", type: "walker", lengthPx: 3110.2 },
+  { id: "clifton-woodland-traverse", type: "walker", lengthPx: 2357.7 },
+  { id: "north-meadow-diagonal", type: "both", lengthPx: 2856.5 },
+  { id: "perimeter-grand-loop", type: "jogger", lengthPx: 7995.2 }
 ];
 
 const MANIFEST = (Array.isArray(npcManifest) && npcManifest.length > 0)
   ? npcManifest
   : FALLBACK_MANIFEST;
 
-const WALKER_SPEED = 35; // px/s
-const JOGGER_SPEED = 80; // px/s
+const WALKER_SPEED = 22; // px/s
+const JOGGER_SPEED = 48; // px/s
 const TARGET_NPC_COUNT = 5;
 
 export class ParkServer extends Server {
@@ -50,12 +50,14 @@ export class ParkServer extends Server {
   }
 
   initSpawner() {
-    while (this.activeNpcs.size < this.targetNpcCount) {
-      this.spawnNpc();
+    const count = this.targetNpcCount;
+    for (let i = 0; i < count; i++) {
+      const prewarmFraction = 0.15 + (i / count) * 0.70;
+      this.spawnNpc(prewarmFraction);
     }
   }
 
-  spawnNpc() {
+  spawnNpc(prewarmFraction = 0.0) {
     if (!this.paths || this.paths.length === 0) return null;
 
     // Pick an unused path from manifest
@@ -78,9 +80,12 @@ export class ParkServer extends Server {
 
     const speed = type === "jogger" ? JOGGER_SPEED : WALKER_SPEED;
     const lifetimeMs = Math.round((path.lengthPx / speed) * 1000);
+    const offsetMs = Math.round(lifetimeMs * Math.max(0, Math.min(0.9, prewarmFraction)));
+    const now = Date.now();
+    const spawnTime = now - offsetMs;
+    const remainingLifetimeMs = Math.max(500, lifetimeMs - offsetMs);
     const seed = (Math.random() * 0xFFFFFFFF) >>> 0;
-    const spawnTime = Date.now();
-    const id = `npc-${Math.random().toString(36).slice(2, 9)}-${Date.now().toString(36)}`;
+    const id = `npc-${Math.random().toString(36).slice(2, 9)}-${now.toString(36)}`;
 
     const npcData = {
       id,
@@ -96,7 +101,7 @@ export class ParkServer extends Server {
 
     const despawnTimer = setTimeout(() => {
       this.despawnNpc(id);
-    }, lifetimeMs);
+    }, remainingLifetimeMs);
     this.npcDespawnTimers.set(id, despawnTimer);
 
     return npcData;

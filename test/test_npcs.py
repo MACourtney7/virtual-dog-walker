@@ -3,8 +3,8 @@
 Automated Acceptance & Regression Test Suite for Park NPCs (Ticket-029 & Ticket-016):
 Traces directly to AC-029.1 and AC-016.1 - AC-016.6:
 1. Walker & Jogger Speed and Pacing Verification:
-   - Walker default speed: 35 px/s (NPC_SPEED.walker).
-   - Jogger default speed: 80 px/s (NPC_SPEED.jogger).
+   - Walker default speed: 22 px/s (NPC_SPEED.walker).
+   - Jogger default speed: 48 px/s (NPC_SPEED.jogger).
    - WalkerNPC and JoggerNPC subclass ParkNPC and instantiate properly.
 2. Deterministic Polyline Traversal & Finite Lifecycle:
    - Simulated NPC matches exact analytical distance speed * (now - spawnTime) along waypoints without stepping tick-by-tick.
@@ -192,7 +192,7 @@ class SimulatedParkNPC:
         elif "speed" in opts:
             self.speed = float(opts["speed"])
         else:
-            self.speed = 80.0 if self.isJogger else 35.0
+            self.speed = 48.0 if self.isJogger else 22.0
 
         self.radius = float(opts.get("radius", radius))
 
@@ -475,14 +475,14 @@ class TestParkNPCs(unittest.TestCase):
     # 1. Walker & Jogger Speed and Pacing Verification
     # --------------------------------------------------------------------------
     def test_npc_speeds_constants(self):
-        """Verify NPC_SPEED defines walker 35 px/s and jogger 80 px/s."""
+        """Verify NPC_SPEED defines walker 22 px/s and jogger 48 px/s."""
         self.assertIn("NPC_SPEED", self.npc_content_code)
         match = re.search(r"export\s+const\s+NPC_SPEED\s*=\s*Object\.freeze\(\{\s*walker:\s*(\d+),\s*jogger:\s*(\d+)\s*\}\);", self.npc_content_code)
         self.assertIsNotNone(match, "NPC_SPEED constant definition missing or formatted incorrectly in npc_content.js")
         walker_speed = int(match.group(1))
         jogger_speed = int(match.group(2))
-        self.assertEqual(walker_speed, 35, f"Walker speed should be 35 px/s, got {walker_speed}")
-        self.assertEqual(jogger_speed, 80, f"Jogger speed should be 80 px/s, got {jogger_speed}")
+        self.assertEqual(walker_speed, 22, f"Walker speed should be 22 px/s, got {walker_speed}")
+        self.assertEqual(jogger_speed, 48, f"Jogger speed should be 48 px/s, got {jogger_speed}")
 
     def test_walker_and_jogger_classes_inheritance(self):
         """Verify WalkerNPC and JoggerNPC subclass ParkNPC and instantiate with correct speeds."""
@@ -491,11 +491,11 @@ class TestParkNPCs(unittest.TestCase):
 
         # Simulation default speeds
         walker = SimulatedParkNPC(type="walker")
-        self.assertEqual(walker.speed, 35.0)
+        self.assertEqual(walker.speed, 22.0)
         self.assertFalse(walker.isJogger)
 
         jogger = SimulatedParkNPC(type="jogger")
-        self.assertEqual(jogger.speed, 80.0)
+        self.assertEqual(jogger.speed, 48.0)
         self.assertTrue(jogger.isJogger)
 
     # --------------------------------------------------------------------------
@@ -638,11 +638,11 @@ class TestParkNPCs(unittest.TestCase):
     # --------------------------------------------------------------------------
     def test_deterministic_seeded_speech_timeline(self):
         """Verify identical seed produces identical speech timeline and different seed produces different timeline."""
-        npc1 = SimulatedParkNPC(seed=42, spawn_time=1000.0, speed=35.0,
+        npc1 = SimulatedParkNPC(seed=42, spawn_time=1000.0, speed=22.0,
                                 waypoints=[{"x": 0, "y": 0}, {"x": 2000, "y": 0}])
-        npc2 = SimulatedParkNPC(seed=42, spawn_time=1000.0, speed=35.0,
+        npc2 = SimulatedParkNPC(seed=42, spawn_time=1000.0, speed=22.0,
                                 waypoints=[{"x": 0, "y": 0}, {"x": 2000, "y": 0}])
-        npc3 = SimulatedParkNPC(seed=999, spawn_time=1000.0, speed=35.0,
+        npc3 = SimulatedParkNPC(seed=999, spawn_time=1000.0, speed=22.0,
                                 waypoints=[{"x": 0, "y": 0}, {"x": 2000, "y": 0}])
 
         self.assertGreater(len(npc1.speechTimeline), 0)
@@ -678,7 +678,7 @@ class TestParkNPCs(unittest.TestCase):
 
     def test_speech_query_during_and_between_windows(self):
         """Verify getSpeech(now) returns active phrase during event and None between events."""
-        npc = SimulatedParkNPC(seed=42, spawn_time=1000.0, speed=35.0,
+        npc = SimulatedParkNPC(seed=42, spawn_time=1000.0, speed=22.0,
                                waypoints=[{"x": 0, "y": 0}, {"x": 2000, "y": 0}])
         first_event = npc.speechTimeline[0]
         start = first_event["startTime"]
@@ -869,8 +869,8 @@ class TestParkNPCs(unittest.TestCase):
         }
         rep1 = client1.spawnNetworkNpc(replacement_packet)
         rep2 = client2.spawnNetworkNpc(replacement_packet)
-        self.assertEqual(rep1.speed, 80.0)
-        self.assertEqual(rep2.speed, 80.0)
+        self.assertEqual(rep1.speed, 48.0)
+        self.assertEqual(rep2.speed, 48.0)
 
         # Check identical coordinates on replacement
         for t in [finish_t + 5.0, finish_t + 15.0, finish_t + 30.0]:

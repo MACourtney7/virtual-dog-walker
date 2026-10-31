@@ -176,6 +176,8 @@ export class ParkNPC {
       let dx = 0;
       let dy = 0;
       let segLen = 0;
+      let activeIndex = -1;
+      let activeRemaining = 0;
 
       for (let i = 0; i < this.segmentLengths.length; i++) {
         segLen = this.segmentLengths[i];
@@ -189,6 +191,8 @@ export class ParkNPC {
           this.x = p1.x + dx * segT;
           this.y = p1.y + dy * segT;
           interpolated = true;
+          activeIndex = i;
+          activeRemaining = remaining;
           break;
         }
         accumulated += segLen;
@@ -203,15 +207,34 @@ export class ParkNPC {
         segLen = this.segmentLengths[lastIdx] || 0;
         this.x = p2.x;
         this.y = p2.y;
+        activeIndex = lastIdx;
+        activeRemaining = segLen;
       }
 
       this.depthY = this.y + 12;
       if (Math.hypot(dx, dy) > 0.000001) {
-        this.angle = Math.atan2(dy, dx);
+        const segAngle = Math.atan2(dy, dx);
+        const distToNext = segLen - activeRemaining;
+        if (activeIndex >= 0 && activeIndex + 1 < this.segmentLengths.length && distToNext < 25.0) {
+          const nextP1 = this.waypoints[activeIndex + 1];
+          const nextP2 = this.waypoints[activeIndex + 2];
+          const nextAngle = Math.atan2(nextP2.y - nextP1.y, nextP2.x - nextP1.x);
+          let angleDiff = nextAngle - segAngle;
+          while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+          while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+          const blendFactor = Math.max(0, Math.min(0.5, (1.0 - distToNext / 25.0) * 0.5));
+          this.angle = segAngle + angleDiff * blendFactor;
+        } else {
+          this.angle = segAngle;
+        }
       }
       this.vx = segLen > 0.000001 ? (dx / segLen) * this.speed : 0;
       this.vy = segLen > 0.000001 ? (dy / segLen) * this.speed : 0;
-      this.opacity = 1.0;
+      if (elapsed < 0.5) {
+        this.opacity = Math.max(0.0, Math.min(1.0, elapsed / 0.5));
+      } else {
+        this.opacity = 1.0;
+      }
       this.done = false;
       this.isFinishedState = false;
     }
@@ -234,7 +257,7 @@ export class ParkNPC {
     }
 
     if (this.speed > 0 && !this.isFinished(this.currentTime)) {
-      this.walkPhase += dt * (this.isJogger ? 14 : 9.5);
+      this.walkPhase += dt * (this.isJogger ? 9.8 : 6.2);
     }
   }
 

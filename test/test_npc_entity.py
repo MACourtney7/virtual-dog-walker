@@ -12,8 +12,8 @@ Traces directly to:
   - Entity reaches final waypoint and does not wrap or overshoot.
   - 0.5s fade lifecycle: opacity 1.0 at finishTime, ~0.5 at finishTime + 0.25, 0.0 and done=True at finishTime + 0.5.
   - No pause states: NPCs do not stop at benches or pause during path navigation.
-- AC-026.3: Speeds Match Ticket-024 Constants
-  - Walker default speed 35 px/s, Jogger default speed 80 px/s matching NPC_SPEED.
+- AC-026.3: Speeds Match Ticket-024 and Ticket-030 Constants
+  - Walker default speed 22 px/s, Jogger default speed 48 px/s matching NPC_SPEED.
 - AC-026.4: Overhead Tag Styling and Name Formatting
   - Nametag uses NPC_TAG_STYLE: italic font, Outfit/sans-serif 11px, dark pill background, golden border and text.
   - Name matches `<First> the <Walker|Jogger>` via npcIdentityFromSeed.
@@ -96,7 +96,7 @@ class SimulatedDeterministicParkNPC:
         if "speed" in opts:
             self.speed = float(opts["speed"])
         else:
-            self.speed = 80.0 if self.type == "jogger" else 35.0
+            self.speed = 48.0 if self.type == "jogger" else 22.0
 
         # Waypoints & polyline
         self.waypoints = opts.get("waypoints", [])
@@ -174,7 +174,10 @@ class SimulatedDeterministicParkNPC:
                 self.done = False
         else:
             self.isFinishedState = False
-            self.opacity = 1.0
+            if elapsed < 0.5:
+                self.opacity = max(0.0, min(1.0, elapsed / 0.5))
+            else:
+                self.opacity = 1.0
             self.done = False
 
             if not self.waypoints or len(self.waypoints) == 1:
@@ -497,10 +500,10 @@ class TestNPCEntity(unittest.TestCase):
         self.assertEqual(npc.vx, 50.0)
 
     # -------------------------------------------------------------------------
-    # AC-026.3: Speeds Match Ticket-024 Constants
+    # AC-026.3: Speeds Match Ticket-024 / Ticket-030 Constants
     # -------------------------------------------------------------------------
     def test_walker_and_jogger_default_speeds(self):
-        """Verify Walker defaults to 35 px/s and Jogger defaults to 80 px/s."""
+        """Verify Walker defaults to 22 px/s and Jogger defaults to 48 px/s."""
         walker = SimulatedDeterministicParkNPC(
             type="walker",
             waypoints=[{"x": 0, "y": 0}, {"x": 100, "y": 0}],
@@ -513,15 +516,51 @@ class TestNPCEntity(unittest.TestCase):
             common_phrases=self.common_phrases,
             odd_phrases=self.odd_phrases
         )
-        self.assertEqual(walker.speed, 35.0)
-        self.assertEqual(jogger.speed, 80.0)
+        self.assertEqual(walker.speed, 22.0)
+        self.assertEqual(jogger.speed, 48.0)
+
+        # Real entity source check
+        self.assertIn("NPC_SPEED.walker", self.npc_code)
+        self.assertIn("NPC_SPEED.jogger", self.npc_code)
 
     def test_speeds_match_npc_content_constants(self):
-        """Verify NPC_SPEED constants in npc_content.js are walker: 35, jogger: 80."""
+        """Verify NPC_SPEED constants in npc_content.js are walker: 22, jogger: 48."""
         speed_match = re.search(r"export\s+const\s+NPC_SPEED\s*=\s*Object\.freeze\(\{\s*walker:\s*(\d+),\s*jogger:\s*(\d+)\s*\}\);", self.content_js)
         self.assertIsNotNone(speed_match, "NPC_SPEED must define walker and jogger speeds")
-        self.assertEqual(int(speed_match.group(1)), 35)
-        self.assertEqual(int(speed_match.group(2)), 80)
+        self.assertEqual(int(speed_match.group(1)), 22)
+        self.assertEqual(int(speed_match.group(2)), 48)
+
+    def test_speed_constants(self):
+        """Alias test verifying NPC_SPEED constants in npc_content.js are walker: 22, jogger: 48."""
+        self.test_speeds_match_npc_content_constants()
+
+    def test_entry_fade_in(self):
+        """
+        Verify entry fade-in:
+        - At now = spawnTime, npc.opacity == 0.0.
+        - At now = spawnTime + 0.25, 0.45 <= npc.opacity <= 0.55.
+        - At now = spawnTime + 0.5, npc.opacity == 1.0.
+        """
+        waypoints = [{"x": 0.0, "y": 0.0}, {"x": 1000.0, "y": 0.0}]
+        spawn_time = 100.0
+        npc = SimulatedDeterministicParkNPC(
+            waypoints=waypoints,
+            spawnTime=spawn_time,
+            common_phrases=self.common_phrases,
+            odd_phrases=self.odd_phrases
+        )
+
+        # At now = spawnTime
+        npc.setClock(spawn_time)
+        self.assertEqual(npc.opacity, 0.0)
+
+        # At now = spawnTime + 0.25
+        npc.setClock(spawn_time + 0.25)
+        self.assertTrue(0.45 <= npc.opacity <= 0.55, f"Opacity {npc.opacity} not in [0.45, 0.55]")
+
+        # At now = spawnTime + 0.5
+        npc.setClock(spawn_time + 0.5)
+        self.assertEqual(npc.opacity, 1.0)
 
     # -------------------------------------------------------------------------
     # AC-026.4: Overhead Tag Styling and Name Formatting

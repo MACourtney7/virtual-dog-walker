@@ -754,12 +754,52 @@ class TestClientNpcSync(unittest.TestCase):
         self.assertIn("onNpcDespawn", self.main_code)
         self.assertIn("onNpcSnapshot", self.main_code)
         self.assertIn("spawnNetworkNpc", self.main_code)
+        self.assertIn("handleNpcSpawn", self.main_code)
         self.assertIn("updateLocalSpawner", self.main_code)
         self.assertIn("dog.update", self.main_code)
         self.assertTrue(
             "Array.from(this.npcs.values())" in self.main_code or "[...this.npcs.values()]" in self.main_code,
             "main.js should pass NPC array to companion dog"
         )
+
+    def test_millisecond_spawntime_sync_and_visibility(self):
+        """
+        AC-033.1: Passing a millisecond spawnTime (e.g. 1793461296000) and calling
+        npc.setClock(1793461306.0) (10 seconds later in seconds) advances distance = 10 * speed
+        and has opacity === 1.0. At elapsed === 0, opacity is at least 0.25 (never 0.0).
+        """
+        net = SimulatedClientNetworkManager(is_authoritative=True)
+        client = SimulatedCliftonDownGameClient(net=net, paths=self.paths, current_time_sec=1793461296.0)
+
+        ms_spawn_time = 1793461296000
+        net.handlePacket({
+            "type": "NPC_SPAWN",
+            "npc": {
+                "id": "npc-ms-sync",
+                "pathId": "ladies-mile-loop",
+                "type": "walker",
+                "seed": 55,
+                "spawnTime": ms_spawn_time
+            }
+        }, localNow=1793461296000.0)
+
+        self.assertIn("npc-ms-sync", client.npcs)
+        npc = client.npcs["npc-ms-sync"]
+
+        # At elapsed === 0, opacity is at least 0.25 (never 0.0)
+        self.assertGreaterEqual(npc.opacity, 0.25)
+        self.assertNotEqual(npc.opacity, 0.0)
+
+        # 10 seconds later in seconds
+        now_sec = 1793461306.0
+        client.currentTimeSec = now_sec
+        npc.setClock(now_sec)
+
+        self.assertEqual(npc.opacity, 1.0)
+        expected_distance = 10.0 * npc.speed
+        elapsed = now_sec - npc.spawnTime
+        self.assertAlmostEqual(elapsed, 10.0)
+        self.assertAlmostEqual(npc.speed * elapsed, expected_distance)
 
 
 if __name__ == "__main__":

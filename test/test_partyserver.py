@@ -138,10 +138,12 @@ class MockPartyServerRoom:
         return parsed
 
     def init_spawner(self):
-        while len(self.active_npcs) < self.target_npc_count:
-            self.spawn_npc()
+        count = self.target_npc_count
+        for i in range(count):
+            prewarm_fraction = 0.15 + (i / count) * 0.70
+            self.spawn_npc(prewarm_fraction=prewarm_fraction)
 
-    def spawn_npc(self):
+    def spawn_npc(self, prewarm_fraction=0.0):
         if not self.paths:
             return None
 
@@ -157,10 +159,13 @@ class MockPartyServerRoom:
         else:
             npc_type = random.choice(["walker", "jogger"])
 
-        speed = 80 if npc_type == "jogger" else 35
+        speed = 48 if npc_type == "jogger" else 22
         lifetime_ms = round((path["lengthPx"] / speed) * 1000)
+        offset_ms = round(lifetime_ms * max(0.0, min(0.9, prewarm_fraction)))
+        now = int(time.time() * 1000)
+        spawn_time = now - offset_ms
+        remaining_lifetime_ms = max(500, lifetime_ms - offset_ms)
         seed = random.randint(0, 0xFFFFFFFF)
-        spawn_time = int(time.time() * 1000)
         npc_id = f"npc-mock-{self._next_npc_seq}-{spawn_time}"
         self._next_npc_seq += 1
 
@@ -171,10 +176,11 @@ class MockPartyServerRoom:
             "npcType": npc_type,
             "seed": seed,
             "spawnTime": spawn_time,
-            "lifetimeMs": lifetime_ms
+            "lifetimeMs": lifetime_ms,
+            "remainingLifetimeMs": remaining_lifetime_ms
         }
         self.active_npcs[npc_id] = npc_data
-        self.despawn_timers[npc_id] = lifetime_ms
+        self.despawn_timers[npc_id] = remaining_lifetime_ms
         return npc_data
 
     def despawn_npc(self, npc_id):
@@ -461,10 +467,10 @@ class TestPartyServerNpcSpawner(unittest.TestCase):
         self.assertEqual(len(self.room.active_npcs), 5)
 
     def test_npc_speed_and_lifetime_accuracy(self):
-        """Walker (35 px/s) and jogger (80 px/s) lifetimes match lengthPx / speed."""
+        """Walker (22 px/s) and jogger (48 px/s) lifetimes match lengthPx / speed."""
         path_manifest = [
-            {"id": "p-walker", "type": "walker", "lengthPx": 3500.0},
-            {"id": "p-jogger", "type": "jogger", "lengthPx": 8000.0}
+            {"id": "p-walker", "type": "walker", "lengthPx": 2200.0},
+            {"id": "p-jogger", "type": "jogger", "lengthPx": 4800.0}
         ]
         room = MockPartyServerRoom("test-room", paths=path_manifest, target_npc_count=2)
         c = MockPartyServerConnection("walker-1")
@@ -473,12 +479,26 @@ class TestPartyServerNpcSpawner(unittest.TestCase):
         for npc in room.active_npcs.values():
             if npc["pathId"] == "p-walker":
                 self.assertEqual(npc["type"], "walker")
-                # 3500 / 35 = 100s = 100000ms
+                # 2200 / 22 = 100s = 100000ms
                 self.assertEqual(npc["lifetimeMs"], 100000)
             elif npc["pathId"] == "p-jogger":
                 self.assertEqual(npc["type"], "jogger")
-                # 8000 / 80 = 100s = 100000ms
+                # 4800 / 48 = 100s = 100000ms
                 self.assertEqual(npc["lifetimeMs"], 100000)
+
+    def test_spawner_prewarming_initial_npcs(self):
+        """Initial NPCs spawned in initSpawner have pre-warmed spawnTime and staggered remaining lifetimes (Ticket-030)."""
+        c1 = MockPartyServerConnection("client-1")
+        self.room.on_connect(c1)
+        now_ms = int(time.time() * 1000)
+
+        self.assertEqual(len(self.room.active_npcs), 5)
+        for npc in self.room.active_npcs.values():
+            # Initial NPCs start with negative offset: now - spawnTime > 0
+            self.assertGreaterEqual(now_ms, npc["spawnTime"], "Initial NPC spawnTime should be in the past (pre-warmed)")
+            # Remaining lifetime is less than total lifetime
+            self.assertLess(npc["remainingLifetimeMs"], npc["lifetimeMs"], "Remaining lifetime should be less than total lifetime")
+            self.assertGreater(npc["remainingLifetimeMs"], 0, "Remaining lifetime must be positive")
 
 
 class TestPartyServerRouteBuilder(unittest.TestCase):

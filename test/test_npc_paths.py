@@ -114,13 +114,22 @@ class TestNpcPaths(unittest.TestCase):
         self.assertTrue(any("woodland" in i for i in ids), "Missing Woodland route")
         self.assertTrue(any("meadow" in i for i in ids), "Missing Meadow route")
 
-        # Check mix of loops (start == end) and point-to-point (start != end)
+        # Check that all 10 paths are point-to-point (start != end) spanning perimeter boundaries
+        self.assertEqual(len(self.paths), 10, f"Expected 10 paths, got {len(self.paths)}")
         loops = [p for p in self.paths if math.hypot(p["waypoints"][0]["x"] - p["waypoints"][-1]["x"],
                                                      p["waypoints"][0]["y"] - p["waypoints"][-1]["y"]) < 5.0]
         p2p = [p for p in self.paths if math.hypot(p["waypoints"][0]["x"] - p["waypoints"][-1]["x"],
                                                    p["waypoints"][0]["y"] - p["waypoints"][-1]["y"]) >= 5.0]
-        self.assertGreaterEqual(len(loops), 2, "Expected a mix including closed loops")
-        self.assertGreaterEqual(len(p2p), 2, "Expected a mix including point-to-point routes")
+        self.assertEqual(len(loops), 0, "Expected all paths to be point-to-point (0 closed loops)")
+        self.assertEqual(len(p2p), 10, "Expected all 10 paths to be point-to-point edge-to-edge routes")
+
+        for p in self.paths:
+            start_wp = p["waypoints"][0]
+            end_wp = p["waypoints"][-1]
+            start_at_edge = (start_wp['x'] <= 20 or start_wp['x'] >= 3180 or start_wp['y'] <= 20 or start_wp['y'] >= 2380)
+            end_at_edge = (end_wp['x'] <= 20 or end_wp['x'] >= 3180 or end_wp['y'] <= 20 or end_wp['y'] >= 2380)
+            self.assertTrue(start_at_edge, f"Path {p['id']} start waypoint {start_wp} not on perimeter edge")
+            self.assertTrue(end_at_edge, f"Path {p['id']} end waypoint {end_wp} not on perimeter edge")
 
     def test_ac_025_2_obstacle_clearance_and_world_bounds(self):
         """AC-025.2: Sample every segment at <= 8 px steps and assert clearance and bounds."""
@@ -141,11 +150,11 @@ class TestNpcPaths(unittest.TestCase):
                     sx = p1["x"] + (p2["x"] - p1["x"]) * t
                     sy = p1["y"] + (p2["y"] - p1["y"]) * t
 
-                    # 1. World bounds: [80, 3120] x [80, 2300]
-                    self.assertGreaterEqual(sx, 80.0, f"{pid} seg {i} X {sx:.1f} < 80")
-                    self.assertLessEqual(sx, 3120.0, f"{pid} seg {i} X {sx:.1f} > 3120")
-                    self.assertGreaterEqual(sy, 80.0, f"{pid} seg {i} Y {sy:.1f} < 80")
-                    self.assertLessEqual(sy, 2300.0, f"{pid} seg {i} Y {sy:.1f} > 2300")
+                    # 1. World bounds: [0.0, 3200.0] x [0.0, 2400.0]
+                    self.assertGreaterEqual(sx, 0.0, f"{pid} seg {i} X {sx:.1f} < 0")
+                    self.assertLessEqual(sx, 3200.0, f"{pid} seg {i} X {sx:.1f} > 3200")
+                    self.assertGreaterEqual(sy, 0.0, f"{pid} seg {i} Y {sy:.1f} < 0")
+                    self.assertLessEqual(sy, 2400.0, f"{pid} seg {i} Y {sy:.1f} > 2400")
 
                     # 2. Tree clearance: hypot >= tree.trunkRadius + 20
                     for tree in self.obstacles["trees"]:
@@ -187,6 +196,7 @@ class TestNpcPaths(unittest.TestCase):
         """AC-025.3: Manifest lengths match computed polyline lengths within 1.0 px."""
         manifest_map = {m["id"]: m for m in self.manifest}
         self.assertEqual(len(manifest_map), len(self.paths), "Manifest count must match paths count")
+        self.assertEqual(len(self.paths), 10, f"Expected 10 paths, got {len(self.paths)}")
 
         for path in self.paths:
             pid = path["id"]

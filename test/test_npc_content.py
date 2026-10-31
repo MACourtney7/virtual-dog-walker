@@ -6,7 +6,7 @@ Traces directly to:
 - AC-024.1: Names follow "<First> the <Walker|Jogger>".
 - AC-024.2: Determinism: identical seed/type yields identical identity and phrase sequence.
 - AC-024.3: Phrase pool is majority common; odd frequency ~15% (+/-5%) over 2000 samples.
-- AC-024.4: Speeds are walker 35 / jogger 80.
+- AC-024.4: Speeds are walker 22 / jogger 48 (updated in Ticket-030).
 - AC-024.5: Tests added and python3 test/run_tests.py passes.
 """
 
@@ -332,15 +332,15 @@ class TestNPCContent(unittest.TestCase):
     # AC-024.4: NPC Speeds
     # -------------------------------------------------------------------------
     def test_ac024_4_npc_speeds(self):
-        """Verify NPC_SPEED specifies walker: 35 and jogger: 80."""
+        """Verify NPC_SPEED specifies walker: 22 and jogger: 48."""
         if self.js_exists:
-            # Match walker: 35 and jogger: 80
+            # Match walker: 22 and jogger: 48
             walker_match = re.search(r"walker\s*:\s*(\d+)", self.js_content)
             jogger_match = re.search(r"jogger\s*:\s*(\d+)", self.js_content)
             self.assertIsNotNone(walker_match, "walker speed not found in NPC_SPEED")
             self.assertIsNotNone(jogger_match, "jogger speed not found in NPC_SPEED")
-            self.assertEqual(int(walker_match.group(1)), 35, "Walker speed must be 35 px/s")
-            self.assertEqual(int(jogger_match.group(1)), 80, "Jogger speed must be 80 px/s")
+            self.assertEqual(int(walker_match.group(1)), 22, "Walker speed must be 22 px/s")
+            self.assertEqual(int(jogger_match.group(1)), 48, "Jogger speed must be 48 px/s")
 
     # -------------------------------------------------------------------------
     # NPC Tag Style & Speech Delay

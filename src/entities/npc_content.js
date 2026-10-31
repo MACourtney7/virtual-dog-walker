@@ -13,8 +13,8 @@ export function mulberry32(seed) {
 }
 
 export const NPC_SPEED = Object.freeze({
-  walker: 35,
-  jogger: 80
+  walker: 22,
+  jogger: 48
 });
 
 export const NPC_TYPES = Object.freeze(['walker', 'jogger']);

@@ -67,6 +67,6 @@ flowchart TD
 - [x] Ticket-026 completed and merged to `main`.
 - [x] Ticket-027 completed and merged to `main`.
 - [x] Ticket-028 completed and merged to `main`.
-- [ ] Ticket-029 completed and merged to `main`.
-- [ ] End-to-end tests pass (`python3 test/run_tests.py`).
-- [ ] Canonical specifications reconciled in `openspec/specs/`.
+- [x] Ticket-029 completed and merged to `main`.
+- [x] End-to-end tests pass (`python3 test/run_tests.py`).
+- [x] Canonical specifications reconciled in `openspec/specs/`.

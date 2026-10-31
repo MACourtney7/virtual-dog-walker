@@ -129,7 +129,7 @@ class SimulatedCliftonDownGameClient:
         self.net.onNpcSnapshot = lambda snapshot, st, pkt=None: self.handleNpcSnapshot(snapshot, st)
 
         # Seed initial solo NPCs if offline
-        if not self.isNetworkAuthoritative():
+        if not self.isNetworkAuthoritative() and not self.isNetworkConnecting():
             self.updateLocalSpawner(0)
 
     def getCurrentServerTime(self):
@@ -137,6 +137,11 @@ class SimulatedCliftonDownGameClient:
             # net.getServerTime works in ms
             return self.net.getServerTime(self.currentTimeSec * 1000.0) / 1000.0
         return self.currentTimeSec
+
+    def isNetworkConnecting(self):
+        if not self.net:
+            return False
+        return getattr(self.net, "status", None) == "CONNECTING"
 
     def isNetworkAuthoritative(self):
         if not self.net:
@@ -160,7 +165,7 @@ class SimulatedCliftonDownGameClient:
         path_id = data.get("pathId")
         path = self.path_map.get(path_id)
         waypoints = path["waypoints"] if path else []
-        speed = 80.0 if npc_type == "jogger" else 35.0
+        speed = 48.0 if npc_type == "jogger" else 22.0
 
         npc = ClientParkNPC(
             id=data["id"],
@@ -204,7 +209,7 @@ class SimulatedCliftonDownGameClient:
         now_sec = self.getCurrentServerTime()
         seed = random.randint(0, 0xFFFFFFFF)
         npc_id = f"npc-solo-{random.randint(100000, 999999)}-{int(now_sec)}"
-        speed = 80.0 if npc_type == "jogger" else 35.0
+        speed = 48.0 if npc_type == "jogger" else 22.0
 
         npc = ClientParkNPC(
             id=npc_id,
@@ -220,7 +225,7 @@ class SimulatedCliftonDownGameClient:
         return npc
 
     def updateLocalSpawner(self, dt):
-        if self.isNetworkAuthoritative():
+        if self.isNetworkAuthoritative() or self.isNetworkConnecting():
             return
         while len(self.npcs) < 5:
             self.spawnLocalNpc()
@@ -318,10 +323,10 @@ class TestClientNpcSync(unittest.TestCase):
         """
         dt_error = 0.050  # 50 milliseconds
 
-        # Test for both Walker (35 px/s) and Jogger (80 px/s)
+        # Test for both Walker (22 px/s) and Jogger (48 px/s)
         test_cases = [
-            ("walker", 35.0, "sea-walls-promenade"),
-            ("jogger", 80.0, "durdham-down-circuit")
+            ("walker", 22.0, "sea-walls-promenade"),
+            ("jogger", 48.0, "durdham-down-circuit")
         ]
 
         for npc_type, speed, path_id in test_cases:
@@ -370,7 +375,7 @@ class TestClientNpcSync(unittest.TestCase):
         late_join_time = 1045.0  # 45 seconds later
 
         path = self.path_map["central-meadow-ramble"]
-        speed = 35.0
+        speed = 22.0
 
         # Reference NPC that has been active since spawnTime
         reference_npc = ClientParkNPC(
@@ -454,7 +459,7 @@ class TestClientNpcSync(unittest.TestCase):
         client = SimulatedCliftonDownGameClient(net=net, paths=self.paths, current_time_sec=1000.0)
 
         path = self.path_map["sea-walls-promenade"]
-        walker_speed = 35.0
+        walker_speed = 22.0
         # Calculate expected finish time
         seg_len_sum = sum(
             math.hypot(path["waypoints"][i+1]["x"] - path["waypoints"][i]["x"],
@@ -585,17 +590,66 @@ class TestClientNpcSync(unittest.TestCase):
             path_def = self.path_map[npc.pathId]
             if path_def.get("type") == "walker":
                 self.assertEqual(npc.type, "walker")
-                self.assertEqual(npc.speed, 35.0)
+                self.assertEqual(npc.speed, 22.0)
             elif path_def.get("type") == "jogger":
                 self.assertEqual(npc.type, "jogger")
-                self.assertEqual(npc.speed, 80.0)
+                self.assertEqual(npc.speed, 48.0)
             else:
                 self.assertIn(npc.type, ("walker", "jogger"))
-                expected_speed = 80.0 if npc.type == "jogger" else 35.0
+                expected_speed = 48.0 if npc.type == "jogger" else 22.0
                 self.assertEqual(npc.speed, expected_speed)
 
             self.assertGreaterEqual(npc.seed, 0)
             self.assertLessEqual(npc.seed, 0xFFFFFFFF)
+
+    def test_deterministic_speech_timing(self):
+        """Verify deterministic speech timeline timing using walker (22.0 px/s) and jogger (48.0 px/s) speeds."""
+        path = self.path_map["sea-walls-promenade"]
+        walker = ClientParkNPC(
+            id="npc-speech-walker",
+            pathId=path["id"],
+            type="walker",
+            seed=42,
+            spawnTime=1000.0,
+            waypoints=path["waypoints"],
+            speed=22.0
+        )
+        jogger = ClientParkNPC(
+            id="npc-speech-jogger",
+            pathId=path["id"],
+            type="jogger",
+            seed=42,
+            spawnTime=1000.0,
+            waypoints=path["waypoints"],
+            speed=48.0
+        )
+        self.assertEqual(walker.speed, 22.0)
+        self.assertEqual(jogger.speed, 48.0)
+        self.assertGreater(len(walker.speechTimeline), 0)
+        self.assertGreater(len(jogger.speechTimeline), 0)
+        for ev in walker.speechTimeline:
+            self.assertEqual(ev["endTime"] - ev["startTime"], 4.0)
+        for ev in jogger.speechTimeline:
+            self.assertEqual(ev["endTime"] - ev["startTime"], 4.0)
+
+    def test_spawner_guarded_during_connecting_handshake(self):
+        """
+        AC-030.4: Verify that when game.net.status === 'CONNECTING',
+        updateLocalSpawner(0) does not spawn local NPCs.
+        """
+        net = SimulatedClientNetworkManager()
+        net.status = "CONNECTING"
+        client = SimulatedCliftonDownGameClient(net=net, paths=self.paths, current_time_sec=1000.0)
+
+        self.assertEqual(len(client.npcs), 0, "No local NPCs should be spawned while net.status is CONNECTING")
+        client.updateLocalSpawner(0)
+        self.assertEqual(len(client.npcs), 0, "updateLocalSpawner(0) must not spawn local NPCs when CONNECTING")
+        client.updateGameLoop(0.016)
+        self.assertEqual(len(client.npcs), 0, "updateGameLoop must not spawn local NPCs when CONNECTING")
+
+        # Source code inspection of src/main.js
+        self.assertIn("isNetworkConnecting", self.main_code)
+        self.assertRegex(self.main_code, r"if\s*\(\s*(?:this\.)?isNetworkAuthoritative\(\)\s*\|\|\s*(?:this\.)?isNetworkConnecting\(\)\s*\)\s*return;")
 
     # -------------------------------------------------------------------------
     # AC-028.4: NetworkManager Event Forwarding & Server Clock Offset

@@ -85,9 +85,11 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
     - Zero per-frame network traffic; clients simulate movement deterministically from `spawnTime`, path speed, and PRNG (`mulberry32`).
     - Finite lifecycle: spawn -> deterministic path traversal -> 0.5s fade out -> despawn -> automatic replacement spawn.
   - **Obstacle-Free Edge-to-Edge Precomputed Path Library**:
-    - 10 point-to-point routes verified completely clear of trees, benches, dog-waste bins, and streetlamps across The Downs.
-    - All paths strictly originate at perimeter map boundaries (`x <= 20`, `x >= 3180`, `y <= 20`, or `y >= 2380`) and terminate at opposing perimeter map boundaries, eliminating mid-meadow popping.
-    - Symmetrical 0.5s entry fade-in and 0.5s exit fade-out with smooth tangent heading angle interpolation on waypoint turns.
+    - 10 point-to-point routes verified completely clear of trees, benches, dog-waste bins, streetlamps, limestone rock outcrops, and the Water Tower landmark across The Downs (`distance >= 14 + obstacleRadius + 6 px`).
+    - All paths strictly originate inside the stone perimeter wall boundaries (`75 <= x <= 140` or `3060 <= x <= 3125`, `75 <= y <= 140` or `2260 <= y <= 2325`, `hypot(start - end) >= 1200 px`) and terminate at opposing perimeter map boundaries, eliminating mid-meadow popping.
+    - Central Meadow & Landmark Routing: At least 7 of 10 paths traverse intermediate waypoints through the central park interior (`900 <= x <= 2500` and `450 <= y <= 1450`), routing along gravel avenues past Central Meadow (`1350, 1000`) and the Durdham Down Water Tower clearing (`2250, 580`).
+    - Symmetrical 0.5s entry fade-in and 0.5s exit fade-out with smooth tangent heading angle interpolation on waypoint turns. Newly spawned NPCs start with `opacity >= 0.25` (1.0 at distance 0) preventing invisible frozen states.
+    - Robust timestamp normalization: `toSeconds(t)` normalizes millisecond server timestamps (`> 1e10`) to seconds without double conversion.
   - **Distinctive Naming & Nametag Styling**:
     - Naming convention: `<First> the <Walker|Jogger>` (e.g. "Mary the Walker", "Steve the Jogger") derived deterministically from `seed`.
     - Distinctive visual styling (`NPC_TAG_STYLE`): italic font (`italic 11px 'Outfit', sans-serif`), translucent dark pill backdrop, and warm golden border and text (`#fef08a`), clearly distinguishing NPCs from player avatars.

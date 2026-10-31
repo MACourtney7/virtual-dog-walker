@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-033"
 title: "Fix Server NPC spawnTime Unit Mismatch (ms vs s), Central Path Coverage, and Ground Shadow Artifacts"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 roadmap: null
 depends_on: []
 created_at: "2026-10-31T15:45:00Z"

@@ -105,11 +105,11 @@ Players engaging in ball-fetching gameplay encounter three significant friction 
 
 ## 3. Acceptance Criteria & Verification Matrix
 
-- [ ] **AC-035.1 (Perimeter Exemption)**: When a ball is thrown > 230 px away (e.g., 350–500 px), the dog in `FETCHING` state breaks the 230 px owner perimeter clamp without restriction, reaches the ball, and picks it up (`hasBall = true`).
-- [ ] **AC-035.2 (Ball Pickup on Owner Contact)**: When the dog returns to the owner with the ball, upon reaching owner contact distance (`dist <= 36–42 px`), the ball transitions to `inOwnerPossession = true`, ceases rendering, and disappears as if picked up by the owner.
-- [ ] **AC-035.3 (Single Active Ball Constraint)**: The owner can only throw when `canThrowBall()` is true. Subsequent throw attempts while the ball is thrown, rolling, carried, or being fetched are strictly blocked.
-- [ ] **AC-035.4 (Touch HUD Feedback)**: The on-screen throw button reflects throw readiness, disabling/dimming when a ball is currently in flight or being fetched.
-- [ ] **AC-035.5 (Harness Validation)**: All unit and integration test suites in `python3 test/run_tests.py` pass 100%, including new fetching mechanics tests in `test/test_fetching_mechanics.py`.
+- [x] **AC-035.1 (Perimeter Exemption)**: When a ball is thrown > 230 px away (e.g., 350–500 px), the dog in `FETCHING` state breaks the 230 px owner perimeter clamp without restriction, reaches the ball, and picks it up (`hasBall = true`).
+- [x] **AC-035.2 (Ball Pickup on Owner Contact)**: When the dog returns to the owner with the ball, upon reaching owner contact distance (`dist <= 36–42 px`), the ball transitions to `inOwnerPossession = true`, ceases rendering, and disappears as if picked up by the owner.
+- [x] **AC-035.3 (Single Active Ball Constraint)**: The owner can only throw when `canThrowBall()` is true. Subsequent throw attempts while the ball is thrown, rolling, carried, or being fetched are strictly blocked.
+- [x] **AC-035.4 (Touch HUD Feedback)**: The on-screen throw button reflects throw readiness, disabling/dimming when a ball is currently in flight or being fetched.
+- [x] **AC-035.5 (Harness Validation)**: All unit and integration test suites in `python3 test/run_tests.py` pass 100%, including new fetching mechanics tests in `test/test_fetching_mechanics.py`.
 
 ---
 

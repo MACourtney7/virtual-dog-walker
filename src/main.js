@@ -37,6 +37,7 @@ export class CliftonDownGame {
     this.owner = new Owner(startX, startY, 'Walker', true);
     this.dog = new CompanionDog(startX + 40, startY + 20, this.owner, CoatPreset.CHOCOLATE_TAN);
     this.ball = new TennisBall(startX + 20, startY + 20);
+    this.ball.inOwnerPossession = true;
 
     this.camera.follow(this.owner);
 
@@ -660,17 +661,40 @@ export class CliftonDownGame {
     this.hud.showToast('Disposed cleanly! The Downs thanks you 🌳');
   }
 
+  canThrowBall() {
+    return Boolean(
+      this.ball &&
+      this.ball.inOwnerPossession &&
+      !this.ball.isThrown &&
+      !this.ball.isCarried &&
+      (!this.dog || (this.dog.state !== DogState.FETCHING && !this.dog.hasBall))
+    );
+  }
+
   throwBall() {
+    if (!this.canThrowBall()) {
+      if (this.hud && typeof this.hud.showToast === 'function') {
+        this.hud.showToast('🎾 Wait for your dog to return the ball!');
+      }
+      return;
+    }
     const dirX = Math.cos(this.owner.angle);
     const dirY = Math.sin(this.owner.angle);
     this.throwBallAt(this.owner.x + dirX * 320, this.owner.y + dirY * 320, dirX, dirY);
   }
 
   throwBallAt(targetX, targetY, dirX, dirY) {
+    if (!this.canThrowBall()) {
+      if (this.hud && typeof this.hud.showToast === 'function') {
+        this.hud.showToast('🎾 Wait for your dog to return the ball!');
+      }
+      return;
+    }
     const dist = Math.hypot(targetX - this.owner.x, targetY - this.owner.y);
     const speed = Math.min(500, Math.max(240, dist * 1.4));
 
     this.ball.throw(this.owner.x, this.owner.y, dirX, dirY, speed, speed * 0.5);
+    this.ball.inOwnerPossession = false;
     sound.playBallBounce();
 
     // Trigger local dog to chase
@@ -678,7 +702,9 @@ export class CliftonDownGame {
 
     // Broadcast throw to multiplayer field
     this.net.broadcast(Protocol.createBallThrown(this.net.peerId, this.owner.x, this.owner.y, dirX, dirY, speed));
-    this.hud.showToast('🎾 Ball thrown! Fetch!');
+    if (this.hud && typeof this.hud.showToast === 'function') {
+      this.hud.showToast('🎾 Ball thrown! Fetch!');
+    }
   }
 
   // Ambient Park NPC Management (Networked & Solo Pool)
@@ -864,6 +890,46 @@ export class CliftonDownGame {
     // this.dog.update(dt, this.field, allDogs, this.ball, this.npcs);
     this.dog.update(dt, this.field, allDogs, this.ball, Array.from(this.npcs.values()));
     this.ball.update(dt, this.field);
+
+    // Direct Owner Ball Pickup Safeguard
+    if (this.ball && this.owner && !this.ball.inOwnerPossession && !this.ball.isCarried) {
+      if (this.ball.isThrown && this.ball.z <= 0 && Math.hypot(this.ball.vx, this.ball.vy) < 10) {
+        this.ball.isThrown = false;
+      }
+      if (!this.ball.isThrown) {
+        const distToBall = Math.hypot(this.owner.x - this.ball.x, this.owner.y - this.ball.y);
+        if (distToBall < 32) {
+          if (typeof this.ball.retrieveByOwner === 'function') {
+            this.ball.retrieveByOwner();
+          } else {
+            this.ball.inOwnerPossession = true;
+            this.ball.isThrown = false;
+            this.ball.isCarried = false;
+            this.ball.carrier = null;
+            this.ball.vx = 0;
+            this.ball.vy = 0;
+            this.ball.vz = 0;
+            this.ball.z = 0;
+          }
+          if (this.dog) {
+            if (this.dog.targetBall === this.ball || this.dog.targetBall) {
+              this.dog.targetBall = null;
+            }
+            if (this.dog.state === DogState.FETCHING) {
+              this.dog.hasBall = false;
+              this.dog.targetBall = null;
+              this.dog.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
+            }
+          }
+          if (this.hud && typeof this.hud.showToast === 'function') {
+            this.hud.showToast('🎾 Picked up tennis ball.');
+          }
+        }
+      }
+    }
+
+    // Dynamic Touch Throw Button State
+    this.touchControls?.setThrowEnabled(this.canThrowBall());
 
     // Grass footstep sound
     if (this.owner.isMoving && timestampNow() - this.lastFootstepTime > 320) {

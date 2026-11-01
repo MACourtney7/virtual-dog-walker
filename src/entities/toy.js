@@ -17,6 +17,7 @@ export class TennisBall {
     this.isThrown = false;
     this.isCarried = false;
     this.carrier = null; // Dog currently holding the ball
+    this.inOwnerPossession = true;
     this.depthY = this.y;
   }
 
@@ -33,12 +34,14 @@ export class TennisBall {
     this.isThrown = true;
     this.isCarried = false;
     this.carrier = null;
+    this.inOwnerPossession = false;
   }
 
   attachToDog(dog) {
     this.isCarried = true;
     this.isThrown = false;
     this.carrier = dog;
+    this.inOwnerPossession = false;
     this.vx = 0;
     this.vy = 0;
     this.vz = 0;
@@ -48,6 +51,7 @@ export class TennisBall {
   drop(x, y) {
     this.isCarried = false;
     this.carrier = null;
+    this.inOwnerPossession = false;
     this.x = x;
     this.y = y;
     this.z = 0;
@@ -56,7 +60,22 @@ export class TennisBall {
     this.vz = 0;
   }
 
+  retrieveByOwner() {
+    this.inOwnerPossession = true;
+    this.isThrown = false;
+    this.isCarried = false;
+    this.carrier = null;
+    this.vx = 0;
+    this.vy = 0;
+    this.vz = 0;
+    this.z = 0;
+  }
+
   update(dt, field) {
+    if (this.inOwnerPossession) {
+      return;
+    }
+
     if (this.isCarried && this.carrier) {
       // Offset ball at the dog's mouth position
       const mouthOffset = 18;
@@ -111,6 +130,10 @@ export class TennisBall {
   }
 
   draw(ctx) {
+    if (this.inOwnerPossession) {
+      return;
+    }
+
     ctx.save();
     // 1. Soft Shadow on the ground
     const shadowScale = Math.max(0.3, 1 - this.z / 180);

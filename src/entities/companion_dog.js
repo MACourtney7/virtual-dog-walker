@@ -495,7 +495,7 @@ export class CompanionDog {
         this.vy *= 0.5;
         this.isPullingLeash = true;
       }
-    } else if (this.owner && !this.owner.isLeashed && this.state !== DogState.LOST) {
+    } else if (this.owner && !this.owner.isLeashed && this.state !== DogState.LOST && this.state !== DogState.FETCHING) {
       this.isPullingLeash = false;
       // Off-leash bounded perimeter constraint: hard clamp to 230px so dog never strays out of sight
       const maxRoam = 230;
@@ -1009,12 +1009,20 @@ export class CompanionDog {
         this.angle = Math.atan2(this.vy, this.vx);
         this.wagSpeed = 14;
       } else {
-        // Drop ball at owner's feet
+        // Hand off ball to owner
+        if (typeof this.targetBall.retrieveByOwner === 'function') {
+          this.targetBall.retrieveByOwner();
+        } else {
+          this.targetBall.inOwnerPossession = true;
+          this.targetBall.isCarried = false;
+          this.targetBall.carrier = null;
+        }
         this.hasBall = false;
-        this.targetBall.drop(this.x + Math.cos(this.angle) * 14, this.y + Math.sin(this.angle) * 14);
         this.targetBall = null;
         this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
-        this.pet(); // reward with happiness!
+        this.pet();
+        this.emoteBubble = '❤️';
+        this.emoteTimer = 2.0;
       }
     }
   }

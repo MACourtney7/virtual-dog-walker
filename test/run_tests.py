@@ -66,7 +66,8 @@ def run_all():
         "test/test_npc_client.py",
         "test/test_field.py",
         "test/test_fetching_mechanics.py",
-        "test/test_zero_mesh_integration.py"
+        "test/test_zero_mesh_integration.py",
+        "test/test_wasm_core_sim.py"
     ]
     for t in test_suites:
         res = subprocess.run([sys.executable, t])

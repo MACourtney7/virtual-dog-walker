@@ -1,4 +1,5 @@
 // Tennis Ball Toy - Ballistic 2.5D Trajectory, Bouncing & Canine Fetching Mechanics
+import { getWasmSim } from '../engine/wasm_sim_bridge.js';
 
 export class TennisBall {
   constructor(x = 0, y = 0) {

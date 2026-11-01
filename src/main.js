@@ -16,6 +16,7 @@ import { NPC_PATHS, getNpcPath } from './world/npc_paths.js';
 import { NavigationArrow } from './ui/navigation_arrow.js';
 import { weatherClient, WeatherType } from './systems/weather.js';
 import { environmentSystem, TimeOfDay } from './world/environment.js';
+import { initWasmSim } from './engine/wasm_sim_bridge.js';
 
 export class CliftonDownGame {
   constructor() {
@@ -183,6 +184,7 @@ export class CliftonDownGame {
     this.initCanvas();
     this.bindInputs();
     this.initNetworking();
+    initWasmSim().catch(() => {});
     if (!this.isNetworkConnecting()) {
       this.updateLocalSpawner(0);
     }

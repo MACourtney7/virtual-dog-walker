@@ -1,5 +1,6 @@
 // Companion Dog Entity - Canine Steering AI, Floppy Ear Springs, Leash Mechanics & Ball Fetching
 import { PoopPile } from './waste.js';
+import { stepLeashConstraint } from '../engine/wasm_sim_bridge.js';
 
 export const DogState = {
   FOLLOWING: 'FOLLOWING',

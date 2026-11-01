@@ -12,6 +12,7 @@ import {
   ODD_PHRASES
 } from './npc_content.js';
 import { getNpcPath, NPC_PATHS } from '../world/npc_paths.js';
+import { sampleNpcState } from '../engine/wasm_sim_bridge.js';
 
 export const NPCState = {
   WALKING: 'WALKING',

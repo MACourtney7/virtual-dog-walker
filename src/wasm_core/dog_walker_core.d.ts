@@ -9,6 +9,7 @@ export class WasmWorldSim {
     sample_npc(waypoints_flat: Float64Array | number[], speed: number, spawn_time: number, now: number): Float64Array;
     set_colliders(colliders_json: string): void;
     step_ball(dt: number): Float64Array;
+    step_ears(left_angle: number, left_v: number, right_angle: number, right_v: number, dog_vx: number, dog_vy: number, dog_angle: number, dt: number): Float64Array;
     step_leash(dog_x: number, dog_y: number, dog_vx: number, dog_vy: number, owner_x: number, owner_y: number, max_length: number, stiffness: number, damping: number, dt: number): Float64Array;
     throw_ball(start_x: number, start_y: number, target_x: number, target_y: number, power: number): void;
 }
@@ -23,6 +24,7 @@ export interface InitOutput {
     readonly wasmworldsim_sample_npc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
     readonly wasmworldsim_set_colliders: (a: number, b: number, c: number) => void;
     readonly wasmworldsim_step_ball: (a: number, b: number, c: number) => void;
+    readonly wasmworldsim_step_ears: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly wasmworldsim_step_leash: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
     readonly wasmworldsim_throw_ball: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly __wbindgen_externrefs: WebAssembly.Table;

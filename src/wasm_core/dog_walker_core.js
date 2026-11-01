@@ -91,6 +91,30 @@ export class WasmWorldSim {
         }
     }
     /**
+     * @param {number} left_angle
+     * @param {number} left_v
+     * @param {number} right_angle
+     * @param {number} right_v
+     * @param {number} dog_vx
+     * @param {number} dog_vy
+     * @param {number} dog_angle
+     * @param {number} dt
+     * @returns {Float64Array}
+     */
+    step_ears(left_angle, left_v, right_angle, right_v, dog_vx, dog_vy, dog_angle, dt) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+            wasm.wasmworldsim_step_ears(retptr, this.__wbg_ptr, left_angle, left_v, right_angle, right_v, dog_vx, dog_vy, dog_angle, dt);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var v1 = getArrayF64FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export(r0, r1 * 8, 8);
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
      * @param {number} dog_x
      * @param {number} dog_y
      * @param {number} dog_vx

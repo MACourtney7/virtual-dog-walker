@@ -42,6 +42,31 @@ pub fn step_leash_constraint(
     }
 }
 
+pub fn step_ear_springs(
+    left_angle: &mut f64,
+    left_v: &mut f64,
+    right_angle: &mut f64,
+    right_v: &mut f64,
+    dog_vx: f64,
+    dog_vy: f64,
+    dog_angle: f64,
+    dt: f64,
+) {
+    let spring_k = 180.0;
+    let damping = 14.0;
+
+    let forward_speed = dog_vx * dog_angle.cos() + dog_vy * dog_angle.sin();
+    let target_offset = (forward_speed * 0.003).clamp(-0.4, 0.4);
+
+    let left_force = -spring_k * (*left_angle - target_offset) - damping * *left_v;
+    *left_v += left_force * dt;
+    *left_angle += *left_v * dt;
+
+    let right_force = -spring_k * (*right_angle - target_offset) - damping * *right_v;
+    *right_v += right_force * dt;
+    *right_angle += *right_v * dt;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -96,5 +121,18 @@ mod tests {
         );
         assert!(constrained);
         assert_eq!(dog_x, 190.0); // 50 + 140
+    }
+
+    #[test]
+    fn test_ear_spring_damping() {
+        let mut l_ang = 0.5;
+        let mut l_v = 0.0;
+        let mut r_ang = -0.5;
+        let mut r_v = 0.0;
+        for _ in 0..60 {
+            step_ear_springs(&mut l_ang, &mut l_v, &mut r_ang, &mut r_v, 0.0, 0.0, 0.0, 1.0 / 60.0);
+        }
+        assert!(l_ang.abs() < 0.1);
+        assert!(r_ang.abs() < 0.1);
     }
 }

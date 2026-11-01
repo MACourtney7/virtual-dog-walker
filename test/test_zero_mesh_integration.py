@@ -282,6 +282,35 @@ class TestZeroMeshIntegration(unittest.TestCase):
         p2.sync_proximity_cluster([])
         self.assertEqual(len(p1.proximity_cluster), 0)
 
+    def test_sync_loop_and_protocol_contract_compatibility(self):
+        """Verify startSyncLoop, ensureRemotePeer structure, and onPeerJoin signature."""
+        js_file = os.path.join(os.path.dirname(__file__), "..", "src", "net", "zero_mesh_network.js")
+        with open(js_file) as f:
+            content = f.read()
+
+        # Check startSyncLoop and stop methods
+        self.assertIn("startSyncLoop(getLocalStateFn)", content)
+        self.assertIn("stop()", content)
+
+        # Check ensureRemotePeer creates ownerInterpolator and dogInterpolator
+        self.assertIn("ownerInterpolator: new EntityInterpolator()", content)
+        self.assertIn("dogInterpolator: new EntityInterpolator()", content)
+
+        # Check SYNC_STATE unpacks both nested packet.owner and packet.dog
+        self.assertIn("const ownerSnap = packet.owner", content)
+        self.assertIn("const dogSnap = packet.dog", content)
+
+        # Check onPeerJoin is called with (senderId, peerData.meta)
+        self.assertIn("this.onPeerJoin(senderId, peerData.meta)", content)
+
+        # Check createWelcome passes (this.peerId, this.localMeta, peersList)
+        self.assertIn("Protocol.createWelcome(\n          this.peerId,\n          this.localMeta,", content)
+
+        # Check real WasmWebRtcEngine / WasmCryptoSession calls
+        self.assertIn("this.cryptoSession.seal_drop_sdp", content)
+        self.assertIn("this.cryptoSession.open_drop_sdp", content)
+        self.assertIn("engine.accept_offer_and_create_answer", content)
+
 
 if __name__ == "__main__":
     unittest.main()

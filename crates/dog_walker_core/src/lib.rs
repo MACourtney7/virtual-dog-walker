@@ -6,7 +6,7 @@ pub mod npc_sim;
 
 use ball_physics::BallSim;
 use collision::{resolve_entity_collisions, Collider};
-use dog_physics::step_leash_constraint;
+use dog_physics::{step_ear_springs, step_leash_constraint};
 use npc_sim::sample_npc_state;
 use wasm_bindgen::prelude::*;
 
@@ -80,6 +80,25 @@ impl WasmWorldSim {
             dt,
         );
         vec![d_x, d_y, d_vx, d_vy, if constrained { 1.0 } else { 0.0 }]
+    }
+
+    pub fn step_ears(
+        &self,
+        left_angle: f64,
+        left_v: f64,
+        right_angle: f64,
+        right_v: f64,
+        dog_vx: f64,
+        dog_vy: f64,
+        dog_angle: f64,
+        dt: f64,
+    ) -> Vec<f64> {
+        let mut l_ang = left_angle;
+        let mut l_vel = left_v;
+        let mut r_ang = right_angle;
+        let mut r_vel = right_v;
+        step_ear_springs(&mut l_ang, &mut l_vel, &mut r_ang, &mut r_vel, dog_vx, dog_vy, dog_angle, dt);
+        vec![l_ang, l_vel, r_ang, r_vel]
     }
 
     pub fn throw_ball(&mut self, start_x: f64, start_y: f64, target_x: f64, target_y: f64, power: f64) {

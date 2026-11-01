@@ -60,14 +60,21 @@ export class ZeroMeshNetworkManager {
     this.localMeta = {
       name: 'Park Walker',
       jacketColor: '#1e3a8a',
-      coatName: 'Chocolate & Tan (Ziggy)'
+      coatName: 'Chocolate & Tan (Ziggy)',
+      hairStyle: 'short',
+      hairColor: '#4a3728',
+      pantsColor: '#1e293b',
+      skinTone: '#f3cbb1',
+      collarColor: '#dc2626',
+      personality: null
     };
 
     this.workerOrigin = (typeof window !== 'undefined' && window.WORKER_HTTP_ORIGIN)
       ? window.WORKER_HTTP_ORIGIN
       : 'https://network.zero-network.workers.dev';
 
-    this.remotePeers = new Map(); // peerId -> { id, name, owner, dog, interpolator, ... }
+    // Remote entity interpolators (peerId -> { ownerInterpolator, dogInterpolator, meta })
+    this.remotePeers = new Map();
     this.meshPeerIds = new Set();
     this.iceServers = null;
     this.iceCachedAt = 0;
@@ -79,6 +86,7 @@ export class ZeroMeshNetworkManager {
     this.proximityMesh = null;
     this.hostWs = null;
     this.hostSecret = null;
+    this.pendingEngine = null;
 
     // Event hooks
     this.onPeerJoin = null;
@@ -97,6 +105,10 @@ export class ZeroMeshNetworkManager {
     this.onProximityChat = null;
 
     this.serverClockOffset = 0;
+
+    // Periodic state synchronization loop
+    this.syncInterval = null;
+    this.syncHz = 16; // 16 updates per second
 
     // NPC Coordination
     this.activeNpcs = new Map();
@@ -122,6 +134,39 @@ export class ZeroMeshNetworkManager {
     if (typeof this.onStatusChange === 'function') {
       this.onStatusChange(status);
     }
+  }
+
+  ensureRemotePeer(peerId, meta = {}) {
+    let peerData = this.remotePeers.get(peerId);
+    if (!peerData) {
+      peerData = {
+        ownerInterpolator: new EntityInterpolator(),
+        dogInterpolator: new EntityInterpolator(),
+        meta: {
+          name: meta.name || 'Walker',
+          jacketColor: meta.jacketColor || '#1e3a8a',
+          coatName: meta.coatName || 'Chocolate & Tan (Ziggy)',
+          hairStyle: meta.hairStyle,
+          hairColor: meta.hairColor,
+          pantsColor: meta.pantsColor,
+          skinTone: meta.skinTone,
+          collarColor: meta.collarColor,
+          personality: meta.personality || null
+        }
+      };
+      this.remotePeers.set(peerId, peerData);
+    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality)) {
+      if (meta.name) peerData.meta.name = meta.name;
+      if (meta.jacketColor) peerData.meta.jacketColor = meta.jacketColor;
+      if (meta.coatName) peerData.meta.coatName = meta.coatName;
+      if (meta.hairStyle) peerData.meta.hairStyle = meta.hairStyle;
+      if (meta.hairColor) peerData.meta.hairColor = meta.hairColor;
+      if (meta.pantsColor) peerData.meta.pantsColor = meta.pantsColor;
+      if (meta.skinTone) peerData.meta.skinTone = meta.skinTone;
+      if (meta.collarColor) peerData.meta.collarColor = meta.collarColor;
+      if (meta.personality) peerData.meta.personality = meta.personality;
+    }
+    return peerData;
   }
 
   async fetchIceServers() {
@@ -199,31 +244,43 @@ export class ZeroMeshNetworkManager {
       this._wireMeshCallbacks(this.gameMesh);
 
       if (matchData.status === 'matched' && matchData.invite) {
-        // Joiner flow
+        // Joiner flow: Accept offer, generate SDP answer, seal drop payload, and POST /drop
         const invite = matchData.invite;
         if (invite.assigned_peer_id) {
           this.peerId = invite.assigned_peer_id;
         }
 
-        const dropPayload = this.cryptoSession.create_drop_payload_json(
-          invite.do_id,
-          invite.invite_uuid,
-          invite.token,
-          invite.host_public_key,
-          "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n", // SDP answer placeholder or RTCPeerConnection answer
-          this.peerId
+        const engine = new this.wasmMod.WasmWebRtcEngine();
+        const answerSdp = await engine.accept_offer_and_create_answer(invite.sdp_offer);
+
+        const hostPubX = new Uint8Array(invite.host_public_key);
+        const hostPubEd = invite.host_signing_key ? new Uint8Array(invite.host_signing_key) : null;
+        const sealedSdpJson = this.cryptoSession.seal_drop_sdp(
+          invite.host_peer_id || 'host',
+          hostPubX,
+          hostPubEd,
+          answerSdp
         );
+
+        const dropPayload = {
+          invite_uuid: invite.invite_uuid,
+          joiner_peer_id: this.peerId,
+          joiner_public_key: Array.from(this.cryptoSession.x25519_public_key_bytes()),
+          joiner_signing_key: Array.from(this.cryptoSession.ed25519_public_key_bytes()),
+          sealed_sdp_answer: JSON.parse(sealedSdpJson)
+        };
 
         const dropUrl = `${this.workerOrigin}/drop/${encodeURIComponent(this.roomId)}/${encodeURIComponent(invite.invite_uuid)}`;
         await fetch(dropUrl, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${invite.token}`
+            'Authorization': `Bearer ${invite.hmac_token || invite.token}`
           },
-          body: dropPayload
+          body: JSON.stringify(dropPayload)
         });
 
+        this.gameMesh.register_peer(invite.host_peer_id || 'host', hostPubX, engine);
         this.setStatus(NetStatus.CONNECTED_PEER);
         this.isHost = false;
         this._setupHostSocket(hostSecretHex);
@@ -240,16 +297,84 @@ export class ZeroMeshNetworkManager {
     }
   }
 
+  async _stageNewInvite(secretHex) {
+    if (!this.wasmMod || !this.hostSecret) return;
+    try {
+      this.pendingEngine = new this.wasmMod.WasmWebRtcEngine();
+      const sdpOffer = await this.pendingEngine.create_offer();
+      const inviteUuid = `inv-${this.peerId}-${Date.now().toString(36)}`;
+      const assignedPeerId = `walker-${Math.random().toString(36).substring(2, 8)}`;
+
+      const token = this.wasmMod.WasmCryptoSession.compute_hmac_hex(this.hostSecret, inviteUuid);
+      const invite = {
+        invite_uuid: inviteUuid,
+        assigned_peer_id: assignedPeerId,
+        host_peer_id: this.peerId,
+        host_public_key: Array.from(this.cryptoSession.x25519_public_key_bytes()),
+        host_signing_key: Array.from(this.cryptoSession.ed25519_public_key_bytes()),
+        sdp_offer: sdpOffer,
+        hmac_token: token
+      };
+
+      if (this.hostWs && this.hostWs.readyState === WebSocket.OPEN) {
+        this.hostWs.send(JSON.stringify({ invite }));
+      } else {
+        // Fallback POST staging
+        await fetch(`${this.workerOrigin}/stage/${encodeURIComponent(this.roomId)}`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${secretHex}`
+          },
+          body: JSON.stringify({ invite })
+        });
+      }
+    } catch (e) {
+      console.warn('[ZeroMesh] Failed staging new invite:', e);
+    }
+  }
+
   _setupHostSocket(secretHex) {
     if (typeof WebSocket === 'undefined') return;
     try {
-      const wsUrl = this.workerOrigin.replace(/^http/, 'ws') + `/host/${encodeURIComponent(this.roomId)}`;
+      const wsUrl = this.workerOrigin.replace(/^http/, 'ws') + `/host/${encodeURIComponent(this.roomId)}?secret=${encodeURIComponent(secretHex)}`;
       this.hostWs = new WebSocket(wsUrl);
-      this.hostWs.onopen = () => {
-        // Stage invite if needed
+
+      this.hostWs.onopen = async () => {
+        await this._stageNewInvite(secretHex);
       };
-      this.hostWs.onmessage = (event) => {
-        // Incoming joiner drop payload delivered down host WebSocket
+
+      this.hostWs.onmessage = async (event) => {
+        try {
+          const drop = JSON.parse(event.data);
+          if (drop && drop.sealed_sdp_answer && this.pendingEngine) {
+            const joinerPubX = new Uint8Array(drop.joiner_public_key);
+            const joinerPubEd = drop.joiner_signing_key ? new Uint8Array(drop.joiner_signing_key) : null;
+            const answerSdp = this.cryptoSession.open_drop_sdp(
+              drop.joiner_peer_id,
+              joinerPubX,
+              joinerPubEd,
+              JSON.stringify(drop.sealed_sdp_answer)
+            );
+            await this.pendingEngine.apply_answer(answerSdp);
+            this.gameMesh.register_peer(drop.joiner_peer_id, joinerPubX, this.pendingEngine);
+            this.pendingEngine = null;
+
+            // Replenish slot in dead drop pool for the next joiner
+            await this._stageNewInvite(secretHex);
+
+            // Greet newly connected joiner
+            this.sendTo(drop.joiner_peer_id, Protocol.createHello(
+              this.peerId,
+              this.localMeta.name,
+              this.localMeta.jacketColor,
+              this.localMeta.coatName,
+              this.localMeta
+            ));
+          }
+        } catch (err) {
+          console.warn('[ZeroMesh] Error processing incoming drop on host WS:', err);
+        }
       };
     } catch (e) {
       console.warn('[ZeroMesh] Host socket connection warning:', e);
@@ -266,7 +391,7 @@ export class ZeroMeshNetworkManager {
           const packet = JSON.parse(str);
           this.handlePacket(originPeerId, packet);
         } catch (e) {
-          console.warn('[ZeroMesh] Failed to parse incoming game packet:', e);
+          console.warn('[ZeroMesh] Error parsing state packet:', e);
         }
       } else if (topic === 'proximity_invite') {
         this._handleProximityInvite(originPeerId, payloadBytes);
@@ -275,107 +400,122 @@ export class ZeroMeshNetworkManager {
       }
     });
 
-    mesh.set_on_message((senderId, text) => {
-      if (this.onProximityChat) {
-        this.onProximityChat({ senderId, text });
+    mesh.set_on_peer_joined((peerId) => {
+      this.meshPeerIds.add(peerId);
+      this.broadcast(Protocol.createHello(
+        this.peerId,
+        this.localMeta.name,
+        this.localMeta.jacketColor,
+        this.localMeta.coatName,
+        this.localMeta
+      ));
+    });
+
+    mesh.set_on_peer_left((peerId) => {
+      this.meshPeerIds.delete(peerId);
+      this.remotePeers.delete(peerId);
+      if (typeof this.onPeerLeave === 'function') {
+        this.onPeerLeave(peerId);
       }
     });
   }
 
   async _connectSimulatedMesh() {
-    this.isHost = !this._simulationHub || this._simulationHub.getPeerCount(this.roomId) === 0;
-    this.setStatus(this.isHost ? NetStatus.HOSTING : NetStatus.CONNECTED_PEER);
-
+    this.setStatus(NetStatus.CONNECTING);
     if (this._simulationHub) {
-      this._simulationHub.registerPeer(this.roomId, this);
-    }
-
-    if (this.isHost) {
-      this.initNpcSpawner();
+      const roomPeers = this._simulationHub.getPeers(this.roomId);
+      if (roomPeers.length === 0) {
+        this.isHost = true;
+        this.setStatus(NetStatus.HOSTING);
+        this.initNpcSpawner();
+      } else {
+        this.isHost = false;
+        this.setStatus(NetStatus.CONNECTED_PEER);
+      }
+      this._simulationHub.register(this.roomId, this.peerId, this);
     } else {
-      this.broadcast(Protocol.createHello(
-        this.peerId,
-        this.localMeta.name,
-        this.localMeta.jacketColor,
-        this.localMeta.coatName
-      ));
+      this.isHost = true;
+      this.setStatus(NetStatus.HOSTING);
+      this.initNpcSpawner();
     }
-  }
-
-  disconnect() {
-    this.stopNpcSpawner();
-    if (this.hostWs) {
-      try { this.hostWs.close(); } catch (e) {}
-      this.hostWs = null;
-    }
-    if (this._simulationHub) {
-      this._simulationHub.unregisterPeer(this.roomId, this);
-    }
-    this.remotePeers.clear();
-    this.meshPeerIds.clear();
-    this.setStatus(NetStatus.OFFLINE);
   }
 
   isNpcCoordinator() {
-    if (this.meshPeerIds.size === 0) return true;
-    for (const remoteId of this.meshPeerIds) {
-      if (remoteId < this.peerId) {
-        return false;
-      }
-    }
-    return true;
+    if (!this.meshPeerIds.size) return this.isHost;
+    const all = Array.from(this.meshPeerIds);
+    all.push(this.peerId);
+    all.sort();
+    return all[0] === this.peerId;
   }
 
   initNpcSpawner() {
-    this.stopNpcSpawner();
-    const count = this.targetNpcCount;
-    for (let i = 0; i < count; i++) {
-      const prewarmFraction = 0.15 + (i / count) * 0.70;
-      this.spawnNpc(prewarmFraction);
+    if (!this.isNpcCoordinator()) return;
+    this.activeNpcs.clear();
+    const usedPathIds = new Set();
+    const manifest = this.npcPaths;
+
+    for (let i = 0; i < this.targetNpcCount; i++) {
+      const avail = manifest.filter(p => !usedPathIds.has(p.id));
+      if (avail.length === 0) break;
+      const chosen = avail[i % avail.length];
+      usedPathIds.add(chosen.id);
+
+      const npcId = `npc-p2p-${Math.floor(1000 + Math.random() * 9000)}`;
+      let type = chosen.type;
+      if (type === 'both') type = (i % 2 === 0) ? 'walker' : 'jogger';
+      const speed = type === 'walker' ? WALKER_SPEED : JOGGER_SPEED;
+      const duration = (chosen.lengthPx / speed);
+      const prewarmFraction = 0.15 + (i / this.targetNpcCount) * 0.70;
+      const spawnTime = (Date.now() / 1000) - (prewarmFraction * duration);
+
+      const npcData = {
+        id: npcId,
+        pathId: chosen.id,
+        type,
+        npcType: type,
+        speed,
+        duration,
+        spawnTime,
+        seed: Math.floor(Math.random() * 100000)
+      };
+
+      this.activeNpcs.set(npcId, npcData);
+      const remainingLifetimeMs = Math.max(1000, ((1 - prewarmFraction) * duration) * 1000);
+      const timer = setTimeout(() => {
+        this.despawnNpc(npcId);
+      }, remainingLifetimeMs);
+      this.npcDespawnTimers.set(npcId, timer);
     }
   }
 
-  spawnNpc(prewarmFraction = 0.0) {
-    if (!this.npcPaths || this.npcPaths.length === 0) return null;
+  spawnNpc() {
+    const usedPathIds = new Set(Array.from(this.activeNpcs.values()).map(n => n.pathId));
+    const avail = this.npcPaths.filter(p => !usedPathIds.has(p.id));
+    if (avail.length === 0) return null;
 
-    const usedPathIds = new Set();
-    for (const npc of this.activeNpcs.values()) {
-      usedPathIds.add(npc.pathId);
-    }
-    const availablePaths = this.npcPaths.filter(p => !usedPathIds.has(p.id));
-    const pathPool = availablePaths.length > 0 ? availablePaths : this.npcPaths;
-    const path = pathPool[Math.floor(Math.random() * pathPool.length)];
-
-    let type;
-    if (path.type === 'walker') type = 'walker';
-    else if (path.type === 'jogger') type = 'jogger';
-    else type = Math.random() < 0.5 ? 'walker' : 'jogger';
-
-    const speed = type === 'jogger' ? JOGGER_SPEED : WALKER_SPEED;
-    const lifetimeMs = Math.round((path.lengthPx / speed) * 1000);
-    const offsetMs = Math.round(lifetimeMs * Math.max(0, Math.min(0.9, prewarmFraction)));
-    const now = Date.now();
-    const spawnTime = now - offsetMs;
-    const remainingLifetimeMs = Math.max(500, lifetimeMs - offsetMs);
-    const seed = (Math.random() * 0xFFFFFFFF) >>> 0;
-    const id = `npc-${Math.random().toString(36).slice(2, 9)}-${now.toString(36)}`;
+    const chosen = avail[Math.floor(Math.random() * avail.length)];
+    const npcId = `npc-p2p-${Math.floor(1000 + Math.random() * 9000)}`;
+    let type = chosen.type;
+    if (type === 'both') type = (Math.random() < 0.5) ? 'walker' : 'jogger';
+    const speed = type === 'walker' ? WALKER_SPEED : JOGGER_SPEED;
+    const duration = chosen.lengthPx / speed;
 
     const npcData = {
-      id,
-      pathId: path.id,
+      id: npcId,
+      pathId: chosen.id,
       type,
       npcType: type,
-      seed,
-      spawnTime,
-      lifetimeMs
+      speed,
+      duration,
+      spawnTime: Date.now() / 1000,
+      seed: Math.floor(Math.random() * 100000)
     };
 
-    this.activeNpcs.set(id, npcData);
-
-    const despawnTimer = setTimeout(() => {
-      this.despawnNpc(id);
-    }, remainingLifetimeMs);
-    this.npcDespawnTimers.set(id, despawnTimer);
+    this.activeNpcs.set(npcId, npcData);
+    const timer = setTimeout(() => {
+      this.despawnNpc(npcId);
+    }, duration * 1000);
+    this.npcDespawnTimers.set(npcId, timer);
 
     return npcData;
   }
@@ -438,6 +578,8 @@ export class ZeroMeshNetworkManager {
   }
 
   broadcast(packet) {
+    if (!packet) return;
+    if (!packet.senderId) packet.senderId = this.peerId;
     if (this.gameMesh && typeof this.gameMesh.broadcast_state === 'function') {
       try {
         const json = typeof packet === 'string' ? packet : JSON.stringify(packet);
@@ -453,6 +595,8 @@ export class ZeroMeshNetworkManager {
   }
 
   sendTo(targetPeerId, packet) {
+    if (!packet) return;
+    if (!packet.senderId) packet.senderId = this.peerId;
     if (this.gameMesh && typeof this.gameMesh.send_direct_state === 'function') {
       try {
         const json = typeof packet === 'string' ? packet : JSON.stringify(packet);
@@ -467,6 +611,32 @@ export class ZeroMeshNetworkManager {
     }
   }
 
+  startSyncLoop(getLocalStateFn) {
+    if (this.syncInterval) clearInterval(this.syncInterval);
+
+    this.syncInterval = setInterval(() => {
+      if (this.status !== NetStatus.HOSTING && this.status !== NetStatus.CONNECTED_PEER) return;
+
+      const state = getLocalStateFn();
+      if (!state || !state.owner || !state.dog) return;
+
+      const packet = Protocol.createSyncState(this.peerId, state.owner, state.dog);
+      this.broadcast(packet);
+    }, 1000 / this.syncHz);
+  }
+
+  stop() {
+    if (this.syncInterval) clearInterval(this.syncInterval);
+    this.stopNpcSpawner();
+    if (this.hostWs) {
+      try { this.hostWs.close(); } catch (e) {}
+      this.hostWs = null;
+    }
+    this.remotePeers.clear();
+    this.meshPeerIds.clear();
+    this.setStatus(NetStatus.OFFLINE);
+  }
+
   handlePacket(senderId, packet) {
     if (!packet || typeof packet !== 'object') {
       try { packet = JSON.parse(packet); } catch (e) { return; }
@@ -476,28 +646,37 @@ export class ZeroMeshNetworkManager {
     switch (packet.type) {
       case PacketType.HELLO: {
         this.meshPeerIds.add(senderId);
-        if (!this.remotePeers.has(senderId)) {
-          this.remotePeers.set(senderId, {
-            id: senderId,
-            name: packet.name || 'Walker',
-            jacketColor: packet.jacketColor || '#1e3a8a',
-            coatName: packet.coatName || 'Chocolate & Tan (Ziggy)',
-            interpolator: new EntityInterpolator()
-          });
-        }
+        const meta = {
+          name: packet.name || 'Walker',
+          jacketColor: packet.jacketColor || '#1e3a8a',
+          coatName: packet.dogCoatName || packet.coatName || 'Chocolate & Tan (Ziggy)',
+          hairStyle: packet.hairStyle,
+          hairColor: packet.hairColor,
+          pantsColor: packet.pantsColor,
+          skinTone: packet.skinTone,
+          collarColor: packet.collarColor,
+          personality: packet.personality || null
+        };
+        const peerData = this.ensureRemotePeer(senderId, meta);
+
         if (typeof this.onPeerJoin === 'function') {
-          this.onPeerJoin(senderId, packet.name, this.remotePeers.get(senderId));
+          this.onPeerJoin(senderId, peerData.meta);
         }
 
-        // Welcome back with state
+        // Welcome back with localMeta and existing peer list
+        const peersList = Array.from(this.remotePeers.entries())
+          .filter(([id]) => id !== senderId)
+          .map(([id, p]) => ({
+            id,
+            name: p.meta.name,
+            jacketColor: p.meta.jacketColor,
+            coatName: p.meta.coatName
+          }));
+
         this.sendTo(senderId, Protocol.createWelcome(
           this.peerId,
-          Array.from(this.remotePeers.values()).map(p => ({
-            id: p.id,
-            name: p.name,
-            jacketColor: p.jacketColor,
-            coatName: p.coatName
-          }))
+          this.localMeta,
+          peersList
         ));
 
         // If coordinator, send NPC snapshot
@@ -521,19 +700,31 @@ export class ZeroMeshNetworkManager {
 
       case PacketType.WELCOME: {
         this.meshPeerIds.add(senderId);
+        if (packet.hostMeta) {
+          this.ensureRemotePeer(senderId, packet.hostMeta);
+          if (typeof this.onPeerJoin === 'function') {
+            this.onPeerJoin(senderId, packet.hostMeta);
+          }
+        }
         if (Array.isArray(packet.peers)) {
-          for (const peer of packet.peers) {
-            if (peer.id && peer.id !== this.peerId && !this.remotePeers.has(peer.id)) {
-              this.meshPeerIds.add(peer.id);
-              this.remotePeers.set(peer.id, {
-                id: peer.id,
-                name: peer.name || 'Walker',
-                jacketColor: peer.jacketColor || '#1e3a8a',
-                coatName: peer.coatName || 'Chocolate & Tan (Ziggy)',
-                interpolator: new EntityInterpolator()
-              });
+          for (const p of packet.peers) {
+            const peerId = typeof p === 'string' ? p : p?.id;
+            const meta = typeof p === 'object' && p !== null ? {
+              name: p.name,
+              jacketColor: p.jacketColor,
+              coatName: p.coatName || p.dogCoatName,
+              hairStyle: p.hairStyle,
+              hairColor: p.hairColor,
+              pantsColor: p.pantsColor,
+              skinTone: p.skinTone,
+              collarColor: p.collarColor,
+              personality: p.personality || null
+            } : {};
+            if (peerId && peerId !== this.peerId) {
+              this.meshPeerIds.add(peerId);
+              const peerData = this.ensureRemotePeer(peerId, meta);
               if (typeof this.onPeerJoin === 'function') {
-                this.onPeerJoin(peer.id, peer.name, this.remotePeers.get(peer.id));
+                this.onPeerJoin(peerId, peerData.meta);
               }
             }
           }
@@ -542,19 +733,38 @@ export class ZeroMeshNetworkManager {
       }
 
       case PacketType.SYNC_STATE: {
-        const peer = this.remotePeers.get(senderId);
-        if (peer && peer.interpolator) {
-          peer.interpolator.setTarget({
-            x: packet.ownerX,
-            y: packet.ownerY,
-            angle: packet.ownerAngle || 0,
-            vx: packet.ownerVx || 0,
-            vy: packet.ownerVy || 0,
-            dogX: packet.dogX,
-            dogY: packet.dogY,
-            dogAngle: packet.dogAngle || 0,
-            dogState: packet.dogState || 'FOLLOW'
-          });
+        let peerData = this.remotePeers.get(senderId);
+        if (!peerData) {
+          peerData = this.ensureRemotePeer(senderId, { name: 'Player' });
+          if (typeof this.onPeerJoin === 'function') {
+            this.onPeerJoin(senderId, peerData.meta);
+          }
+        }
+
+        const ownerSnap = packet.owner || {
+          x: packet.ownerX,
+          y: packet.ownerY,
+          vx: packet.ownerVx || 0,
+          vy: packet.ownerVy || 0,
+          angle: packet.ownerAngle || 0,
+          isMoving: Boolean(packet.isMoving),
+          isLeashed: Boolean(packet.isLeashed)
+        };
+
+        const dogSnap = packet.dog || {
+          x: packet.dogX,
+          y: packet.dogY,
+          vx: packet.dogVx || 0,
+          vy: packet.dogVy || 0,
+          angle: packet.dogAngle || 0,
+          state: packet.dogState || 'FOLLOWING'
+        };
+
+        if (peerData.ownerInterpolator) {
+          peerData.ownerInterpolator.setTarget(ownerSnap);
+        }
+        if (peerData.dogInterpolator) {
+          peerData.dogInterpolator.setTarget(dogSnap);
         }
         break;
       }
@@ -663,7 +873,6 @@ export class ZeroMeshNetworkManager {
   }
 
   _handleProximityInvite(originPeerId, payloadBytes) {
-    // Recipient receives proximity_invite over gameMesh and returns proximity_drop
     const dropBytes = new TextEncoder().encode(JSON.stringify({
       responder: this.peerId,
       timestamp: Date.now()
@@ -702,4 +911,3 @@ export class ZeroMeshNetworkManager {
     return Date.now() + (this.serverClockOffset || 0);
   }
 }
-

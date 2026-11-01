@@ -7,6 +7,7 @@ export const wasmworldsim_resolve_collision: (a: number, b: number, c: number, d
 export const wasmworldsim_sample_npc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
 export const wasmworldsim_set_colliders: (a: number, b: number, c: number) => void;
 export const wasmworldsim_step_ball: (a: number, b: number, c: number) => void;
+export const wasmworldsim_step_ears: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
 export const wasmworldsim_step_leash: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
 export const wasmworldsim_throw_ball: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const __wbindgen_externrefs: WebAssembly.Table;

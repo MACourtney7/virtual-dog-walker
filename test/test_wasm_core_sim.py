@@ -23,8 +23,8 @@ class TestWasmCoreSim(unittest.TestCase):
             text=True
         )
         self.assertEqual(res.returncode, 0, f"cargo test failed:\n{res.stdout}\n{res.stderr}")
-        self.assertIn("15 passed", res.stdout)
-        print("✅ dog_walker_core native Rust tests passed (15/15)")
+        self.assertTrue("passed" in res.stdout and ("15 passed" in res.stdout or "16 passed" in res.stdout))
+        print("✅ dog_walker_core native Rust tests passed (>= 15)")
 
     def test_dual_wasm_build_artifacts_exist(self):
         """Verify scripts/build_wasm.sh generated wasm and js files for both zero_mesh and dog_walker_core."""

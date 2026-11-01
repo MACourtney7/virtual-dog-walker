@@ -153,6 +153,11 @@ export class TouchControls {
       if (!btn) return;
 
       const trigger = (e) => {
+        if (btn.classList.contains('is-disabled') || btn.hasAttribute('disabled')) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
         e.preventDefault();
         e.stopPropagation();
         this.vibrate(25);
@@ -255,6 +260,27 @@ export class TouchControls {
       btn.textContent = '🐕';
       btn.classList.add('off-leash');
       btn.setAttribute('aria-label', 'Toggle Leash (Currently Off)');
+    }
+  }
+
+  setThrowEnabled(enabled) {
+    const btn = document.getElementById('btn-touch-throw');
+    if (!btn) return;
+
+    if (enabled) {
+      btn.classList.remove('is-disabled');
+      btn.style.opacity = '';
+      btn.style.filter = '';
+      btn.style.pointerEvents = '';
+      btn.removeAttribute('disabled');
+      btn.setAttribute('aria-disabled', 'false');
+    } else {
+      btn.classList.add('is-disabled');
+      btn.style.opacity = '0.45';
+      btn.style.filter = 'grayscale(80%)';
+      btn.style.pointerEvents = 'none';
+      btn.setAttribute('disabled', 'true');
+      btn.setAttribute('aria-disabled', 'true');
     }
   }
 

@@ -1,20 +1,24 @@
 // Spatial Proximity Clustering & Prominent Glassmorphic Conversation HUD
 export const PROXIMITY_RADIUS = 200;
+export const PROXIMITY_JOIN_RADIUS = 160;
 export const RETENTION_DURATION_MS = 5 * 60 * 1000; // 300,000 ms (5 minutes)
 export const PLAYER_PALETTE = ['#38bdf8', '#4ade80', '#fbbf24', '#fb7185', '#c084fc', '#2dd4bf', '#f97316', '#60a5fa'];
 
 export class ProximityChat {
   /**
    * @param {Object} options
-   * @param {number} [options.radius=200] - Proximity threshold in pixels
+   * @param {number} [options.radius=200] - Leave proximity threshold in pixels
+   * @param {number} [options.joinRadius] - Join proximity threshold in pixels (defaults to options.radius if omitted)
    * @param {number} [options.retentionDuration=300000] - Message retention duration in ms
    * @param {HTMLElement} [options.container] - Parent DOM container
    * @param {Function} [options.onClusterFormed] - Callback when cluster forms (participants)
    * @param {Function} [options.onClusterDissolved] - Callback when cluster dissolves (partingContext)
+   * @param {Function} [options.onClusterChanged] - Callback when cluster membership updates (activePeerIds)
    * @param {Function} [options.onSendMessage] - Callback when local player sends message (text, activePeers)
    */
   constructor(options = {}) {
     this.radius = typeof options.radius === 'number' ? options.radius : PROXIMITY_RADIUS;
+    this.joinRadius = typeof options.joinRadius === 'number' ? options.joinRadius : this.radius;
     this.retentionDuration = typeof options.retentionDuration === 'number' ? options.retentionDuration : RETENTION_DURATION_MS;
     this.departureTimers = new Map(); // peerId -> departureTimestamp (ms)
     this.playerColors = new Map(); // senderId -> colorHex
@@ -24,6 +28,7 @@ export class ProximityChat {
     this.lastMessage = null;
     this.onClusterFormed = options.onClusterFormed || null;
     this.onClusterDissolved = options.onClusterDissolved || null;
+    this.onClusterChanged = options.onClusterChanged || null;
     this.onSendMessage = options.onSendMessage || null;
 
     this.container = options.container ||
@@ -497,6 +502,9 @@ export class ProximityChat {
         if (typeof this.onClusterDissolved === 'function') {
           this.onClusterDissolved(partingContext);
         }
+        if (typeof this.onClusterChanged === 'function') {
+          this.onClusterChanged([]);
+        }
         this.activeCluster = null;
         this.participants = [];
         this.updateParticipantsBadge();
@@ -519,9 +527,14 @@ export class ProximityChat {
     const allRemotes = this._extractRemotePlayers(remotePlayersMap).filter(r => r.id !== localId);
 
     // Multi-player transitive clustering via BFS from local player
+    // Uses joinRadius for newcomer discovery, and leaveRadius (this.radius) for active members
     const connectedRemoteNodes = [];
     const visited = new Set();
     const queue = [localNode];
+
+    const prevActiveIds = this.activeCluster instanceof Set
+      ? this.activeCluster
+      : (Array.isArray(this.activeCluster) ? new Set(this.activeCluster) : new Set());
 
     while (queue.length > 0) {
       const current = queue.shift();
@@ -530,7 +543,12 @@ export class ProximityChat {
           const dx = current.x - rem.x;
           const dy = current.y - rem.y;
           const dist = Math.hypot(dx, dy);
-          if (dist <= this.radius) {
+
+          // Apply hysteresis: if peer is already active in cluster, stay in up to this.radius (leave threshold);
+          // if newcomer, must be within this.joinRadius to initiate clustering.
+          const effectiveThreshold = prevActiveIds.has(rem.id) ? this.radius : this.joinRadius;
+
+          if (dist <= effectiveThreshold) {
             visited.add(rem.id);
             connectedRemoteNodes.push(rem);
             queue.push(rem);
@@ -567,6 +585,9 @@ export class ProximityChat {
         if (typeof this.onClusterFormed === 'function') {
           this.onClusterFormed(this.participants);
         }
+        if (typeof this.onClusterChanged === 'function') {
+          this.onClusterChanged(this.getActivePeers());
+        }
       } else {
         // Cluster remains ACTIVE: check if active participants changed
         const prevPeerIds = this.activeCluster || new Set();
@@ -596,6 +617,9 @@ export class ProximityChat {
           this.activeCluster = currentPeerIds;
           this.participants = newParticipants;
           this.updateParticipantsBadge();
+          if (typeof this.onClusterChanged === 'function') {
+            this.onClusterChanged(this.getActivePeers());
+          }
         }
       }
     } else {
@@ -618,6 +642,9 @@ export class ProximityChat {
         this.isManuallyHidden = false;
         if (typeof this.onClusterDissolved === 'function') {
           this.onClusterDissolved(partingContext);
+        }
+        if (typeof this.onClusterChanged === 'function') {
+          this.onClusterChanged([]);
         }
         this.activeCluster = null;
         this.participants = [];

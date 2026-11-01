@@ -94,9 +94,13 @@ export class CliftonDownGame {
 
     // Proximity Chat HUD & Dynamic Spatial Clustering
     this.proximityChat = new ProximityChat({
+      radius: 200,
+      joinRadius: 160,
       onSendMessage: (text, clusterPeerIds) => {
         const peers = clusterPeerIds || this.proximityChat.getActivePeers();
-        if (this.net && typeof this.net.broadcast === 'function') {
+        if (this.net && typeof this.net.sendProximityChat === 'function') {
+          this.net.sendProximityChat(text, peers);
+        } else if (this.net && typeof this.net.broadcast === 'function') {
           if (typeof Protocol.createProximityChat === 'function') {
             this.net.broadcast(Protocol.createProximityChat(
               this.net.peerId,
@@ -116,6 +120,11 @@ export class CliftonDownGame {
           sound.playChat();
         }
       },
+      onClusterChanged: (activePeerIds) => {
+        if (this.net && typeof this.net.syncProximityCluster === 'function') {
+          this.net.syncProximityCluster(activePeerIds);
+        }
+      },
       onClusterDissolved: (partingContext) => {
         // Parting no longer drops turf markers
         if (this.hud && typeof this.hud.showToast === 'function') {
@@ -123,6 +132,14 @@ export class CliftonDownGame {
         }
       }
     });
+
+    if (this.net) {
+      this.net.onProximityChat = (data) => {
+        if (data && data.text) {
+          this.proximityChat.addMessage(data.senderId, data.name || data.senderName, data.text);
+        }
+      };
+    }
     this.hud.proximityChat = this.proximityChat;
 
     // Touch Controls

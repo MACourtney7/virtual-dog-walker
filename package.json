@@ -6,6 +6,8 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "build:wasm": "bash scripts/build_wasm.sh",
+    "build": "bash scripts/build_pages.sh",
     "test": "python3 test/run_tests.py"
   },
   "dependencies": {

@@ -2,6 +2,7 @@
 
 import { PacketType, Protocol } from './protocol.js';
 import { WebSocketNetworkManager, WSStatus } from './ws_network.js';
+import { ZeroMeshNetworkManager } from './zero_mesh_network.js';
 
 export const NetStatus = {
   OFFLINE: 'OFFLINE',
@@ -514,18 +515,27 @@ export class NetworkManager {
     const urlParams = new URLSearchParams(window.location.search);
     const serverParam = urlParams.get('server');
     const partyParam = urlParams.get('party') || urlParams.get('partykit');
+    const zeroMeshParam = urlParams.get('zeromesh');
     const isP2P = urlParams.get('p2p') === '1';
 
-    // Auto-detect whether to use PartyKit Edge, Dedicated WebSocket Server, or PeerJS P2P
-    const isHttp = window.location.protocol.startsWith('http');
-    const isPartyHost = window.location.hostname.includes('workers.dev') ||
-                        window.location.hostname.includes('partykit.dev') ||
-                        window.location.port === '8787' ||
+    // Auto-detect whether to use ZeroMesh (P2P + DeadDrop on Cloudflare Pages), PartyKit Edge, Dedicated WebSocket Server, or PeerJS P2P
+    const isPagesHost = window.location.hostname.includes('pages.dev') ||
+                        window.location.hostname.includes('zero-network') ||
+                        zeroMeshParam === '1';
+    const isPartyHost = window.location.hostname.includes('partykit.dev') ||
                         window.location.port === '1999' ||
                         Boolean(partyParam);
 
-    if (!isP2P && (partyParam || isPartyHost)) {
-      // 1. PartyKit Global Edge Mode
+    if (isPagesHost || zeroMeshParam === '1') {
+      // 1. ZeroMesh P2P + Dead-Drop Matchmaking Mode (Cloudflare Pages default)
+      this.adapter = new ZeroMeshNetworkManager({
+        roomId: urlParams.get('room') || 'clifton-commons'
+      });
+      this.isDedicatedServer = false;
+      this.isPartyKit = false;
+      this.isZeroMesh = true;
+    } else if (!isP2P && (partyParam || isPartyHost)) {
+      // 2. PartyKit Global Edge Mode
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const targetHost = partyParam && partyParam !== '1' ? partyParam : window.location.host;
       this.wsEndpoint = `${proto}//${targetHost}`;
@@ -533,28 +543,20 @@ export class NetworkManager {
       this.isDedicatedServer = true;
       this.isPartyKit = true;
       this.adapter.isPartyKit = true;
-    } else if (!isP2P && (serverParam || isHttp)) {
-      // 2. Local/Dedicated Python Microserver Mode
-      let wsEndpoint = '';
-      if (serverParam) {
-        let clean = serverParam.trim();
-        if (clean.startsWith('http://')) clean = clean.replace('http://', 'ws://');
-        else if (clean.startsWith('https://')) clean = clean.replace('https://', 'wss://');
-        else if (!clean.startsWith('ws://') && !clean.startsWith('wss://')) clean = `wss://${clean}`;
+    } else if (!isP2P && serverParam) {
+      // 3. Local/Dedicated Python Microserver Mode
+      let clean = serverParam.trim();
+      if (clean.startsWith('http://')) clean = clean.replace('http://', 'ws://');
+      else if (clean.startsWith('https://')) clean = clean.replace('https://', 'wss://');
+      else if (!clean.startsWith('ws://') && !clean.startsWith('wss://')) clean = `wss://${clean}`;
 
-        if (!clean.endsWith('/ws')) clean = clean.replace(/\/+$/, '') + '/ws';
-        wsEndpoint = clean;
-      } else {
-        const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        wsEndpoint = `${proto}//${window.location.host}/ws`;
-      }
-
+      if (!clean.endsWith('/ws')) clean = clean.replace(/\/+$/, '') + '/ws';
       this.adapter = new WebSocketNetworkManager();
       this.isDedicatedServer = true;
       this.isPartyKit = false;
-      this.wsEndpoint = wsEndpoint;
+      this.wsEndpoint = clean;
     } else {
-      // 3. PeerJS P2P Fallback Mode
+      // 4. PeerJS P2P Fallback Mode
       this.adapter = new PeerNetworkManager();
       this.isDedicatedServer = false;
       this.isPartyKit = false;
@@ -581,9 +583,11 @@ export class NetworkManager {
 
   autoConnect() {
     const urlParams = new URLSearchParams(window.location.search);
-    const targetRoom = urlParams.get('room') || 'the-commons';
+    const targetRoom = urlParams.get('room') || (this.isZeroMesh ? 'clifton-commons' : 'the-commons');
 
-    if (this.isDedicatedServer && this.wsEndpoint) {
+    if (this.isZeroMesh) {
+      this.adapter.connect(targetRoom);
+    } else if (this.isDedicatedServer && this.wsEndpoint) {
       this.adapter.connect(this.wsEndpoint, targetRoom);
     } else if (urlParams.get('room')) {
       this.adapter.joinRoom(targetRoom);

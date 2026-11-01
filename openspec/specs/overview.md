@@ -154,7 +154,22 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 
 ---
 
-## 6. Mobile Ergonomics & Responsive Touch Architecture
+## 5. Fetch Mechanics & Toy Lifecycle
+- **Tennis Ball Possession Lifecycle (`src/entities/toy.js`)**:
+  - `TennisBall` encapsulates an `inOwnerPossession` state flag and `retrieveByOwner()` lifecycle handler.
+  - While in owner possession (`inOwnerPossession === true`), physics integration, collision detection, and canvas draw calls return immediately with zero per-frame rendering overhead.
+- **Canine Fetching & Perimeter Dynamics (`src/entities/companion_dog.js`)**:
+  - Dogs in `DogState.FETCHING` are explicitly exempt from the off-leash 230px `maxRoam` perimeter clamp, allowing unrestricted pursuit of thrown balls across the entire park landscape up to obstacle and world boundaries.
+  - Returning to the owner with the ball triggers `retrieveByOwner()` on contact (`dist <= 36`), seamlessly stowing the ball, rewarding the dog with happiness and visual heart emotes, and returning canine state to following/roaming.
+- **Single Active Ball Restriction & HUD Feedback (`src/main.js`, `src/ui/touch_controls.js`)**:
+  - `canThrowBall()` strictly blocks throws unless the ball is stowed in owner possession and not currently in flight, rolling, carried, or being fetched.
+  - Attempting to throw while a ball is in play triggers non-intrusive HUD toast feedback (`"Wait for your dog to return the ball!"`).
+  - Direct owner pickup safeguard stows uncarried resting balls when walked over within 32px.
+  - Virtual touch controls (`TouchControls.setThrowEnabled`) dynamically dim and disable the `#btn-touch-throw` touch button during active throws.
+
+---
+
+## 7. Mobile Ergonomics & Responsive Touch Architecture
 - **Virtual Touch Controller (`src/ui/touch_controls.js`)**:
   - Virtual analog joystick with dynamic thumb tracking, 10% deadzone threshold, 50px maximum deflection clamp, and normalized `(vx, vy)` vector output.
   - Multi-touch isolation using explicit touch identifiers (`joystickTouchId`).
@@ -165,9 +180,10 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 
 ---
 
-## 7. Test Suite & CI/CD
-- `python3 test/run_tests.py`: Comprehensive test runner executing 26 test suites covering:
+## 8. Test Suite & CI/CD
+- `python3 test/run_tests.py`: Comprehensive test runner executing 27 test suites covering:
   - Physics ballistics, arrival steering, leash clamping and off-lead rendering.
+  - Ball possession lifecycle, canine fetch perimeter exemption, and single active ball limits (`test_fetching_mechanics.py`).
   - Real-time leash synchronization, entity interpolator discrete propagation, network packet schemas.
   - Dog personality scaling, obedience-weighted stray probability, leash pulling physics.
   - Directional navigation arrow bearing math, viewport ray-box clamping, target lifecycle.

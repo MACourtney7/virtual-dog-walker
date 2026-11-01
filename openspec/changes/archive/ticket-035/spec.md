@@ -4,7 +4,7 @@
 ---
 ticket_id: "ticket-035"
 title: "Canine Fetching Perimeter Exemption, Ball Disappearance on Return & Single Ball Throw Restriction"
-state: "IN_PROGRESS"
+state: "COMPLETED"
 roadmap: null
 depends_on: []
 created_at: "2026-11-01T09:50:00Z"

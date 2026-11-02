@@ -66,6 +66,9 @@ class MockZeroMeshPeer:
         self.npc_paths = list(DEFAULT_PATH_MANIFEST)
         self.target_npc_count = 5
         self._next_npc_seq = 1
+        self.on_npc_snapshot = None
+        self.on_npc_spawn = None
+        self.on_npc_despawn = None
 
     def connect(self, coordinator):
         self.status = "CONNECTING"
@@ -85,7 +88,7 @@ class MockZeroMeshPeer:
             }
             coordinator.stage_invite(self.peer_id, invite)
             # Initialize 5 pre-warmed NPCs locally
-            self.init_npcs()
+            self.init_npc_spawner()
             return "seed_host"
         else:
             # Matched newcomer
@@ -144,6 +147,46 @@ class MockZeroMeshPeer:
                 "duration": duration,
                 "colorSeed": i * 100
             }
+
+    def init_npc_spawner(self):
+        if not self.is_npc_coordinator():
+            return
+        self.init_npcs()
+        if callable(self.on_npc_snapshot):
+            snapshot = [
+                {
+                    "id": n["id"],
+                    "pathId": n["pathId"],
+                    "type": n["type"],
+                    "npcType": n["type"],
+                    "seed": n.get("colorSeed", 12345),
+                    "spawnTime": n["spawnTime"]
+                }
+                for n in self.active_npcs.values()
+            ]
+            self.on_npc_snapshot(snapshot, 1000.0)
+
+    def despawn_npc(self, npc_id):
+        npc = self.active_npcs.pop(npc_id, None)
+        if not npc:
+            return
+        if callable(self.on_npc_despawn):
+            self.on_npc_despawn(npc["id"])
+        if self.is_npc_coordinator():
+            new_id = f"npc-p2p-{self._next_npc_seq}"
+            self._next_npc_seq += 1
+            new_npc = {
+                "id": new_id,
+                "pathId": "ladies-mile-loop",
+                "type": "walker",
+                "npcType": "walker",
+                "seed": 54321,
+                "spawnTime": 1050.0,
+                "duration": 100.0
+            }
+            self.active_npcs[new_id] = new_npc
+            if callable(self.on_npc_spawn):
+                self.on_npc_spawn(new_npc)
 
     def get_npc_snapshot(self):
         return {
@@ -334,6 +377,79 @@ class TestZeroMeshIntegration(unittest.TestCase):
             [],
             f"Found bare JSON imports in unbundled browser JavaScript modules: {offending_imports}"
         )
+
+    def test_seed_host_populates_local_game_npcs_via_on_npc_snapshot(self):
+        """Regression test (unification-007):
+        Verify that calling initNpcSpawner() on a host triggers onNpcSnapshot locally,
+        and lifecycle rotations invoke onNpcDespawn and onNpcSpawn.
+        Also validates contract wiring in zero_mesh_network.js, main.js, and environment.js.
+        """
+        coord = MockDeadDropCoordinator()
+        host = MockZeroMeshPeer("peer-host", name="HostAlice")
+
+        received_snapshots = []
+        despawned_npc_ids = []
+        spawned_npcs = []
+
+        host.on_npc_snapshot = lambda snap, st: received_snapshots.append((snap, st))
+        host.on_npc_despawn = lambda nid: despawned_npc_ids.append(nid)
+        host.on_npc_spawn = lambda npc: spawned_npcs.append(npc)
+
+        # 1. Host connects as seed host and initializes spawner
+        res = host.connect(coord)
+        self.assertEqual(res, "seed_host")
+        self.assertTrue(host.is_host)
+        self.assertTrue(host.is_npc_coordinator())
+
+        # Verify onNpcSnapshot was invoked locally with 5 pre-warmed NPCs
+        self.assertEqual(len(received_snapshots), 1)
+        snapshot, server_time = received_snapshots[0]
+        self.assertEqual(len(snapshot), 5)
+        self.assertAlmostEqual(server_time, 1000.0)
+        first_npc_id = snapshot[0]["id"]
+        for npc in snapshot:
+            self.assertIn("id", npc)
+            self.assertIn("pathId", npc)
+            self.assertIn("type", npc)
+            self.assertIn("npcType", npc)
+            self.assertIn("seed", npc)
+            self.assertIn("spawnTime", npc)
+
+        # 2. Despawn lifecycle rotation
+        host.despawn_npc(first_npc_id)
+        self.assertIn(first_npc_id, despawned_npc_ids)
+        self.assertEqual(len(spawned_npcs), 1)
+        self.assertNotIn(first_npc_id, host.active_npcs)
+        self.assertIn(spawned_npcs[0]["id"], host.active_npcs)
+
+        # 3. Source contracts: zero_mesh_network.js
+        net_js_path = os.path.join(os.path.dirname(__file__), "..", "src", "net", "zero_mesh_network.js")
+        with open(net_js_path, "r", encoding="utf-8") as f:
+            net_code = f.read()
+
+        self.assertIn("typeof this.onNpcSnapshot === 'function'", net_code)
+        self.assertIn("this.onNpcSnapshot(snapshot, Date.now())", net_code)
+        self.assertIn("typeof this.onNpcDespawn === 'function'", net_code)
+        self.assertIn("this.onNpcDespawn(npc.id)", net_code)
+        self.assertIn("typeof this.onNpcSpawn === 'function'", net_code)
+        self.assertIn("this.onNpcSpawn(spawnPacket.npc || spawnPacket)", net_code)
+
+        # 4. Source contracts: main.js
+        main_js_path = os.path.join(os.path.dirname(__file__), "..", "src", "main.js")
+        with open(main_js_path, "r", encoding="utf-8") as f:
+            main_code = f.read()
+
+        self.assertIn("this.net.activeNpcs && this.net.activeNpcs.size > 0 && this.npcs.size === 0", main_code)
+        self.assertIn("this.handleNpcSnapshot(Array.from(this.net.activeNpcs.values()), Date.now())", main_code)
+        self.assertIn("for (const npc of this.npcs.values())", main_code)
+
+        # 5. Source contracts: environment.js
+        env_js_path = os.path.join(os.path.dirname(__file__), "..", "src", "world", "environment.js")
+        with open(env_js_path, "r", encoding="utf-8") as f:
+            env_code = f.read()
+
+        self.assertIn("const isNpc =", env_code)
+        self.assertIn("pRadius = p.cutoutRadius || (isNpc ? 60 :", env_code)
 
 
 if __name__ == "__main__":

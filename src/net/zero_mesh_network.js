@@ -505,6 +505,18 @@ export class ZeroMeshNetworkManager {
       }, remainingLifetimeMs);
       this.npcDespawnTimers.set(npcId, timer);
     }
+
+    if (typeof this.onNpcSnapshot === 'function') {
+      const snapshot = Array.from(this.activeNpcs.values()).map(n => ({
+        id: n.id,
+        pathId: n.pathId,
+        type: n.type,
+        npcType: n.type,
+        seed: n.seed,
+        spawnTime: n.spawnTime
+      }));
+      this.onNpcSnapshot(snapshot, Date.now());
+    }
   }
 
   spawnNpc() {
@@ -555,6 +567,9 @@ export class ZeroMeshNetworkManager {
       timestamp: Date.now()
     };
     this.broadcast(despawnPacket);
+    if (typeof this.onNpcDespawn === 'function') {
+      this.onNpcDespawn(npc.id);
+    }
 
     if (this.isNpcCoordinator()) {
       const delay = 1000 + Math.random() * 3000;
@@ -581,6 +596,9 @@ export class ZeroMeshNetworkManager {
               timestamp: Date.now()
             };
             this.broadcast(spawnPacket);
+            if (typeof this.onNpcSpawn === 'function') {
+              this.onNpcSpawn(spawnPacket.npc || spawnPacket);
+            }
           }
         }
       }, delay);

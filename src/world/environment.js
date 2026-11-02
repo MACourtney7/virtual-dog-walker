@@ -538,9 +538,9 @@ export class EnvironmentSystem {
         offCtx.fill();
       }
 
-      // Soft halo cutout around player and dog so actors remain visible in dark
+      // Soft halo cutout around player, dog, and ambient NPCs so actors remain visible in dark
       for (const p of players) {
-        if (!p || typeof p.x !== 'number') continue;
+        if (!p || typeof p.x !== 'number' || typeof p.y !== 'number') continue;
         let px = p.x;
         let py = p.y;
         if (camera && typeof camera.worldToScreen === 'function') {
@@ -552,7 +552,9 @@ export class EnvironmentSystem {
           py = p.y - camera.y;
         }
 
-        const pRadius = 75;
+        const isNpc = Boolean(p.isJogger !== undefined || p.type === 'walker' || p.type === 'jogger' || (p.id && String(p.id).startsWith('npc')));
+        const isPlayerOrDog = Boolean(p.isOwner || p.isDog || (camera && camera.target === p));
+        const pRadius = p.cutoutRadius || (isNpc ? 60 : (isPlayerOrDog ? 75 : 60));
         if (px < -pRadius || px > w + pRadius || py < -pRadius || py > h + pRadius) {
           continue;
         }

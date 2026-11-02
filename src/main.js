@@ -64,6 +64,10 @@ export class CliftonDownGame {
       this.handleNpcSnapshot(snapshotNpcs, serverTime);
     };
 
+    if (this.net.activeNpcs && this.net.activeNpcs.size > 0 && this.npcs.size === 0) {
+      this.handleNpcSnapshot(Array.from(this.net.activeNpcs.values()), Date.now());
+    }
+
     // UI HUD
     this.hud = new SocialHUD(this.net, this.owner, this.dog, CoatPreset);
 
@@ -400,6 +404,10 @@ export class CliftonDownGame {
     this.net.onNpcSnapshot = (snapshotNpcs, serverTime) => {
       this.handleNpcSnapshot(snapshotNpcs, serverTime);
     };
+
+    if (this.net.activeNpcs && this.net.activeNpcs.size > 0 && this.npcs.size === 0) {
+      this.handleNpcSnapshot(Array.from(this.net.activeNpcs.values()), Date.now());
+    }
 
     // Intercept packets on underlying network adapter if adapter lacks native dispatch
     if (this.net.adapter && typeof this.net.adapter.handlePacket === 'function') {
@@ -1138,6 +1146,9 @@ export class CliftonDownGame {
       const players = [this.owner, this.dog];
       for (const p of this.remotePlayers.values()) {
         players.push(p.owner, p.dog);
+      }
+      for (const npc of this.npcs.values()) {
+        players.push(npc);
       }
       this.environment.render(this.ctx, this.camera, this.field, this.canvas.width, this.canvas.height, players);
     }

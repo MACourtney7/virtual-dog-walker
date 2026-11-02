@@ -468,6 +468,7 @@ export class CompanionDog {
 
     // Leash constraint & pulling physics: If leashed to owner, hard clamp to max leash length
     if (this.owner && this.owner.isLeashed && this.state !== DogState.FETCHING) {
+      stepLeashConstraint(this, this.owner, 65, 4.0, 5.0, dt);
       const maxLeash = 105;
       const dx = this.x - this.owner.x;
       const dy = this.y - this.owner.y;

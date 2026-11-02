@@ -103,6 +103,8 @@ export class ZeroMeshNetworkManager {
     this.cryptoSession = null;
     this.gameMesh = null;
     this.proximityMesh = null;
+    this.pendingProximityEngines = new Map();
+    this.proximityCrypto = null;
     this.hostWs = null;
     this.hostSecret = null;
     this.pendingEngine = null;
@@ -259,6 +261,21 @@ export class ZeroMeshNetworkManager {
       this.cryptoSession = new this.wasmMod.WasmCryptoSession();
       this.gameMesh = new this.wasmMod.WasmMeshTopology(this.peerId, privKey);
       this.proximityMesh = new this.wasmMod.WasmMeshTopology(`prox-${this.peerId}`, this.generateSecret());
+
+      this.proximityMesh.set_on_message((senderPeerId, plaintext) => {
+        const cleanSenderId = String(senderPeerId).replace(/^prox-/, '');
+        const peerObj = this.remotePeers.get(cleanSenderId);
+        const senderName = (peerObj && peerObj.meta && peerObj.meta.name) ? peerObj.meta.name : 'Walker';
+        if (typeof this.onProximityChat === 'function') {
+          this.onProximityChat({
+            senderId: cleanSenderId,
+            name: senderName,
+            text: plaintext
+          });
+        }
+      });
+      this.pendingProximityEngines = new Map();
+      this.proximityCrypto = new this.wasmMod.WasmCryptoSession();
 
       this._wireMeshCallbacks(this.gameMesh);
 
@@ -855,6 +872,21 @@ export class ZeroMeshNetworkManager {
         break;
       }
 
+      case PacketType.PROXIMITY_CHAT:
+      case 'PROXIMITY_CHAT': {
+        if (typeof this.onProximityChat === 'function') {
+          this.onProximityChat({
+            senderId: packet.senderId || senderId,
+            name: packet.name || 'Walker',
+            text: packet.text,
+            x: packet.x,
+            y: packet.y,
+            clusterPeers: packet.clusterPeers
+          });
+        }
+        break;
+      }
+
       case 'NPC_SNAPSHOT': {
         if (typeof this.onNpcSnapshot === 'function') {
           this.onNpcSnapshot(packet.npcs || [], packet.serverTime || Date.now());
@@ -882,7 +914,7 @@ export class ZeroMeshNetworkManager {
   }
 
   // Dual-Mesh Proximity Chat
-  syncProximityCluster(clusterPeerIds) {
+  async syncProximityCluster(clusterPeerIds) {
     const nextSet = new Set(clusterPeerIds || []);
     const joined = [...nextSet].filter(id => !this.activeClusterPeerIds.has(id));
     const left = [...this.activeClusterPeerIds].filter(id => !nextSet.has(id));
@@ -891,25 +923,78 @@ export class ZeroMeshNetworkManager {
     // For joining peers: send proximity offer if deterministic initiator (localId < remoteId)
     for (const remoteId of joined) {
       if (this.peerId < remoteId) {
-        const inviteBytes = new TextEncoder().encode(JSON.stringify({
-          initiator: this.peerId,
-          timestamp: Date.now()
-        }));
-        if (this.gameMesh && typeof this.gameMesh.send_direct_state === 'function') {
-          this.gameMesh.send_direct_state(remoteId, 'proximity_invite', inviteBytes);
+        if (this.wasmMod && this.proximityMesh && typeof window !== 'undefined' && window.RTCPeerConnection) {
+          try {
+            const engine = new this.wasmMod.WasmWebRtcEngine();
+            if (this.pendingProximityEngines) {
+              this.pendingProximityEngines.set(remoteId, engine);
+            }
+            const sdpOffer = await engine.create_offer();
+            const inviteBytes = new TextEncoder().encode(JSON.stringify({
+              initiator: this.peerId,
+              sdpOffer,
+              pubKey: Array.from(this.proximityMesh.local_public_key()),
+              timestamp: Date.now()
+            }));
+            if (this.gameMesh && typeof this.gameMesh.send_direct_state === 'function') {
+              this.gameMesh.send_direct_state(remoteId, 'proximity_invite', inviteBytes);
+            }
+          } catch (e) {
+            console.warn('[ZeroMesh] Live proximity offer error:', e);
+          }
+        } else {
+          const inviteBytes = new TextEncoder().encode(JSON.stringify({
+            initiator: this.peerId,
+            timestamp: Date.now()
+          }));
+          if (this.gameMesh && typeof this.gameMesh.send_direct_state === 'function') {
+            this.gameMesh.send_direct_state(remoteId, 'proximity_invite', inviteBytes);
+          }
         }
       }
     }
 
     // For departing peers: tear down proximity link
     for (const remoteId of left) {
+      if (this.pendingProximityEngines && this.pendingProximityEngines.has(remoteId)) {
+        this.pendingProximityEngines.delete(remoteId);
+      }
       if (this.proximityMesh && typeof this.proximityMesh.remove_peer === 'function') {
         try { this.proximityMesh.remove_peer(remoteId); } catch (e) {}
       }
     }
   }
 
-  _handleProximityInvite(originPeerId, payloadBytes) {
+  async _handleProximityInvite(originPeerId, payloadBytes) {
+    let payload = {};
+    try {
+      const decoded = typeof payloadBytes === 'string' ? payloadBytes : new TextDecoder().decode(payloadBytes);
+      payload = JSON.parse(decoded);
+    } catch (e) {
+      console.warn('[ZeroMesh] Failed decoding proximity invite:', e);
+    }
+
+    if (payload.sdpOffer && this.wasmMod && this.proximityMesh) {
+      try {
+        const engine = new this.wasmMod.WasmWebRtcEngine();
+        const answerSdp = await engine.accept_offer_and_create_answer(payload.sdpOffer);
+        const pubKeyBytes = payload.pubKey ? new Uint8Array(payload.pubKey) : new Uint8Array(32);
+        this.proximityMesh.register_peer(originPeerId, pubKeyBytes, engine);
+        const dropBytes = new TextEncoder().encode(JSON.stringify({
+          responder: this.peerId,
+          sdpAnswer: answerSdp,
+          pubKey: Array.from(this.proximityMesh.local_public_key()),
+          timestamp: Date.now()
+        }));
+        if (this.gameMesh && typeof this.gameMesh.send_direct_state === 'function') {
+          this.gameMesh.send_direct_state(originPeerId, 'proximity_drop', dropBytes);
+        }
+        return;
+      } catch (e) {
+        console.warn('[ZeroMesh] Error answering proximity invite:', e);
+      }
+    }
+
     const dropBytes = new TextEncoder().encode(JSON.stringify({
       responder: this.peerId,
       timestamp: Date.now()
@@ -919,19 +1004,56 @@ export class ZeroMeshNetworkManager {
     }
   }
 
-  _handleProximityDrop(originPeerId, payloadBytes) {
-    // Proximity channel confirmed
+  async _handleProximityDrop(originPeerId, payloadBytes) {
+    let payload = {};
+    try {
+      const decoded = typeof payloadBytes === 'string' ? payloadBytes : new TextDecoder().decode(payloadBytes);
+      payload = JSON.parse(decoded);
+    } catch (e) {
+      console.warn('[ZeroMesh] Failed decoding proximity drop:', e);
+    }
+
+    if (payload.sdpAnswer && this.pendingProximityEngines && this.pendingProximityEngines.has(originPeerId)) {
+      try {
+        const engine = this.pendingProximityEngines.get(originPeerId);
+        await engine.apply_answer(payload.sdpAnswer);
+        if (this.proximityMesh) {
+          const pubKeyBytes = payload.pubKey ? new Uint8Array(payload.pubKey) : new Uint8Array(32);
+          this.proximityMesh.register_peer(originPeerId, pubKeyBytes, engine);
+        }
+        this.pendingProximityEngines.delete(originPeerId);
+      } catch (e) {
+        console.warn('[ZeroMesh] Failed applying proximity answer:', e);
+      }
+    }
   }
 
   sendProximityChat(text, peers) {
     if (!text) return;
-    if (this.proximityMesh && typeof this.proximityMesh.broadcast_chat === 'function') {
+    let sentLive = false;
+    if (this.proximityMesh && typeof this.proximityMesh.peer_count === 'function' && this.proximityMesh.peer_count() > 0) {
       try {
         this.proximityMesh.broadcast_chat(text);
+        sentLive = true;
       } catch (e) {
         console.warn('[ZeroMesh] Proximity broadcast_chat failed:', e);
       }
     }
+
+    if (!sentLive) {
+      if (this.gameMesh && typeof this.gameMesh.send_direct_state === 'function' && Array.isArray(peers) && peers.length > 0) {
+        const chatPacket = Protocol.createProximityChat(this.peerId, this.localMeta.name, text, 0, 0, peers);
+        const bytes = new TextEncoder().encode(JSON.stringify(chatPacket));
+        for (const peerId of peers) {
+          try {
+            this.gameMesh.send_direct_state(peerId, 'game_packet', bytes);
+          } catch (e) {
+            console.warn(`[ZeroMesh] Failed sending direct proximity chat packet to ${peerId}:`, e);
+          }
+        }
+      }
+    }
+
     // Simulation / local fallback
     if (this._simulationHub) {
       this._simulationHub.broadcastProximityChat(this.roomId, this.peerId, this.localMeta.name, text, peers);

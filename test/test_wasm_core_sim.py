@@ -63,7 +63,10 @@ class TestWasmCoreSim(unittest.TestCase):
 
         with open(bridge_path) as f:
             content = f.read()
-            self.assertIn("export async function initWasmSim", content)
+            self.assertIn("export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0)", content)
+            self.assertIn("new mod.WasmWorldSim(worldWidth, worldHeight)", content)
+            self.assertIn("export function stepEarSprings", content)
+            self.assertIn("wasmSimInstance.step_ears", content)
             self.assertIn("export function stepLeashConstraint", content)
             self.assertIn("export function resolveWorldCollision", content)
             self.assertIn("export function sampleNpcState", content)
@@ -74,6 +77,12 @@ class TestWasmCoreSim(unittest.TestCase):
             with open(full) as f:
                 src = f.read()
                 self.assertIn("wasm_sim_bridge", src, f"Expected wasm_sim_bridge import in {rel_file}")
+
+        # Verify CompanionDog invokes stepLeashConstraint
+        dog_path = os.path.join(PROJECT_ROOT, "src", "entities", "companion_dog.js")
+        with open(dog_path) as f:
+            dog_src = f.read()
+            self.assertIn("stepLeashConstraint(this, this.owner, 65, 4.0, 5.0, dt)", dog_src)
 
         print("✅ wasm_sim_bridge.js cleanly integrated into entity simulation loop")
 

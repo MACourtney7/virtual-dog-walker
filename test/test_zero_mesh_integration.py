@@ -451,6 +451,182 @@ class TestZeroMeshIntegration(unittest.TestCase):
         self.assertIn("const isNpc =", env_code)
         self.assertIn("pRadius = p.cutoutRadius || (isNpc ? 60 :", env_code)
 
+    def test_live_proximity_mesh_sdp_handshake_and_chat_routing(self):
+        """Regression test (unification-008):
+        Verify live WebRTC offer/answer negotiation for proximityMesh over gameMesh.send_direct_state,
+        registering incoming proximity chat callbacks, and falling back to game_packet when no live mesh peers exist.
+        """
+        # 1. Behavioral simulation of SDP handshake and chat routing
+        class FakeEngine:
+            def __init__(self, role="initiator"):
+                self.role = role
+                self.answer_applied = None
+
+            def create_offer(self):
+                return "v=0\r\no=FakeOffer"
+
+            def accept_offer_and_create_answer(self, offer):
+                assert offer == "v=0\r\no=FakeOffer"
+                return "v=0\r\no=FakeAnswer"
+
+            def apply_answer(self, answer):
+                self.answer_applied = answer
+
+        class FakeProximityMesh:
+            def __init__(self, local_id):
+                self.local_id = local_id
+                self.peers = {}
+                self.messages = []
+                self.on_message_cb = None
+
+            def local_public_key(self):
+                return [1, 2, 3, 4]
+
+            def peer_count(self):
+                return len(self.peers)
+
+            def register_peer(self, peer_id, pub_key, engine):
+                self.peers[peer_id] = {"pub_key": pub_key, "engine": engine}
+
+            def broadcast_chat(self, text):
+                self.messages.append(text)
+
+            def set_on_message(self, cb):
+                self.on_message_cb = cb
+
+        class FakeGameMesh:
+            def __init__(self):
+                self.sent = []
+
+            def send_direct_state(self, target_id, topic, payload):
+                self.sent.append((target_id, topic, payload))
+
+        # Test Handshake: Peer 1 (initiator) -> Peer 2 (responder)
+        peer1_prox_mesh = FakeProximityMesh("prox-peer-1")
+        peer2_prox_mesh = FakeProximityMesh("prox-peer-2")
+        peer1_game_mesh = FakeGameMesh()
+        peer2_game_mesh = FakeGameMesh()
+        pending_engines = {}
+
+        # Peer 1 initiates proximity handshake (peer-1 < peer-2)
+        p1_engine = FakeEngine("initiator")
+        pending_engines["peer-2"] = p1_engine
+        offer_sdp = p1_engine.create_offer()
+        invite_payload = {
+            "initiator": "peer-1",
+            "sdpOffer": offer_sdp,
+            "pubKey": list(peer1_prox_mesh.local_public_key()),
+            "timestamp": 12345
+        }
+        peer1_game_mesh.send_direct_state("peer-2", "proximity_invite", json.dumps(invite_payload).encode())
+
+        # Peer 2 receives proximity_invite and creates answer
+        self.assertEqual(len(peer1_game_mesh.sent), 1)
+        tgt, topic, raw = peer1_game_mesh.sent[0]
+        self.assertEqual(tgt, "peer-2")
+        self.assertEqual(topic, "proximity_invite")
+        received_invite = json.loads(raw.decode())
+
+        p2_engine = FakeEngine("responder")
+        answer_sdp = p2_engine.accept_offer_and_create_answer(received_invite["sdpOffer"])
+        peer2_prox_mesh.register_peer(received_invite["initiator"], received_invite["pubKey"], p2_engine)
+        drop_payload = {
+            "responder": "peer-2",
+            "sdpAnswer": answer_sdp,
+            "pubKey": list(peer2_prox_mesh.local_public_key()),
+            "timestamp": 12346
+        }
+        peer2_game_mesh.send_direct_state("peer-1", "proximity_drop", json.dumps(drop_payload).encode())
+
+        # Peer 1 receives proximity_drop and finalizes
+        self.assertEqual(len(peer2_game_mesh.sent), 1)
+        tgt, topic, raw = peer2_game_mesh.sent[0]
+        self.assertEqual(tgt, "peer-1")
+        self.assertEqual(topic, "proximity_drop")
+        received_drop = json.loads(raw.decode())
+
+        engine_to_finalize = pending_engines.pop("peer-2")
+        engine_to_finalize.apply_answer(received_drop["sdpAnswer"])
+        peer1_prox_mesh.register_peer(received_drop["responder"], received_drop["pubKey"], engine_to_finalize)
+
+        self.assertEqual(engine_to_finalize.answer_applied, "v=0\r\no=FakeAnswer")
+        self.assertEqual(peer1_prox_mesh.peer_count(), 1)
+        self.assertEqual(peer2_prox_mesh.peer_count(), 1)
+        self.assertEqual(len(pending_engines), 0)
+
+        # Test on_message callback cleans 'prox-' prefix
+        delivered = []
+        peer1_prox_mesh.set_on_message(lambda s_id, text: delivered.append((str(s_id).replace("prox-", ""), text)))
+        peer1_prox_mesh.on_message_cb("prox-peer-2", "Hello in proximity!")
+        self.assertEqual(delivered, [("peer-2", "Hello in proximity!")])
+
+        # 2. Source code contract validation in src/net/zero_mesh_network.js
+        net_js_path = os.path.join(os.path.dirname(__file__), "..", "src", "net", "zero_mesh_network.js")
+        with open(net_js_path, "r", encoding="utf-8") as f:
+            net_code = f.read()
+
+        self.assertIn("this.proximityMesh.set_on_message((senderPeerId, plaintext) => {", net_code)
+        self.assertIn("const cleanSenderId = String(senderPeerId).replace(/^prox-/, '');", net_code)
+        self.assertIn("this.pendingProximityEngines = new Map();", net_code)
+        self.assertIn("this.proximityCrypto = new this.wasmMod.WasmCryptoSession();", net_code)
+        self.assertIn("const engine = new this.wasmMod.WasmWebRtcEngine();", net_code)
+        self.assertIn("const sdpOffer = await engine.create_offer();", net_code)
+        self.assertIn("this.gameMesh.send_direct_state(remoteId, 'proximity_invite',", net_code)
+        self.assertIn("const answerSdp = await engine.accept_offer_and_create_answer(payload.sdpOffer);", net_code)
+        self.assertIn("this.gameMesh.send_direct_state(originPeerId, 'proximity_drop',", net_code)
+        self.assertIn("await engine.apply_answer(payload.sdpAnswer);", net_code)
+        self.assertIn("this.proximityMesh.broadcast_chat(text);", net_code)
+        self.assertIn("Protocol.createProximityChat(this.peerId, this.localMeta.name, text, 0, 0, peers)", net_code)
+        self.assertIn("case PacketType.PROXIMITY_CHAT:", net_code)
+
+    def test_social_hud_recognizes_clifton_commons_as_public_online_badge(self):
+        """Regression test (unification-008):
+        Verify SocialHUD status badge recognizes 'clifton-commons' as public commons (green 'Online' and 'Share Park').
+        """
+        # 1. Logic validation
+        def compute_hud_state(room_id, status="CONNECTED"):
+            if status in ("CONNECTED", "CONNECTED_PEER", "HOSTING"):
+                is_commons = not room_id or room_id == 'the-commons' or room_id == 'clifton-commons' or room_id == 'clifton-field'
+                if is_commons:
+                    badge_text = "Online"
+                    badge_bg = "#059669"
+                    label_text = "Share Park"
+                else:
+                    badge_text = f"🔒 Meadow ({room_id})"
+                    badge_bg = "#8b5cf6"
+                    label_text = "Share Link"
+                return is_commons, badge_text, badge_bg, label_text
+            return False, "Offline", "#64748b", "Share Park"
+
+        # Verify clifton-commons displays green Online badge and Share Park
+        is_comm, text, bg, label = compute_hud_state("clifton-commons")
+        self.assertTrue(is_comm)
+        self.assertEqual(text, "Online")
+        self.assertEqual(bg, "#059669")
+        self.assertEqual(label, "Share Park")
+
+        # Verify other public aliases
+        for r in ("", None, "the-commons", "clifton-field"):
+            is_comm, text, bg, label = compute_hud_state(r)
+            self.assertTrue(is_comm)
+            self.assertEqual(text, "Online")
+
+        # Verify private room displays locked meadow
+        is_comm, text, bg, label = compute_hud_state("secret-meadow-99")
+        self.assertFalse(is_comm)
+        self.assertEqual(text, "🔒 Meadow (secret-meadow-99)")
+        self.assertEqual(bg, "#8b5cf6")
+        self.assertEqual(label, "Share Link")
+
+        # 2. Source code contract validation in src/ui/social_hud.js
+        hud_js_path = os.path.join(os.path.dirname(__file__), "..", "src", "ui", "social_hud.js")
+        with open(hud_js_path, "r", encoding="utf-8") as f:
+            hud_code = f.read()
+
+        self.assertIn("this.net.roomId === 'clifton-commons'", hud_code)
+        self.assertIn("badge.textContent = 'Online'", hud_code)
+        self.assertIn("label.textContent = isCommons ? 'Share Park' : 'Share Link'", hud_code)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,7 @@
 let wasmSimInstance = null;
 let initPromise = null;
 
-export async function initWasmSim() {
+export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0) {
   if (wasmSimInstance) return wasmSimInstance;
   if (initPromise) return initPromise;
 
@@ -16,7 +16,7 @@ export async function initWasmSim() {
           await mod.default();
         }
         if (typeof mod.WasmWorldSim === 'function') {
-          wasmSimInstance = new mod.WasmWorldSim(2000.0, 2000.0);
+          wasmSimInstance = new mod.WasmWorldSim(worldWidth, worldHeight);
           console.log('[WasmSimBridge] Core simulation engine initialized (Rust/Wasm).');
           return wasmSimInstance;
         }
@@ -32,6 +32,56 @@ export async function initWasmSim() {
 
 export function getWasmSim() {
   return wasmSimInstance;
+}
+
+export function stepEarSprings(leftEar, rightEar, dogVx, dogVy, dogAngle, dt) {
+  if (wasmSimInstance && typeof wasmSimInstance.step_ears === 'function') {
+    const lAngle = leftEar ? (leftEar.angle || 0) : 0;
+    const lVel = leftEar ? (leftEar.vel ?? leftEar.v ?? 0) : 0;
+    const rAngle = rightEar ? (rightEar.angle || 0) : 0;
+    const rVel = rightEar ? (rightEar.vel ?? rightEar.v ?? 0) : 0;
+    const res = wasmSimInstance.step_ears(
+      lAngle, lVel,
+      rAngle, rVel,
+      dogVx, dogVy, dogAngle, dt
+    );
+    if (leftEar) {
+      leftEar.angle = res[0];
+      if ('vel' in leftEar) leftEar.vel = res[1];
+      if ('v' in leftEar) leftEar.v = res[1];
+    }
+    if (rightEar) {
+      rightEar.angle = res[2];
+      if ('vel' in rightEar) rightEar.vel = res[3];
+      if ('v' in rightEar) rightEar.v = res[3];
+    }
+    return;
+  }
+
+  // JS Fallback
+  const springK = 180.0;
+  const damping = 14.0;
+  const forwardSpeed = dogVx * Math.cos(dogAngle) + dogVy * Math.sin(dogAngle);
+  const targetOffset = Math.max(-0.4, Math.min(0.4, forwardSpeed * 0.003));
+
+  if (leftEar) {
+    const lAngle = leftEar.angle || 0;
+    const lVel = leftEar.vel ?? leftEar.v ?? 0;
+    const leftForce = -springK * (lAngle - targetOffset) - damping * lVel;
+    const newLVel = lVel + leftForce * dt;
+    leftEar.angle = lAngle + newLVel * dt;
+    if ('vel' in leftEar) leftEar.vel = newLVel;
+    if ('v' in leftEar) leftEar.v = newLVel;
+  }
+  if (rightEar) {
+    const rAngle = rightEar.angle || 0;
+    const rVel = rightEar.vel ?? rightEar.v ?? 0;
+    const rightForce = -springK * (rAngle - targetOffset) - damping * rVel;
+    const newRVel = rVel + rightForce * dt;
+    rightEar.angle = rAngle + newRVel * dt;
+    if ('vel' in rightEar) rightEar.vel = newRVel;
+    if ('v' in rightEar) rightEar.v = newRVel;
+  }
 }
 
 export function stepLeashConstraint(dog, owner, maxLength, stiffness, damping, dt) {

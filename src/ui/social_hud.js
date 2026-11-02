@@ -645,7 +645,7 @@ export class SocialHUD {
     const label = document.getElementById('btn-room-label');
 
     if (status === WSStatus.CONNECTED || status === NetStatus.CONNECTED_PEER || status === NetStatus.HOSTING) {
-      const isCommons = !this.net.roomId || this.net.roomId === 'the-commons' || this.net.roomId === 'clifton-field';
+      const isCommons = !this.net.roomId || this.net.roomId === 'the-commons' || this.net.roomId === 'clifton-commons' || this.net.roomId === 'clifton-field';
       if (badge) {
         if (isCommons) {
           badge.textContent = 'Online';

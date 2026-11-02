@@ -119,6 +119,34 @@ export class Field {
     return null;
   }
 
+  getColliders() {
+    const colliders = [];
+    if (Array.isArray(this.trees)) {
+      for (const t of this.trees) {
+        colliders.push({ x: t.x, y: t.y, r: t.trunkRadius || (t.r ? t.r * 0.35 : 18) });
+      }
+    }
+    if (this.waterTower) {
+      colliders.push({ x: this.waterTower.x, y: this.waterTower.y, r: this.waterTower.radius || 42 });
+    }
+    if (Array.isArray(this.rockOutcrops)) {
+      for (const r of this.rockOutcrops) {
+        colliders.push({ x: r.x, y: r.y, r: r.r || 26 });
+      }
+    }
+    if (Array.isArray(this.bins)) {
+      for (const b of this.bins) {
+        colliders.push({ x: b.x, y: b.y, r: b.radius || 12 });
+      }
+    }
+    if (Array.isArray(this.benches)) {
+      for (const b of this.benches) {
+        colliders.push({ x: b.x, y: b.y, r: Math.max(b.w, b.h) / 2 || 20 });
+      }
+    }
+    return colliders;
+  }
+
   bakeGround() {
     if (!this.bakedCanvas) return;
     const ctx = this.bakedCanvas.getContext('2d');

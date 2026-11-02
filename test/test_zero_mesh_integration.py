@@ -311,6 +311,30 @@ class TestZeroMeshIntegration(unittest.TestCase):
         self.assertIn("this.cryptoSession.open_drop_sdp", content)
         self.assertIn("engine.accept_offer_and_create_answer", content)
 
+    def test_no_bare_json_imports_in_browser_src(self):
+        """Regression test (unification-006): Verify no browser .js files contain bare import ... from '*.json'."""
+        import re
+        src_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "src"))
+        bare_json_pattern = re.compile(r"""^\s*import\s+.*?['"][^'"]+\.json['"]\s*;?""", re.MULTILINE)
+
+        offending_imports = []
+        for root, _, files in os.walk(src_dir):
+            for file in files:
+                if file.endswith(".js"):
+                    file_path = os.path.join(root, file)
+                    rel_path = os.path.relpath(file_path, src_dir)
+                    with open(file_path, "r", encoding="utf-8") as f:
+                        text = f.read()
+                    matches = bare_json_pattern.findall(text)
+                    if matches:
+                        offending_imports.append((rel_path, matches))
+
+        self.assertEqual(
+            offending_imports,
+            [],
+            f"Found bare JSON imports in unbundled browser JavaScript modules: {offending_imports}"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

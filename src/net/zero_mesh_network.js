@@ -4,7 +4,7 @@
 
 import { PacketType, Protocol } from './protocol.js';
 import { EntityInterpolator, NetStatus } from './network.js';
-import npcManifest from '../world/npc_path_manifest.json';
+import { NPC_PATHS } from '../world/npc_paths.js';
 
 const FALLBACK_MANIFEST = [
   { id: 'ladies-mile-loop', type: 'both', lengthPx: 3637.4 },
@@ -19,8 +19,27 @@ const FALLBACK_MANIFEST = [
   { id: 'perimeter-grand-loop', type: 'jogger', lengthPx: 7886.1 }
 ];
 
-const MANIFEST = (Array.isArray(npcManifest) && npcManifest.length > 0)
-  ? npcManifest
+function computePathLength(waypoints) {
+  if (!Array.isArray(waypoints) || waypoints.length < 2) return 0;
+  let len = 0;
+  for (let i = 0; i < waypoints.length - 1; i++) {
+    const p1 = waypoints[i];
+    const p2 = waypoints[i + 1];
+    const x1 = Array.isArray(p1) ? p1[0] : p1.x;
+    const y1 = Array.isArray(p1) ? p1[1] : p1.y;
+    const x2 = Array.isArray(p2) ? p2[0] : p2.x;
+    const y2 = Array.isArray(p2) ? p2[1] : p2.y;
+    len += Math.hypot(x2 - x1, y2 - y1);
+  }
+  return Math.round(len * 10) / 10;
+}
+
+const MANIFEST = (Array.isArray(NPC_PATHS) && NPC_PATHS.length > 0)
+  ? NPC_PATHS.map(p => ({
+      id: p.id,
+      type: p.type,
+      lengthPx: computePathLength(p.waypoints || [])
+    }))
   : FALLBACK_MANIFEST;
 
 const WALKER_SPEED = 22; // px/s

@@ -184,7 +184,17 @@ export class CliftonDownGame {
     this.initCanvas();
     this.bindInputs();
     this.initNetworking();
-    initWasmSim().catch(() => {});
+    initWasmSim()
+      .then((sim) => {
+        this.wasmSim = sim;
+        if (this.wasmSim && this.field) {
+          const colliders = typeof this.field.getColliders === 'function'
+            ? this.field.getColliders()
+            : [];
+          this.wasmSim.set_colliders(JSON.stringify(colliders));
+        }
+      })
+      .catch(() => {});
     if (!this.isNetworkConnecting()) {
       this.updateLocalSpawner(0);
     }
@@ -213,6 +223,13 @@ export class CliftonDownGame {
   }
 
   initNetworking() {
+    if (this.wasmSim && this.field && typeof this.wasmSim.set_colliders === 'function') {
+      const colliders = typeof this.field.getColliders === 'function'
+        ? this.field.getColliders()
+        : [];
+      this.wasmSim.set_colliders(JSON.stringify(colliders));
+    }
+
     // Set initial local profile metadata for networking
     this.net.setLocalMeta({
       name: this.owner.name,

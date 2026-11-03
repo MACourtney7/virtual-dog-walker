@@ -763,6 +763,19 @@ class TestZeroMeshIntegration(unittest.TestCase):
         parsed_session = json.loads(raw.decode("utf-8"))
         self.assertEqual(parsed_session["type"], "PROXIMITY_BURN_ALL")
 
+    def test_pages_host_detection_regression(self):
+        """Verify network.js checks 'pages.dev' to select ZeroMeshNetworkManager with clifton-commons room."""
+        network_js_path = os.path.join(os.path.dirname(__file__), "..", "src", "net", "network.js")
+        self.assertTrue(os.path.exists(network_js_path), f"network.js must exist at {network_js_path}")
+        with open(network_js_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        # Check pages.dev hostname detection
+        self.assertIn("window.location.hostname.includes('pages.dev')", code)
+        # Check default room fallback to 'clifton-commons'
+        self.assertIn("'clifton-commons'", code)
+        self.assertIn("ZeroMeshNetworkManager", code)
+
 
 
 if __name__ == "__main__":

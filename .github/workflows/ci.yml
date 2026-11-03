@@ -1,6 +1,6 @@
 name: CI & Deployment
 
-on:
+'on':
   push:
     branches: [main]
   pull_request:
@@ -11,36 +11,57 @@ jobs:
   test:
     name: Run Automated Test Suites
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout virtual_dog_walker
         uses: actions/checkout@v4
+        with:
+          path: virtual_dog_walker
+
+      - name: Checkout zero_protocol sibling
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/zero-protocol
+          path: zero_protocol
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout zero_chat sibling
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/zero-chat
+          path: zero_chat
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-          cache: "pip"
 
-      - name: Install Python Dependencies
-        run: |
-          pip install -r requirements.txt
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen-cli
+        run: cargo install -q wasm-bindgen-cli --version 0.2.129
+
+      - name: Run Cargo Tests
+        working-directory: virtual_dog_walker
+        run: cargo test
 
       - name: Run Test Runner
+        working-directory: virtual_dog_walker
         run: python3 test/run_tests.py
 
   deploy:
-    name: Deploy to Cloudflare Workers
+    name: Deploy to Cloudflare Pages
     needs: test
     if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
-      - name: Checkout Repository
-        uses: actions/checkout@v4
-
       - name: Check Cloudflare Credentials
         id: check_creds
         run: |
@@ -51,6 +72,38 @@ jobs:
             echo "has_token=true" >> $GITHUB_OUTPUT
           fi
 
+      - name: Checkout virtual_dog_walker
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: actions/checkout@v4
+        with:
+          path: virtual_dog_walker
+
+      - name: Checkout zero_protocol sibling
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/zero-protocol
+          path: zero_protocol
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout zero_chat sibling
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/zero-chat
+          path: zero_chat
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust toolchain
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen-cli
+        if: steps.check_creds.outputs.has_token == 'true'
+        run: cargo install -q wasm-bindgen-cli --version 0.2.129
+
       - name: Set up Node.js
         if: steps.check_creds.outputs.has_token == 'true'
         uses: actions/setup-node@v4
@@ -59,11 +112,27 @@ jobs:
 
       - name: Install Dependencies
         if: steps.check_creds.outputs.has_token == 'true'
+        working-directory: virtual_dog_walker
         run: npm install
 
-      - name: Deploy with Wrangler
+      - name: Build Application
+        if: steps.check_creds.outputs.has_token == 'true'
+        working-directory: virtual_dog_walker
+        run: npm run build
+
+      - name: Ensure Cloudflare Pages project exists
+        if: steps.check_creds.outputs.has_token == 'true'
+        working-directory: virtual_dog_walker
+        run: npx wrangler pages project create virtual-dog-walker --production-branch=main || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy to Cloudflare Pages
         if: steps.check_creds.outputs.has_token == 'true'
         uses: cloudflare/wrangler-action@v3
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: virtual_dog_walker
+          command: 'pages deploy dist --project-name=virtual-dog-walker --branch=main --commit-dirty=true'

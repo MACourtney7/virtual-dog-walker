@@ -44,7 +44,7 @@ jobs:
           targets: wasm32-unknown-unknown
 
       - name: Install wasm-bindgen-cli
-        run: cargo install -q wasm-bindgen-cli --version 0.2.129
+        run: cargo install -q wasm-bindgen-cli --version 0.2.130
 
       - name: Run Cargo Tests
         working-directory: virtual_dog_walker
@@ -102,7 +102,7 @@ jobs:
 
       - name: Install wasm-bindgen-cli
         if: steps.check_creds.outputs.has_token == 'true'
-        run: cargo install -q wasm-bindgen-cli --version 0.2.129
+        run: cargo install -q wasm-bindgen-cli --version 0.2.130
 
       - name: Set up Node.js
         if: steps.check_creds.outputs.has_token == 'true'

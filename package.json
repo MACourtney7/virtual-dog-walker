@@ -4,8 +4,8 @@
   "description": "Virtual Dog Walker - Clifton Commons 2D decentralized P2P social dog walking sandbox",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "bash scripts/build_wasm.sh && wrangler deploy",
+    "dev": "npm run build && wrangler pages dev dist",
+    "deploy": "npm run build && wrangler pages deploy dist --project-name=virtual-dog-walker",
     "build:wasm": "bash scripts/build_wasm.sh",
     "build": "bash scripts/build_pages.sh",
     "test": "python3 test/run_tests.py"

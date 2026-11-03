@@ -40,7 +40,7 @@ class TestWasmCoreSim(unittest.TestCase):
         print("✅ Dual Wasm build artifacts verified in src/wasm/ and src/wasm_core/")
 
     def test_pages_distribution_packages_both_wasm_bundles(self):
-        """Verify dist/ contains both src/wasm and src/wasm_core bundles if dist/ has been built."""
+        """Verify dist/ contains both src/wasm and src/wasm_core bundles and strictly runtime assets if dist/ has been built (AC-011.2)."""
         dist_dir = os.path.join(PROJECT_ROOT, "dist")
         if not os.path.exists(dist_dir):
             # In fresh CI checkouts, dist/ is not tracked in git; verify scripts/build_pages.sh existence
@@ -54,7 +54,22 @@ class TestWasmCoreSim(unittest.TestCase):
 
         self.assertTrue(os.path.exists(dist_mesh), f"Missing {dist_mesh}")
         self.assertTrue(os.path.exists(dist_core), f"Missing {dist_core}")
-        print("✅ Pages distribution bundle in dist/ packages both Wasm runtimes")
+
+        # AC-011.2 assertions: dist/ contains only runtime assets (index.html, src/)
+        # Must not contain package.json, wrangler.jsonc, *.py, *.md, test/, openspec/, .factory/
+        self.assertTrue(os.path.exists(os.path.join(dist_dir, "index.html")), "Missing dist/index.html")
+        self.assertFalse(os.path.exists(os.path.join(dist_dir, "package.json")), "dist/ must not contain package.json")
+        self.assertFalse(os.path.exists(os.path.join(dist_dir, "wrangler.jsonc")), "dist/ must not contain wrangler.jsonc")
+        self.assertFalse(os.path.exists(os.path.join(dist_dir, "test")), "dist/ must not contain test/")
+        self.assertFalse(os.path.exists(os.path.join(dist_dir, "openspec")), "dist/ must not contain openspec/")
+        self.assertFalse(os.path.exists(os.path.join(dist_dir, ".factory")), "dist/ must not contain .factory/")
+
+        for root, dirs, files in os.walk(dist_dir):
+            for file_name in files:
+                self.assertFalse(file_name.endswith(".py"), f"Found python file {file_name} in dist/")
+                self.assertFalse(file_name.endswith(".md"), f"Found markdown file {file_name} in dist/")
+
+        print("✅ Pages distribution bundle in dist/ satisfies AC-011.2 (runtime assets only, dual Wasm)")
 
     def test_wasm_sim_bridge_and_entity_integration(self):
         """Verify wasm_sim_bridge.js exports and entity module hooks."""

@@ -21,15 +21,12 @@ bash "${SCRIPT_DIR}/build_wasm.sh"
 rm -rf "${DIST_DIR}"
 mkdir -p "${DIST_DIR}"
 
-echo "Copying static assets..."
+echo "Copying static runtime assets..."
 cp "${PROJECT_ROOT}/index.html" "${DIST_DIR}/"
 cp -r "${PROJECT_ROOT}/src" "${DIST_DIR}/"
-if [[ -f "${PROJECT_ROOT}/package.json" ]]; then
-    cp "${PROJECT_ROOT}/package.json" "${DIST_DIR}/"
-fi
-if [[ -f "${PROJECT_ROOT}/wrangler.jsonc" ]]; then
-    cp "${PROJECT_ROOT}/wrangler.jsonc" "${DIST_DIR}/"
-fi
+
+# Prune non-runtime files that might exist inside src/
+find "${DIST_DIR}" -type f \( -name "*.py" -o -name "*.md" -o -name "*.rs" -o -name "Cargo.toml" -o -name "Cargo.lock" \) -delete
+find "${DIST_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 echo "✅ Distribution built successfully in ${DIST_DIR}"
-

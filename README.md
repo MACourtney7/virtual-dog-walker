@@ -2,6 +2,8 @@
 
 An open-world, 2D decentralized peer-to-peer (P2P) social dog-walking simulation set in Clifton Down (Bristol, UK). Powered by pure WebAssembly physics, real-time spatial simulation, and the serverless `zero_network` protocol stack.
 
+**Live Client:** [https://virtual-dog-walker.pages.dev](https://virtual-dog-walker.pages.dev)
+
 ---
 
 ## 1. Architecture & The `zero_network` Polyrepo Stack
@@ -45,7 +47,7 @@ virtual_dog_walker/
 │   └── build_pages.sh        # Assembles static Cloudflare Pages distribution bundle in dist/
 ├── test/                     # Python integration, simulation, and contract test suite
 ├── index.html                # Main game canvas & UI mount points
-└── wrangler.jsonc            # Cloudflare Pages / Static Assets configuration
+└── wrangler.jsonc            # Cloudflare Pages configuration
 ```
 
 ---
@@ -70,9 +72,15 @@ npm run build
 ```
 
 ### Local Development Server
-Launch local static dev server using Wrangler:
+Builds assets and starts the Cloudflare Pages local development server:
 ```bash
 npm run dev
+```
+
+### Manual Deploy
+Builds distribution bundle and deploys to Cloudflare Pages:
+```bash
+npm run deploy
 ```
 
 ---
@@ -90,3 +98,18 @@ Executes end-to-end integration tests covering entity interpolation, network pro
 ```bash
 python3 test/run_tests.py
 ```
+
+---
+
+## 5. Deployment & CI/CD
+
+The production game client is hosted on **Cloudflare Pages** at [https://virtual-dog-walker.pages.dev](https://virtual-dog-walker.pages.dev).
+
+### CI/CD Pipeline
+Continuous integration and deployment are automated via GitHub Actions in `.github/workflows/ci.yml`:
+1. **Test Job**: Runs on all pushes and pull requests. Installs the Rust toolchain with target `wasm32-unknown-unknown`, checks out sibling repositories (`zero_protocol`, `zero_chat`), and executes `cargo test` and `python3 test/run_tests.py`.
+2. **Deploy Job**: Runs on push to `main` (and `workflow_dispatch`). Assembles production assets via `npm run build` and deploys `dist/` directly to Cloudflare Pages project `virtual-dog-walker`.
+
+### Required GitHub Secrets
+- `CLOUDFLARE_API_TOKEN`: Cloudflare API token with `Cloudflare Pages: Edit` permissions.
+- `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account identifier.

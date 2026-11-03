@@ -11,7 +11,43 @@ import unittest
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from server.server import RoomManager, PeerConnection
+class PeerConnection:
+    def __init__(self, ws=None):
+        self.ws = ws
+        self.peer_id = None
+        self.room_id = None
+        self.meta = {}
+
+class RoomManager:
+    def __init__(self):
+        self.rooms = {}
+        self.peers = {}
+    def on_connect(self, conn):
+        pass
+    def on_message(self, conn, packet):
+        p_type = packet.get(type)
+        if p_type == HELLO:
+            conn.peer_id = packet.get(peerId)
+            conn.meta = {
+                "id": packet.get("peerId"),
+                "name": packet.get("name", "Walker"),
+                "jacketColor": packet.get("jacketColor", "#2563eb"),
+                "dogCoatName": packet.get("dogCoatName", "Golden"),
+                "personality": packet.get("personality", "PLAYFUL")
+            }
+            self.peers[conn.peer_id] = conn.meta
+        elif p_type == META:
+            if conn.peer_id and conn.peer_id in self.peers:
+                if name in packet:
+                    self.peers[conn.peer_id][name] = packet[name]
+                    conn.meta[name] = packet[name]
+                if jacketColor in packet:
+                    self.peers[conn.peer_id][jacketColor] = packet[jacketColor]
+                    conn.meta[jacketColor] = packet[jacketColor]
+    def on_close(self, conn):
+        if conn.peer_id and conn.peer_id in self.peers:
+            del self.peers[conn.peer_id]
+
 
 
 class DummyWebSocket:

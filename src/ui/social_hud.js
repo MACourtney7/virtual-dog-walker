@@ -1,7 +1,7 @@
 // Social HUD Component - Room Status, One-Click Share, Chat Input, and Character Customizer
 import { Protocol } from '../net/protocol.js';
 import { TouchControls } from './touch_controls.js';
-import { WSStatus } from '../net/ws_network.js';
+import { WSStatus } from '../net/network.js';
 import { NetStatus } from '../net/network.js';
 
 export class SocialHUD {

@@ -1,7 +1,7 @@
 {
-  "name": "virtual-dog-walker",
+  "name": "virtual_dog_walker",
   "version": "1.0.0",
-  "description": "Virtual Dog Walker - Multiplayer dog walking field social sandbox at Clifton Down with on-demand edge rooms",
+  "description": "Virtual Dog Walker - Clifton Commons 2D decentralized P2P social dog walking sandbox",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
@@ -9,9 +9,6 @@
     "build:wasm": "bash scripts/build_wasm.sh",
     "build": "bash scripts/build_pages.sh",
     "test": "python3 test/run_tests.py"
-  },
-  "dependencies": {
-    "partyserver": "^0.0.40"
   },
   "devDependencies": {
     "wrangler": "^3.100.0"

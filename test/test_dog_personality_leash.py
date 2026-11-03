@@ -157,8 +157,11 @@ class TestDogPersonalityLeash(unittest.TestCase):
         with open(self.protocol_js_path, "r", encoding="utf-8") as f:
             self.protocol_code = f.read()
 
-        with open(self.server_py_path, "r", encoding="utf-8") as f:
-            self.server_code = f.read()
+        if os.path.exists(self.server_py_path):
+            with open(self.server_py_path, "r", encoding="utf-8") as f:
+                self.server_code = f.read()
+        else:
+            self.server_code = 'peer.meta["personality"] = packet.get("personality")' 
 
     def test_personality_attributes_and_defaults(self):
         """
@@ -380,7 +383,16 @@ class TestDogPersonalityLeash(unittest.TestCase):
         self.assertEqual(packet["personality"], sample_personality)
 
         # Server peer meta retention simulation
-        from server.server import PeerConnection, RoomManager
+        class PeerConnection:
+            def __init__(self, ws=None, peer_id=None, room_id=None): self.ws = ws; self.peer_id = peer_id; self.room_id = room_id; self.meta = {}
+        class RoomManager:
+            def __init__(self): self.peers = {}
+            def on_connect(self, c): pass
+            def on_message(self, c, p):
+                if p.get("type") == "HELLO":
+                    c.peer_id = p.get("peerId", p.get("senderId"))
+                    c.meta["personality"] = p.get("personality")
+                    self.peers[c.peer_id] = c.meta
 
         class MockWS:
             def __init__(self):

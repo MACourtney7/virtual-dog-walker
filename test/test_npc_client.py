@@ -48,7 +48,7 @@ except ImportError:
     from test_npc_entity import SimulatedDeterministicParkNPC
 
 MAIN_JS = os.path.join(ROOT_DIR, "src", "main.js")
-WS_NETWORK_JS = os.path.join(ROOT_DIR, "src", "net", "ws_network.js")
+WS_NETWORK_JS = os.path.join(ROOT_DIR, "src", "net", "zero_mesh_network.js")
 NETWORK_JS = os.path.join(ROOT_DIR, "src", "net", "network.js")
 
 

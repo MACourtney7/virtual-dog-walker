@@ -16,15 +16,11 @@ def test_scaffold():
     assert os.path.exists("src/world/npc_paths.js"), "src/world/npc_paths.js missing"
     assert os.path.exists("src/world/npc_path_manifest.json"), "src/world/npc_path_manifest.json missing"
     assert os.path.exists("src/net/network.js"), "src/net/network.js missing"
-    assert os.path.exists("src/net/ws_network.js"), "src/net/ws_network.js missing"
     assert os.path.exists("src/ui/social_hud.js"), "src/ui/social_hud.js missing"
     assert os.path.exists("src/ui/touch_controls.js"), "src/ui/touch_controls.js missing"
     assert os.path.exists("src/systems/audio.js"), "src/systems/audio.js missing"
     assert os.path.exists("src/systems/weather.js"), "src/systems/weather.js missing"
     assert os.path.exists("src/world/environment.js"), "src/world/environment.js missing"
-    assert os.path.exists("server/server.py"), "server/server.py missing"
-    assert os.path.exists("server/host.py"), "server/host.py missing"
-    assert os.path.exists("server/tunnel.py"), "server/tunnel.py missing"
     
     with open("index.html") as f:
         html = f.read()
@@ -40,8 +36,6 @@ def run_all():
         "test/test_steering.py",
         "test/test_ball_physics.py",
         "test/test_protocol.py",
-        "test/test_server.py",
-        "test/test_partyserver.py",
         "test/test_mobile_controls.py",
         "test/test_player_identity.py",
         "test/test_leash_sync.py",
@@ -62,7 +56,6 @@ def run_all():
         "test/test_npc_content.py",
         "test/test_npc_paths.py",
         "test/test_npc_entity.py",
-        "test/test_npc_server.py",
         "test/test_npc_client.py",
         "test/test_field.py",
         "test/test_fetching_mechanics.py",

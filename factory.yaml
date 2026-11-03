@@ -1,16 +1,10 @@
-# factory.yaml - Host Project Configuration for Agentic Software Factory
-project_name: "virtual-dog-walker"
+project_name: "virtual_dog_walker"
+version: "1.0.0"
+tech_stack: "HTML5 Canvas / Vanilla ES6 JavaScript / Rust & WebAssembly (dog_walker_core + zero_mesh) / Web Audio API / Zero-Network WebRTC P2P"
 base_branch: "main"
-tech_stack: "HTML5 Canvas / Vanilla ES6 JavaScript / Web Audio API / Cloudflare PartyServer / Python Microserver / WebRTC P2P"
-
-# Automation commands executed by Validator and Reviewer workers in isolated worktrees:
-commands:
-  build: python3 test/run_tests.py
-  test: python3 test/run_tests.py
-  lint: echo lint-passed
-  format_check: echo format-passed
-
-# Paths to relevant host project documentation for Architect and Reviewer:
-documentation:
-  guidelines: "README.md"
-  architecture: "openspec/changes/ticket-005/spec.md"
+review_cycles_limit: 3
+autonomous_mode: true
+verification:
+  test_command: "python3 test/run_tests.py"
+  rust_test_command: "cargo test"
+  wasm_build_command: "npm run build:wasm"

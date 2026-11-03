@@ -1,80 +1,92 @@
-# Virtual Dog Walker (Clifton Down)
+# Virtual Dog Walker (Clifton Commons)
 
-A multiplayer social dog-walking sandbox game built with HTML5 Canvas, Web Audio API, and Cloudflare PartyServer edge multiplayer, developed using the **Agentic Software Factory**.
-
----
-
-## Getting Started
-
-This repository is configured with the **Agentic Software Factory** multi-agent development engine and **OpenSpec Spec-Driven Development (SDD)**.
-
-### Development Workflow
-
-1. **Start Task**: Invoke `/start-task` with the Architect to specify the game concept, mechanics, and technical architecture in `openspec/changes/<ticket-id>/spec.md`.
-2. **Implement Task**: Trigger `/implement-task` to decompose the approved spec into cognitive-sized worker briefs, dispatching Implementer, Validator, and Reviewer subagents in isolated Git worktrees.
-3. **Complete Task**: Run `/complete-task` to merge and archive completed changes into `openspec/specs/`.
-
-### Live Factory Board
-
-To monitor active subagents and tasks in real time, launch the TUI board in a terminal:
-
-```bash
-"/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/target/release/factory-board"
-```
+An open-world, 2D decentralized peer-to-peer (P2P) social dog-walking simulation set in Clifton Down (Bristol, UK). Powered by pure WebAssembly physics, real-time spatial simulation, and the serverless `zero_network` protocol stack.
 
 ---
 
-## Multiplayer Hosting & Deployment
+## 1. Architecture & The `zero_network` Polyrepo Stack
 
-Clifton Down supports global edge multiplayer, automated GitHub CI/CD, and dedicated local hosting with **zero port forwarding**:
+Virtual Dog Walker operates as a member of the unified 4-repository `zero_network` ecosystem:
 
-### 1. Always-Open Public Commons (Cloudflare PartyServer & Durable Objects)
-- **Single Shared Park**: By default, all players join **The Commons** (`the-commons`) together. No rooms to create, no codes needed.
-- **Local Edge Dev**:
-  ```bash
-  npm run dev
-  ```
-  Runs local Cloudflare emulation with Wrangler (`http://localhost:8787`).
-- **Manual CLI Deploy**:
-  ```bash
-  npm run deploy
-  ```
-  Deploys directly to `https://virtual-dog-walker.<your-subdomain>.workers.dev`.
+1. **`zero_protocol`**: Shared core Rust workspace containing cryptographic and network protocols:
+   - Synchronous cryptographic primitives (X25519, Ed25519, ChaCha20-Poly1305, HMAC-SHA256).
+   - Envelope serialization and blind dead-drop signaling protocols.
+   - `zero_mesh`: Pure Rust WebRTC DataChannel full-mesh coordinator compiled to WebAssembly (`wasm32-unknown-unknown`).
+2. **`zero_network`**: Cloudflare Worker edge signaling infrastructure using WebSocket Hibernation:
+   - `DeadDropRoom` Durable Object providing blind, zero-trust rendezvous matchmaking (`GET /match/:room`, `POST /stage/:room`, `POST /drop/:room/:uuid`).
+   - Dynamic ephemeral STUN/TURN credential provisioning (`GET /ice`).
+3. **`zero_chat`**: Serverless, zero-footprint ephemeral encrypted messaging client:
+   - Provider of the canonical, reusable `ZeroChatWidget` (`zero_chat_widget.js` & `zero_chat_widget.css`).
+4. **`virtual_dog_walker`**: The frontend game application:
+   - **Physics & Simulation Engine**: Native Rust core compiled to Wasm (`crates/dog_walker_core`).
+   - **P2P Multiplayer Mesh**: `ZeroMeshNetworkManager` backed by `zero_mesh` Wasm.
+   - **Deterministic NPC Simulation**: P2P coordinator election with pre-warmed ambient path traversal and nocturnal streetlight visibility cutouts.
+   - **Proximity Chat**: Embedded `ZeroChatWidget` with spatial hysteresis (160px join / 200px leave), 5-minute retention, and distributed per-message flame burn (`PROXIMITY_BURN_MSG`) & session wipe (`PROXIMITY_BURN_ALL`).
 
-### 2. Automated Free CI/CD (GitHub Actions $\rightarrow$ Cloudflare Workers)
-On every push to `main`, GitHub Actions automatically:
-1. Runs the complete test suite (`test/run_tests.py`) with a 3-minute safety timeout.
-2. If tests pass, deploys the game and PartyServer relay to Cloudflare Workers automatically.
+---
 
-**Zero-Cost Safety Safeguards**:
-- **GitHub**: Actions spending limit defaults to **$0.00**. Test suite completes in ~12 seconds.
-- **Cloudflare**: Workers Free Tier provides **100,000 requests/day** with hard cut-off (no automatic overage billing).
+## 2. Directory Structure
 
-**Connecting Your Cloudflare Account**:
-Add these two free secrets to GitHub (**Settings** $\rightarrow$ **Secrets and variables** $\rightarrow$ **Actions**):
-- `CLOUDFLARE_API_TOKEN`: Cloudflare API token with the template *Edit Cloudflare Workers*.
-- `CLOUDFLARE_ACCOUNT_ID`: Your 32-character Account ID from the Cloudflare Dashboard sidebar.
-
-*(If secrets are not yet configured, the deployment job cleanly skips and issues a warning without failing).*
-
-### 3. Dedicated Local Microserver (Python + Zero-Port Tunnel)
-```bash
-python3 server/host.py
-```
-Starts a local background microserver and generates a secure Cloudflare Quick Tunnel link:
 ```text
-🌐 Public Link: https://<subdomain>.trycloudflare.com/?server=...&room=clifton-field
+virtual_dog_walker/
+├── crates/
+│   └── dog_walker_core/      # Pure Rust physics engine (leash constraint, ball flight, collisions)
+├── src/
+│   ├── engine/               # Simulation bridge to dog_walker_core Wasm
+│   ├── entities/             # Owner, Companion Dog, Tennis Ball, NPC entities
+│   ├── net/                  # ZeroMeshNetworkManager P2P WebRTC networking
+│   ├── systems/              # Spatial audio, weather simulation
+│   ├── ui/                   # Social HUD, Touch Controls, embedded ZeroChatWidget
+│   ├── wasm/                 # zero_mesh compiled Wasm bundle
+│   ├── wasm_core/            # dog_walker_core compiled Wasm bundle
+│   └── world/                # Clifton Down field map, paths, and nocturnal lighting
+├── scripts/
+│   ├── build_wasm.sh         # Compiles Wasm bundles & syncs ZeroChatWidget from zero_chat
+│   └── build_pages.sh        # Assembles static Cloudflare Pages distribution bundle in dist/
+├── test/                     # Python integration, simulation, and contract test suite
+├── index.html                # Main game canvas & UI mount points
+└── wrangler.jsonc            # Cloudflare Pages / Static Assets configuration
 ```
-
-### 4. Offline / Solo Mode
-Open `index.html` directly in your browser or run any static HTTP server.
 
 ---
 
-## Automated Test Suite
+## 3. Development & Build Commands
 
-Run the master test suite:
+### Prerequisites
+- [Rust](https://rustup.rs/) (with `wasm32-unknown-unknown` target: `rustup target add wasm32-unknown-unknown`)
+- [Node.js & npm](https://nodejs.org/)
+- [Python 3](https://python.org/)
 
+### Building WebAssembly Bundles
+Compiles `dog_walker_core` and `zero_mesh` into `src/wasm_core/` and `src/wasm/`, and synchronizes `ZeroChatWidget` from `../zero_chat`:
+```bash
+npm run build:wasm
+```
+
+### Static Pages Distribution Bundle
+Assembles production distribution files in `dist/`:
+```bash
+npm run build
+```
+
+### Local Development Server
+Launch local static dev server using Wrangler:
+```bash
+npm run dev
+```
+
+---
+
+## 4. Testing
+
+### Run Native Rust Unit Tests
+Verifies physics routines, leash clamping, and bounce restitution in `crates/dog_walker_core`:
+```bash
+cargo test
+```
+
+### Run Full Integration & Simulation Suite
+Executes end-to-end integration tests covering entity interpolation, network protocol schemas, proximity chat hysteresis, and NPC lifecycle:
 ```bash
 python3 test/run_tests.py
 ```

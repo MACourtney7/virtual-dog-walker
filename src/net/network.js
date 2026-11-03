@@ -1,7 +1,15 @@
 // Universal Multiplayer Network Engine (Supporting Dedicated WebSocket Server & In-Browser PeerJS)
 
 import { PacketType, Protocol } from './protocol.js';
-import { WebSocketNetworkManager, WSStatus } from './ws_network.js';
+export const WSStatus = {
+  DISCONNECTED: 'DISCONNECTED',
+  CONNECTING: 'CONNECTING',
+  CONNECTED: 'CONNECTED',
+  ROOM_JOINED: 'ROOM_JOINED',
+  RECONNECTING: 'RECONNECTING',
+  ERROR: 'ERROR'
+};
+export { ZeroMeshNetworkManager as WebSocketNetworkManager };
 import { ZeroMeshNetworkManager } from './zero_mesh_network.js';
 
 export const NetStatus = {
@@ -539,7 +547,7 @@ export class NetworkManager {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const targetHost = partyParam && partyParam !== '1' ? partyParam : window.location.host;
       this.wsEndpoint = `${proto}//${targetHost}`;
-      this.adapter = new WebSocketNetworkManager();
+      this.adapter = new ZeroMeshNetworkManager();
       this.isDedicatedServer = true;
       this.isPartyKit = true;
       this.adapter.isPartyKit = true;
@@ -551,7 +559,7 @@ export class NetworkManager {
       else if (!clean.startsWith('ws://') && !clean.startsWith('wss://')) clean = `wss://${clean}`;
 
       if (!clean.endsWith('/ws')) clean = clean.replace(/\/+$/, '') + '/ws';
-      this.adapter = new WebSocketNetworkManager();
+      this.adapter = new ZeroMeshNetworkManager();
       this.isDedicatedServer = true;
       this.isPartyKit = false;
       this.wsEndpoint = clean;

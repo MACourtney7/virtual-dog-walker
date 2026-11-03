@@ -136,6 +136,8 @@ You MUST operate strictly within the **OpenSpec Spec-Driven Development (SDD)** 
 
 An open-world, 2D decentralized peer-to-peer (P2P) social dog-walking simulation set in Clifton Down (Bristol, UK). Powered by pure WebAssembly physics, real-time spatial simulation, and the serverless `zero_network` protocol stack.
 
+**Live Client:** [https://virtual-dog-walker.pages.dev](https://virtual-dog-walker.pages.dev)
+
 ---
 
 ## 1. Architecture & The `zero_network` Polyrepo Stack
@@ -179,7 +181,7 @@ virtual_dog_walker/
 │   └── build_pages.sh        # Assembles static Cloudflare Pages distribution bundle in dist/
 ├── test/                     # Python integration, simulation, and contract test suite
 ├── index.html                # Main game canvas & UI mount points
-└── wrangler.jsonc            # Cloudflare Pages / Static Assets configuration
+└── wrangler.jsonc            # Cloudflare Pages configuration
 ```
 
 ---
@@ -204,9 +206,15 @@ npm run build
 ```
 
 ### Local Development Server
-Launch local static dev server using Wrangler:
+Builds assets and starts the Cloudflare Pages local development server:
 ```bash
 npm run dev
+```
+
+### Manual Deploy
+Builds distribution bundle and deploys to Cloudflare Pages:
+```bash
+npm run deploy
 ```
 
 ---
@@ -224,6 +232,21 @@ Executes end-to-end integration tests covering entity interpolation, network pro
 ```bash
 python3 test/run_tests.py
 ```
+
+---
+
+## 5. Deployment & CI/CD
+
+The production game client is hosted on **Cloudflare Pages** at [https://virtual-dog-walker.pages.dev](https://virtual-dog-walker.pages.dev).
+
+### CI/CD Pipeline
+Continuous integration and deployment are automated via GitHub Actions in `.github/workflows/ci.yml`:
+1. **Test Job**: Runs on all pushes and pull requests. Installs the Rust toolchain with target `wasm32-unknown-unknown`, checks out sibling repositories (`zero_protocol`, `zero_chat`), and executes `cargo test` and `python3 test/run_tests.py`.
+2. **Deploy Job**: Runs on push to `main` (and `workflow_dispatch`). Assembles production assets via `npm run build` and deploys `dist/` directly to Cloudflare Pages project `virtual-dog-walker`.
+
+### Required GitHub Secrets
+- `CLOUDFLARE_API_TOKEN`: Cloudflare API token with `Cloudflare Pages: Edit` permissions.
+- `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account identifier.
 
 ```
 
@@ -1188,8 +1211,8 @@ verification:
   "description": "Virtual Dog Walker - Clifton Commons 2D decentralized P2P social dog walking sandbox",
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "deploy": "bash scripts/build_wasm.sh && wrangler deploy",
+    "dev": "npm run build && wrangler pages dev dist",
+    "deploy": "npm run build && wrangler pages deploy dist --project-name=virtual-dog-walker",
     "build:wasm": "bash scripts/build_wasm.sh",
     "build": "bash scripts/build_pages.sh",
     "test": "python3 test/run_tests.py"
@@ -1226,18 +1249,15 @@ bash "${SCRIPT_DIR}/build_wasm.sh"
 rm -rf "${DIST_DIR}"
 mkdir -p "${DIST_DIR}"
 
-echo "Copying static assets..."
+echo "Copying static runtime assets..."
 cp "${PROJECT_ROOT}/index.html" "${DIST_DIR}/"
 cp -r "${PROJECT_ROOT}/src" "${DIST_DIR}/"
-if [[ -f "${PROJECT_ROOT}/package.json" ]]; then
-    cp "${PROJECT_ROOT}/package.json" "${DIST_DIR}/"
-fi
-if [[ -f "${PROJECT_ROOT}/wrangler.jsonc" ]]; then
-    cp "${PROJECT_ROOT}/wrangler.jsonc" "${DIST_DIR}/"
-fi
+
+# Prune non-runtime files that might exist inside src/
+find "${DIST_DIR}" -type f \( -name "*.py" -o -name "*.md" -o -name "*.rs" -o -name "Cargo.toml" -o -name "Cargo.lock" \) -delete
+find "${DIST_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 echo "✅ Distribution built successfully in ${DIST_DIR}"
-
 
 ```
 
@@ -27092,7 +27112,7 @@ class TestWasmCoreSim(unittest.TestCase):
         print("✅ Dual Wasm build artifacts verified in src/wasm/ and src/wasm_core/")
 
     def test_pages_distribution_packages_both_wasm_bundles(self):
-        """Verify dist/ contains both src/wasm and src/wasm_core bundles if dist/ has been built."""
+        """Verify dist/ contains both src/wasm and src/wasm_core bundles and strictly runtime assets if dist/ has been built (AC-011.2)."""
         dist_dir = os.path.join(PROJECT_ROOT, "dist")
         if not os.path.exists(dist_dir):
             # In fresh CI checkouts, dist/ is not tracked in git; verify scripts/build_pages.sh existence
@@ -27106,7 +27126,22 @@ class TestWasmCoreSim(unittest.TestCase):
 
         self.assertTrue(os.path.exists(dist_mesh), f"Missing {dist_mesh}")
         self.assertTrue(os.path.exists(dist_core), f"Missing {dist_core}")
-        print("✅ Pages distribution bundle in dist/ packages both Wasm runtimes")
+
+        # AC-011.2 assertions: dist/ contains only runtime assets (index.html, src/)
+        # Must not contain package.json, wrangler.jsonc, *.py, *.md, test/, openspec/, .factory/
+        self.assertTrue(os.path.exists(os.path.join(dist_dir, "index.html")), "Missing dist/index.html")
+        self.assertFalse(os.path.exists(os.path.join(dist_dir, "package.json")), "dist/ must not contain package.json")
+        self.assertFalse(os.path.exists(os.path.join(dist_dir, "wrangler.jsonc")), "dist/ must not contain wrangler.jsonc")
+        self.assertFalse(os.path.exists(os.path.join(dist_dir, "test")), "dist/ must not contain test/")
+        self.assertFalse(os.path.exists(os.path.join(dist_dir, "openspec")), "dist/ must not contain openspec/")
+        self.assertFalse(os.path.exists(os.path.join(dist_dir, ".factory")), "dist/ must not contain .factory/")
+
+        for root, dirs, files in os.walk(dist_dir):
+            for file_name in files:
+                self.assertFalse(file_name.endswith(".py"), f"Found python file {file_name} in dist/")
+                self.assertFalse(file_name.endswith(".md"), f"Found markdown file {file_name} in dist/")
+
+        print("✅ Pages distribution bundle in dist/ satisfies AC-011.2 (runtime assets only, dual Wasm)")
 
     def test_wasm_sim_bridge_and_entity_integration(self):
         """Verify wasm_sim_bridge.js exports and entity module hooks."""
@@ -28108,6 +28143,19 @@ class TestZeroMeshIntegration(unittest.TestCase):
         parsed_session = json.loads(raw.decode("utf-8"))
         self.assertEqual(parsed_session["type"], "PROXIMITY_BURN_ALL")
 
+    def test_pages_host_detection_regression(self):
+        """Verify network.js checks 'pages.dev' to select ZeroMeshNetworkManager with clifton-commons room."""
+        network_js_path = os.path.join(os.path.dirname(__file__), "..", "src", "net", "network.js")
+        self.assertTrue(os.path.exists(network_js_path), f"network.js must exist at {network_js_path}")
+        with open(network_js_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        # Check pages.dev hostname detection
+        self.assertIn("window.location.hostname.includes('pages.dev')", code)
+        # Check default room fallback to 'clifton-commons'
+        self.assertIn("'clifton-commons'", code)
+        self.assertIn("ZeroMeshNetworkManager", code)
+
 
 
 if __name__ == "__main__":
@@ -28202,10 +28250,8 @@ if __name__ == "__main__":
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "virtual-dog-walker",
-  "compatibility_date": "2024-09-23",
-  "assets": {
-    "directory": "./"
-  }
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2024-09-23"
 }
 
 ```

@@ -12,6 +12,8 @@ export const PacketType = {
   EMOTE: 'EMOTE',
   WHISTLE: 'WHISTLE',
   PROXIMITY_CHAT: 'PROXIMITY_CHAT',
+  PROXIMITY_BURN_MSG: 'PROXIMITY_BURN_MSG',
+  PROXIMITY_BURN_ALL: 'PROXIMITY_BURN_ALL',
   PEER_LEFT: 'PEER_LEFT',
   NPC_SPAWN: 'NPC_SPAWN',
   NPC_DESPAWN: 'NPC_DESPAWN',
@@ -156,6 +158,23 @@ export class Protocol {
       x: Math.round(x * 10) / 10,
       y: Math.round(y * 10) / 10,
       clusterPeers,
+      timestamp: Date.now()
+    };
+  }
+
+  static createProximityBurnMessage(peerId, messageUuid) {
+    return {
+      type: PacketType.PROXIMITY_BURN_MSG,
+      senderId: peerId,
+      messageUuid,
+      timestamp: Date.now()
+    };
+  }
+
+  static createProximityBurnSession(peerId) {
+    return {
+      type: PacketType.PROXIMITY_BURN_ALL,
+      senderId: peerId,
       timestamp: Date.now()
     };
   }

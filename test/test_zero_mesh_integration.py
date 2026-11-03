@@ -627,6 +627,143 @@ class TestZeroMeshIntegration(unittest.TestCase):
         self.assertIn("badge.textContent = 'Online'", hud_code)
         self.assertIn("label.textContent = isCommons ? 'Share Park' : 'Share Link'", hud_code)
 
+    def test_unified_zero_chat_widget_mounted_in_proximity_chat(self):
+        """Regression test (unification-009):
+        Verify ZeroChatWidget sync and mounting inside ProximityChat with distributed message and session burn.
+        - Synchronized widget files and index.html stylesheet inclusion.
+        - ProximityChat mounts ZeroChatWidget with mode: 'embedded'.
+        - Message bubble classes (.message-bubble, .proximity-chat-msg, .btn-message-burn, data-msg-uuid).
+        - Distributed PROXIMITY_BURN_MSG and PROXIMITY_BURN_ALL packet propagation and wiring.
+        """
+        root_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+        # 1. Verify build script sync and widget assets
+        widget_js_path = os.path.join(root_dir, "src", "ui", "zero_chat_widget.js")
+        widget_css_path = os.path.join(root_dir, "src", "ui", "zero_chat_widget.css")
+        self.assertTrue(os.path.isfile(widget_js_path), "src/ui/zero_chat_widget.js must exist")
+        self.assertTrue(os.path.isfile(widget_css_path), "src/ui/zero_chat_widget.css must exist")
+
+        with open(widget_js_path, "r", encoding="utf-8") as f:
+            widget_js = f.read()
+        self.assertIn("export class ZeroChatWidget", widget_js)
+        self.assertIn("export const PEER_COLOR_PALETTE", widget_js)
+        self.assertIn("dissolveMessageById", widget_js)
+        self.assertIn("burnAllMessages", widget_js)
+        self.assertIn("setPeers", widget_js)
+        self.assertIn("btn-message-burn", widget_js)
+
+        with open(widget_css_path, "r", encoding="utf-8") as f:
+            widget_css = f.read()
+        self.assertIn(".zero-chat-widget", widget_css)
+        self.assertIn(".zero-chat-embedded", widget_css)
+        self.assertIn(".message-bubble", widget_css)
+        self.assertIn(".btn-message-burn", widget_css)
+        self.assertIn(".message-aging", widget_css)
+        self.assertIn(".message-dissolve", widget_css)
+
+        # Verify index.html links zero_chat_widget.css
+        index_html_path = os.path.join(root_dir, "index.html")
+        with open(index_html_path, "r", encoding="utf-8") as f:
+            index_html = f.read()
+        self.assertIn('href="src/ui/zero_chat_widget.css"', index_html)
+
+        # Verify build scripts sync widget
+        for script_name in ("build_wasm.sh", "build_pages.sh"):
+            script_path = os.path.join(root_dir, "scripts", script_name)
+            with open(script_path, "r", encoding="utf-8") as f:
+                script_content = f.read()
+            self.assertIn("zero_chat_widget.js", script_content, f"Widget sync missing in {script_name}")
+            self.assertIn("zero_chat_widget.css", script_content, f"Widget css sync missing in {script_name}")
+
+        # 2. Verify ProximityChat mounting contract in src/ui/proximity_chat.js
+        prox_js_path = os.path.join(root_dir, "src", "ui", "proximity_chat.js")
+        with open(prox_js_path, "r", encoding="utf-8") as f:
+            prox_code = f.read()
+
+        self.assertIn("import { ZeroChatWidget } from './zero_chat_widget.js';", prox_code)
+        self.assertIn("this.widget = new ZeroChatWidget({", prox_code)
+        self.assertIn("mode: 'embedded'", prox_code)
+        self.assertIn("onSendMessage: (text) => this.sendMessage(text)", prox_code)
+        self.assertIn("this.widget.appendMessage", prox_code)
+        self.assertIn("this.widget.dissolveMessageById(messageUuid)", prox_code)
+        self.assertIn("this.widget.burnAllMessages()", prox_code)
+        self.assertIn("this.widget.setPeers(this.activeCluster, this.activeCluster.length)", prox_code)
+
+        # Verify public API preserved
+        for method in ("receiveMessage", "sendMessage", "burnMessage", "clearMessages", "getMessages", "getActivePeers", "update", "destroy"):
+            self.assertIn(f"{method}(", prox_code, f"Method {method} missing from ProximityChat")
+        for prop in ("this.radius", "this.joinRadius", "this.activeCluster", "this.messages", "this.retentionTimer"):
+            self.assertIn(prop, prox_code, f"Property {prop} missing from ProximityChat")
+
+        # 3. Verify distributed burn in src/net/zero_mesh_network.js
+        net_js_path = os.path.join(root_dir, "src", "net", "zero_mesh_network.js")
+        with open(net_js_path, "r", encoding="utf-8") as f:
+            net_code = f.read()
+
+        self.assertIn("burnProximityMessage(messageUuid)", net_code)
+        self.assertIn("burnProximitySession()", net_code)
+        self.assertIn("PROXIMITY_BURN_MSG", net_code)
+        self.assertIn("PROXIMITY_BURN_ALL", net_code)
+        self.assertIn("this.onProximityBurnMessage(packet.messageUuid)", net_code)
+        self.assertIn("this.onProximityBurnSession()", net_code)
+
+        # 4. Verify CliftonDownGame wiring in src/main.js
+        main_js_path = os.path.join(root_dir, "src", "main.js")
+        with open(main_js_path, "r", encoding="utf-8") as f:
+            main_code = f.read()
+
+        self.assertIn("this.net.onProximityBurnMessage = (uuid) => this.proximityChat && this.proximityChat.burnMessage(uuid);", main_code)
+        self.assertIn("this.net.onProximityBurnSession = () => this.proximityChat && this.proximityChat.clearMessages();", main_code)
+        self.assertIn("this.proximityChat.onBurnMessage = (uuid) => this.net && this.net.burnProximityMessage(uuid);", main_code)
+        self.assertIn("this.proximityChat.onBurnSession = () => this.net && this.net.burnProximitySession();", main_code)
+
+        # 5. Functional simulation of distributed burn packet flow
+        class MockGameMesh:
+            def __init__(self):
+                self.sent = []
+            def send_direct_state(self, peer_id, topic, payload):
+                self.sent.append((peer_id, topic, payload))
+
+        mesh = MockGameMesh()
+        peer_id = "local-walker-1"
+        target_peers = ["peer-alpha", "peer-beta"]
+
+        # Simulate burnProximityMessage dispatch
+        burn_msg_uuid = "burn-uuid-999"
+        burn_packet = {
+            "type": "PROXIMITY_BURN_MSG",
+            "messageUuid": burn_msg_uuid,
+            "senderId": peer_id
+        }
+        bytes_payload = json.dumps(burn_packet).encode("utf-8")
+        for target in target_peers:
+            mesh.send_direct_state(target, "game_packet", bytes_payload)
+
+        self.assertEqual(len(mesh.sent), 2)
+        tgt, topic, raw = mesh.sent[0]
+        self.assertEqual(tgt, "peer-alpha")
+        self.assertEqual(topic, "game_packet")
+        parsed = json.loads(raw.decode("utf-8"))
+        self.assertEqual(parsed["type"], "PROXIMITY_BURN_MSG")
+        self.assertEqual(parsed["messageUuid"], burn_msg_uuid)
+
+        # Simulate burnProximitySession dispatch
+        session_packet = {
+            "type": "PROXIMITY_BURN_ALL",
+            "senderId": peer_id
+        }
+        session_bytes = json.dumps(session_packet).encode("utf-8")
+        mesh.sent.clear()
+        for target in target_peers:
+            mesh.send_direct_state(target, "game_packet", session_bytes)
+
+        self.assertEqual(len(mesh.sent), 2)
+        tgt, topic, raw = mesh.sent[1]
+        self.assertEqual(tgt, "peer-beta")
+        parsed_session = json.loads(raw.decode("utf-8"))
+        self.assertEqual(parsed_session["type"], "PROXIMITY_BURN_ALL")
+
+
 
 if __name__ == "__main__":
     unittest.main()

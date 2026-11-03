@@ -1,4 +1,6 @@
 // Spatial Proximity Clustering & Prominent Glassmorphic Conversation HUD
+import { ZeroChatWidget } from './zero_chat_widget.js';
+
 export const PROXIMITY_RADIUS = 200;
 export const PROXIMITY_JOIN_RADIUS = 160;
 export const RETENTION_DURATION_MS = 5 * 60 * 1000; // 300,000 ms (5 minutes)
@@ -15,11 +17,14 @@ export class ProximityChat {
    * @param {Function} [options.onClusterDissolved] - Callback when cluster dissolves (partingContext)
    * @param {Function} [options.onClusterChanged] - Callback when cluster membership updates (activePeerIds)
    * @param {Function} [options.onSendMessage] - Callback when local player sends message (text, activePeers)
+   * @param {Function} [options.onBurnMessage] - Callback when message is burned across network (messageUuid)
+   * @param {Function} [options.onBurnSession] - Callback when session is burned across network ()
    */
   constructor(options = {}) {
     this.radius = typeof options.radius === 'number' ? options.radius : PROXIMITY_RADIUS;
     this.joinRadius = typeof options.joinRadius === 'number' ? options.joinRadius : this.radius;
     this.retentionDuration = typeof options.retentionDuration === 'number' ? options.retentionDuration : RETENTION_DURATION_MS;
+    this.retentionTimer = this.retentionDuration;
     this.departureTimers = new Map(); // peerId -> departureTimestamp (ms)
     this.playerColors = new Map(); // senderId -> colorHex
     this.activeCluster = null; // null when solo, or Set of active peer IDs
@@ -30,11 +35,14 @@ export class ProximityChat {
     this.onClusterDissolved = options.onClusterDissolved || null;
     this.onClusterChanged = options.onClusterChanged || null;
     this.onSendMessage = options.onSendMessage || null;
+    this.onBurnMessage = options.onBurnMessage || null;
+    this.onBurnSession = options.onBurnSession || null;
 
     this.container = options.container ||
       (typeof document !== 'undefined' ? (document.getElementById('game-container') || document.body) : null);
 
     this.panel = null;
+    this.widget = null;
     this.header = null;
     this.pillsContainer = null;
     this.messagesContainer = null;
@@ -50,12 +58,13 @@ export class ProximityChat {
     this._boundOnKeyDown = null;
     this._boundOnSendClick = null;
     this._boundEmojiClicks = [];
+    this._isClearing = false;
 
     this.initHUD();
   }
 
   /**
-   * Initializes HUD DOM elements.
+   * Initializes HUD DOM elements and mounts ZeroChatWidget.
    */
   initHUD() {
     if (typeof document === 'undefined') return;
@@ -71,21 +80,11 @@ export class ProximityChat {
     panel.id = 'proximity-chat-panel';
     panel.className = 'hidden';
 
-    panel.innerHTML = `
+    /*
       <div id="proximity-chat-header" class="proximity-chat-header">
-        <div class="proximity-header-title">
-          <span class="proximity-chat-icon">💬</span>
-          <span class="proximity-title-text">Group Chat</span>
-          <span class="proximity-badge">🟢 In Range (${this.radius}px)</span>
-        </div>
-        <div class="proximity-participants" id="proximity-participants">
-          <span class="proximity-participants-label">💬 Chat with:</span>
-          <div class="proximity-pills-list" id="proximity-pills-list"></div>
-        </div>
+        <div class="proximity-pills-list" id="proximity-pills-list"></div>
       </div>
-
       <div id="proximity-chat-messages" class="proximity-chat-messages"></div>
-
       <div id="proximity-chat-input-container" class="proximity-chat-input-container">
         <!-- Retired quick emoji bar: 👋, 🐾, ❤️, ☕ and send button in Ticket-023 in favor of streamlined text input -->
         <div id="proximity-chat-input-bar" class="proximity-input-row">
@@ -98,7 +97,7 @@ export class ProximityChat {
           />
         </div>
       </div>
-    `;
+    */
 
     if (this.container) {
       this.container.appendChild(panel);
@@ -107,35 +106,40 @@ export class ProximityChat {
     }
 
     this.panel = panel;
-    this.header = panel.querySelector('#proximity-chat-header');
-    this.pillsContainer = panel.querySelector('#proximity-pills-list');
-    this.messagesContainer = panel.querySelector('#proximity-chat-messages');
-    this.inputContainer = panel.querySelector('#proximity-chat-input-container');
-    this.input = panel.querySelector('#proximity-chat-input');
-    this.sendBtn = panel.querySelector('#proximity-chat-send-btn');
-    this.emojiBtns = Array.from(panel.querySelectorAll('.proximity-emoji-btn'));
 
-    // Event listeners
-    if (this.input) {
-      this._boundOnKeyDown = (e) => {
-        e.stopPropagation();
-        if (e.key === 'Enter') {
-          e.preventDefault();
-          this._handleInputSubmit();
+    // Instantiate canonical ZeroChatWidget
+    this.widget = new ZeroChatWidget({
+      container: this.panel,
+      mode: 'embedded',
+      onSendMessage: (text) => this.sendMessage(text),
+      onBurnMessage: (uuid) => {
+        this.messages = this.messages.filter(m => (m.messageUuid !== uuid && m.uuid !== uuid && m.id !== uuid));
+        if (this.lastMessage && (this.lastMessage.messageUuid === uuid || this.lastMessage.uuid === uuid || this.lastMessage.id === uuid)) {
+          this.lastMessage = this.messages.length > 0 ? this.messages[this.messages.length - 1] : null;
         }
-      };
-      this.input.addEventListener('keydown', this._boundOnKeyDown);
-      this.input.addEventListener('keyup', (e) => e.stopPropagation());
-      this.input.addEventListener('keypress', (e) => e.stopPropagation());
-    }
+        if (typeof this.onBurnMessage === 'function') {
+          this.onBurnMessage(uuid);
+        }
+      },
+      onBurnSession: () => {
+        this.messages = [];
+        this.lastMessage = null;
+        if (typeof this.onBurnSession === 'function') {
+          this.onBurnSession();
+        }
+      }
+    });
 
-    if (this.sendBtn) {
-      this._boundOnSendClick = (e) => {
-        e.preventDefault();
-        this._handleInputSubmit();
-      };
-      this.sendBtn.addEventListener('click', this._boundOnSendClick);
+    this.header = this.widget.header || (this.panel ? this.panel.querySelector('.zero-chat-header') : null);
+    if (this.header && !this.header.id) {
+      this.header.id = 'proximity-chat-header';
     }
+    this.pillsContainer = this.widget.statusEl || (this.panel ? this.panel.querySelector('#proximity-chat-status') : null);
+    this.messagesContainer = this.widget.messagesContainer || (this.panel ? this.panel.querySelector('#proximity-chat-messages') : null);
+    this.inputContainer = this.widget.form || (this.panel ? this.panel.querySelector('#proximity-chat-form') : null);
+    this.input = this.widget.input || (this.panel ? this.panel.querySelector('#proximity-chat-input') : null);
+    this.sendBtn = this.widget.sendBtn || (this.panel ? this.panel.querySelector('#proximity-chat-send') : null);
+    this.emojiBtns = [];
 
     // Check and clean up existing #chat-toggle-btn
     const existingToggle = document.getElementById('chat-toggle-btn');
@@ -165,68 +169,46 @@ export class ProximityChat {
       this.toggleVisibility();
     };
     this.toggleBtn.addEventListener('click', this._boundOnToggleClick);
-
-    if (this.emojiBtns && this.emojiBtns.length > 0) {
-      for (const btn of this.emojiBtns) {
-        const handler = (e) => {
-          e.preventDefault();
-          const emoji = btn.getAttribute('data-emoji') || btn.textContent.trim();
-          if (emoji) {
-            this.submitMessage(emoji);
-          }
-        };
-        btn.addEventListener('click', handler);
-        this._boundEmojiClicks.push({ btn, handler });
-      }
-    }
   }
 
   _handleInputSubmit() {
     if (!this.input) return;
     const text = this.input.value.trim();
     if (text) {
-      this.submitMessage(text);
+      this.sendMessage(text);
       this.input.value = '';
       this.input.focus();
     }
   }
 
   /**
-   * Submits a message from the local player.
+   * Submits a message from the local player (sendMessage implementation).
    * @param {string} text
    */
-  submitMessage(text) {
-    if (!text) return;
+  sendMessage(text) {
+    if (!text) return null;
     const trimmed = String(text).trim();
-    if (!trimmed) return;
+    if (!trimmed) return null;
 
-    const localP = this.participants.find(p => p.isLocal) || { id: 'local', name: 'You' };
-    this.addMessage(localP.id, localP.name, trimmed, true);
-
-    if (typeof this.onSendMessage === 'function') {
-      this.onSendMessage(trimmed, this.getActivePeers());
-    }
-  }
-
-  /**
-   * Public API: Append message to active chat thread.
-   */
-  addMessage(senderId, senderName, text, isLocal = false) {
-    const sId = senderId || (isLocal ? 'local' : 'peer');
-    const sName = senderName || (isLocal ? 'You' : 'Walker');
-    const strText = String(text !== undefined ? text : '');
+    const localP = (this.participants && this.participants.find(p => p.isLocal)) || { id: 'local', name: 'You' };
+    const sId = localP.id;
+    const sName = localP.name;
 
     if (!this.playerColors.has(sId)) {
       const color = PLAYER_PALETTE[this.playerColors.size % PLAYER_PALETTE.length];
       this.playerColors.set(sId, color);
     }
     const assignedColor = this.playerColors.get(sId);
+    const messageUuid = 'msg-' + Math.random().toString(36).substring(2, 10);
 
     const msg = {
       senderId: sId,
       senderName: sName,
-      text: strText,
-      isLocal: Boolean(isLocal),
+      name: sName,
+      text: trimmed,
+      isLocal: true,
+      isSelf: true,
+      messageUuid,
       timestamp: Date.now(),
       color: assignedColor,
       toString() {
@@ -246,29 +228,80 @@ export class ProximityChat {
       }
     }
 
-    if (this.messagesContainer && typeof document !== 'undefined') {
-      const msgEl = document.createElement('div');
-      msgEl.className = `proximity-message ${isLocal ? 'local' : 'peer'}`;
-      // data-sender-id="${this.escapeHTML(sId)}"
-      msgEl.setAttribute('data-sender-id', sId);
+    if (typeof this.onSendMessage === 'function') {
+      this.onSendMessage(trimmed, this.getActivePeers());
+    }
 
-      const timeStr = new Date(msg.timestamp).toLocaleTimeString([], {
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-
-      msgEl.innerHTML = `
-        <div class="proximity-message-header">
-          <span class="proximity-message-sender" style="color: ${assignedColor};">${this.escapeHTML(msg.senderName)}</span>
-          <span class="proximity-message-time">${timeStr}</span>
-        </div>
-        <div class="proximity-message-text" style="color: ${assignedColor};">${this.escapeHTML(msg.text)}</div>
-      `;
-      this.messagesContainer.appendChild(msgEl);
-      this.scrollToBottom();
+    if (this.widget && typeof this.widget.appendMessage === 'function') {
+      return this.widget.appendMessage(msg);
     }
 
     return msg;
+  }
+
+  /**
+   * Receives incoming remote message or appends message object.
+   * @param {Object|string} msg
+   */
+  receiveMessage(msg) {
+    if (!msg) return null;
+    const msgObj = typeof msg === 'object' ? { ...msg } : { text: String(msg) };
+    if (!msgObj.senderId) msgObj.senderId = msgObj.isLocal || msgObj.isSelf ? 'local' : 'peer';
+    if (!msgObj.name) msgObj.name = msgObj.senderName || (msgObj.isLocal || msgObj.isSelf ? 'You' : 'Walker');
+    if (!msgObj.senderName) msgObj.senderName = msgObj.name;
+    if (!msgObj.messageUuid) msgObj.messageUuid = msgObj.uuid || msgObj.id || ('msg-' + Math.random().toString(36).substring(2, 10));
+    if (!msgObj.timestamp) msgObj.timestamp = Date.now();
+    msgObj.isSelf = Boolean(msgObj.isSelf || msgObj.isLocal);
+    msgObj.isLocal = msgObj.isSelf;
+
+    if (!this.playerColors.has(msgObj.senderId)) {
+      const color = PLAYER_PALETTE[this.playerColors.size % PLAYER_PALETTE.length];
+      this.playerColors.set(msgObj.senderId, color);
+    }
+    msgObj.color = this.playerColors.get(msgObj.senderId);
+    msgObj.toString = function() { return this.text; };
+
+    this.messages.push(msgObj);
+    this.lastMessage = msgObj;
+
+    // Auto-unhide logic: If in an active cluster, automatically unhide panel when message is added
+    if (this.isClusterActive() || this.activeCluster) {
+      const isPanelActive = this.panel && this.panel.classList.contains('active');
+      if (this.isManuallyHidden || !isPanelActive) {
+        this.showHUD();
+        this.isManuallyHidden = false;
+      }
+    }
+
+    if (this.widget && typeof this.widget.appendMessage === 'function') {
+      return this.widget.appendMessage(msgObj);
+    }
+    return msgObj;
+  }
+
+  /**
+   * Public API: Backward-compatible message addition.
+   */
+  addMessage(senderId, senderName, text, isLocal = false) {
+    if (isLocal) {
+      return this.sendMessage(text);
+    }
+    return this.receiveMessage({
+      senderId,
+      name: senderName,
+      senderName,
+      text,
+      isLocal: false,
+      isSelf: false
+    });
+  }
+
+  /**
+   * Submits a message programmatically.
+   * @param {string} text
+   */
+  submitMessage(text) {
+    return this.sendMessage(text);
   }
 
   /**
@@ -277,12 +310,45 @@ export class ProximityChat {
    */
   addSystemMessage(text) {
     if (!text) return;
-    if (this.messagesContainer && typeof document !== 'undefined') {
-      const sysEl = document.createElement('div');
-      sysEl.className = 'proximity-message system';
-      sysEl.innerHTML = `<span class="proximity-system-text">${this.escapeHTML(text)}</span>`;
-      this.messagesContainer.appendChild(sysEl);
-      this.scrollToBottom();
+    if (this.widget && typeof this.widget.appendMessage === 'function') {
+      this.widget.appendMessage({
+        senderId: 'system',
+        name: 'System',
+        text,
+        isSelf: false
+      });
+    }
+  }
+
+  /**
+   * Burns a specific message by its UUID.
+   * @param {string} messageUuid
+   */
+  burnMessage(messageUuid) {
+    if (!messageUuid) return;
+    this.messages = this.messages.filter(m => (m.messageUuid !== messageUuid && m.uuid !== messageUuid && m.id !== messageUuid));
+    if (this.lastMessage && (this.lastMessage.messageUuid === messageUuid || this.lastMessage.uuid === messageUuid || this.lastMessage.id === messageUuid)) {
+      this.lastMessage = this.messages.length > 0 ? this.messages[this.messages.length - 1] : null;
+    }
+    if (this.widget && typeof this.widget.dissolveMessageById === 'function') {
+      this.widget.dissolveMessageById(messageUuid);
+    }
+  }
+
+  /**
+   * Clears all messages from state and delegates to widget.burnAllMessages().
+   */
+  clearMessages() {
+    this.messages = [];
+    this.lastMessage = null;
+    if (this._isClearing) return;
+    this._isClearing = true;
+    try {
+      if (this.widget && typeof this.widget.burnAllMessages === 'function') {
+        this.widget.burnAllMessages();
+      }
+    } finally {
+      this._isClearing = false;
     }
   }
 
@@ -291,6 +357,14 @@ export class ProximityChat {
    */
   getLastMessage() {
     return this.lastMessage;
+  }
+
+  /**
+   * Public API: Returns list of messages.
+   * @returns {Array<Object>}
+   */
+  getMessages() {
+    return this.messages;
   }
 
   /**
@@ -391,16 +465,22 @@ export class ProximityChat {
   }
 
   /**
-   * Refreshes participant pills in the header.
+   * Refreshes participant pills in the header and updates widget peer counter.
    */
   updateParticipantsBadge() {
+    if (this.widget && typeof this.widget.setPeers === 'function') {
+      const activePeers = this.getActivePeers();
+      this.widget.setPeers(activePeers, activePeers.length);
+    }
     if (!this.pillsContainer || typeof document === 'undefined') return;
-    this.pillsContainer.innerHTML = '';
-    for (const p of this.participants) {
-      const pill = document.createElement('span');
-      pill.className = `participant-pill ${p.isLocal ? 'local' : 'peer'}`;
-      pill.textContent = p.isLocal ? `${p.name} (You)` : p.name;
-      this.pillsContainer.appendChild(pill);
+    if (this.pillsContainer.id === 'proximity-pills-list') {
+      this.pillsContainer.innerHTML = '';
+      for (const p of this.participants) {
+        const pill = document.createElement('span');
+        pill.className = `participant-pill ${p.isLocal ? 'local' : 'peer'}`;
+        pill.textContent = p.isLocal ? `${p.name} (You)` : p.name;
+        this.pillsContainer.appendChild(pill);
+      }
     }
   }
 
@@ -468,11 +548,23 @@ export class ProximityChat {
 
   /**
    * Evaluates spatial proximity clustering and updates HUD lifecycle.
-   * @param {number} dt
-   * @param {Object} localOwner
-   * @param {Map|Array|Object} remotePlayersMap
+   * Supports both update(dt, localOwner, remotePlayers) and update(localOwner, remotePlayers).
+   * @param {number|Object} dtOrLocalOwner
+   * @param {Object} [localOwnerOrRemote]
+   * @param {Map|Array|Object} [remotePlayersMap]
    */
-  update(dt, localOwner, remotePlayersMap) {
+  update(dtOrLocalOwner, localOwnerOrRemote, remotePlayersMap) {
+    let dt, localOwner, remotes;
+    if (typeof dtOrLocalOwner === 'object' && dtOrLocalOwner !== null && ('x' in dtOrLocalOwner || 'id' in dtOrLocalOwner)) {
+      dt = 0;
+      localOwner = dtOrLocalOwner;
+      remotes = localOwnerOrRemote;
+    } else {
+      dt = dtOrLocalOwner;
+      localOwner = localOwnerOrRemote;
+      remotes = remotePlayersMap;
+    }
+
     const wasActive = this.isClusterActive();
 
     // Expiration check:
@@ -508,6 +600,9 @@ export class ProximityChat {
         this.activeCluster = null;
         this.participants = [];
         this.updateParticipantsBadge();
+        if (this.widget && typeof this.widget.setPeers === 'function') {
+          this.widget.setPeers([], 0);
+        }
       }
       return;
     }
@@ -524,7 +619,7 @@ export class ProximityChat {
     };
 
     // Extract remote players and exclude local player ID
-    const allRemotes = this._extractRemotePlayers(remotePlayersMap).filter(r => r.id !== localId);
+    const allRemotes = this._extractRemotePlayers(remotes).filter(r => r.id !== localId);
 
     // Multi-player transitive clustering via BFS from local player
     // Uses joinRadius for newcomer discovery, and leaveRadius (this.radius) for active members
@@ -559,6 +654,10 @@ export class ProximityChat {
 
     if (connectedRemoteNodes.length > 0) {
       const currentPeerIds = new Set(connectedRemoteNodes.map(r => r.id));
+      Object.defineProperty(currentPeerIds, 'length', {
+        get() { return this.size; },
+        configurable: true
+      });
       const remoteParticipants = connectedRemoteNodes.map(r => ({
         id: r.id,
         name: r.name,
@@ -579,6 +678,9 @@ export class ProximityChat {
         this.activeCluster = currentPeerIds;
         this.participants = newParticipants;
         this.updateParticipantsBadge();
+        if (this.widget && typeof this.widget.setPeers === 'function') {
+          this.widget.setPeers(this.activeCluster, this.activeCluster.length);
+        }
         if (!this.isManuallyHidden) {
           this.showHUD();
         }
@@ -617,6 +719,9 @@ export class ProximityChat {
           this.activeCluster = currentPeerIds;
           this.participants = newParticipants;
           this.updateParticipantsBadge();
+          if (this.widget && typeof this.widget.setPeers === 'function') {
+            this.widget.setPeers(this.activeCluster, this.activeCluster.length);
+          }
           if (typeof this.onClusterChanged === 'function') {
             this.onClusterChanged(this.getActivePeers());
           }
@@ -649,6 +754,9 @@ export class ProximityChat {
         this.activeCluster = null;
         this.participants = [];
         this.updateParticipantsBadge();
+        if (this.widget && typeof this.widget.setPeers === 'function') {
+          this.widget.setPeers([], 0);
+        }
       }
     }
 
@@ -670,6 +778,9 @@ export class ProximityChat {
     if (this.lastMessage && this.lastMessage.senderId === peerId) {
       this.lastMessage = this.messages.length > 0 ? this.messages[this.messages.length - 1] : null;
     }
+    if (this.widget && typeof this.widget.burnPeerMessages === 'function') {
+      this.widget.burnPeerMessages(peerId);
+    }
     if (this.messagesContainer && typeof document !== 'undefined') {
       const toRemove = this.messagesContainer.querySelectorAll(`[data-sender-id="${peerId}"]`);
       toRemove.forEach(el => el.remove());
@@ -681,6 +792,11 @@ export class ProximityChat {
    * Public API: Cleans up DOM elements and event listeners.
    */
   destroy() {
+    if (this.widget && typeof this.widget.destroy === 'function') {
+      this.widget.destroy();
+    }
+    this.widget = null;
+
     if (this.input && this._boundOnKeyDown) {
       this.input.removeEventListener('keydown', this._boundOnKeyDown);
     }

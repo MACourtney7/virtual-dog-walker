@@ -124,6 +124,8 @@ export class ZeroMeshNetworkManager {
     this.onNpcDespawn = null;
     this.onNpcSnapshot = null;
     this.onProximityChat = null;
+    this.onProximityBurnMessage = null;
+    this.onProximityBurnSession = null;
 
     this.serverClockOffset = 0;
 
@@ -264,6 +266,22 @@ export class ZeroMeshNetworkManager {
 
       this.proximityMesh.set_on_message((senderPeerId, plaintext) => {
         const cleanSenderId = String(senderPeerId).replace(/^prox-/, '');
+        try {
+          const packet = typeof plaintext === 'string' && plaintext.trim().startsWith('{') ? JSON.parse(plaintext) : null;
+          if (packet && packet.type === 'PROXIMITY_BURN_MSG') {
+            if (typeof this.onProximityBurnMessage === 'function') {
+              this.onProximityBurnMessage(packet.messageUuid);
+            }
+            return;
+          } else if (packet && packet.type === 'PROXIMITY_BURN_ALL') {
+            if (typeof this.onProximityBurnSession === 'function') {
+              this.onProximityBurnSession();
+            }
+            return;
+          }
+        } catch (e) {
+          // Plaintext chat
+        }
         const peerObj = this.remotePeers.get(cleanSenderId);
         const senderName = (peerObj && peerObj.meta && peerObj.meta.name) ? peerObj.meta.name : 'Walker';
         if (typeof this.onProximityChat === 'function') {
@@ -887,6 +905,22 @@ export class ZeroMeshNetworkManager {
         break;
       }
 
+      case 'PROXIMITY_BURN_MSG':
+      case PacketType.PROXIMITY_BURN_MSG: {
+        if (typeof this.onProximityBurnMessage === 'function') {
+          this.onProximityBurnMessage(packet.messageUuid);
+        }
+        break;
+      }
+
+      case 'PROXIMITY_BURN_ALL':
+      case PacketType.PROXIMITY_BURN_ALL: {
+        if (typeof this.onProximityBurnSession === 'function') {
+          this.onProximityBurnSession();
+        }
+        break;
+      }
+
       case 'NPC_SNAPSHOT': {
         if (typeof this.onNpcSnapshot === 'function') {
           this.onNpcSnapshot(packet.npcs || [], packet.serverTime || Date.now());
@@ -1057,6 +1091,76 @@ export class ZeroMeshNetworkManager {
     // Simulation / local fallback
     if (this._simulationHub) {
       this._simulationHub.broadcastProximityChat(this.roomId, this.peerId, this.localMeta.name, text, peers);
+    }
+  }
+
+  burnProximityMessage(messageUuid) {
+    if (!messageUuid) return;
+    const packet = {
+      type: 'PROXIMITY_BURN_MSG',
+      messageUuid,
+      senderId: this.peerId
+    };
+    const jsonStr = JSON.stringify(packet);
+    const bytes = new TextEncoder().encode(jsonStr);
+
+    let sentLive = false;
+    if (this.proximityMesh && typeof this.proximityMesh.peer_count === 'function' && this.proximityMesh.peer_count() > 0) {
+      try {
+        if (typeof this.proximityMesh.broadcast_chat === 'function') {
+          this.proximityMesh.broadcast_chat(jsonStr);
+          sentLive = true;
+        }
+      } catch (e) {
+        console.warn('[ZeroMesh] Proximity burn message broadcast failed:', e);
+      }
+    }
+
+    if (this.gameMesh && typeof this.gameMesh.send_direct_state === 'function') {
+      const targets = this.meshPeerIds && this.meshPeerIds.size > 0
+        ? Array.from(this.meshPeerIds)
+        : Array.from(this.remotePeers.keys());
+      for (const peerId of targets) {
+        try {
+          this.gameMesh.send_direct_state(peerId, 'game_packet', bytes);
+        } catch (e) {
+          console.warn(`[ZeroMesh] Failed sending direct burn packet to ${peerId}:`, e);
+        }
+      }
+    }
+  }
+
+  burnProximitySession() {
+    const packet = {
+      type: 'PROXIMITY_BURN_ALL',
+      senderId: this.peerId
+    };
+    const jsonStr = JSON.stringify(packet);
+    const bytes = new TextEncoder().encode(jsonStr);
+
+    let sentLive = false;
+    if (this.proximityMesh && typeof this.proximityMesh.peer_count === 'function' && this.proximityMesh.peer_count() > 0) {
+      try {
+        if (typeof this.proximityMesh.broadcast_chat === 'function') {
+          this.proximityMesh.broadcast_chat(jsonStr);
+          sentLive = true;
+        }
+      } catch (e) {
+        console.warn('[ZeroMesh] Proximity burn session broadcast failed:', e);
+      }
+    }
+
+    if (this.gameMesh && typeof this.gameMesh.send_direct_state === 'function') {
+      const targets = this.meshPeerIds && this.meshPeerIds.size > 0
+        ? Array.from(this.meshPeerIds)
+        : Array.from(this.remotePeers.keys());
+      for (const peerId of targets) {
+        try {
+          this.gameMesh.send_direct_state(peerId, 'game_packet', bytes);
+        } catch (e) {
+          console.warn(`[ZeroMesh] Failed sending direct burn session packet to ${peerId}:`, e);
+        }
+      }
     }
   }
 

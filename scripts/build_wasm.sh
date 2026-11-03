@@ -46,3 +46,13 @@ else
     exit 1
 fi
 echo "✅ dog_walker_core Wasm bundle built into ${OUT_DIR_CORE}"
+
+echo "=== Syncing ZeroChatWidget from zero_chat ==="
+ZERO_CHAT_DIR="${PROJECT_ROOT}/../zero_chat"
+if [[ -f "${ZERO_CHAT_DIR}/zero_client/widget/zero_chat_widget.js" && -f "${ZERO_CHAT_DIR}/zero_client/widget/zero_chat_widget.css" ]]; then
+    mkdir -p "${PROJECT_ROOT}/src/ui"
+    cp "${ZERO_CHAT_DIR}/zero_client/widget/zero_chat_widget.js" "${PROJECT_ROOT}/src/ui/zero_chat_widget.js"
+    cp "${ZERO_CHAT_DIR}/zero_client/widget/zero_chat_widget.css" "${PROJECT_ROOT}/src/ui/zero_chat_widget.css"
+    echo "✅ ZeroChatWidget synced to src/ui/"
+fi
+

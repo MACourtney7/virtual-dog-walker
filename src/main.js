@@ -138,12 +138,19 @@ export class CliftonDownGame {
       }
     });
 
+    if (this.proximityChat) {
+      this.proximityChat.onBurnMessage = (uuid) => this.net && this.net.burnProximityMessage(uuid);
+      this.proximityChat.onBurnSession = () => this.net && this.net.burnProximitySession();
+    }
+
     if (this.net) {
       this.net.onProximityChat = (data) => {
         if (data && data.text) {
           this.proximityChat.addMessage(data.senderId, data.name || data.senderName, data.text);
         }
       };
+      this.net.onProximityBurnMessage = (uuid) => this.proximityChat && this.proximityChat.burnMessage(uuid);
+      this.net.onProximityBurnSession = () => this.proximityChat && this.proximityChat.clearMessages();
     }
     this.hud.proximityChat = this.proximityChat;
 
@@ -391,6 +398,8 @@ export class CliftonDownGame {
       if (!data) return;
       this.proximityChat.addMessage(data.senderId, data.name || 'Walker', data.text, false);
     };
+    this.net.onProximityBurnMessage = (uuid) => this.proximityChat && this.proximityChat.burnMessage(uuid);
+    this.net.onProximityBurnSession = () => this.proximityChat && this.proximityChat.clearMessages();
 
     // Network NPC Spawner Callbacks
     this.net.onNpcSpawn = (npcData) => {

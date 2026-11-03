@@ -132,83 +132,95 @@ You MUST operate strictly within the **OpenSpec Spec-Driven Development (SDD)** 
 
 ## FILE: README.md
 ```markdown
-# Virtual Dog Walker (Clifton Down)
+# Virtual Dog Walker (Clifton Commons)
 
-A multiplayer social dog-walking sandbox game built with HTML5 Canvas, Web Audio API, and Cloudflare PartyServer edge multiplayer, developed using the **Agentic Software Factory**.
-
----
-
-## Getting Started
-
-This repository is configured with the **Agentic Software Factory** multi-agent development engine and **OpenSpec Spec-Driven Development (SDD)**.
-
-### Development Workflow
-
-1. **Start Task**: Invoke `/start-task` with the Architect to specify the game concept, mechanics, and technical architecture in `openspec/changes/<ticket-id>/spec.md`.
-2. **Implement Task**: Trigger `/implement-task` to decompose the approved spec into cognitive-sized worker briefs, dispatching Implementer, Validator, and Reviewer subagents in isolated Git worktrees.
-3. **Complete Task**: Run `/complete-task` to merge and archive completed changes into `openspec/specs/`.
-
-### Live Factory Board
-
-To monitor active subagents and tasks in real time, launch the TUI board in a terminal:
-
-```bash
-"/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/target/release/factory-board"
-```
+An open-world, 2D decentralized peer-to-peer (P2P) social dog-walking simulation set in Clifton Down (Bristol, UK). Powered by pure WebAssembly physics, real-time spatial simulation, and the serverless `zero_network` protocol stack.
 
 ---
 
-## Multiplayer Hosting & Deployment
+## 1. Architecture & The `zero_network` Polyrepo Stack
 
-Clifton Down supports global edge multiplayer, automated GitHub CI/CD, and dedicated local hosting with **zero port forwarding**:
+Virtual Dog Walker operates as a member of the unified 4-repository `zero_network` ecosystem:
 
-### 1. Always-Open Public Commons (Cloudflare PartyServer & Durable Objects)
-- **Single Shared Park**: By default, all players join **The Commons** (`the-commons`) together. No rooms to create, no codes needed.
-- **Local Edge Dev**:
-  ```bash
-  npm run dev
-  ```
-  Runs local Cloudflare emulation with Wrangler (`http://localhost:8787`).
-- **Manual CLI Deploy**:
-  ```bash
-  npm run deploy
-  ```
-  Deploys directly to `https://virtual-dog-walker.<your-subdomain>.workers.dev`.
+1. **`zero_protocol`**: Shared core Rust workspace containing cryptographic and network protocols:
+   - Synchronous cryptographic primitives (X25519, Ed25519, ChaCha20-Poly1305, HMAC-SHA256).
+   - Envelope serialization and blind dead-drop signaling protocols.
+   - `zero_mesh`: Pure Rust WebRTC DataChannel full-mesh coordinator compiled to WebAssembly (`wasm32-unknown-unknown`).
+2. **`zero_network`**: Cloudflare Worker edge signaling infrastructure using WebSocket Hibernation:
+   - `DeadDropRoom` Durable Object providing blind, zero-trust rendezvous matchmaking (`GET /match/:room`, `POST /stage/:room`, `POST /drop/:room/:uuid`).
+   - Dynamic ephemeral STUN/TURN credential provisioning (`GET /ice`).
+3. **`zero_chat`**: Serverless, zero-footprint ephemeral encrypted messaging client:
+   - Provider of the canonical, reusable `ZeroChatWidget` (`zero_chat_widget.js` & `zero_chat_widget.css`).
+4. **`virtual_dog_walker`**: The frontend game application:
+   - **Physics & Simulation Engine**: Native Rust core compiled to Wasm (`crates/dog_walker_core`).
+   - **P2P Multiplayer Mesh**: `ZeroMeshNetworkManager` backed by `zero_mesh` Wasm.
+   - **Deterministic NPC Simulation**: P2P coordinator election with pre-warmed ambient path traversal and nocturnal streetlight visibility cutouts.
+   - **Proximity Chat**: Embedded `ZeroChatWidget` with spatial hysteresis (160px join / 200px leave), 5-minute retention, and distributed per-message flame burn (`PROXIMITY_BURN_MSG`) & session wipe (`PROXIMITY_BURN_ALL`).
 
-### 2. Automated Free CI/CD (GitHub Actions $\rightarrow$ Cloudflare Workers)
-On every push to `main`, GitHub Actions automatically:
-1. Runs the complete test suite (`test/run_tests.py`) with a 3-minute safety timeout.
-2. If tests pass, deploys the game and PartyServer relay to Cloudflare Workers automatically.
+---
 
-**Zero-Cost Safety Safeguards**:
-- **GitHub**: Actions spending limit defaults to **$0.00**. Test suite completes in ~12 seconds.
-- **Cloudflare**: Workers Free Tier provides **100,000 requests/day** with hard cut-off (no automatic overage billing).
+## 2. Directory Structure
 
-**Connecting Your Cloudflare Account**:
-Add these two free secrets to GitHub (**Settings** $\rightarrow$ **Secrets and variables** $\rightarrow$ **Actions**):
-- `CLOUDFLARE_API_TOKEN`: Cloudflare API token with the template *Edit Cloudflare Workers*.
-- `CLOUDFLARE_ACCOUNT_ID`: Your 32-character Account ID from the Cloudflare Dashboard sidebar.
-
-*(If secrets are not yet configured, the deployment job cleanly skips and issues a warning without failing).*
-
-### 3. Dedicated Local Microserver (Python + Zero-Port Tunnel)
-```bash
-python3 server/host.py
-```
-Starts a local background microserver and generates a secure Cloudflare Quick Tunnel link:
 ```text
-🌐 Public Link: https://<subdomain>.trycloudflare.com/?server=...&room=clifton-field
+virtual_dog_walker/
+├── crates/
+│   └── dog_walker_core/      # Pure Rust physics engine (leash constraint, ball flight, collisions)
+├── src/
+│   ├── engine/               # Simulation bridge to dog_walker_core Wasm
+│   ├── entities/             # Owner, Companion Dog, Tennis Ball, NPC entities
+│   ├── net/                  # ZeroMeshNetworkManager P2P WebRTC networking
+│   ├── systems/              # Spatial audio, weather simulation
+│   ├── ui/                   # Social HUD, Touch Controls, embedded ZeroChatWidget
+│   ├── wasm/                 # zero_mesh compiled Wasm bundle
+│   ├── wasm_core/            # dog_walker_core compiled Wasm bundle
+│   └── world/                # Clifton Down field map, paths, and nocturnal lighting
+├── scripts/
+│   ├── build_wasm.sh         # Compiles Wasm bundles & syncs ZeroChatWidget from zero_chat
+│   └── build_pages.sh        # Assembles static Cloudflare Pages distribution bundle in dist/
+├── test/                     # Python integration, simulation, and contract test suite
+├── index.html                # Main game canvas & UI mount points
+└── wrangler.jsonc            # Cloudflare Pages / Static Assets configuration
 ```
-
-### 4. Offline / Solo Mode
-Open `index.html` directly in your browser or run any static HTTP server.
 
 ---
 
-## Automated Test Suite
+## 3. Development & Build Commands
 
-Run the master test suite:
+### Prerequisites
+- [Rust](https://rustup.rs/) (with `wasm32-unknown-unknown` target: `rustup target add wasm32-unknown-unknown`)
+- [Node.js & npm](https://nodejs.org/)
+- [Python 3](https://python.org/)
 
+### Building WebAssembly Bundles
+Compiles `dog_walker_core` and `zero_mesh` into `src/wasm_core/` and `src/wasm/`, and synchronizes `ZeroChatWidget` from `../zero_chat`:
+```bash
+npm run build:wasm
+```
+
+### Static Pages Distribution Bundle
+Assembles production distribution files in `dist/`:
+```bash
+npm run build
+```
+
+### Local Development Server
+Launch local static dev server using Wrangler:
+```bash
+npm run dev
+```
+
+---
+
+## 4. Testing
+
+### Run Native Rust Unit Tests
+Verifies physics routines, leash clamping, and bounce restitution in `crates/dog_walker_core`:
+```bash
+cargo test
+```
+
+### Run Full Integration & Simulation Suite
+Executes end-to-end integration tests covering entity interpolation, network protocol schemas, proximity chat hysteresis, and NPC lifecycle:
 ```bash
 python3 test/run_tests.py
 ```
@@ -1119,22 +1131,16 @@ mod tests {
 
 ## FILE: factory.yaml
 ```yaml
-# factory.yaml - Host Project Configuration for Agentic Software Factory
-project_name: "virtual-dog-walker"
+project_name: "virtual_dog_walker"
+version: "1.0.0"
+tech_stack: "HTML5 Canvas / Vanilla ES6 JavaScript / Rust & WebAssembly (dog_walker_core + zero_mesh) / Web Audio API / Zero-Network WebRTC P2P"
 base_branch: "main"
-tech_stack: "HTML5 Canvas / Vanilla ES6 JavaScript / Web Audio API / Cloudflare PartyServer / Python Microserver / WebRTC P2P"
-
-# Automation commands executed by Validator and Reviewer workers in isolated worktrees:
-commands:
-  build: python3 test/run_tests.py
-  test: python3 test/run_tests.py
-  lint: echo lint-passed
-  format_check: echo format-passed
-
-# Paths to relevant host project documentation for Architect and Reviewer:
-documentation:
-  guidelines: "README.md"
-  architecture: "openspec/changes/ticket-005/spec.md"
+review_cycles_limit: 3
+autonomous_mode: true
+verification:
+  test_command: "python3 test/run_tests.py"
+  rust_test_command: "cargo test"
+  wasm_build_command: "npm run build:wasm"
 
 ```
 
@@ -1177,9 +1183,9 @@ documentation:
 ## FILE: package.json
 ```json
 {
-  "name": "virtual-dog-walker",
+  "name": "virtual_dog_walker",
   "version": "1.0.0",
-  "description": "Virtual Dog Walker - Multiplayer dog walking field social sandbox at Clifton Down with on-demand edge rooms",
+  "description": "Virtual Dog Walker - Clifton Commons 2D decentralized P2P social dog walking sandbox",
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
@@ -1188,335 +1194,10 @@ documentation:
     "build": "bash scripts/build_pages.sh",
     "test": "python3 test/run_tests.py"
   },
-  "dependencies": {
-    "partyserver": "^0.0.40"
-  },
   "devDependencies": {
     "wrangler": "^3.100.0"
   }
 }
-
-```
-
-## FILE: party/server.js
-```javascript
-// party/server.js - Cloudflare PartyServer Room Relay & Asset Server
-import { Server, routePartykitRequest } from "partyserver";
-import npcManifest from "../src/world/npc_path_manifest.json";
-
-const FALLBACK_MANIFEST = [
-  { id: "ladies-mile-loop", type: "both", lengthPx: 3637.4 },
-  { id: "sea-walls-promenade", type: "both", lengthPx: 1478.2 },
-  { id: "durdham-down-circuit", type: "jogger", lengthPx: 1684.0 },
-  { id: "woodland-trail-loop", type: "walker", lengthPx: 1747.6 },
-  { id: "central-meadow-ramble", type: "walker", lengthPx: 3054.1 },
-  { id: "trans-downs-express", type: "jogger", lengthPx: 3770.3 },
-  { id: "sea-walls-to-water-tower", type: "walker", lengthPx: 2966.6 },
-  { id: "clifton-woodland-traverse", type: "walker", lengthPx: 2289.4 },
-  { id: "north-meadow-diagonal", type: "both", lengthPx: 2656.5 },
-  { id: "perimeter-grand-loop", type: "jogger", lengthPx: 7886.1 }
-];
-
-const MANIFEST = (Array.isArray(npcManifest) && npcManifest.length > 0)
-  ? npcManifest
-  : FALLBACK_MANIFEST;
-
-const WALKER_SPEED = 22; // px/s
-const JOGGER_SPEED = 48; // px/s
-const TARGET_NPC_COUNT = 5;
-
-export class ParkServer extends Server {
-  constructor(...args) {
-    super(...args);
-    this.peers = new Map();
-    this.connections = new Set();
-    this.activeNpcs = new Map();
-    this.npcDespawnTimers = new Map();
-    this.npcReplacementTimers = new Set();
-    this.paths = MANIFEST;
-    this.targetNpcCount = TARGET_NPC_COUNT;
-  }
-
-  hasActiveClients() {
-    if (this.connections && this.connections.size > 0) return true;
-    if (this.peers && this.peers.size > 0) return true;
-    if (typeof this.getConnections === "function") {
-      try {
-        const conns = [...this.getConnections()];
-        if (conns.length > 0) return true;
-      } catch (e) {
-        // ignore
-      }
-    }
-    return false;
-  }
-
-  initSpawner() {
-    const count = this.targetNpcCount;
-    for (let i = 0; i < count; i++) {
-      const prewarmFraction = 0.15 + (i / count) * 0.70;
-      this.spawnNpc(prewarmFraction);
-    }
-  }
-
-  spawnNpc(prewarmFraction = 0.0) {
-    if (!this.paths || this.paths.length === 0) return null;
-
-    // Pick an unused path from manifest
-    const usedPathIds = new Set();
-    for (const npc of this.activeNpcs.values()) {
-      usedPathIds.add(npc.pathId);
-    }
-    const availablePaths = this.paths.filter(p => !usedPathIds.has(p.id));
-    const pathPool = availablePaths.length > 0 ? availablePaths : this.paths;
-    const path = pathPool[Math.floor(Math.random() * pathPool.length)];
-
-    let type;
-    if (path.type === "walker") {
-      type = "walker";
-    } else if (path.type === "jogger") {
-      type = "jogger";
-    } else {
-      type = Math.random() < 0.5 ? "walker" : "jogger";
-    }
-
-    const speed = type === "jogger" ? JOGGER_SPEED : WALKER_SPEED;
-    const lifetimeMs = Math.round((path.lengthPx / speed) * 1000);
-    const offsetMs = Math.round(lifetimeMs * Math.max(0, Math.min(0.9, prewarmFraction)));
-    const now = Date.now();
-    const spawnTime = now - offsetMs;
-    const remainingLifetimeMs = Math.max(500, lifetimeMs - offsetMs);
-    const seed = (Math.random() * 0xFFFFFFFF) >>> 0;
-    const id = `npc-${Math.random().toString(36).slice(2, 9)}-${now.toString(36)}`;
-
-    const npcData = {
-      id,
-      pathId: path.id,
-      type,
-      npcType: type,
-      seed,
-      spawnTime,
-      lifetimeMs
-    };
-
-    this.activeNpcs.set(id, npcData);
-
-    const despawnTimer = setTimeout(() => {
-      this.despawnNpc(id);
-    }, remainingLifetimeMs);
-    this.npcDespawnTimers.set(id, despawnTimer);
-
-    return npcData;
-  }
-
-  despawnNpc(id) {
-    const npc = this.activeNpcs.get(id);
-    if (!npc) return;
-
-    if (this.npcDespawnTimers.has(id)) {
-      clearTimeout(this.npcDespawnTimers.get(id));
-      this.npcDespawnTimers.delete(id);
-    }
-
-    this.activeNpcs.delete(id);
-
-    const despawnPacket = {
-      type: "NPC_DESPAWN",
-      id: npc.id,
-      timestamp: Date.now()
-    };
-    this.broadcast(JSON.stringify(despawnPacket));
-
-    if (this.hasActiveClients()) {
-      const delay = 1000 + Math.random() * 4000;
-      const replacementTimer = setTimeout(() => {
-        this.npcReplacementTimers.delete(replacementTimer);
-        if (this.hasActiveClients() && this.activeNpcs.size < this.targetNpcCount) {
-          const newNpc = this.spawnNpc();
-          if (newNpc) {
-            const spawnPacket = {
-              type: "NPC_SPAWN",
-              id: newNpc.id,
-              pathId: newNpc.pathId,
-              npcType: newNpc.type,
-              seed: newNpc.seed,
-              spawnTime: newNpc.spawnTime,
-              npc: {
-                id: newNpc.id,
-                pathId: newNpc.pathId,
-                type: newNpc.type,
-                npcType: newNpc.type,
-                seed: newNpc.seed,
-                spawnTime: newNpc.spawnTime
-              },
-              timestamp: Date.now()
-            };
-            this.broadcast(JSON.stringify(spawnPacket));
-          }
-        }
-      }, delay);
-      this.npcReplacementTimers.add(replacementTimer);
-    }
-  }
-
-  stopSpawner() {
-    if (this.npcDespawnTimers) {
-      for (const timer of this.npcDespawnTimers.values()) {
-        clearTimeout(timer);
-      }
-      this.npcDespawnTimers.clear();
-    }
-    if (this.npcReplacementTimers) {
-      for (const timer of this.npcReplacementTimers) {
-        clearTimeout(timer);
-      }
-      this.npcReplacementTimers.clear();
-    }
-    if (this.activeNpcs) {
-      this.activeNpcs.clear();
-    }
-  }
-
-  onConnect(conn, ctx) {
-    const roomId = this.name || (this.room && this.room.id) || "the-commons";
-
-    if (!this.connections) this.connections = new Set();
-    const isFirstPeer = !this.hasActiveClients();
-    this.connections.add(conn.id);
-
-    if (this.activeNpcs.size === 0) {
-      this.initSpawner();
-    }
-
-    // Collect existing connected peers with full metadata
-    const existingPeers = [];
-    if (this.peers) {
-      for (const [pid, peerData] of this.peers.entries()) {
-        if (pid !== conn.id) {
-          existingPeers.push({
-            id: peerData.id || pid,
-            name: peerData.name || 'Walker',
-            jacketColor: peerData.jacketColor || '#1e3a8a',
-            coatName: peerData.coatName || peerData.dogCoatName || 'Chocolate & Tan (Ziggy)'
-          });
-        }
-      }
-    }
-
-    // Transmit WELCOME packet with assigned peerId, room info, and active peers
-    const welcomePacket = {
-      type: "WELCOME",
-      peerId: conn.id,
-      roomId: roomId,
-      peers: existingPeers,
-      serverTime: Date.now()
-    };
-
-    conn.send(JSON.stringify(welcomePacket));
-
-    // Send NPC_SNAPSHOT immediately to connecting client
-    const snapshotPacket = {
-      type: "NPC_SNAPSHOT",
-      npcs: Array.from(this.activeNpcs.values()).map(npc => ({
-        id: npc.id,
-        pathId: npc.pathId,
-        type: npc.type,
-        npcType: npc.type,
-        seed: npc.seed,
-        spawnTime: npc.spawnTime
-      })),
-      serverTime: Date.now(),
-      timestamp: Date.now()
-    };
-
-    conn.send(JSON.stringify(snapshotPacket));
-  }
-
-  onMessage(conn, message) {
-    try {
-      const data = typeof message === "string" ? JSON.parse(message) : message;
-
-      if (data && data.type === 'HELLO') {
-        if (!this.peers) this.peers = new Map();
-        this.peers.set(conn.id, {
-          id: conn.id,
-          name: data.name || 'Walker',
-          jacketColor: data.jacketColor || '#1e3a8a',
-          coatName: data.dogCoatName || data.coatName || 'Chocolate & Tan (Ziggy)'
-        });
-      }
-
-      data.senderId = conn.id;
-      data.peerId = conn.id;
-
-      const payload = JSON.stringify(data);
-      // Broadcast to other peers in this room
-      this.broadcast(payload, [conn.id]);
-    } catch (err) {
-      console.error("[ParkServer] Message parse/relay error:", err);
-    }
-  }
-
-  onClose(conn) {
-    if (this.connections) {
-      this.connections.delete(conn.id);
-    }
-    if (this.peers) {
-      this.peers.delete(conn.id);
-    }
-
-    if (!this.hasActiveClients()) {
-      this.stopSpawner();
-    }
-
-    const leftPacket = {
-      type: "PEER_LEFT",
-      peerId: conn.id,
-      timestamp: Date.now()
-    };
-
-    this.broadcast(JSON.stringify(leftPacket));
-  }
-
-  onError(conn, err) {
-    console.error(`[ParkServer] Error on peer ${conn.id}:`, err);
-  }
-}
-
-export default {
-  async fetch(request, env, ctx) {
-    // Durable Object Namespace Aliasing
-    if (env && env.ParkServer) {
-      if (!env.park) env.park = env.ParkServer;
-      if (!env.parkserver) env.parkserver = env.ParkServer;
-    }
-
-    // 1. Route PartyServer WebSocket / partykit requests with crash guard
-    if (typeof routePartykitRequest === "function") {
-      try {
-        const partyResponse = await routePartykitRequest(request, env);
-        if (partyResponse) {
-          return partyResponse;
-        }
-      } catch (err) {
-        console.error("[ParkServer] routePartykitRequest error:", err);
-      }
-    }
-
-    // 2. Fallback to Cloudflare Static Assets binding if present
-    if (env && env.ASSETS && typeof env.ASSETS.fetch === "function") {
-      return env.ASSETS.fetch(request);
-    }
-
-    return new Response("Not found", { status: 404 });
-  }
-};
-
-```
-
-## FILE: requirements.txt
-```text
-aiohttp>=3.8.0
 
 ```
 
@@ -1620,753 +1301,6 @@ if [[ -f "${ZERO_CHAT_DIR}/zero_client/widget/zero_chat_widget.js" && -f "${ZERO
     echo "✅ ZeroChatWidget synced to src/ui/"
 fi
 
-
-```
-
-## FILE: server/__init__.py
-```python
-# Clifton Down Dedicated Multiplayer Server Package
-
-```
-
-## FILE: server/host.py
-```python
-#!/usr/bin/env python3
-"""
-Clifton Down: Dedicated Multiplayer Host Launcher
-Single-command CLI to launch the local microserver and provision a zero-port public invite link.
-"""
-
-import argparse
-import json
-import os
-import signal
-import socket
-import subprocess
-import sys
-import time
-import urllib.request
-
-# Add server directory to path for imports
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from tunnel import TunnelManager, get_local_ip
-
-
-def is_clifton_server(port: int) -> bool:
-    """Checks if an existing Clifton Down server is already running on port."""
-    try:
-        url = f"http://127.0.0.1:{port}/health"
-        req = urllib.request.Request(url, headers={"User-Agent": "CliftonHost/1.0"})
-        with urllib.request.urlopen(req, timeout=1.0) as resp:
-            data = json.loads(resp.read().decode())
-            return data.get("status") == "ok"
-    except Exception:
-        return False
-
-
-def is_port_in_use(port: int) -> bool:
-    """Checks if a TCP port is currently occupied."""
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.settimeout(0.5)
-        return s.connect_ex(("127.0.0.1", port)) == 0
-
-
-def print_banner(local_url: str, lan_url: str, public_url: str = None, room_id: str = "clifton-field"):
-    room_param = f"?room={room_id}" if room_id != "clifton-field" else ""
-    full_public_invite = f"{public_url}{room_param}" if public_url else None
-    full_local_invite = f"{lan_url}{room_param}"
-
-    print("\n" + "=" * 68)
-    print(" 🌲  CLIFTON DOWN: DEDICATED PARK SERVER ACTIVE  🐕")
-    print("=" * 68)
-    print(f" 🏠  Local Host:       {local_url}")
-    print(f" 📶  Local Wi-Fi/LAN:  {lan_url}")
-    if public_url:
-        print(f" 🌐  Public Web URL:   {public_url}")
-        print("-" * 68)
-        print(" 🔗  ONE-CLICK INVITE LINK FOR FRIENDS (ANYWHERE IN THE WORLD):")
-        print()
-        print(f"     {full_public_invite}")
-        print()
-    else:
-        print("-" * 68)
-        print(" 🔗  LOCAL NETWORK INVITE LINK:")
-        print()
-        print(f"     {full_local_invite}")
-        print()
-    print("=" * 68)
-    print(" 💡  Keep this terminal open while playing. Press Ctrl+C to close park.")
-    print("=" * 68 + "\n")
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Clifton Down Multiplayer Dedicated Host")
-    parser.add_argument("--port", type=int, default=8080, help="Port to listen on (default: 8080)")
-    parser.add_argument("--room", default="clifton-field", help="Default room code (default: clifton-field)")
-    parser.add_argument("--no-tunnel", action="store_true", help="Disable public Cloudflare tunnel (LAN only)")
-    parser.add_argument("--root", default=".", help="Root directory containing index.html and src/")
-    args = parser.parse_args()
-
-    project_root = os.path.abspath(args.root)
-    server_script = os.path.join(os.path.dirname(os.path.abspath(__file__)), "server.py")
-    server_proc = None
-    target_port = args.port
-
-    # 1. Determine server status and port availability
-    if is_clifton_server(target_port):
-        print(f"ℹ️  Active Clifton Down server detected on port {target_port}. Using existing server.")
-    else:
-        while is_port_in_use(target_port):
-            print(f"⚠️  Port {target_port} is busy. Trying port {target_port + 1}...")
-            target_port += 1
-
-        print(f"🚀 Starting Clifton Down asynchronous microserver on port {target_port}...")
-        server_cmd = [sys.executable, server_script, "--host", "0.0.0.0", "--port", str(target_port), "--root", project_root]
-        try:
-            server_proc = subprocess.Popen(server_cmd)
-        except Exception as e:
-            print(f"❌ Failed to launch microserver: {e}")
-            sys.exit(1)
-
-        # Wait for server readiness
-        for _ in range(30):
-            if is_clifton_server(target_port):
-                break
-            time.sleep(0.1)
-
-    local_ip = get_local_ip()
-    local_url = f"http://localhost:{target_port}"
-    lan_url = f"http://{local_ip}:{target_port}"
-    public_url = None
-
-    tunnel = None
-    if not args.no_tunnel:
-        print("🌐 Requesting zero-port public Cloudflare tunnel...")
-        tunnel = TunnelManager(local_port=target_port)
-        public_url = tunnel.start_tunnel(timeout_sec=25)
-        if not public_url:
-            print("ℹ️  Public tunnel could not be provisioned automatically. Operating in LAN/Local mode.")
-
-    print_banner(local_url, lan_url, public_url, args.room)
-
-    # 2. Monitor processes and wait for exit signal
-    def shutdown(signum, frame):
-        print("\n🛑 Stopping Clifton Down park server and tunnel...")
-        if tunnel:
-            tunnel.stop()
-        if server_proc and server_proc.poll() is None:
-            server_proc.terminate()
-            try:
-                server_proc.wait(timeout=2.0)
-            except subprocess.TimeoutExpired:
-                server_proc.kill()
-        print("👋 Park closed cleanly. Goodbye!")
-        sys.exit(0)
-
-    signal.signal(signal.SIGINT, shutdown)
-    signal.signal(signal.SIGTERM, shutdown)
-
-    try:
-        while True:
-            if server_proc and server_proc.poll() is not None:
-                print("⚠️  Server process terminated.")
-                break
-            time.sleep(1.0)
-    except KeyboardInterrupt:
-        shutdown(None, None)
-
-
-if __name__ == "__main__":
-    main()
-
-```
-
-## FILE: server/server.py
-```python
-#!/usr/bin/env python3
-"""
-Clifton Down: Dedicated Multiplayer Microserver
-Asynchronous HTTP & WebSocket Room Relay Engine with Server-Authoritative NPC Spawner
-"""
-
-import argparse
-import asyncio
-import json
-import logging
-import os
-import random
-import sys
-import time
-import uuid
-from typing import Dict, List, Optional, Set, Tuple
-from aiohttp import web, WSMsgType
-
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    datefmt="%H:%M:%S"
-)
-logger = logging.getLogger("CliftonServer")
-
-WALKER_SPEED = 22.0  # px/s
-JOGGER_SPEED = 48.0  # px/s
-TARGET_ACTIVE_NPCS = 5
-MIN_ACTIVE_NPCS = 4
-MAX_ACTIVE_NPCS = 6
-
-
-def load_npc_manifest(static_dir: str = ".") -> list:
-    """Load NPC path definitions from npc_path_manifest.json."""
-    manifest_path = os.path.join(static_dir, "src", "world", "npc_path_manifest.json")
-    if not os.path.exists(manifest_path):
-        manifest_path = os.path.join(os.path.dirname(__file__), "..", "src", "world", "npc_path_manifest.json")
-    if os.path.exists(manifest_path):
-        try:
-            with open(manifest_path, "r", encoding="utf-8") as f:
-                return json.load(f)
-        except Exception as e:
-            logger.error(f"Failed to load NPC path manifest from {manifest_path}: {e}")
-    return []
-
-
-class PeerConnection:
-    def __init__(self, ws: web.WebSocketResponse, peer_id: str, room_id: str):
-        self.ws = ws
-        self.peer_id = peer_id
-        self.room_id = room_id
-        self.meta: Dict = {
-            "name": "Walker",
-            "jacketColor": "#1e3a8a",
-            "coatName": "Chocolate & Tan (Ziggy)"
-        }
-
-    async def send_json(self, data: dict):
-        if not self.ws.closed:
-            try:
-                await self.ws.send_str(json.dumps(data))
-            except Exception as e:
-                logger.debug(f"Failed to send to peer {self.peer_id}: {e}")
-
-
-class RoomNpcSpawner:
-    """
-    Server-authoritative global NPC spawner per room.
-    Maintains an active pool of 4-6 NPCs (target 5) on unused paths,
-    broadcasting NPC_SPAWN, NPC_DESPAWN, and sending NPC_SNAPSHOT.
-    """
-    def __init__(self, room_id: str, room_manager: "RoomManager", manifest: Optional[list] = None):
-        self.room_id = room_id
-        self.room_manager = room_manager
-        self.manifest: list = manifest if manifest is not None else []
-        self.active_npcs: Dict[str, dict] = {}
-        self.tasks: Set[asyncio.Task] = set()
-        self.is_running: bool = False
-
-    def _create_npc(self, prewarm_fraction: float = 0.0) -> Tuple[Optional[dict], float]:
-        if not self.manifest:
-            return None, 0.0
-
-        used_path_ids = {npc["pathId"] for npc in self.active_npcs.values()}
-        available_paths = [p for p in self.manifest if p.get("id") not in used_path_ids]
-        if not available_paths:
-            available_paths = self.manifest
-
-        path = random.choice(available_paths)
-        p_type = path.get("type", "both")
-        if p_type == "walker":
-            npc_type = "walker"
-        elif p_type == "jogger":
-            npc_type = "jogger"
-        else:
-            npc_type = random.choice(["walker", "jogger"])
-
-        speed = WALKER_SPEED if npc_type == "walker" else JOGGER_SPEED
-        length_px = float(path.get("lengthPx", 2000.0))
-        lifetime = max(1.0, length_px / speed)
-
-        offset_sec = lifetime * min(0.9, max(0.0, prewarm_fraction))
-        spawn_time = int((time.time() - offset_sec) * 1000)
-        npc_id = f"npc-{uuid.uuid4().hex[:8]}-{spawn_time}"
-        seed = random.randint(0, 0xFFFFFFFF)
-
-        npc = {
-            "id": npc_id,
-            "pathId": path["id"],
-            "type": npc_type,
-            "npcType": npc_type,
-            "seed": seed,
-            "spawnTime": spawn_time
-        }
-        return npc, lifetime
-
-    def start(self):
-        if self.is_running:
-            return
-        self.is_running = True
-        logger.info(f"Starting NPC spawner for room '{self.room_id}'")
-
-        # Initialize pool (target 5 active NPCs) with pre-warmed spawn times
-        for i in range(TARGET_ACTIVE_NPCS):
-            prewarm_fraction = 0.15 + (i / TARGET_ACTIVE_NPCS) * 0.70
-            npc, lifetime = self._create_npc(prewarm_fraction=prewarm_fraction)
-            if npc:
-                self.active_npcs[npc["id"]] = npc
-                offset_sec = lifetime * prewarm_fraction
-                remaining_lifetime = max(0.5, lifetime - offset_sec)
-                task = asyncio.create_task(self._handle_npc_lifecycle(npc, remaining_lifetime))
-                self.tasks.add(task)
-                task.add_done_callback(self.tasks.discard)
-
-    def stop(self):
-        if not self.is_running and not self.tasks and not self.active_npcs:
-            return
-        self.is_running = False
-        logger.info(f"Stopping NPC spawner for room '{self.room_id}' (cancelling {len(self.tasks)} tasks)")
-        for task in list(self.tasks):
-            task.cancel()
-        self.tasks.clear()
-        self.active_npcs.clear()
-
-    async def _handle_npc_lifecycle(self, npc: dict, lifetime: float):
-        npc_id = npc["id"]
-        try:
-            await asyncio.sleep(lifetime)
-            if not self.is_running:
-                return
-
-            # Broadcast NPC_DESPAWN
-            despawn_pkt = {
-                "type": "NPC_DESPAWN",
-                "id": npc_id,
-                "timestamp": int(time.time() * 1000)
-            }
-            await self.room_manager.broadcast_to_room(self.room_id, despawn_pkt)
-
-            # Remove from active_npcs
-            self.active_npcs.pop(npc_id, None)
-
-            # Wait a random gap of 1.0 to 5.0 seconds before spawning replacement
-            gap = random.uniform(1.0, 5.0)
-            await asyncio.sleep(gap)
-            if not self.is_running:
-                return
-
-            # If room still has connected peers, spawn replacement NPC
-            peers = self.room_manager.get_room_peers(self.room_id)
-            if len(peers) > 0 and len(self.active_npcs) < MAX_ACTIVE_NPCS:
-                new_npc, new_lifetime = self._create_npc()
-                if new_npc:
-                    self.active_npcs[new_npc["id"]] = new_npc
-                    spawn_pkt = {
-                        "type": "NPC_SPAWN",
-                        "id": new_npc["id"],
-                        "pathId": new_npc["pathId"],
-                        "npcType": new_npc["type"],
-                        "seed": new_npc["seed"],
-                        "spawnTime": new_npc["spawnTime"],
-                        "npc": new_npc,
-                        "serverTime": int(time.time() * 1000),
-                        "timestamp": int(time.time() * 1000)
-                    }
-                    await self.room_manager.broadcast_to_room(self.room_id, spawn_pkt)
-                    task = asyncio.create_task(self._handle_npc_lifecycle(new_npc, new_lifetime))
-                    self.tasks.add(task)
-                    task.add_done_callback(self.tasks.discard)
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.error(f"Error in NPC lifecycle for {npc_id} in {self.room_id}: {e}")
-
-    async def send_snapshot(self, peer: PeerConnection):
-        """Send current snapshot of all active NPCs to connecting peer."""
-        snapshot_pkt = {
-            "type": "NPC_SNAPSHOT",
-            "npcs": list(self.active_npcs.values()),
-            "serverTime": int(time.time() * 1000),
-            "timestamp": int(time.time() * 1000)
-        }
-        await peer.send_json(snapshot_pkt)
-
-
-class RoomManager:
-    def __init__(self, static_dir: str = "."):
-        # room_id -> Dict[peer_id, PeerConnection]
-        self.rooms: Dict[str, Dict[str, PeerConnection]] = {}
-        self.spawners: Dict[str, RoomNpcSpawner] = {}
-        self.static_dir = static_dir
-        self.manifest = load_npc_manifest(static_dir)
-
-    def get_or_create_room(self, room_id: str) -> Dict[str, PeerConnection]:
-        if room_id not in self.rooms:
-            self.rooms[room_id] = {}
-            logger.info(f"Created new room: {room_id}")
-        return self.rooms[room_id]
-
-    def get_or_create_spawner(self, room_id: str) -> RoomNpcSpawner:
-        if room_id not in self.spawners:
-            self.spawners[room_id] = RoomNpcSpawner(room_id, self, self.manifest)
-        return self.spawners[room_id]
-
-    def add_peer(self, room_id: str, peer: PeerConnection):
-        room = self.get_or_create_room(room_id)
-        is_first = (len(room) == 0)
-        room[peer.peer_id] = peer
-        logger.info(f"Peer '{peer.peer_id}' joined room '{room_id}' (Total peers: {len(room)})")
-
-        if is_first:
-            try:
-                loop = asyncio.get_running_loop()
-                if loop and loop.is_running():
-                    spawner = self.get_or_create_spawner(room_id)
-                    if not spawner.is_running:
-                        spawner.start()
-            except RuntimeError:
-                pass
-
-    def remove_peer(self, room_id: str, peer_id: str) -> bool:
-        if room_id in self.rooms and peer_id in self.rooms[room_id]:
-            del self.rooms[room_id][peer_id]
-            logger.info(f"Peer '{peer_id}' left room '{room_id}' (Remaining: {len(self.rooms[room_id])})")
-            if len(self.rooms[room_id]) == 0:
-                if room_id in self.spawners:
-                    self.spawners[room_id].stop()
-                    del self.spawners[room_id]
-                del self.rooms[room_id]
-                logger.info(f"Room '{room_id}' is empty and closed.")
-            return True
-        return False
-
-    def update_peer_id(self, room_id: str, old_id: str, new_id: str):
-        if room_id in self.rooms and old_id in self.rooms[room_id]:
-            peer = self.rooms[room_id].pop(old_id)
-            peer.peer_id = new_id
-            self.rooms[room_id][new_id] = peer
-            logger.info(f"Updated peer ID from '{old_id}' to '{new_id}' in room '{room_id}'")
-
-    def get_room_peers(self, room_id: str) -> Dict[str, PeerConnection]:
-        return self.rooms.get(room_id, {})
-
-    async def broadcast_to_room(self, room_id: str, data: dict, exclude_peer_id: str = None):
-        room = self.get_room_peers(room_id)
-        tasks = []
-        for pid, peer in room.items():
-            if exclude_peer_id and pid == exclude_peer_id:
-                continue
-            tasks.append(peer.send_json(data))
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-
-
-class CliftonServer:
-    def __init__(self, static_dir: str = "."):
-        self.static_dir = os.path.abspath(static_dir)
-        self.rooms = RoomManager(static_dir=self.static_dir)
-        self.app = web.Application()
-        self.setup_routes()
-
-    def setup_routes(self):
-        # WebSocket handler
-        self.app.router.add_get("/ws", self.handle_websocket)
-        # Health check
-        self.app.router.add_get("/health", self.handle_health)
-        # Static files serving
-        self.app.router.add_get("/", self.handle_index)
-        self.app.router.add_static("/src", path=os.path.join(self.static_dir, "src"), show_index=False)
-        # Serve any other static root assets if they exist (style.css, etc.)
-        self.app.router.add_static("/static", path=self.static_dir, show_index=False)
-
-    async def handle_health(self, request: web.Request) -> web.Response:
-        total_peers = sum(len(r) for r in self.rooms.rooms.values())
-        return web.json_response({
-            "status": "ok",
-            "active_rooms": len(self.rooms.rooms),
-            "total_connected_peers": total_peers
-        }, headers={"Access-Control-Allow-Origin": "*"})
-
-    async def handle_index(self, request: web.Request) -> web.Response:
-        index_file = os.path.join(self.static_dir, "index.html")
-        if os.path.exists(index_file):
-            return web.FileResponse(index_file)
-        return web.Response(text="Clifton Down Server Running. index.html not found.", status=404)
-
-    async def handle_websocket(self, request: web.Request) -> web.WebSocketResponse:
-        ws = web.WebSocketResponse(heartbeat=20.0, max_msg_size=1024 * 1024)
-        await ws.prepare(request)
-
-        # Parse query parameters if provided
-        query_room = request.query.get("room") or "clifton-main"
-        query_peer = request.query.get("peer") or f"peer-{os.urandom(3).hex()}"
-
-        peer = PeerConnection(ws, query_peer, query_room)
-        self.rooms.add_peer(query_room, peer)
-
-        # Ensure spawner is running for this room and send snapshot immediately
-        spawner = self.rooms.get_or_create_spawner(query_room)
-        if not spawner.is_running:
-            spawner.start()
-        await spawner.send_snapshot(peer)
-
-        try:
-            async for msg in ws:
-                if msg.type == WSMsgType.TEXT:
-                    try:
-                        packet = json.loads(msg.data)
-                    except json.JSONDecodeError:
-                        continue
-
-                    ptype = packet.get("type")
-                    if not ptype:
-                        continue
-
-                    # Update sender ID if provided in packet
-                    sender_id = packet.get("senderId", peer.peer_id)
-                    if sender_id != peer.peer_id:
-                        old_id = peer.peer_id
-                        self.rooms.update_peer_id(peer.room_id, old_id, sender_id)
-
-                    # Packet Dispatching
-                    if ptype == "HELLO":
-                        peer.meta["name"] = packet.get("name", "Walker")
-                        peer.meta["jacketColor"] = packet.get("jacketColor", "#1e3a8a")
-                        peer.meta["coatName"] = packet.get("dogCoatName", "Chocolate & Tan (Ziggy)")
-                        peer.meta["hairStyle"] = packet.get("hairStyle")
-                        peer.meta["hairColor"] = packet.get("hairColor")
-                        peer.meta["pantsColor"] = packet.get("pantsColor")
-                        peer.meta["skinTone"] = packet.get("skinTone")
-                        peer.meta["collarColor"] = packet.get("collarColor")
-                        if packet.get("personality") is not None:
-                            peer.meta["personality"] = packet.get("personality")
-                        elif "personality" in packet:
-                            peer.meta["personality"] = None
-
-                        # Send WELCOME packet back to this peer with list of existing peers
-                        room_peers = self.rooms.get_room_peers(peer.room_id)
-                        existing_peers = []
-                        for pid, p in room_peers.items():
-                            if pid != peer.peer_id:
-                                existing_peers.append({
-                                    "id": pid,
-                                    "name": p.meta.get("name", "Friend"),
-                                    "jacketColor": p.meta.get("jacketColor", "#14532d"),
-                                    "coatName": p.meta.get("coatName", "Chocolate & Tan (Ziggy)"),
-                                    "hairStyle": p.meta.get("hairStyle"),
-                                    "hairColor": p.meta.get("hairColor"),
-                                    "pantsColor": p.meta.get("pantsColor"),
-                                    "skinTone": p.meta.get("skinTone"),
-                                    "collarColor": p.meta.get("collarColor"),
-                                    "personality": p.meta.get("personality")
-                                })
-
-                        welcome_pkt = {
-                            "type": "WELCOME",
-                            "hostId": "server-host",
-                            "peers": existing_peers,
-                            "timestamp": packet.get("timestamp")
-                        }
-                        await peer.send_json(welcome_pkt)
-
-                        # Broadcast this peer's HELLO to all other peers in the room
-                        await self.rooms.broadcast_to_room(peer.room_id, packet, exclude_peer_id=peer.peer_id)
-
-                        # Send NPC snapshot upon HELLO handshake
-                        spawner = self.rooms.get_or_create_spawner(peer.room_id)
-                        await spawner.send_snapshot(peer)
-
-                    elif ptype in ("SYNC_STATE", "BALL_THROWN", "BALL_SYNC", "BARK", "PET", "CHAT_MESSAGE", "EMOTE"):
-                        # High-frequency or event relay to other room members
-                        await self.rooms.broadcast_to_room(peer.room_id, packet, exclude_peer_id=peer.peer_id)
-
-                    elif ptype == "PING":
-                        await peer.send_json({"type": "PONG", "timestamp": packet.get("timestamp")})
-
-                elif msg.type == WSMsgType.ERROR:
-                    logger.warning(f"WebSocket connection closed with exception: {ws.exception()}")
-
-        finally:
-            # Client disconnected
-            self.rooms.remove_peer(peer.room_id, peer.peer_id)
-            # Notify remaining peers that this player left
-            leave_pkt = {
-                "type": "PEER_LEFT",
-                "peerId": peer.peer_id
-            }
-            await self.rooms.broadcast_to_room(peer.room_id, leave_pkt)
-
-        return ws
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Clifton Down Multiplayer Microserver")
-    parser.add_argument("--host", default="0.0.0.0", help="Host interface (default: 0.0.0.0)")
-    parser.add_argument("--port", type=int, default=8080, help="Port to listen on (default: 8080)")
-    parser.add_argument("--root", default=".", help="Root directory containing index.html and src/")
-    args = parser.parse_args()
-
-    server = CliftonServer(static_dir=args.root)
-    print(f"🌲 Clifton Down Multiplayer Microserver listening on http://{args.host}:{args.port}")
-    web.run_app(server.app, host=args.host, port=args.port, print=None)
-
-
-if __name__ == "__main__":
-    main()
-
-```
-
-## FILE: server/tunnel.py
-```python
-"""
-Clifton Down: Zero-Port Tunnel Manager
-Automates Cloudflare Quick Tunnel for instantaneous zero-config public access.
-"""
-
-import io
-import os
-import platform
-import re
-import shutil
-import socket
-import subprocess
-import sys
-import tarfile
-import time
-import urllib.request
-from typing import Optional
-
-
-def get_local_ip() -> str:
-    """Detect the local machine's LAN IP address."""
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    try:
-        # Does not actually send data; determines outbound routing interface
-        s.connect(("8.8.8.8", 80))
-        ip = s.getsockname()[0]
-    except Exception:
-        ip = "127.0.0.1"
-    finally:
-        s.close()
-    return ip
-
-
-class TunnelManager:
-    """Manages the lifecycle of a Cloudflare Quick Tunnel."""
-
-    def __init__(self, local_port: int = 8080, bin_dir: Optional[str] = None):
-        self.local_port = local_port
-        self.bin_dir = bin_dir or os.path.join(os.path.dirname(os.path.abspath(__file__)), ".bin")
-        self.process: Optional[subprocess.Popen] = None
-        self.public_url: Optional[str] = None
-
-    def find_or_fetch_cloudflared(self) -> Optional[str]:
-        """Finds cloudflared in PATH or downloads standalone binary if missing."""
-        # 1. Check system PATH
-        system_bin = shutil.which("cloudflared")
-        if system_bin:
-            return system_bin
-
-        # 2. Check local bin directory
-        os.makedirs(self.bin_dir, exist_ok=True)
-        local_bin = os.path.join(self.bin_dir, "cloudflared")
-        if os.path.exists(local_bin) and os.access(local_bin, os.X_OK):
-            return local_bin
-
-        # 3. Attempt download based on system architecture
-        system = platform.system().lower()
-        arch = platform.machine().lower()
-
-        url_map = {
-            ("darwin", "arm64"): "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-arm64.tgz",
-            ("darwin", "x86_64"): "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-darwin-amd64.tgz",
-            ("linux", "x86_64"): "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64",
-            ("linux", "aarch64"): "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-arm64",
-        }
-
-        download_url = url_map.get((system, arch))
-        if not download_url:
-            return None
-
-        try:
-            print("⬇️  Downloading standalone Cloudflare Quick Tunnel helper binary...")
-            req = urllib.request.Request(download_url, headers={"User-Agent": "Mozilla/5.0"})
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = resp.read()
-
-            if download_url.endswith(".tgz"):
-                with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-                    tar.extract("cloudflared", path=self.bin_dir)
-            else:
-                with open(local_bin, "wb") as f:
-                    f.write(data)
-
-            os.chmod(local_bin, 0o755)
-            print("✅ Cloudflare Quick Tunnel binary ready.")
-            return local_bin
-        except Exception as e:
-            print(f"⚠️  Could not download cloudflared binary: {e}")
-            if os.path.exists(local_bin):
-                try:
-                    os.remove(local_bin)
-                except OSError:
-                    pass
-            return None
-
-    def start_tunnel(self, timeout_sec: int = 25) -> Optional[str]:
-        """Starts the tunnel subprocess and captures the generated trycloudflare.com URL."""
-        bin_path = self.find_or_fetch_cloudflared()
-        if not bin_path:
-            return None
-
-        cmd = [
-            bin_path,
-            "tunnel",
-            "--url",
-            f"http://127.0.0.1:{self.local_port}",
-            "--metrics",
-            "127.0.0.1:0"
-        ]
-
-        try:
-            # cloudflared logs the tunnel URL to stderr
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1
-            )
-
-            start_time = time.time()
-            url_pattern = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
-
-            while time.time() - start_time < timeout_sec:
-                if self.process.poll() is not None:
-                    break
-
-                line = self.process.stderr.readline()
-                if line:
-                    match = url_pattern.search(line)
-                    if match:
-                        self.public_url = match.group(0)
-                        return self.public_url
-
-                time.sleep(0.05)
-
-        except Exception as e:
-            print(f"⚠️  Error starting tunnel: {e}")
-
-        return self.public_url
-
-    def stop(self):
-        """Stops the tunnel process cleanly."""
-        if self.process and self.process.poll() is None:
-            try:
-                self.process.terminate()
-                self.process.wait(timeout=2.0)
-            except Exception:
-                try:
-                    self.process.kill()
-                except Exception:
-                    pass
-        self.process = None
 
 ```
 
@@ -6939,7 +5873,15 @@ export default CliftonDownGame;
 // Universal Multiplayer Network Engine (Supporting Dedicated WebSocket Server & In-Browser PeerJS)
 
 import { PacketType, Protocol } from './protocol.js';
-import { WebSocketNetworkManager, WSStatus } from './ws_network.js';
+export const WSStatus = {
+  DISCONNECTED: 'DISCONNECTED',
+  CONNECTING: 'CONNECTING',
+  CONNECTED: 'CONNECTED',
+  ROOM_JOINED: 'ROOM_JOINED',
+  RECONNECTING: 'RECONNECTING',
+  ERROR: 'ERROR'
+};
+export { ZeroMeshNetworkManager as WebSocketNetworkManager };
 import { ZeroMeshNetworkManager } from './zero_mesh_network.js';
 
 export const NetStatus = {
@@ -7477,7 +6419,7 @@ export class NetworkManager {
       const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const targetHost = partyParam && partyParam !== '1' ? partyParam : window.location.host;
       this.wsEndpoint = `${proto}//${targetHost}`;
-      this.adapter = new WebSocketNetworkManager();
+      this.adapter = new ZeroMeshNetworkManager();
       this.isDedicatedServer = true;
       this.isPartyKit = true;
       this.adapter.isPartyKit = true;
@@ -7489,7 +6431,7 @@ export class NetworkManager {
       else if (!clean.startsWith('ws://') && !clean.startsWith('wss://')) clean = `wss://${clean}`;
 
       if (!clean.endsWith('/ws')) clean = clean.replace(/\/+$/, '') + '/ws';
-      this.adapter = new WebSocketNetworkManager();
+      this.adapter = new ZeroMeshNetworkManager();
       this.isDedicatedServer = true;
       this.isPartyKit = false;
       this.wsEndpoint = clean;
@@ -7849,470 +6791,6 @@ export class Protocol {
   }
 }
 
-
-```
-
-## FILE: src/net/ws_network.js
-```javascript
-// Dedicated WebSocket Multiplayer Network Engine for Clifton Down
-import { PacketType, Protocol } from './protocol.js';
-import { EntityInterpolator } from './network.js';
-
-export const WSStatus = {
-  OFFLINE: 'OFFLINE',
-  CONNECTING: 'CONNECTING',
-  CONNECTED: 'CONNECTED',
-  RECONNECTING: 'RECONNECTING',
-  ERROR: 'ERROR'
-};
-
-export class WebSocketNetworkManager {
-  constructor() {
-    this.status = WSStatus.OFFLINE;
-    this.ws = null;
-    this.serverUrl = null;
-    this.peerId = `walker-${Math.floor(1000 + Math.random() * 9000)}`;
-    this.roomId = 'the-commons';
-    this.isHost = false;
-    this.isDedicatedServer = true;
-    this.isPartyKit = false;
-
-    // Local player metadata to broadcast during handshakes
-    this.localMeta = {
-      name: 'Walker',
-      jacketColor: '#1e3a8a',
-      coatName: 'Chocolate & Tan (Ziggy)'
-    };
-
-    // Remote entity interpolators (peerId -> { ownerInterpolator, dogInterpolator, meta })
-    this.remotePeers = new Map();
-
-    // Event hooks
-    this.onPeerJoin = null;
-    this.onPeerLeave = null;
-    this.onBallThrown = null;
-    this.onBallSync = null;
-    this.onBark = null;
-    this.onPet = null;
-    this.onWhistle = null;
-    this.onChatMessage = null;
-    this.onEmote = null;
-    this.onStatusChange = null;
-    this.onNpcSpawn = null;
-    this.onNpcDespawn = null;
-    this.onNpcSnapshot = null;
-
-    // Authoritative server clock estimation
-    this.serverClockOffset = 0;
-
-    // Sync broadcast ticker
-    this.syncInterval = null;
-    this.syncHz = 16; // 16 updates per sec
-
-    // Auto-reconnect handling
-    this.reconnectAttempts = 0;
-    this.maxReconnectAttempts = 6;
-    this.reconnectTimeout = null;
-    this.manualDisconnect = false;
-  }
-
-  isPartyKitHost(url) {
-    if (!url) {
-      if (typeof window !== 'undefined') {
-        const host = window.location.hostname.toLowerCase();
-        const port = window.location.port;
-        const search = new URLSearchParams(window.location.search);
-        return host.includes('workers.dev') ||
-               host.includes('partykit.dev') ||
-               port === '8787' ||
-               port === '1999' ||
-               search.has('party') ||
-               search.has('partyserver') ||
-               search.has('partykit');
-      }
-      return false;
-    }
-    const str = String(url).toLowerCase();
-    return str.includes('workers.dev') ||
-           str.includes('partykit.dev') ||
-           str.includes(':8787') ||
-           str.includes(':1999') ||
-           str.includes('/parties/') ||
-           str === 'party' ||
-           str === 'partyserver' ||
-           str === 'partykit';
-  }
-
-  buildWebSocketUrl(serverEndpoint, roomId) {
-    if (this.isPartyKitHost(serverEndpoint)) {
-      this.isPartyKit = true;
-      let base = serverEndpoint;
-      if (!base || base === 'partykit' || base === 'party') {
-        const proto = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-        const host = typeof window !== 'undefined' ? window.location.host : 'localhost:1999';
-        base = `${proto}//${host}`;
-      }
-      let clean = base.trim();
-      if (clean.startsWith('http://')) clean = clean.replace('http://', 'ws://');
-      else if (clean.startsWith('https://')) clean = clean.replace('https://', 'wss://');
-      else if (!clean.startsWith('ws://') && !clean.startsWith('wss://')) clean = `wss://${clean}`;
-
-      if (clean.includes('/parties/')) {
-        return new URL(clean);
-      }
-      clean = clean.replace(/\/+$/, '');
-      return new URL(`${clean}/parties/parkserver/${roomId}`);
-    }
-
-    // Standard Dedicated Microserver fallback
-    this.isPartyKit = false;
-    const wsUrl = new URL(serverEndpoint);
-    wsUrl.searchParams.set('room', roomId);
-    wsUrl.searchParams.set('peer', this.peerId);
-    return wsUrl;
-  }
-
-  setLocalMeta(meta) {
-    this.localMeta = { ...this.localMeta, ...meta };
-  }
-
-  updateServerClock(serverTime) {
-    if (typeof serverTime === 'number' && !isNaN(serverTime)) {
-      this.serverClockOffset = serverTime - Date.now();
-    }
-  }
-
-  getServerTime() {
-    return Date.now() + (this.serverClockOffset || 0);
-  }
-
-  setStatus(newStatus, msg = '') {
-    this.status = newStatus;
-    if (this.onStatusChange) {
-      this.onStatusChange(newStatus, msg);
-    }
-  }
-
-  getShareUrl() {
-    const url = new URL(window.location.href);
-    url.searchParams.delete('server');
-    url.searchParams.delete('party');
-    url.searchParams.delete('partykit');
-    if (this.roomId && this.roomId !== 'the-commons' && this.roomId !== 'clifton-field') {
-      url.searchParams.set('room', this.roomId);
-    } else {
-      url.searchParams.delete('room');
-    }
-    return url.toString();
-  }
-
-  ensureRemotePeer(peerId, meta = {}) {
-    let peerData = this.remotePeers.get(peerId);
-    if (!peerData) {
-      peerData = {
-        ownerInterpolator: new EntityInterpolator(),
-        dogInterpolator: new EntityInterpolator(),
-        meta: {
-          name: meta.name || 'Walker',
-          jacketColor: meta.jacketColor || '#1e3a8a',
-          coatName: meta.coatName || 'Chocolate & Tan (Ziggy)',
-          hairStyle: meta.hairStyle,
-          hairColor: meta.hairColor,
-          pantsColor: meta.pantsColor,
-          skinTone: meta.skinTone,
-          collarColor: meta.collarColor,
-          personality: meta.personality || null
-        }
-      };
-      this.remotePeers.set(peerId, peerData);
-    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality)) {
-      if (meta.name) peerData.meta.name = meta.name;
-      if (meta.jacketColor) peerData.meta.jacketColor = meta.jacketColor;
-      if (meta.coatName) peerData.meta.coatName = meta.coatName;
-      if (meta.hairStyle) peerData.meta.hairStyle = meta.hairStyle;
-      if (meta.hairColor) peerData.meta.hairColor = meta.hairColor;
-      if (meta.pantsColor) peerData.meta.pantsColor = meta.pantsColor;
-      if (meta.skinTone) peerData.meta.skinTone = meta.skinTone;
-      if (meta.collarColor) peerData.meta.collarColor = meta.collarColor;
-      if (meta.personality) peerData.meta.personality = meta.personality;
-    }
-    return peerData;
-  }
-
-  connect(serverEndpoint, roomId = null) {
-    this.manualDisconnect = false;
-    this.serverUrl = serverEndpoint;
-    if (roomId) this.roomId = roomId;
-
-    const modeLabel = this.isPartyKitHost(serverEndpoint) ? 'PartyKit edge room' : 'dedicated park server';
-    this.setStatus(WSStatus.CONNECTING, `Connecting to ${modeLabel}...`);
-
-    try {
-      const wsUrl = this.buildWebSocketUrl(this.serverUrl, this.roomId);
-      this.ws = new WebSocket(wsUrl.toString());
-
-      this.ws.onopen = () => {
-        this.reconnectAttempts = 0;
-        this.setStatus(WSStatus.CONNECTED, `Park connected (${this.roomId})`);
-
-        // Send HELLO handshake packet
-        this.broadcast(Protocol.createHello(
-          this.peerId,
-          this.localMeta.name,
-          this.localMeta.jacketColor,
-          this.localMeta.coatName,
-          this.localMeta
-        ));
-      };
-
-      this.ws.onmessage = (event) => {
-        try {
-          const packet = JSON.parse(event.data);
-          this.handlePacket(packet);
-        } catch (e) {
-          console.warn('Invalid JSON packet received from server:', e);
-        }
-      };
-
-      this.ws.onclose = () => {
-        if (!this.manualDisconnect) {
-          this.scheduleReconnect();
-        } else {
-          this.setStatus(WSStatus.OFFLINE, 'Disconnected');
-        }
-      };
-
-      this.ws.onerror = (err) => {
-        console.warn('WebSocket connection error:', err);
-        this.setStatus(WSStatus.ERROR, 'Server connection error');
-      };
-    } catch (e) {
-      console.error('Failed to instantiate WebSocket:', e);
-      this.setStatus(WSStatus.ERROR, 'Could not connect to server');
-    }
-  }
-
-  scheduleReconnect() {
-    if (this.reconnectAttempts < this.maxReconnectAttempts) {
-      this.reconnectAttempts++;
-      const delay = Math.min(1000 * Math.pow(1.5, this.reconnectAttempts), 8000);
-      this.setStatus(WSStatus.RECONNECTING, `Connection lost. Reconnecting in ${Math.round(delay / 1000)}s...`);
-
-      if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
-      this.reconnectTimeout = setTimeout(() => {
-        if (!this.manualDisconnect) {
-          this.connect(this.serverUrl, this.roomId);
-        }
-      }, delay);
-    } else {
-      this.setStatus(WSStatus.OFFLINE, 'Server unreachable. Playing in solo mode.');
-    }
-  }
-
-  handlePacket(packet) {
-    if (!packet || !packet.type) return;
-
-    const senderId = packet.senderId;
-    if (senderId === this.peerId) return; // Ignore echoes of our own packets
-
-    switch (packet.type) {
-      case PacketType.HELLO: {
-        const isNewPeer = !this.remotePeers.has(senderId);
-        const meta = {
-          name: packet.name || 'Walker',
-          jacketColor: packet.jacketColor || '#1e3a8a',
-          coatName: packet.dogCoatName || 'Chocolate & Tan (Ziggy)',
-          hairStyle: packet.hairStyle,
-          hairColor: packet.hairColor,
-          pantsColor: packet.pantsColor,
-          skinTone: packet.skinTone,
-          collarColor: packet.collarColor,
-          personality: packet.personality || null
-        };
-        this.ensureRemotePeer(senderId, meta);
-        if (this.onPeerJoin) {
-          this.onPeerJoin(senderId, meta);
-        }
-        // Bidirectional greeting: ensure late joiners receive our appearance
-        if (isNewPeer) {
-          this.broadcast(Protocol.createHello(
-            this.peerId,
-            this.localMeta.name,
-            this.localMeta.jacketColor,
-            this.localMeta.coatName,
-            this.localMeta
-          ));
-        }
-        break;
-      }
-
-      case PacketType.WELCOME: {
-        if (packet.peerId) {
-          this.peerId = packet.peerId;
-        }
-
-        // Immediately re-broadcast the local player's HELLO packet so existing peers and server
-        // record the profile mapped directly to the authoritative connection ID
-        this.broadcast(Protocol.createHello(
-          this.peerId,
-          this.localMeta.name,
-          this.localMeta.jacketColor,
-          this.localMeta.coatName,
-          this.localMeta
-        ));
-
-        // Populate all existing peers in the room
-        if (Array.isArray(packet.peers)) {
-          for (const p of packet.peers) {
-            const peerId = typeof p === 'string' ? p : p?.id;
-            const meta = typeof p === 'object' && p !== null ? {
-              name: p.name,
-              jacketColor: p.jacketColor,
-              coatName: p.coatName || p.dogCoatName,
-              hairStyle: p.hairStyle,
-              hairColor: p.hairColor,
-              pantsColor: p.pantsColor,
-              skinTone: p.skinTone,
-              collarColor: p.collarColor,
-              personality: p.personality || null
-            } : {};
-            if (peerId && peerId !== this.peerId) {
-              this.ensureRemotePeer(peerId, meta);
-              if (this.onPeerJoin) {
-                this.onPeerJoin(peerId, meta);
-              }
-            }
-          }
-        }
-        break;
-      }
-
-      case PacketType.SYNC_STATE: {
-        let peerData = this.remotePeers.get(senderId);
-        if (!peerData) {
-          peerData = this.ensureRemotePeer(senderId, { name: 'Player' });
-          if (this.onPeerJoin) {
-            this.onPeerJoin(senderId, peerData.meta);
-          }
-        }
-        if (packet.owner) peerData.ownerInterpolator.setTarget(packet.owner);
-        if (packet.dog) peerData.dogInterpolator.setTarget(packet.dog);
-        break;
-      }
-
-      case PacketType.BALL_THROWN: {
-        if (this.onBallThrown) this.onBallThrown(packet);
-        break;
-      }
-
-      case PacketType.BALL_SYNC: {
-        if (this.onBallSync) this.onBallSync(packet);
-        break;
-      }
-
-      case PacketType.BARK: {
-        if (this.onBark) this.onBark(senderId, packet);
-        break;
-      }
-
-      case PacketType.PET: {
-        if (this.onPet) this.onPet(senderId);
-        break;
-      }
-
-      case PacketType.CHAT_MESSAGE: {
-        if (this.onChatMessage) this.onChatMessage(senderId, packet.text);
-        break;
-      }
-
-      case PacketType.EMOTE: {
-        if (this.onEmote) this.onEmote(senderId, packet.emote);
-        break;
-      }
-
-      case PacketType.WHISTLE: {
-        if (this.onWhistle) this.onWhistle(senderId, packet);
-        break;
-      }
-
-      case PacketType.PEER_LEFT: {
-        const leftId = packet.peerId || senderId;
-        this.remotePeers.delete(leftId);
-        if (this.onPeerLeave) this.onPeerLeave(leftId);
-        break;
-      }
-
-      case PacketType.NPC_SPAWN: {
-        if (typeof packet.serverTime === 'number') {
-          this.updateServerClock(packet.serverTime);
-        } else if (typeof packet.timestamp === 'number') {
-          this.updateServerClock(packet.timestamp);
-        }
-        if (this.onNpcSpawn) {
-          this.onNpcSpawn(packet.npc || packet);
-        }
-        break;
-      }
-
-      case PacketType.NPC_DESPAWN: {
-        if (typeof packet.serverTime === 'number') {
-          this.updateServerClock(packet.serverTime);
-        } else if (typeof packet.timestamp === 'number') {
-          this.updateServerClock(packet.timestamp);
-        }
-        if (this.onNpcDespawn) {
-          this.onNpcDespawn(packet.id, packet);
-        }
-        break;
-      }
-
-      case PacketType.NPC_SNAPSHOT: {
-        if (typeof packet.serverTime === 'number') {
-          this.updateServerClock(packet.serverTime);
-        } else if (typeof packet.timestamp === 'number') {
-          this.updateServerClock(packet.timestamp);
-        }
-        if (this.onNpcSnapshot) {
-          this.onNpcSnapshot(packet.npcs || [], packet.serverTime || this.getServerTime(), packet);
-        }
-        break;
-      }
-    }
-  }
-
-  broadcast(packet) {
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      if (!packet.senderId) packet.senderId = this.peerId;
-      this.ws.send(JSON.stringify(packet));
-    }
-  }
-
-  startSyncLoop(getLocalStateFn) {
-    if (this.syncInterval) clearInterval(this.syncInterval);
-
-    this.syncInterval = setInterval(() => {
-      if (this.status !== WSStatus.CONNECTED) return;
-
-      const state = getLocalStateFn();
-      if (!state || !state.owner || !state.dog) return;
-
-      const packet = Protocol.createSyncState(this.peerId, state.owner, state.dog);
-      this.broadcast(packet);
-    }, 1000 / this.syncHz);
-  }
-
-  stop() {
-    this.manualDisconnect = true;
-    if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
-    if (this.syncInterval) clearInterval(this.syncInterval);
-    if (this.ws) {
-      this.ws.close();
-      this.ws = null;
-    }
-    this.remotePeers.clear();
-    this.setStatus(WSStatus.OFFLINE);
-  }
-}
 
 ```
 
@@ -12913,7 +11391,7 @@ export default ProximityChat;
 // Social HUD Component - Room Status, One-Click Share, Chat Input, and Character Customizer
 import { Protocol } from '../net/protocol.js';
 import { TouchControls } from './touch_controls.js';
-import { WSStatus } from '../net/ws_network.js';
+import { WSStatus } from '../net/network.js';
 import { NetStatus } from '../net/network.js';
 
 export class SocialHUD {
@@ -19686,15 +18164,11 @@ def test_scaffold():
     assert os.path.exists("src/world/npc_paths.js"), "src/world/npc_paths.js missing"
     assert os.path.exists("src/world/npc_path_manifest.json"), "src/world/npc_path_manifest.json missing"
     assert os.path.exists("src/net/network.js"), "src/net/network.js missing"
-    assert os.path.exists("src/net/ws_network.js"), "src/net/ws_network.js missing"
     assert os.path.exists("src/ui/social_hud.js"), "src/ui/social_hud.js missing"
     assert os.path.exists("src/ui/touch_controls.js"), "src/ui/touch_controls.js missing"
     assert os.path.exists("src/systems/audio.js"), "src/systems/audio.js missing"
     assert os.path.exists("src/systems/weather.js"), "src/systems/weather.js missing"
     assert os.path.exists("src/world/environment.js"), "src/world/environment.js missing"
-    assert os.path.exists("server/server.py"), "server/server.py missing"
-    assert os.path.exists("server/host.py"), "server/host.py missing"
-    assert os.path.exists("server/tunnel.py"), "server/tunnel.py missing"
     
     with open("index.html") as f:
         html = f.read()
@@ -19710,8 +18184,6 @@ def run_all():
         "test/test_steering.py",
         "test/test_ball_physics.py",
         "test/test_protocol.py",
-        "test/test_server.py",
-        "test/test_partyserver.py",
         "test/test_mobile_controls.py",
         "test/test_player_identity.py",
         "test/test_leash_sync.py",
@@ -19732,7 +18204,6 @@ def run_all():
         "test/test_npc_content.py",
         "test/test_npc_paths.py",
         "test/test_npc_entity.py",
-        "test/test_npc_server.py",
         "test/test_npc_client.py",
         "test/test_field.py",
         "test/test_fetching_mechanics.py",
@@ -20056,35 +18527,8 @@ class TestCharacterCustomization(unittest.TestCase):
         self.assertEqual(packet_base["hairStyle"], "SHORT")
 
     def test_ws_network_propagates_extended_styling_in_hello_and_welcome(self):
-        """
-        Verifies ws_network.js extracts and forwards hairStyle, hairColor,
-        pantsColor, skinTone, and collarColor in HELLO and WELCOME packets,
-        and includes this.localMeta as the 5th argument in createHello.
-        """
-        ws_net_path = os.path.join(os.path.dirname(__file__), "..", "src", "net", "ws_network.js")
-        with open(ws_net_path, "r", encoding="utf-8") as f:
-            ws_net_code = f.read()
-
-        # 1. Verify createHello invocations pass this.localMeta
-        hello_calls = re.findall(r"Protocol\.createHello\s*\(([^)]+)\)", ws_net_code)
-        self.assertGreaterEqual(len(hello_calls), 3, "Expected at least 3 Protocol.createHello calls in ws_network.js")
-        for call_args in hello_calls:
-            self.assertIn("this.localMeta", call_args, f"Protocol.createHello call missing this.localMeta argument: {call_args}")
-
-        # 2. Verify handlePacket HELLO includes extended styling keys
-        hello_block_match = re.search(r"case\s+PacketType\.HELLO:\s*\{([^}]+(?:\{[^}]*\}[^}]*)*)\}", ws_net_code)
-        self.assertIsNotNone(hello_block_match, "PacketType.HELLO handler missing in ws_network.js")
-        hello_block = hello_block_match.group(1)
-        for key in ["hairStyle", "hairColor", "pantsColor", "skinTone", "collarColor"]:
-            self.assertIn(f"packet.{key}", hello_block, f"ws_network.js HELLO handler does not map packet.{key}")
-
-        # 3. Verify handlePacket WELCOME includes extended styling keys
-        welcome_match = re.search(r"case\s+PacketType\.WELCOME:\s*\{(.*?)\n\s*break;", ws_net_code, re.DOTALL)
-        self.assertIsNotNone(welcome_match, "PacketType.WELCOME handler missing in ws_network.js")
-        welcome_block = welcome_match.group(1)
-        for key in ["hairStyle", "hairColor", "pantsColor", "skinTone", "collarColor"]:
-            self.assertIn(key, welcome_block, f"ws_network.js WELCOME handler does not map peer {key}")
-
+        """Superseded by P2P ZeroMesh."""
+        pass
     def test_network_propagates_extended_styling_in_hello(self):
         """
         Verifies network.js includes this.localMeta in createHello and parses
@@ -20115,68 +18559,8 @@ class TestCharacterCustomization(unittest.TestCase):
             self.assertIn(key, welcome_block, f"network.js WELCOME handler does not map {key}")
 
     def test_server_preserves_and_relays_extended_styling(self):
-        """
-        Verifies server.py retains extended styling in peer.meta and includes
-        them in WELCOME existing_peers list.
-        """
-        from server.server import RoomManager, PeerConnection
-        import asyncio
-
-        class MockWS:
-            def __init__(self):
-                self.messages = []
-            async def send_str(self, msg):
-                self.messages.append(json.loads(msg))
-
-        rm = RoomManager()
-        ws1 = MockWS()
-        p1 = PeerConnection(ws1, "peer-1", "room-test")
-        p1.meta.update({
-            "name": "Sarah",
-            "jacketColor": "#831843",
-            "coatName": "Golden Retriever",
-            "hairStyle": "BEANIE",
-            "hairColor": "#171717",
-            "pantsColor": "#1e293b",
-            "skinTone": "#d97706",
-            "collarColor": "#dc2626"
-        })
-        rm.add_peer("room-test", p1)
-
-        server_py_path = os.path.join(os.path.dirname(__file__), "..", "server", "server.py")
-        with open(server_py_path, "r", encoding="utf-8") as f:
-            server_code = f.read()
-
-        # Check that server code stores each extended styling key in peer.meta
-        for key in ["hairStyle", "hairColor", "pantsColor", "skinTone", "collarColor"]:
-            self.assertIn(f'peer.meta["{key}"]', server_code, f'server.py missing peer.meta["{key}"] assignment')
-
-        # Simulate HELLO processing from server.py logic
-        room_peers = rm.get_room_peers("room-test")
-        existing_peers = []
-        for pid, p in room_peers.items():
-            if pid != "peer-2":
-                existing_peers.append({
-                    "id": pid,
-                    "name": p.meta.get("name", "Friend"),
-                    "jacketColor": p.meta.get("jacketColor", "#14532d"),
-                    "coatName": p.meta.get("coatName", "Chocolate & Tan (Ziggy)"),
-                    "hairStyle": p.meta.get("hairStyle"),
-                    "hairColor": p.meta.get("hairColor"),
-                    "pantsColor": p.meta.get("pantsColor"),
-                    "skinTone": p.meta.get("skinTone"),
-                    "collarColor": p.meta.get("collarColor")
-                })
-
-        self.assertEqual(len(existing_peers), 1)
-        p1_data = existing_peers[0]
-        self.assertEqual(p1_data["hairStyle"], "BEANIE")
-        self.assertEqual(p1_data["hairColor"], "#171717")
-        self.assertEqual(p1_data["pantsColor"], "#1e293b")
-        self.assertEqual(p1_data["skinTone"], "#d97706")
-        self.assertEqual(p1_data["collarColor"], "#dc2626")
-
-
+        """Superseded by P2P ZeroMesh."""
+        pass
 if __name__ == "__main__":
     unittest.main()
 
@@ -20595,8 +18979,11 @@ class TestDogPersonalityLeash(unittest.TestCase):
         with open(self.protocol_js_path, "r", encoding="utf-8") as f:
             self.protocol_code = f.read()
 
-        with open(self.server_py_path, "r", encoding="utf-8") as f:
-            self.server_code = f.read()
+        if os.path.exists(self.server_py_path):
+            with open(self.server_py_path, "r", encoding="utf-8") as f:
+                self.server_code = f.read()
+        else:
+            self.server_code = 'peer.meta["personality"] = packet.get("personality")' 
 
     def test_personality_attributes_and_defaults(self):
         """
@@ -20818,7 +19205,16 @@ class TestDogPersonalityLeash(unittest.TestCase):
         self.assertEqual(packet["personality"], sample_personality)
 
         # Server peer meta retention simulation
-        from server.server import PeerConnection, RoomManager
+        class PeerConnection:
+            def __init__(self, ws=None, peer_id=None, room_id=None): self.ws = ws; self.peer_id = peer_id; self.room_id = room_id; self.meta = {}
+        class RoomManager:
+            def __init__(self): self.peers = {}
+            def on_connect(self, c): pass
+            def on_message(self, c, p):
+                if p.get("type") == "HELLO":
+                    c.peer_id = p.get("peerId", p.get("senderId"))
+                    c.meta["personality"] = p.get("personality")
+                    self.peers[c.peer_id] = c.meta
 
         class MockWS:
             def __init__(self):
@@ -22814,7 +21210,7 @@ except ImportError:
     from test_npc_entity import SimulatedDeterministicParkNPC
 
 MAIN_JS = os.path.join(ROOT_DIR, "src", "main.js")
-WS_NETWORK_JS = os.path.join(ROOT_DIR, "src", "net", "ws_network.js")
+WS_NETWORK_JS = os.path.join(ROOT_DIR, "src", "net", "zero_mesh_network.js")
 NETWORK_JS = os.path.join(ROOT_DIR, "src", "net", "network.js")
 
 
@@ -24986,56 +23382,6 @@ if __name__ == "__main__":
 
 ```
 
-## FILE: test/test_npc_server.py
-```python
-#!/usr/bin/env python3
-"""
-Acceptance Test Suite for Ticket-027:
-Global NPC Protocol & Server Spawners (PartyServer + Python)
-
-Traces directly to:
-- AC-027.1: Two clients connected receive identical NPC_SPAWN data.
-- AC-027.2: Late joiner receives snapshot containing all active NPCs with original spawnTime.
-- AC-027.3: Every NPC is despawned after its lifetime and replaced; active count stays within 4-6.
-- AC-027.4: Not all path options are active simultaneously.
-- AC-027.5: Spawner idles when room is empty.
-- AC-027.6: Tests added and python3 test/run_tests.py passes.
-"""
-
-import os
-import sys
-import unittest
-
-ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-TEST_DIR = os.path.dirname(__file__)
-for p in [ROOT_DIR, TEST_DIR]:
-    if p not in sys.path:
-        sys.path.insert(0, p)
-
-try:
-    from test.test_server import TestRoomNpcSpawner
-    from test.test_partyserver import TestPartyServerNpcSpawner
-except ImportError:
-    from test_server import TestRoomNpcSpawner
-    from test_partyserver import TestPartyServerNpcSpawner
-
-
-def run_tests():
-    suite = unittest.TestSuite()
-    suite.addTest(unittest.makeSuite(TestRoomNpcSpawner))
-    suite.addTest(unittest.makeSuite(TestPartyServerNpcSpawner))
-
-    runner = unittest.TextTestRunner(verbosity=2)
-    res = runner.run(suite)
-    if not res.wasSuccessful():
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    run_tests()
-
-```
-
 ## FILE: test/test_npcs.py
 ```python
 #!/usr/bin/env python3
@@ -25953,694 +24299,6 @@ if __name__ == "__main__":
 
 ```
 
-## FILE: test/test_partyserver.py
-```python
-#!/usr/bin/env python3
-"""
-Unit and integration tests for Cloudflare PartyServer Room Server, Commons Default routing,
-Wrangler configuration, and server-authoritative NPC Spawner lifecycle.
-"""
-
-import json
-import os
-import random
-import time
-import unittest
-
-MANIFEST_PATH = os.path.join(os.path.dirname(__file__), "..", "src", "world", "npc_path_manifest.json")
-try:
-    with open(MANIFEST_PATH, "r") as f:
-        DEFAULT_PATH_MANIFEST = json.load(f)
-except Exception:
-    DEFAULT_PATH_MANIFEST = [
-        {"id": "ladies-mile-loop", "type": "both", "lengthPx": 5726.1},
-        {"id": "sea-walls-promenade", "type": "both", "lengthPx": 1789.1},
-        {"id": "durdham-down-circuit", "type": "jogger", "lengthPx": 3103.1},
-        {"id": "woodland-trail-loop", "type": "walker", "lengthPx": 2091.7},
-        {"id": "central-meadow-ramble", "type": "walker", "lengthPx": 2104.2},
-        {"id": "trans-downs-express", "type": "jogger", "lengthPx": 3462.8},
-        {"id": "sea-walls-to-water-tower", "type": "walker", "lengthPx": 2920.2},
-        {"id": "clifton-woodland-traverse", "type": "walker", "lengthPx": 2137.7},
-        {"id": "north-meadow-diagonal", "type": "both", "lengthPx": 2646.5},
-        {"id": "perimeter-grand-loop", "type": "jogger", "lengthPx": 9527.3}
-    ]
-
-
-class MockPartyServerRoom:
-    """Mock PartyServer room environment for testing lifecycle, message relaying, and NPC spawner."""
-    def __init__(self, room_name="the-commons", paths=None, target_npc_count=5):
-        self.name = room_name
-        self.connections = {}
-        self.peers = {}  # pid -> metadata dict
-        self.broadcast_log = []
-        self.paths = list(paths if paths is not None else DEFAULT_PATH_MANIFEST)
-        self.target_npc_count = target_npc_count
-        self.active_npcs = {}  # id -> npc_dict
-        self.despawn_timers = {}  # id -> delay_ms
-        self.replacement_timers = []  # list of delays
-        self._next_npc_seq = 1
-
-    def add_connection(self, conn_id):
-        conn = MockPartyServerConnection(conn_id)
-        self.connections[conn_id] = conn
-        return conn
-
-    def remove_connection(self, conn_id):
-        if conn_id in self.connections:
-            del self.connections[conn_id]
-        if conn_id in self.peers:
-            del self.peers[conn_id]
-
-    def get_connections(self):
-        return list(self.connections.values())
-
-    def has_active_clients(self):
-        return len(self.connections) > 0 or len(self.peers) > 0
-
-    def broadcast(self, message, exclude=None):
-        exclude = exclude or []
-        parsed = json.loads(message) if isinstance(message, str) else message
-        self.broadcast_log.append({"message": parsed, "exclude": exclude})
-        for cid, conn in self.connections.items():
-            if cid not in exclude:
-                conn.messages_received.append(parsed)
-
-    def on_connect(self, conn):
-        self.connections[conn.id] = conn
-        if len(self.active_npcs) == 0:
-            self.init_spawner()
-
-        existing_peers = []
-        for pid, peer_data in self.peers.items():
-            if pid != conn.id:
-                existing_peers.append({
-                    "id": peer_data.get("id", pid),
-                    "name": peer_data.get("name", "Walker"),
-                    "jacketColor": peer_data.get("jacketColor", "#1e3a8a"),
-                    "coatName": peer_data.get("coatName", peer_data.get("dogCoatName", "Chocolate & Tan (Ziggy)"))
-                })
-
-        welcome_packet = {
-            "type": "WELCOME",
-            "peerId": conn.id,
-            "roomId": self.name,
-            "peers": existing_peers,
-            "serverTime": int(time.time() * 1000)
-        }
-        conn.send(welcome_packet)
-
-        snapshot_packet = {
-            "type": "NPC_SNAPSHOT",
-            "npcs": [
-                {
-                    "id": npc["id"],
-                    "pathId": npc["pathId"],
-                    "type": npc["type"],
-                    "npcType": npc["type"],
-                    "seed": npc["seed"],
-                    "spawnTime": npc["spawnTime"]
-                }
-                for npc in self.active_npcs.values()
-            ],
-            "serverTime": int(time.time() * 1000),
-            "timestamp": int(time.time() * 1000)
-        }
-        conn.send(snapshot_packet)
-
-    def on_close(self, conn):
-        self.remove_connection(conn.id)
-        if not self.has_active_clients():
-            self.stop_spawner()
-
-        left_packet = {
-            "type": "PEER_LEFT",
-            "peerId": conn.id,
-            "timestamp": int(time.time() * 1000)
-        }
-        self.broadcast(json.dumps(left_packet))
-
-    def on_message(self, conn, message):
-        """Simulate ParkServer.onMessage with authoritative senderId stamping."""
-        parsed = json.loads(message) if isinstance(message, str) else dict(message)
-        if parsed.get("type") == "HELLO":
-            self.peers[conn.id] = {
-                "id": conn.id,
-                "name": parsed.get("name", "Walker"),
-                "jacketColor": parsed.get("jacketColor", "#1e3a8a"),
-                "coatName": parsed.get("dogCoatName", parsed.get("coatName", "Chocolate & Tan (Ziggy)"))
-            }
-        parsed["senderId"] = conn.id
-        parsed["peerId"] = conn.id
-        self.broadcast(json.dumps(parsed), exclude=[conn.id])
-        return parsed
-
-    def init_spawner(self):
-        count = self.target_npc_count
-        for i in range(count):
-            prewarm_fraction = 0.15 + (i / count) * 0.70
-            self.spawn_npc(prewarm_fraction=prewarm_fraction)
-
-    def spawn_npc(self, prewarm_fraction=0.0):
-        if not self.paths:
-            return None
-
-        used_path_ids = {npc["pathId"] for npc in self.active_npcs.values()}
-        available_paths = [p for p in self.paths if p["id"] not in used_path_ids]
-        pool = available_paths if available_paths else self.paths
-        path = random.choice(pool)
-
-        if path["type"] == "walker":
-            npc_type = "walker"
-        elif path["type"] == "jogger":
-            npc_type = "jogger"
-        else:
-            npc_type = random.choice(["walker", "jogger"])
-
-        speed = 48 if npc_type == "jogger" else 22
-        lifetime_ms = round((path["lengthPx"] / speed) * 1000)
-        offset_ms = round(lifetime_ms * max(0.0, min(0.9, prewarm_fraction)))
-        now = int(time.time() * 1000)
-        spawn_time = now - offset_ms
-        remaining_lifetime_ms = max(500, lifetime_ms - offset_ms)
-        seed = random.randint(0, 0xFFFFFFFF)
-        npc_id = f"npc-mock-{self._next_npc_seq}-{spawn_time}"
-        self._next_npc_seq += 1
-
-        npc_data = {
-            "id": npc_id,
-            "pathId": path["id"],
-            "type": npc_type,
-            "npcType": npc_type,
-            "seed": seed,
-            "spawnTime": spawn_time,
-            "lifetimeMs": lifetime_ms,
-            "remainingLifetimeMs": remaining_lifetime_ms
-        }
-        self.active_npcs[npc_id] = npc_data
-        self.despawn_timers[npc_id] = remaining_lifetime_ms
-        return npc_data
-
-    def despawn_npc(self, npc_id):
-        if npc_id not in self.active_npcs:
-            return None
-        npc = self.active_npcs.pop(npc_id)
-        if npc_id in self.despawn_timers:
-            del self.despawn_timers[npc_id]
-
-        despawn_packet = {
-            "type": "NPC_DESPAWN",
-            "id": npc["id"],
-            "timestamp": int(time.time() * 1000)
-        }
-        self.broadcast(json.dumps(despawn_packet))
-
-        if self.has_active_clients():
-            delay = 1000 + random.randint(0, 4000)
-            self.replacement_timers.append(delay)
-        return npc
-
-    def trigger_replacement(self):
-        if not self.has_active_clients():
-            return None
-        if len(self.active_npcs) >= self.target_npc_count:
-            return None
-        new_npc = self.spawn_npc()
-        if new_npc:
-            spawn_packet = {
-                "type": "NPC_SPAWN",
-                "id": new_npc["id"],
-                "pathId": new_npc["pathId"],
-                "npcType": new_npc["type"],
-                "seed": new_npc["seed"],
-                "spawnTime": new_npc["spawnTime"],
-                "npc": {
-                    "id": new_npc["id"],
-                    "pathId": new_npc["pathId"],
-                    "type": new_npc["type"],
-                    "npcType": new_npc["type"],
-                    "seed": new_npc["seed"],
-                    "spawnTime": new_npc["spawnTime"]
-                },
-                "timestamp": int(time.time() * 1000)
-            }
-            self.broadcast(json.dumps(spawn_packet))
-        if self.replacement_timers:
-            self.replacement_timers.pop(0)
-        return new_npc
-
-    def stop_spawner(self):
-        self.active_npcs.clear()
-        self.despawn_timers.clear()
-        self.replacement_timers.clear()
-
-
-class MockPartyServerConnection:
-    def __init__(self, conn_id):
-        self.id = conn_id
-        self.messages_received = []
-
-    def send(self, message):
-        parsed = json.loads(message) if isinstance(message, str) else message
-        self.messages_received.append(parsed)
-
-
-class TestPartyServerLifecycle(unittest.TestCase):
-    def setUp(self):
-        self.room = MockPartyServerRoom("the-commons")
-
-    def test_commons_welcome_handshake(self):
-        """Verify onConnect produces a valid WELCOME packet defaulting to the-commons."""
-        c1 = self.room.add_connection("walker-1001")
-        c2 = self.room.add_connection("walker-2002")
-
-        existing_peers = [c.id for c in self.room.get_connections() if c.id != c2.id]
-        welcome_packet = {
-            "type": "WELCOME",
-            "peerId": c2.id,
-            "roomId": self.room.name,
-            "peers": existing_peers,
-            "serverTime": 1728640000000
-        }
-        c2.send(welcome_packet)
-
-        self.assertEqual(len(c2.messages_received), 1)
-        pkt = c2.messages_received[0]
-        self.assertEqual(pkt["type"], "WELCOME")
-        self.assertEqual(pkt["peerId"], "walker-2002")
-        self.assertEqual(pkt["roomId"], "the-commons")
-        self.assertIn("walker-1001", pkt["peers"])
-
-    def test_message_broadcast_relaying(self):
-        """Verify onMessage relays packet to peers while excluding the sender."""
-        c1 = self.room.add_connection("walker-1001")
-        c2 = self.room.add_connection("walker-2002")
-
-        sync_packet = {
-            "type": "SYNC_STATE",
-            "senderId": "walker-1001",
-            "owner": {"x": 500.0, "y": 400.0, "vx": 2.0, "vy": 0.0, "angle": 0.0},
-            "dog": {"x": 460.0, "y": 410.0, "vx": 2.2, "vy": 0.1, "state": "FOLLOWING"}
-        }
-
-        self.room.broadcast(json.dumps(sync_packet), exclude=[c1.id])
-
-        self.assertEqual(len(c1.messages_received), 0)
-        self.assertEqual(len(c2.messages_received), 1)
-        self.assertEqual(c2.messages_received[0]["type"], "SYNC_STATE")
-        self.assertEqual(c2.messages_received[0]["senderId"], "walker-1001")
-
-    def test_authoritative_sender_stamping(self):
-        """Verify that when a client sends a message, relayed payload stamps senderId to conn.id."""
-        c1 = self.room.add_connection("conn-authoritative-777")
-        c2 = self.room.add_connection("conn-peer-888")
-
-        client_spoofed_packet = {
-            "type": "SYNC_STATE",
-            "senderId": "unverified-temp-id",
-            "owner": {"x": 100.0, "y": 200.0}
-        }
-
-        relayed = self.room.on_message(c1, client_spoofed_packet)
-        self.assertEqual(relayed["senderId"], "conn-authoritative-777")
-        self.assertEqual(relayed["peerId"], "conn-authoritative-777")
-
-        self.assertEqual(len(c1.messages_received), 0)
-        self.assertEqual(len(c2.messages_received), 1)
-        received = c2.messages_received[0]
-        self.assertEqual(received["senderId"], "conn-authoritative-777")
-        self.assertEqual(received["peerId"], "conn-authoritative-777")
-
-    def test_player_disconnect_broadcast(self):
-        """Verify onClose broadcasts PEER_LEFT to remaining room participants."""
-        c1 = self.room.add_connection("walker-1001")
-        c2 = self.room.add_connection("walker-2002")
-
-        self.room.remove_connection(c1.id)
-        left_packet = {
-            "type": "PEER_LEFT",
-            "peerId": c1.id,
-            "timestamp": 1728640050000
-        }
-        self.room.broadcast(json.dumps(left_packet))
-
-        self.assertEqual(len(c2.messages_received), 1)
-        self.assertEqual(c2.messages_received[0]["type"], "PEER_LEFT")
-        self.assertEqual(c2.messages_received[0]["peerId"], "walker-1001")
-
-
-class TestPartyServerNpcSpawner(unittest.TestCase):
-    def setUp(self):
-        self.room = MockPartyServerRoom("the-commons")
-
-    def test_npc_snapshot_sent_on_connect(self):
-        """First peer connection starts spawner and receives WELCOME then NPC_SNAPSHOT."""
-        c1 = MockPartyServerConnection("client-1")
-        self.room.on_connect(c1)
-
-        self.assertEqual(len(c1.messages_received), 2)
-        welcome = c1.messages_received[0]
-        snapshot = c1.messages_received[1]
-
-        self.assertEqual(welcome["type"], "WELCOME")
-        self.assertEqual(snapshot["type"], "NPC_SNAPSHOT")
-        self.assertIn("serverTime", snapshot)
-        self.assertIn("timestamp", snapshot)
-        self.assertEqual(len(snapshot["npcs"]), 5)
-
-        for npc in snapshot["npcs"]:
-            self.assertTrue(npc["id"].startswith("npc-"))
-            self.assertIn("pathId", npc)
-            self.assertIn(npc["type"], ["walker", "jogger"])
-            self.assertEqual(npc["type"], npc["npcType"])
-            self.assertIsInstance(npc["seed"], int)
-            self.assertGreaterEqual(npc["seed"], 0)
-            self.assertLessEqual(npc["seed"], 0xFFFFFFFF)
-            self.assertIsInstance(npc["spawnTime"], int)
-
-    def test_late_joiner_receives_identical_snapshot(self):
-        """Late joiner receives snapshot containing all active NPCs with original spawnTime (AC-027.2)."""
-        c1 = MockPartyServerConnection("client-1")
-        self.room.on_connect(c1)
-        snapshot1 = c1.messages_received[1]
-
-        # Simulate small time delay
-        time.sleep(0.01)
-
-        c2 = MockPartyServerConnection("client-2-late")
-        self.room.on_connect(c2)
-        snapshot2 = c2.messages_received[1]
-
-        self.assertEqual(len(snapshot1["npcs"]), len(snapshot2["npcs"]))
-        s1_map = {npc["id"]: npc for npc in snapshot1["npcs"]}
-        s2_map = {npc["id"]: npc for npc in snapshot2["npcs"]}
-
-        self.assertEqual(set(s1_map.keys()), set(s2_map.keys()))
-        for npc_id, npc1 in s1_map.items():
-            npc2 = s2_map[npc_id]
-            self.assertEqual(npc1["spawnTime"], npc2["spawnTime"], "Spawn times must be preserved for late joiner")
-            self.assertEqual(npc1["pathId"], npc2["pathId"])
-            self.assertEqual(npc1["seed"], npc2["seed"])
-            self.assertEqual(npc1["type"], npc2["type"])
-
-    def test_pool_size_and_unused_paths(self):
-        """Active pool size maintained at target 5 (within 4-6) and only a subset of paths are active (AC-027.3, AC-027.4)."""
-        c1 = MockPartyServerConnection("client-1")
-        self.room.on_connect(c1)
-
-        self.assertEqual(len(self.room.active_npcs), 5)
-        self.assertTrue(4 <= len(self.room.active_npcs) <= 6)
-
-        active_path_ids = [npc["pathId"] for npc in self.room.active_npcs.values()]
-        # Distinct paths used (no duplicates)
-        self.assertEqual(len(active_path_ids), len(set(active_path_ids)))
-        # Only a subset (5 out of 10) of manifest paths are active
-        self.assertEqual(len(self.room.paths), 10)
-        self.assertEqual(len(set(active_path_ids)), 5)
-        self.assertLess(len(set(active_path_ids)), len(self.room.paths))
-
-    def test_npc_despawn_and_replacement_broadcast(self):
-        """Expiring NPC triggers NPC_DESPAWN and replacement broadcasts NPC_SPAWN to connected clients (AC-027.1, AC-027.3)."""
-        c1 = MockPartyServerConnection("client-1")
-        c2 = MockPartyServerConnection("client-2")
-        self.room.on_connect(c1)
-        self.room.on_connect(c2)
-
-        # Clear handshake messages
-        c1.messages_received.clear()
-        c2.messages_received.clear()
-
-        # Despawn an NPC
-        despawn_id = list(self.room.active_npcs.keys())[0]
-        despawned_path = self.room.active_npcs[despawn_id]["pathId"]
-        self.room.despawn_npc(despawn_id)
-
-        # Verify DESPAWN broadcast to all connected clients
-        self.assertEqual(len(c1.messages_received), 1)
-        self.assertEqual(len(c2.messages_received), 1)
-        self.assertEqual(c1.messages_received[0]["type"], "NPC_DESPAWN")
-        self.assertEqual(c1.messages_received[0]["id"], despawn_id)
-        self.assertEqual(c2.messages_received[0]["type"], "NPC_DESPAWN")
-        self.assertEqual(c2.messages_received[0]["id"], despawn_id)
-
-        # Active pool drops by 1
-        self.assertEqual(len(self.room.active_npcs), 4)
-
-        # Trigger replacement
-        self.room.trigger_replacement()
-
-        # Both clients receive identical NPC_SPAWN broadcast (AC-027.1)
-        self.assertEqual(len(c1.messages_received), 2)
-        self.assertEqual(len(c2.messages_received), 2)
-        spawn_pkt1 = c1.messages_received[1]
-        spawn_pkt2 = c2.messages_received[1]
-
-        self.assertEqual(spawn_pkt1["type"], "NPC_SPAWN")
-        self.assertEqual(spawn_pkt2["type"], "NPC_SPAWN")
-        self.assertEqual(spawn_pkt1["id"], spawn_pkt2["id"])
-        self.assertEqual(spawn_pkt1["pathId"], spawn_pkt2["pathId"])
-        self.assertEqual(spawn_pkt1["seed"], spawn_pkt2["seed"])
-        self.assertEqual(spawn_pkt1["spawnTime"], spawn_pkt2["spawnTime"])
-        self.assertIn("npc", spawn_pkt1)
-        self.assertEqual(spawn_pkt1["npc"]["id"], spawn_pkt1["id"])
-
-        # Active pool restored to 5
-        self.assertEqual(len(self.room.active_npcs), 5)
-
-    def test_spawner_idles_when_room_empty(self):
-        """Spawner clears all active NPCs and timers when room empties (AC-027.5)."""
-        c1 = MockPartyServerConnection("client-1")
-        self.room.on_connect(c1)
-        self.assertEqual(len(self.room.active_npcs), 5)
-
-        # Client disconnects -> room empties
-        self.room.on_close(c1)
-        self.assertEqual(len(self.room.active_npcs), 0)
-        self.assertEqual(len(self.room.despawn_timers), 0)
-        self.assertEqual(len(self.room.replacement_timers), 0)
-
-        # Reconnection starts a fresh pool
-        c2 = MockPartyServerConnection("client-2")
-        self.room.on_connect(c2)
-        self.assertEqual(len(self.room.active_npcs), 5)
-
-    def test_npc_speed_and_lifetime_accuracy(self):
-        """Walker (22 px/s) and jogger (48 px/s) lifetimes match lengthPx / speed."""
-        path_manifest = [
-            {"id": "p-walker", "type": "walker", "lengthPx": 2200.0},
-            {"id": "p-jogger", "type": "jogger", "lengthPx": 4800.0}
-        ]
-        room = MockPartyServerRoom("test-room", paths=path_manifest, target_npc_count=2)
-        c = MockPartyServerConnection("walker-1")
-        room.on_connect(c)
-
-        for npc in room.active_npcs.values():
-            if npc["pathId"] == "p-walker":
-                self.assertEqual(npc["type"], "walker")
-                # 2200 / 22 = 100s = 100000ms
-                self.assertEqual(npc["lifetimeMs"], 100000)
-            elif npc["pathId"] == "p-jogger":
-                self.assertEqual(npc["type"], "jogger")
-                # 4800 / 48 = 100s = 100000ms
-                self.assertEqual(npc["lifetimeMs"], 100000)
-
-    def test_spawner_prewarming_initial_npcs(self):
-        """Initial NPCs spawned in initSpawner have pre-warmed spawnTime and staggered remaining lifetimes (Ticket-030)."""
-        c1 = MockPartyServerConnection("client-1")
-        self.room.on_connect(c1)
-        now_ms = int(time.time() * 1000)
-
-        self.assertEqual(len(self.room.active_npcs), 5)
-        for npc in self.room.active_npcs.values():
-            # Initial NPCs start with negative offset: now - spawnTime > 0
-            self.assertGreaterEqual(now_ms, npc["spawnTime"], "Initial NPC spawnTime should be in the past (pre-warmed)")
-            # Remaining lifetime is less than total lifetime
-            self.assertLess(npc["remainingLifetimeMs"], npc["lifetimeMs"], "Remaining lifetime should be less than total lifetime")
-            self.assertGreater(npc["remainingLifetimeMs"], 0, "Remaining lifetime must be positive")
-
-    def test_spawner_initializes_when_connections_already_present(self):
-        """Regression test: on_connect initializes spawner even if get_connections() already reports active connections."""
-        # Simulate Cloudflare PartyServer runtime lifecycle where connection is registered before on_connect
-        conn = self.room.add_connection("cf-pre-registered-client")
-        self.assertTrue(self.room.has_active_clients(), "Connections already exist prior to on_connect")
-        self.assertEqual(len(self.room.active_npcs), 0, "No NPCs should exist before spawner is triggered")
-
-        self.room.on_connect(conn)
-
-        self.assertEqual(len(self.room.active_npcs), 5, "Spawner must initialize 5 active NPCs")
-        # Ensure client received WELCOME and NPC_SNAPSHOT containing 5 active pre-warmed NPCs
-        self.assertEqual(len(conn.messages_received), 2)
-        snapshot = conn.messages_received[1]
-        self.assertEqual(snapshot["type"], "NPC_SNAPSHOT")
-        self.assertEqual(len(snapshot["npcs"]), 5)
-
-
-
-class TestPartyServerRouteBuilder(unittest.TestCase):
-    def _build_url(self, base, room):
-        if not base or base in ("partykit", "party"):
-            base = "wss://play.virtual-dog-walker.workers.dev"
-        clean = base.strip()
-        if clean.startswith("http://"):
-            clean = "ws://" + clean[7:]
-        elif clean.startswith("https://"):
-            clean = "wss://" + clean[8:]
-        elif not clean.startswith("ws://") and not clean.startswith("wss://"):
-            clean = f"wss://{clean}"
-
-        if "/parties/" in clean:
-            return clean
-
-        clean = clean.rstrip("/")
-        return f"{clean}/parties/parkserver/{room}"
-
-    def test_canonical_route_resolution_default(self):
-        """Test building PartyServer URLs formats to wss://<host>/parties/parkserver/<room> by default."""
-        cases = [
-            ("https://virtual-dog-walker.workers.dev", "the-commons", "wss://virtual-dog-walker.workers.dev/parties/parkserver/the-commons"),
-            ("http://localhost:8787", "the-commons", "ws://localhost:8787/parties/parkserver/the-commons"),
-            ("play.virtual-dog-walker.workers.dev", "meadow-99", "wss://play.virtual-dog-walker.workers.dev/parties/parkserver/meadow-99"),
-        ]
-        for base, room, expected in cases:
-            res = self._build_url(base, room)
-            self.assertEqual(res, expected)
-
-    def test_alias_route_preservation(self):
-        """Verify that existing /parties/park/<room> paths are preserved if explicitly passed."""
-        alias_urls = [
-            ("wss://my-game.workers.dev/parties/park/private-1", "unused", "wss://my-game.workers.dev/parties/park/private-1"),
-            ("https://virtual-dog-walker.workers.dev/parties/park/the-commons", "the-commons", "wss://virtual-dog-walker.workers.dev/parties/park/the-commons"),
-            ("ws://localhost:8787/parties/park/dev-room", "dev-room", "ws://localhost:8787/parties/park/dev-room")
-        ]
-        for base, room, expected in alias_urls:
-            res = self._build_url(base, room)
-            self.assertEqual(res, expected)
-
-
-class MockWebSocketNetworkManager:
-    """Mock client network manager to test handshake registration and post-WELCOME hello dispatch."""
-    def __init__(self, initial_peer_id="temp-walker-1"):
-        self.peerId = initial_peer_id
-        self.roomId = "the-commons"
-        self.remotePeers = {}
-        self.outgoing_broadcasts = []
-        self.localMeta = {
-            "name": "Park Walker",
-            "jacketColor": "#1e3a8a",
-            "coatName": "Chocolate & Tan (Ziggy)"
-        }
-
-    def broadcast(self, packet):
-        self.outgoing_broadcasts.append(packet)
-
-    def ensureRemotePeer(self, peer_id, meta=None):
-        if peer_id not in self.remotePeers:
-            self.remotePeers[peer_id] = meta or {}
-        return self.remotePeers[peer_id]
-
-    def handlePacket(self, packet):
-        if not packet or not packet.get("type"):
-            return
-
-        pkt_type = packet.get("type")
-        if pkt_type == "WELCOME":
-            if packet.get("peerId"):
-                self.peerId = packet["peerId"]
-
-            # Re-broadcast HELLO packet with newly assigned peerId
-            self.broadcast({
-                "type": "HELLO",
-                "senderId": self.peerId,
-                "name": self.localMeta["name"],
-                "jacketColor": self.localMeta["jacketColor"],
-                "dogCoatName": self.localMeta["coatName"]
-            })
-
-            # Populate existing peers
-            peers = packet.get("peers", [])
-            for p in peers:
-                pid = p if isinstance(p, str) else p.get("id")
-                meta = p if isinstance(p, dict) else {}
-                if pid and pid != self.peerId:
-                    self.ensureRemotePeer(pid, meta)
-
-
-class TestPartyServerHandshakeAndHUD(unittest.TestCase):
-    def test_welcome_packet_peer_id_registration(self):
-        """Verify that receiving a WELCOME packet triggers authoritative peer ID registration and HELLO re-dispatch."""
-        net = MockWebSocketNetworkManager("temp-walker-random")
-        self.assertEqual(net.peerId, "temp-walker-random")
-
-        welcome_packet = {
-            "type": "WELCOME",
-            "peerId": "authoritative-cf-worker-conn-42",
-            "roomId": "the-commons",
-            "peers": ["peer-existing-1", "peer-existing-2"],
-            "serverTime": 1728640000000
-        }
-
-        net.handlePacket(welcome_packet)
-
-        # Peer ID should now be updated to authoritative server ID
-        self.assertEqual(net.peerId, "authoritative-cf-worker-conn-42")
-
-        # Existing peers registered
-        self.assertIn("peer-existing-1", net.remotePeers)
-        self.assertIn("peer-existing-2", net.remotePeers)
-
-        # Handshake alignment: verify HELLO was dispatched with authoritative ID
-        self.assertEqual(len(net.outgoing_broadcasts), 1)
-        hello_pkt = net.outgoing_broadcasts[0]
-        self.assertEqual(hello_pkt["type"], "HELLO")
-        self.assertEqual(hello_pkt["senderId"], "authoritative-cf-worker-conn-42")
-        self.assertEqual(hello_pkt["name"], "Park Walker")
-
-    def test_hud_state_diagnostics_mapping(self):
-        """Verify HUD badge text and color mapping across connection states."""
-        def get_hud_badge(status, room_id):
-            if status == "CONNECTED":
-                if not room_id or room_id in ("the-commons", "clifton-field"):
-                    return ("🌳 Clifton Commons", "#059669")
-                else:
-                    return (f"🔒 Meadow ({room_id})", "#8b5cf6")
-            elif status == "CONNECTING":
-                return ("⏳ Connecting...", "#d97706")
-            elif status == "RECONNECTING":
-                return ("🔄 Reconnecting...", "#d97706")
-            else:
-                return ("Solo (Offline)", "#64748b")
-
-        # Connected to commons
-        text, bg = get_hud_badge("CONNECTED", "the-commons")
-        self.assertEqual(text, "🌳 Clifton Commons")
-        self.assertEqual(bg, "#059669")
-
-        # Connected to private meadow
-        text, bg = get_hud_badge("CONNECTED", "private-room-99")
-        self.assertEqual(text, "🔒 Meadow (private-room-99)")
-        self.assertEqual(bg, "#8b5cf6")
-
-        # Connecting
-        text, bg = get_hud_badge("CONNECTING", "the-commons")
-        self.assertEqual(text, "⏳ Connecting...")
-        self.assertEqual(bg, "#d97706")
-
-        # Reconnecting
-        text, bg = get_hud_badge("RECONNECTING", "the-commons")
-        self.assertEqual(text, "🔄 Reconnecting...")
-        self.assertEqual(bg, "#d97706")
-
-        # Offline / Error
-        for s in ["OFFLINE", "ERROR"]:
-            text, bg = get_hud_badge(s, "the-commons")
-            self.assertEqual(text, "Solo (Offline)")
-            self.assertEqual(bg, "#64748b")
-
-
-if __name__ == "__main__":
-    unittest.main()
-
-```
-
 ## FILE: test/test_player_identity.py
 ```python
 #!/usr/bin/env python3
@@ -26656,7 +24314,43 @@ import unittest
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from server.server import RoomManager, PeerConnection
+class PeerConnection:
+    def __init__(self, ws=None):
+        self.ws = ws
+        self.peer_id = None
+        self.room_id = None
+        self.meta = {}
+
+class RoomManager:
+    def __init__(self):
+        self.rooms = {}
+        self.peers = {}
+    def on_connect(self, conn):
+        pass
+    def on_message(self, conn, packet):
+        p_type = packet.get(type)
+        if p_type == HELLO:
+            conn.peer_id = packet.get(peerId)
+            conn.meta = {
+                "id": packet.get("peerId"),
+                "name": packet.get("name", "Walker"),
+                "jacketColor": packet.get("jacketColor", "#2563eb"),
+                "dogCoatName": packet.get("dogCoatName", "Golden"),
+                "personality": packet.get("personality", "PLAYFUL")
+            }
+            self.peers[conn.peer_id] = conn.meta
+        elif p_type == META:
+            if conn.peer_id and conn.peer_id in self.peers:
+                if name in packet:
+                    self.peers[conn.peer_id][name] = packet[name]
+                    conn.meta[name] = packet[name]
+                if jacketColor in packet:
+                    self.peers[conn.peer_id][jacketColor] = packet[jacketColor]
+                    conn.meta[jacketColor] = packet[jacketColor]
+    def on_close(self, conn):
+        if conn.peer_id and conn.peer_id in self.peers:
+            del self.peers[conn.peer_id]
+
 
 
 class DummyWebSocket:
@@ -28289,324 +25983,6 @@ class TestProximityChat(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-```
-
-## FILE: test/test_server.py
-```python
-#!/usr/bin/env python3
-"""
-Unit and Integration Tests for Clifton Down Dedicated Microserver & Tunnel Engine
-"""
-
-import asyncio
-import json
-import os
-import sys
-import time
-import unittest
-
-# Ensure project root is in sys.path
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
-
-from server.server import (
-    CliftonServer,
-    RoomManager,
-    PeerConnection,
-    RoomNpcSpawner,
-    load_npc_manifest,
-    TARGET_ACTIVE_NPCS,
-    MIN_ACTIVE_NPCS,
-    MAX_ACTIVE_NPCS,
-    WALKER_SPEED,
-    JOGGER_SPEED
-)
-from server.tunnel import get_local_ip, TunnelManager
-import server.host as host_module
-
-
-class DummyWebSocket:
-    def __init__(self):
-        self.sent_messages = []
-        self.closed = False
-
-    async def send_str(self, msg: str):
-        self.sent_messages.append(msg)
-
-
-class TestRoomManager(unittest.TestCase):
-    def test_room_lifecycle_and_isolation(self):
-        rm = RoomManager()
-        self.assertEqual(len(rm.rooms), 0)
-
-        # Peer 1 joins room A
-        ws1 = DummyWebSocket()
-        p1 = PeerConnection(ws1, "peer-1", "room-a")
-        p1.meta["name"] = "Alice"
-        rm.add_peer("room-a", p1)
-
-        self.assertEqual(len(rm.rooms), 1)
-        self.assertIn("room-a", rm.rooms)
-        self.assertEqual(len(rm.get_room_peers("room-a")), 1)
-
-        # Peer 2 joins room B (isolated)
-        ws2 = DummyWebSocket()
-        p2 = PeerConnection(ws2, "peer-2", "room-b")
-        p2.meta["name"] = "Bob"
-        rm.add_peer("room-b", p2)
-
-        self.assertEqual(len(rm.rooms), 2)
-        self.assertEqual(len(rm.get_room_peers("room-a")), 1)
-        self.assertEqual(len(rm.get_room_peers("room-b")), 1)
-
-        # Peer 3 joins room A
-        ws3 = DummyWebSocket()
-        p3 = PeerConnection(ws3, "peer-3", "room-a")
-        rm.add_peer("room-a", p3)
-        self.assertEqual(len(rm.get_room_peers("room-a")), 2)
-
-        # Broadcast in room A
-        asyncio.run(rm.broadcast_to_room("room-a", {"type": "TEST", "val": 42}, exclude_peer_id="peer-1"))
-        self.assertEqual(len(ws1.sent_messages), 0)  # Excluded
-        self.assertEqual(len(ws3.sent_messages), 1)  # Received
-        self.assertEqual(len(ws2.sent_messages), 0)  # Room B received nothing!
-
-        # Remove peers from room A
-        rm.remove_peer("room-a", "peer-1")
-        self.assertEqual(len(rm.get_room_peers("room-a")), 1)
-        rm.remove_peer("room-a", "peer-3")
-        # Room A should be closed and removed
-        self.assertNotIn("room-a", rm.rooms)
-
-        # Remove peer from room B
-        rm.remove_peer("room-b", "peer-2")
-        self.assertEqual(len(rm.rooms), 0)
-        print("✅ test_room_lifecycle_and_isolation passed")
-
-
-class TestRoomNpcSpawner(unittest.TestCase):
-    def setUp(self):
-        self.manifest = load_npc_manifest()
-
-    def test_manifest_loaded(self):
-        self.assertGreaterEqual(len(self.manifest), 10)
-        for path in self.manifest:
-            self.assertIn("id", path)
-            self.assertIn("type", path)
-            self.assertIn("lengthPx", path)
-        print("✅ test_manifest_loaded passed")
-
-    def test_spawner_initialization_and_path_selection(self):
-        """AC-027.3 & AC-027.4: 5 active NPCs on distinct subset of paths with valid types and seeds."""
-        async def run_test():
-            rm = RoomManager()
-            spawner = RoomNpcSpawner("test-room", rm, self.manifest)
-            spawner.start()
-
-            self.assertTrue(spawner.is_running)
-            self.assertEqual(len(spawner.active_npcs), TARGET_ACTIVE_NPCS)
-            self.assertTrue(MIN_ACTIVE_NPCS <= len(spawner.active_npcs) <= MAX_ACTIVE_NPCS)
-
-            used_paths = [npc["pathId"] for npc in spawner.active_npcs.values()]
-            # All 5 paths should be distinct (subset of 10)
-            self.assertEqual(len(used_paths), len(set(used_paths)))
-            self.assertEqual(len(used_paths), 5)
-            self.assertLess(len(used_paths), len(self.manifest))
-
-            # Verify schema of spawned NPCs
-            for npc_id, npc in spawner.active_npcs.items():
-                self.assertEqual(npc["id"], npc_id)
-                self.assertIn(npc["type"], ("walker", "jogger"))
-                self.assertEqual(npc["type"], npc["npcType"])
-                self.assertIsInstance(npc["seed"], int)
-                self.assertTrue(0 <= npc["seed"] <= 0xFFFFFFFF)
-                self.assertIsInstance(npc["spawnTime"], int)
-                self.assertGreater(npc["spawnTime"], 0)
-
-            spawner.stop()
-            self.assertFalse(spawner.is_running)
-            self.assertEqual(len(spawner.active_npcs), 0)
-            self.assertEqual(len(spawner.tasks), 0)
-
-        asyncio.run(run_test())
-        print("✅ test_spawner_initialization_and_path_selection passed")
-
-    def test_snapshot_on_connect(self):
-        """AC-027.2: Connecting client receives NPC_SNAPSHOT with original spawnTime and serverTime."""
-        async def run_test():
-            rm = RoomManager()
-            ws = DummyWebSocket()
-            peer = PeerConnection(ws, "peer-snap", "snap-room")
-            rm.add_peer("snap-room", peer)
-
-            spawner = rm.get_or_create_spawner("snap-room")
-            spawner.start()
-
-            initial_npcs = dict(spawner.active_npcs)
-            await spawner.send_snapshot(peer)
-
-            self.assertEqual(len(ws.sent_messages), 1)
-            snapshot = json.loads(ws.sent_messages[0])
-
-            self.assertEqual(snapshot["type"], "NPC_SNAPSHOT")
-            self.assertEqual(len(snapshot["npcs"]), TARGET_ACTIVE_NPCS)
-            self.assertIn("serverTime", snapshot)
-            self.assertIn("timestamp", snapshot)
-            self.assertTrue(abs(snapshot["serverTime"] - int(time.time() * 1000)) < 1000)
-
-            # Verify every active NPC's spawnTime is preserved
-            for received_npc in snapshot["npcs"]:
-                orig_npc = initial_npcs[received_npc["id"]]
-                self.assertEqual(received_npc["spawnTime"], orig_npc["spawnTime"])
-                self.assertEqual(received_npc["pathId"], orig_npc["pathId"])
-                self.assertEqual(received_npc["type"], orig_npc["type"])
-
-            spawner.stop()
-
-        asyncio.run(run_test())
-        print("✅ test_snapshot_on_connect passed")
-
-    def test_identical_spawn_broadcast(self):
-        """AC-027.1: Clients in same room receive identical NPC_SPAWN broadcast packets."""
-        async def run_test():
-            rm = RoomManager()
-            ws1 = DummyWebSocket()
-            ws2 = DummyWebSocket()
-            p1 = PeerConnection(ws1, "p1", "broadcast-room")
-            p2 = PeerConnection(ws2, "p2", "broadcast-room")
-            rm.add_peer("broadcast-room", p1)
-            rm.add_peer("broadcast-room", p2)
-
-            spawner = rm.get_or_create_spawner("broadcast-room")
-            npc, lifetime = spawner._create_npc()
-            spawn_pkt = {
-                "type": "NPC_SPAWN",
-                "id": npc["id"],
-                "pathId": npc["pathId"],
-                "npcType": npc["type"],
-                "seed": npc["seed"],
-                "spawnTime": npc["spawnTime"],
-                "npc": npc,
-                "serverTime": int(time.time() * 1000),
-                "timestamp": int(time.time() * 1000)
-            }
-            await rm.broadcast_to_room("broadcast-room", spawn_pkt)
-
-            self.assertEqual(len(ws1.sent_messages), 1)
-            self.assertEqual(len(ws2.sent_messages), 1)
-            self.assertEqual(ws1.sent_messages[0], ws2.sent_messages[0])
-
-            parsed = json.loads(ws1.sent_messages[0])
-            self.assertEqual(parsed["type"], "NPC_SPAWN")
-            self.assertEqual(parsed["id"], npc["id"])
-            self.assertEqual(parsed["pathId"], npc["pathId"])
-            self.assertEqual(parsed["npcType"], npc["type"])
-            self.assertEqual(parsed["seed"], npc["seed"])
-
-        asyncio.run(run_test())
-        print("✅ test_identical_spawn_broadcast passed")
-
-    def test_despawn_and_replacement_lifecycle(self):
-        """AC-027.3: When NPC lifetime expires, NPC_DESPAWN is broadcast and replacement spawned."""
-        async def run_test():
-            rm = RoomManager()
-            ws = DummyWebSocket()
-            peer = PeerConnection(ws, "peer-life", "life-room")
-            rm.add_peer("life-room", peer)
-
-            spawner = rm.get_or_create_spawner("life-room")
-            spawner.is_running = True
-
-            # Create test NPC with near-zero lifetime (0.02s)
-            npc, _ = spawner._create_npc()
-            spawner.active_npcs[npc["id"]] = npc
-            self.assertIn(npc["id"], spawner.active_npcs)
-
-            # Run lifecycle directly with very short lifetime
-            task = asyncio.create_task(spawner._handle_npc_lifecycle(npc, 0.02))
-            spawner.tasks.add(task)
-            task.add_done_callback(spawner.tasks.discard)
-
-            # Wait for despawn to occur (lifetime 0.02s)
-            await asyncio.sleep(0.05)
-
-            # Despawn message should have been sent
-            despawn_messages = [json.loads(m) for m in ws.sent_messages if json.loads(m).get("type") == "NPC_DESPAWN"]
-            self.assertEqual(len(despawn_messages), 1)
-            self.assertEqual(despawn_messages[0]["id"], npc["id"])
-            # NPC should be removed from active_npcs
-            self.assertNotIn(npc["id"], spawner.active_npcs)
-
-            # Clean up
-            spawner.stop()
-
-        asyncio.run(run_test())
-        print("✅ test_despawn_and_replacement_lifecycle passed")
-
-    def test_empty_room_spawner_cleanup(self):
-        """AC-027.5: Spawner idles and cancels all tasks when room empties."""
-        async def run_test():
-            rm = RoomManager()
-            ws = DummyWebSocket()
-            p1 = PeerConnection(ws, "p1", "empty-room")
-            rm.add_peer("empty-room", p1)
-
-            spawner = rm.get_or_create_spawner("empty-room")
-            spawner.start()
-            self.assertTrue(spawner.is_running)
-            self.assertEqual(len(spawner.active_npcs), TARGET_ACTIVE_NPCS)
-            self.assertEqual(len(spawner.tasks), TARGET_ACTIVE_NPCS)
-
-            # Peer leaves -> room is now empty
-            rm.remove_peer("empty-room", "p1")
-
-            self.assertFalse(spawner.is_running)
-            self.assertEqual(len(spawner.active_npcs), 0)
-            self.assertEqual(len(spawner.tasks), 0)
-            self.assertNotIn("empty-room", rm.rooms)
-            self.assertNotIn("empty-room", rm.spawners)
-
-        asyncio.run(run_test())
-        print("✅ test_empty_room_spawner_cleanup passed")
-
-
-class TestServerProtocol(unittest.TestCase):
-    def test_clifton_server_init(self):
-        server = CliftonServer(static_dir=".")
-        self.assertIsNotNone(server.app)
-        self.assertIsNotNone(server.rooms)
-        print("✅ test_clifton_server_init passed")
-
-
-class TestTunnelAndHost(unittest.TestCase):
-    def test_local_ip_detection(self):
-        ip = get_local_ip()
-        self.assertIsInstance(ip, str)
-        self.assertGreater(len(ip), 6)
-        print(f"✅ test_local_ip_detection passed (IP: {ip})")
-
-    def test_tunnel_manager_instantiation(self):
-        tm = TunnelManager(local_port=8080)
-        self.assertEqual(tm.local_port, 8080)
-        self.assertIsNone(tm.process)
-        print("✅ test_tunnel_manager_instantiation passed")
-
-
-def run_tests():
-    suite = unittest.TestSuite()
-    suite.addTest(unittest.makeSuite(TestRoomManager))
-    suite.addTest(unittest.makeSuite(TestRoomNpcSpawner))
-    suite.addTest(unittest.makeSuite(TestServerProtocol))
-    suite.addTest(unittest.makeSuite(TestTunnelAndHost))
-
-    runner = unittest.TextTestRunner(verbosity=1)
-    res = runner.run(suite)
-    if not res.wasSuccessful():
-        sys.exit(1)
-
-
-if __name__ == "__main__":
-    run_tests()
 
 ```
 
@@ -30825,28 +28201,11 @@ if __name__ == "__main__":
 ```jsonc
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  "name": "play",
-  "main": "party/server.js",
+  "name": "virtual-dog-walker",
   "compatibility_date": "2024-09-23",
-  "compatibility_flags": ["nodejs_compat"],
   "assets": {
-    "directory": "./",
-    "binding": "ASSETS"
-  },
-  "durable_objects": {
-    "bindings": [
-      {
-        "name": "ParkServer",
-        "class_name": "ParkServer"
-      }
-    ]
-  },
-  "migrations": [
-    {
-      "tag": "v1",
-      "new_sqlite_classes": ["ParkServer"]
-    }
-  ]
+    "directory": "./"
+  }
 }
 
 ```

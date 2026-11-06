@@ -8,8 +8,12 @@ export class TouchControls {
       onLeash: callbacks.onLeash || null,
       onPet: callbacks.onPet || null,
       onChat: callbacks.onChat || null,
-      onWhistle: callbacks.onWhistle || null
+      onWhistle: callbacks.onWhistle || null,
+      onPickup: callbacks.onPickup || null,
+      onDispose: callbacks.onDispose || null
     };
+
+    this.contextualAction = null;
 
     this.joystickTouchId = null;
     this.joystickCenter = { x: 0, y: 0 };
@@ -177,7 +181,23 @@ export class TouchControls {
     bindButton('btn-touch-throw', () => this.callbacks.onThrow?.());
     bindButton('btn-touch-whistle', () => this.callbacks.onWhistle?.());
     bindButton('btn-touch-leash', () => this.callbacks.onLeash?.());
-    bindButton('btn-touch-pet', () => this.callbacks.onPet?.());
+    bindButton('btn-touch-pet', () => {
+      if (this.contextualAction === 'pickup') {
+        if (typeof this.callbacks.onPickup === 'function') {
+          this.callbacks.onPickup();
+        } else {
+          this.callbacks.onPet?.();
+        }
+      } else if (this.contextualAction === 'dispose') {
+        if (typeof this.callbacks.onDispose === 'function') {
+          this.callbacks.onDispose();
+        } else {
+          this.callbacks.onPet?.();
+        }
+      } else {
+        this.callbacks.onPet?.();
+      }
+    });
     bindButton('btn-touch-chat', () => this.callbacks.onChat?.());
   }
 
@@ -260,6 +280,29 @@ export class TouchControls {
       btn.textContent = '🐕';
       btn.classList.add('off-leash');
       btn.setAttribute('aria-label', 'Toggle Leash (Currently Off)');
+    }
+  }
+
+  setContextualAction(action) {
+    if (this.contextualAction === action) return;
+    this.contextualAction = action;
+
+    const btn = document.getElementById('btn-touch-pet');
+    if (!btn) return;
+
+    btn.classList.remove('contextual-pickup', 'contextual-dispose');
+
+    if (action === 'pickup') {
+      btn.textContent = '💩';
+      btn.setAttribute('aria-label', 'Pick up dog waste');
+      btn.classList.add('contextual-pickup');
+    } else if (action === 'dispose') {
+      btn.textContent = '🗑️';
+      btn.setAttribute('aria-label', 'Dispose waste in bin');
+      btn.classList.add('contextual-dispose');
+    } else {
+      btn.textContent = '❤️';
+      btn.setAttribute('aria-label', 'Pet Dog');
     }
   }
 

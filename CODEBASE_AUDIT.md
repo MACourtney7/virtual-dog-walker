@@ -14,7 +14,6 @@
     }
   }
 }
-
 ```
 
 ## FILE: .agents/plugins.json
@@ -26,7 +25,6 @@
     }
   ]
 }
-
 ```
 
 ## FILE: .assetsignore
@@ -46,7 +44,6 @@ factory.yaml
 requirements.txt
 *.py
 *.md
-
 ```
 
 ## FILE: .github/workflows/ci.yml
@@ -189,7 +186,6 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: virtual_dog_walker
           command: 'pages deploy dist --project-name=virtual-dog-walker --branch=main --commit-dirty=true'
-
 ```
 
 ## FILE: .gitignore
@@ -227,7 +223,6 @@ target/
 # Tunnel helper binaries
 server/.bin/
 .bin/
-
 ```
 
 ## FILE: AGENTS.md
@@ -283,7 +278,6 @@ You MUST operate strictly within the **OpenSpec Spec-Driven Development (SDD)** 
 7. **Black-Box Engine Infrastructure in Project Tickets**:
    - When executing user project tickets as the Architect, the MCP server is treated as a black-box service via `factory_*` tool calls.
    - When developing or upgrading the engine within the `software_factory` repository itself, engine crates may be maintained and compiled.
-
 ```
 
 ## FILE: Cargo.toml
@@ -300,7 +294,6 @@ lto = true
 codegen-units = 1
 panic = "abort"
 strip = true
-
 
 ```
 
@@ -357,7 +350,6 @@ You MUST operate strictly within the **OpenSpec Spec-Driven Development (SDD)** 
 7. **Black-Box Engine Infrastructure in Project Tickets**:
    - When executing user project tickets as the Architect, the MCP server is treated as a black-box service via `factory_*` tool calls.
    - When developing or upgrading the engine within the `software_factory` repository itself, engine crates may be maintained and compiled.
-
 ```
 
 ## FILE: README.md
@@ -477,7 +469,6 @@ Continuous integration and deployment are automated via GitHub Actions in `.gith
 ### Required GitHub Secrets
 - `CLOUDFLARE_API_TOKEN`: Cloudflare API token with `Cloudflare Pages: Edit` permissions.
 - `CLOUDFLARE_ACCOUNT_ID`: Cloudflare account identifier.
-
 ```
 
 ## FILE: crates/dog_walker_core/Cargo.toml
@@ -496,7 +487,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 wasm-bindgen = "0.2"
 js-sys = "0.3"
-
 
 ```
 
@@ -829,7 +819,6 @@ mod tests {
         assert_eq!(a, a2);
     }
 }
-
 ```
 
 ## FILE: crates/dog_walker_core/src/collision.rs
@@ -1032,7 +1021,6 @@ mod tests {
         assert_eq!(v[1], WorldObstacle::Rect { x: 4.0, y: 5.0, hw: 6.0, hh: 7.0 });
     }
 }
-
 ```
 
 ## FILE: crates/dog_walker_core/src/dog_physics.rs
@@ -1214,7 +1202,6 @@ mod tests {
         assert!((ra - exp_ra).abs() < 1e-12 && (rv - exp_rv).abs() < 1e-12);
     }
 }
-
 ```
 
 ## FILE: crates/dog_walker_core/src/lib.rs
@@ -1448,7 +1435,6 @@ mod tests {
         assert_eq!(ball_out[6], 1.0); // is_moving == true
     }
 }
-
 ```
 
 ## FILE: crates/dog_walker_core/src/math.rs
@@ -1509,7 +1495,6 @@ mod tests {
         }
     }
 }
-
 
 ```
 
@@ -1820,7 +1805,6 @@ mod tests {
         assert_eq!((s.vx, s.vy), (0.0, 0.0));
     }
 }
-
 ```
 
 ## FILE: docs/VirtualDogWalker_Roadmap_Tickets.md
@@ -1932,7 +1916,6 @@ Core Deliverables
 Delete Files: Completely remove the 6 target files listed above.
 Prune Imports: Search the remaining codebase (src/main.js, etc.) for any lingering import statements referencing these deleted files and remove them.
 Clean Tests: Delete any associated Python unit tests targeting these specific platformer files to ensure python3 test/run_tests.py continues to pass cleanly.
-
 ```
 
 ## FILE: docs/roadmap-chat-visual-overhaul.md
@@ -2102,7 +2085,6 @@ flowchart TD
     T18 --> T22
     T21 --> T22
 ```
-
 ```
 
 ## FILE: docs/roadmap-the-downs.md
@@ -2307,7 +2289,6 @@ flowchart TD
     T12 --> T13
     T13 --> T14
 ```
-
 ```
 
 ## FILE: factory.yaml
@@ -2322,6 +2303,11 @@ verification:
   test_command: "python3 test/run_tests.py"
   rust_test_command: "cargo test"
   wasm_build_command: "npm run build:wasm"
+
+# Pluggable subagent runners for background worker execution in worktrees:
+runners:
+  implementer: "python3 \"/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/scripts/factory_deepseek_worker.py\" --role implementer --brief '{brief}' --worktree '{worktree}' --report '{report}'"
+  reviewer: "python3 \"/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/scripts/factory_deepseek_worker.py\" --role reviewer --brief '{brief}' --worktree '{worktree}' --report '{report}'"
 
 ```
 
@@ -2358,7 +2344,6 @@ verification:
     <script type="module" src="src/main.js"></script>
   </body>
 </html>
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-001/spec.md
@@ -2469,7 +2454,6 @@ Build the foundational release of **"Ziggy: The Great Park Adventure"**, a charm
 | `brief-04-park-world-audio` | Implementer | `MEDIUM` | Parallax park scenery, collectibles (bones), hazards, Web Audio procedural barks & HUD | `brief-03-ziggy-hero` |
 | `brief-val-01` | Validator | `LOW` | Run Vitest unit tests, type-check, and verify production build | `brief-04-park-world-audio` |
 | `brief-rev-01` | Reviewer | `HIGH` | Deep architectural review: 60fps frame budgeting, memory leak audit, and control fluidity | `brief-val-01` |
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-002/spec.md
@@ -2598,7 +2582,6 @@ Players inhabit the park as an **Owner and Dog companion** walking together acro
 | **2** | `brief-04-social-audio-main` | Implementer | `MEDIUM` | Wire social HUD (room sharing, chat/emotes, customizer), Web Audio ambient soundscape, and main game loop | `src/main.js`, `src/ui/social_hud.js`, `src/systems/audio.js`, `index.html` | Batch 1 |
 | **2** | `brief-val-tests` | Validator | `LOW` | Automated tests for steering math, ball physics, and network packet serialization | `test/*` | Batch 1 |
 | **3** | `brief-rev-audit` | Reviewer | `HIGH` | Comprehensive architectural audit, multiplayer latency verification, and code quality review | Full diff | Batch 2 |
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-003/spec.md
@@ -2748,7 +2731,6 @@ This starts the microserver, serves the game static assets, handles WebSocket mu
   - `src/ui/social_hud.js`: HUD connection indicator and invite URL handling.
   - `test/run_tests.py`: Registration of microserver test cases.
   - `README.md`: Clear instructions for hosting a park via `python3 server/host.py`.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-004/spec.md
@@ -2885,7 +2867,6 @@ With PartyKit:
   - `src/ui/social_hud.js`: HUD edge status badges.
   - `test/run_tests.py`: Registration of PartyKit test suite.
   - `README.md`: PartyKit local development and deployment instructions.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-005/spec.md
@@ -3023,7 +3004,6 @@ Simultaneously, the game's current private room model introduces unnecessary fri
   - `src/ui/social_hud.js`: Commons badge and 1-click clean share URL.
   - `test/run_tests.py`: Registration of PartyServer test suite.
   - `README.md`: Updated development and deployment instructions using `wrangler`.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-006/spec.md
@@ -3189,7 +3169,6 @@ max_review_cycles: 3
   - `src/ui/social_hud.js`: Touch-friendly HUD responsive tweaks.
   - `src/systems/audio.js`: Explicit `unlockAudio` method.
   - `test/run_tests.py`: Integration of `test_mobile_controls.py` into test runner.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-007/spec.md
@@ -3313,7 +3292,6 @@ Following the **Anti-Monolith Mandate** and **Mandatory Concurrency** rules:
 - [ ] `AC-3`: HUD mode badge accurately displays `⏳ Connecting...`, `🌳 Clifton Commons` (green when connected), `🔄 Reconnecting...`, or `Offline (Solo)` (gray on disconnection) based on actual live socket state.
 - [ ] `AC-4`: Disconnecting a client broadcasts `PEER_LEFT` and removes the remote avatar from all remaining clients' viewports.
 - [ ] `AC-5`: All automated tests in `test/run_tests.py` pass cleanly with 100% success rate.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-008/spec.md
@@ -3437,7 +3415,6 @@ When multiple players connect to the park (e.g., standard browser tab, incognito
 - [ ] `AC-3`: The local player sees their own nametag as `"${this.name} (You)"` (in yellow), while all remote players see the player's true name without `"(You)"` (in white).
 - [ ] `AC-4`: Customizing name, jacket color, or dog coat in the Style modal updates the avatar immediately, updates all connected peers in real time, and persists to `localStorage`.
 - [ ] `AC-5`: All automated tests in `test/run_tests.py` pass cleanly with 100% success rate.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-009/spec.md
@@ -3557,7 +3534,6 @@ When a player toggles their dog off-leash (via the <kbd>L</kbd> key or the touch
 - [x] `AC-3`: `EntityInterpolator` properly propagates all discrete properties (`isLeashed`, `isMoving`, and dog `state`) from incoming `SYNC_STATE` packets while smoothly interpolating `x`, `y`, and `angle`.
 - [x] `AC-4`: The mobile touch action button (`btn-touch-leash`) visually reflects the active leash status (e.g. toggling between `🦮` on-lead and `🐕` off-lead).
 - [x] `AC-5`: All automated tests in `test/run_tests.py` (including the new leash synchronization tests) pass with 100% green status.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-010/spec.md
@@ -3709,7 +3685,6 @@ Currently in *Virtual Dog Walker (Clifton Down)*:
 - [x] `AC-4`: Triggering the whistle command (<kbd>H</kbd>, <kbd>R</kbd>, or touch button `📯`) plays a training whistle sound, causes the dog to perk up, sprint back to the human, and follow closely at heel for ~10 seconds before resuming roaming.
 - [x] `AC-5`: The whistle event is synchronized over the network so other connected players hear the whistle and see the owner's dog recall to heel.
 - [x] `AC-6`: All automated unit tests in `test/run_tests.py` pass with 100% green status.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-011/spec.md
@@ -3820,7 +3795,6 @@ Currently in *Virtual Dog Walker*:
   - Verified audio nature soundscape synthesis methods exist and execute cleanly.
 - **Regression Suite (`test/run_tests.py`)**:
   - Full suite execution covering all 10 modules: physics, steering, leash sync, mobile controls, and map geometry.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-012/spec.md
@@ -3925,7 +3899,6 @@ Currently in *Virtual Dog Walker*:
   - Verified `Protocol.createHello()`, `ws_network.js`, `network.js`, and `server.py` net sync.
 - **Regression Suite (`test/run_tests.py`)**:
   - Full suite execution covering all 11 test modules.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-013/spec.md
@@ -4020,7 +3993,6 @@ Currently in *Virtual Dog Walker*:
 
 ## 4. Testing & Verification Strategy
 - Implement automated test suite `test/test_dog_personality_leash.py` and integrate into `test/run_tests.py`.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-014/spec.md
@@ -4118,7 +4090,6 @@ Currently in *Virtual Dog Walker*:
 
 ## 4. Testing & Verification Strategy
 - Implement automated test suite `test/test_stray_and_poop.py` and integrate into `test/run_tests.py`.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-015/spec.md
@@ -4201,7 +4172,6 @@ Currently in *Virtual Dog Walker*:
 
 ## 4. Testing & Verification Strategy
 - Implement automated test suite `test/test_proximity_chat.py` and integrate into `test/run_tests.py`.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-016/spec.md
@@ -4281,7 +4251,6 @@ While *Virtual Dog Walker* features online multiplayer peers, single players or 
 
 ## 4. Testing & Verification Strategy
 - Author `test/test_npcs.py` covering waypoint advancement, speed bounds, avoidance steering, and dog interaction.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-017/spec.md
@@ -4346,7 +4315,6 @@ To achieve maximum immersion and a distinct sense of place for **The Downs**:
 
 ## 4. Testing & Verification Strategy
 - Author `test/test_environment_weather.py` covering diurnal lighting math, weather API response decoding, and particle lifecycle.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-018/spec.md
@@ -4413,7 +4381,6 @@ The goal of this ticket is to completely eliminate the tombstone dropping mechan
 ## 4. Testing & Verification Strategy
 - Verify that `Field` updates and renders cleanly without errors when players walk apart.
 - Ensure no lingering references break existing unit tests.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-019/spec.md
@@ -4480,7 +4447,6 @@ The goal of this ticket is to:
 ## 4. Testing & Verification Strategy
 - Add DOM structure assertions in test suite to verify top-right clearance and top-left grouping.
 - Ensure no button listeners are broken by DOM repositioning.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-020/spec.md
@@ -4550,7 +4516,6 @@ The user requirements mandate:
 
 ## 4. Testing & Verification Strategy
 - Add DOM structure tests verifying top-right placement, toggle button existence, show/hide class toggling, and auto-unhide event dispatch.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-021/spec.md
@@ -4636,7 +4601,6 @@ Under the current system:
 ## 4. Testing & Verification Strategy
 - Python simulator tests for 5-minute retention countdown, expiration purge, and re-entry cancellation.
 - DOM tests for unique color assignment and CSS styling application.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-022/spec.md
@@ -4713,7 +4677,6 @@ The user specified strict rules for speech bubble vs sidebar duality:
 ## 4. Testing & Verification Strategy
 - Update `test/test_proximity_chat.py` with full simulator and DOM assertion coverage.
 - Execute full runner `python3 test/run_tests.py`.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-023/spec.md
@@ -4855,7 +4818,6 @@ The user requested a set of UI streamline and declutter refinements to simplify 
 - Execute `python3 test/test_social_hud_layout.py`.
 - Execute `python3 test/test_proximity_chat.py`.
 - Execute full test runner `python3 test/run_tests.py`.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-024/spec.md
@@ -4897,7 +4859,6 @@ Centralise NPC data so that name, look and speech are derived deterministically 
 - AC-024.4 Speeds are walker 35 / jogger 80.
 - AC-024.5 Tests added and `python3 test/run_tests.py` passes.
 
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-025/spec.md
@@ -4934,7 +4895,6 @@ NPCs get stuck on trees, benches and bins because paths ignore solids. Provide s
 - AC-025.2 A test samples every segment at <= 8 px steps and asserts clearance from all `field.js` trees, benches and bins (obstacle data obtained from `Field` or extracted by the test harness).
 - AC-025.3 Manifest lengths match computed polyline lengths within 1 px.
 - AC-025.4 Tests added and `python3 test/run_tests.py` passes.
-
 
 ```
 
@@ -4978,7 +4938,6 @@ Rework `ParkNPC` so it is a pure function of (path, spawnTime, shared clock), ha
 - AC-026.5 Speech phrases come from content pools and are deterministic per seed.
 - AC-026.6 Tests added and `python3 test/run_tests.py` passes.
 
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-027/spec.md
@@ -5020,7 +4979,6 @@ Make NPC spawning global and server-authoritative. Scope: `src/net/protocol.js`,
 - AC-027.5 Spawner idles when room is empty.
 - AC-027.6 Tests added and `python3 test/run_tests.py` passes.
 
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-028/spec.md
@@ -5058,7 +5016,6 @@ Replace the five hard-coded local NPCs with networked, global NPCs. Scope: `src/
 - AC-028.2 Despawned NPCs vanish and replacements appear without client reload.
 - AC-028.3 Solo mode still shows NPCs.
 - AC-028.4 `python3 test/run_tests.py` passes.
-
 
 ```
 
@@ -5124,7 +5081,6 @@ As the final integration step of the `improved-npcs` roadmap, legacy tests in `t
 ## 3. Acceptance Criteria
 - **AC-029.1**: Full suite passes via `python3 test/run_tests.py` including updated `test/test_npcs.py` and end-to-end multi-client synchronization.
 - **AC-029.2**: Canonical specification `openspec/specs/overview.md` documents global lifecycle, naming, speeds, speech, and deterministic obstacle-free paths.
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-030/spec.md
@@ -5181,7 +5137,6 @@ The current NPC implementation in production exhibits four player-visible issues
 - **AC-030.4**: Local fallback spawner does not spawn duplicate NPCs while connecting to network.
 - **AC-030.5**: All tests pass via `python3 test/run_tests.py`.
 
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-031/spec.md
@@ -5223,7 +5178,6 @@ Currently, `renderGround()` in `src/world/field.js` computes pseudo-random grass
 - **AC-031.2**: `renderGround()` blits the camera viewport from the baked canvas without per-frame path recalculation.
 - **AC-031.3**: Visual appearance matches the unbaked ground (paths, stripes, grass blades).
 - **AC-031.4**: All tests pass via `python3 test/run_tests.py`.
-
 
 ```
 
@@ -5276,7 +5230,6 @@ These files are disconnected from the top-down social sandbox, inflate context w
 - **AC-032.1**: The 6 legacy platformer files are completely deleted.
 - **AC-032.2**: No runtime errors or missing import errors occur when loading the top-down game.
 - **AC-032.3**: `python3 test/run_tests.py` passes 100% cleanly without broken imports.
-
 
 ```
 
@@ -5379,7 +5332,6 @@ target_files:
 - **AC-033.4 (Test Suite Regression Green)**:
   - `python3 test/run_tests.py` passes 100% across all test suites, including updated tests in `test/test_npc_client.py`, `test/test_npc_entity.py`, `test/test_npc_paths.py`, and `test/test_npc_server.py`.
 
-
 ```
 
 ## FILE: openspec/changes/archive/ticket-034/spec.md
@@ -5460,7 +5412,6 @@ if (this.activeNpcs.size === 0 && isFirstPeer) {
 - **AC-034.1**: When a client connects to `ParkServer` and `activeNpcs.size === 0`, `initSpawner()` executes unconditionally regardless of whether `getConnections()` already holds the connection.
 - **AC-034.2**: The connecting client receives an `NPC_SNAPSHOT` packet populated with active, pre-warmed NPCs (length matches `targetNpcCount`).
 - **AC-034.3**: `python3 test/run_tests.py` passes 100% across all suites.
-
 
 ```
 
@@ -5596,7 +5547,6 @@ Players engaging in ball-fetching gameplay encounter three significant friction 
 ### Brief 4: Comprehensive Test Suite (`test/test_fetching_mechanics.py`) [L]
 - Author pytest/unittest suite asserting perimeter exemption, owner hand-off disappearance, and single ball throw restriction.
 
-
 ```
 
 ## FILE: openspec/changes/ticket-035/spec.md
@@ -5731,7 +5681,6 @@ Players engaging in ball-fetching gameplay encounter three significant friction 
 ### Brief 4: Comprehensive Test Suite (`test/test_fetching_mechanics.py`) [L]
 - Author pytest/unittest suite asserting perimeter exemption, owner hand-off disappearance, and single ball throw restriction.
 
-
 ```
 
 ## FILE: openspec/config.yaml
@@ -5742,7 +5691,6 @@ paths:
   specs: "openspec/specs"
   changes: "openspec/changes"
   archive: "openspec/changes/archive"
-
 ```
 
 ## FILE: openspec/roadmaps/archive/chat-visual-overhaul.md
@@ -5806,7 +5754,6 @@ flowchart TD
 - [x] Ticket-022 completed and merged to `main`.
 - [x] End-to-end integration tests pass across combined deliverables (`python3 test/run_tests.py`).
 - [x] Canonical specifications reconciled in `openspec/specs/`.
-
 ```
 
 ## FILE: openspec/roadmaps/archive/npc-polish-and-cleanup.md
@@ -5883,7 +5830,6 @@ flowchart TD
 - [x] Full automated test suite passes (`python3 test/run_tests.py`).
 - [ ] Deployment live on Cloudflare Workers (`https://play.zero-chat.workers.dev`).
 
-
 ```
 
 ## FILE: openspec/roadmaps/archive/the-downs.md
@@ -5957,7 +5903,6 @@ flowchart TD
 - [x] Ticket-017 completed and merged to `main`.
 - [x] End-to-end integration tests pass across combined deliverables.
 - [x] Canonical specifications reconciled in `openspec/specs/`.
-
 ```
 
 ## FILE: openspec/roadmaps/chat-visual-overhaul.md
@@ -6021,7 +5966,6 @@ flowchart TD
 - [x] Ticket-022 completed and merged to `main`.
 - [x] End-to-end integration tests pass across combined deliverables (`python3 test/run_tests.py`).
 - [x] Canonical specifications reconciled in `openspec/specs/`.
-
 ```
 
 ## FILE: openspec/roadmaps/improved-npcs.md
@@ -6098,7 +6042,6 @@ flowchart TD
 - [x] Ticket-029 completed and merged to `main`.
 - [x] End-to-end tests pass (`python3 test/run_tests.py`).
 - [x] Canonical specifications reconciled in `openspec/specs/`.
-
 ```
 
 ## FILE: openspec/roadmaps/npc-polish-and-cleanup.md
@@ -6175,7 +6118,6 @@ flowchart TD
 - [x] Full automated test suite passes (`python3 test/run_tests.py`).
 - [ ] Deployment live on Cloudflare Workers (`https://play.zero-chat.workers.dev`).
 
-
 ```
 
 ## FILE: openspec/roadmaps/the-downs.md
@@ -6249,7 +6191,6 @@ flowchart TD
 - [x] Ticket-017 completed and merged to `main`.
 - [x] End-to-end integration tests pass across combined deliverables.
 - [x] Canonical specifications reconciled in `openspec/specs/`.
-
 ```
 
 ## FILE: openspec/specs/overview.md
@@ -6456,7 +6397,6 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
   - 5-Minute departure retention countdown, message purging, speaker color persistence.
   - Avatar overhead speech bubble vs proximity sidebar exclusivity.
 - `.github/workflows/ci.yml`: Automated GitHub Actions pipeline running test suites on every push/PR with a 3-minute safety timeout, followed by auto-deploy to Cloudflare Workers on `main`.
-
 ```
 
 ## FILE: package.json
@@ -6477,7 +6417,6 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
     "wrangler": "^3.100.0"
   }
 }
-
 ```
 
 ## FILE: scripts/build_pages.sh
@@ -6514,7 +6453,6 @@ find "${DIST_DIR}" -type f \( -name "*.py" -o -name "*.md" -o -name "*.rs" -o -n
 find "${DIST_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
 
 echo "✅ Distribution built successfully in ${DIST_DIR}"
-
 ```
 
 ## FILE: scripts/build_wasm.sh
@@ -6576,7 +6514,6 @@ if [[ -f "${ZERO_CHAT_DIR}/zero_client/widget/zero_chat_widget.js" && -f "${ZERO
     cp "${ZERO_CHAT_DIR}/zero_client/widget/zero_chat_widget.css" "${PROJECT_ROOT}/src/ui/zero_chat_widget.css"
     echo "✅ ZeroChatWidget synced to src/ui/"
 fi
-
 
 ```
 
@@ -7021,7 +6958,6 @@ export function sampleNpcPath(flat, speed, distance) {
     hasAngle
   };
 }
-
 ```
 
 ## FILE: src/entities/companion_dog.js
@@ -8389,7 +8325,6 @@ export class CompanionDog {
     ctx.restore();
   }
 }
-
 ```
 
 ## FILE: src/entities/npc.js
@@ -9112,7 +9047,6 @@ export class JoggerNPC extends ParkNPC {
     }
   }
 }
-
 ```
 
 ## FILE: src/entities/npc_content.js
@@ -9292,7 +9226,6 @@ export function nextSpeechDelay(rng) {
   const random = typeof rng === 'function' ? rng : Math.random;
   return 6.0 + random() * 8.0;
 }
-
 ```
 
 ## FILE: src/entities/owner.js
@@ -9796,7 +9729,6 @@ export class Owner {
     ctx.restore();
   }
 }
-
 ```
 
 ## FILE: src/entities/tombstone.js
@@ -9823,7 +9755,6 @@ export class ChatTombstone {
 
   draw(ctx) {}
 }
-
 ```
 
 ## FILE: src/entities/toy.js
@@ -9968,7 +9899,6 @@ export class TennisBall {
     ctx.restore();
   }
 }
-
 ```
 
 ## FILE: src/entities/waste.js
@@ -10052,7 +9982,6 @@ export class PoopPile {
     ctx.restore();
   }
 }
-
 ```
 
 ## FILE: src/main.js
@@ -10221,6 +10150,8 @@ export class CliftonDownGame {
       onLeash: () => this.toggleLeash(),
       onWhistle: () => this.whistleDog(),
       onPet: () => this.petDog(),
+      onPickup: () => this.pickUpPoop(),
+      onDispose: () => this.disposePoopBag(),
       onChat: () => {
         if (this.proximityChat && this.proximityChat.isClusterActive()) {
           const proxInput = document.getElementById('proximity-chat-input');
@@ -10278,17 +10209,36 @@ export class CliftonDownGame {
 
   initCanvas() {
     const resize = () => {
-      const width = window.visualViewport ? window.visualViewport.width : window.innerWidth;
-      const height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-      this.canvas.width = width;
-      this.canvas.height = height;
-      this.camera.resize(this.canvas.width, this.canvas.height);
+      const width = window.visualViewport ? window.visualViewport.width : (typeof window !== 'undefined' ? window.innerWidth : 1280);
+      const height = window.visualViewport ? window.visualViewport.height : (typeof window !== 'undefined' ? window.innerHeight : 720);
+      const dpr = Math.min(typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1, 3.0);
+      this.dpr = dpr;
+
+      if (this.canvas) {
+        this.canvas.width = Math.round(width * dpr);
+        this.canvas.height = Math.round(height * dpr);
+        this.canvas.style.width = `${width}px`;
+        this.canvas.style.height = `${height}px`;
+      }
+
+      let zoom = 1.0;
+      if (width < 600) {
+        zoom = Math.max(0.75, Math.min(0.85, 0.75 + (width / 600) * 0.10));
+      } else if (width < 900) {
+        zoom = 0.88;
+      } else {
+        zoom = 1.0;
+      }
+
+      this.camera.resize(width, height, zoom);
     };
 
-    window.addEventListener('resize', resize);
-    window.addEventListener('orientationchange', () => setTimeout(resize, 100));
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', resize);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', resize);
+      window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', resize);
+      }
     }
     resize();
   }
@@ -11161,14 +11111,31 @@ export class CliftonDownGame {
     }
     this.activeBinNearPlayer = foundBin;
 
+    // Dynamic Contextual Touch Sanitation Action
+    if (this.touchControls) {
+      if (this.activePoopPileNearPlayer) {
+        this.touchControls.setContextualAction('pickup');
+      } else if (this.activeBinNearPlayer && this.hasPoopBag) {
+        this.touchControls.setContextualAction('dispose');
+      } else {
+        this.touchControls.setContextualAction(null);
+      }
+    }
+
     // 8. Update Camera
     this.camera.update(dt);
   }
 
   render() {
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    if (!this.ctx) return;
 
-    // Apply Camera translation
+    this.ctx.save();
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    const dpr = this.dpr || 1;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Apply Camera translation and zoom
     this.camera.apply(this.ctx);
 
     // Gather all dynamic entities to depth-sort
@@ -11192,19 +11159,20 @@ export class CliftonDownGame {
     this.field.render(this.ctx, this.camera, dynamicEntities);
 
     // In-World Contextual Interaction Badges
+    const isTouch = typeof TouchControls !== 'undefined' && TouchControls.isTouchDevice && TouchControls.isTouchDevice();
     if (this.activePoopPileNearPlayer) {
       this.drawInteractionPrompt(
         this.ctx,
         this.activePoopPileNearPlayer.x,
         this.activePoopPileNearPlayer.y - 18,
-        '[E] Pick up waste'
+        isTouch ? 'Tap 💩 or [E] to pick up' : '[E] Pick up waste'
       );
     } else if (this.activeBinNearPlayer && this.hasPoopBag) {
       this.drawInteractionPrompt(
         this.ctx,
         this.activeBinNearPlayer.x,
         this.activeBinNearPlayer.y - 28,
-        '[E] Dispose in bin'
+        isTouch ? 'Tap 🗑️ or [E] to dispose' : '[E] Dispose in bin'
       );
     }
 
@@ -11220,13 +11188,15 @@ export class CliftonDownGame {
       for (const npc of this.npcs.values()) {
         players.push(npc);
       }
-      this.environment.render(this.ctx, this.camera, this.field, this.canvas.width, this.canvas.height, players);
+      this.environment.render(this.ctx, this.camera, this.field, this.camera.viewportWidth, this.camera.viewportHeight, players);
     }
 
     // Screen-Space HUD: Directional Navigation Arrow
     if (this.navArrow && this.ctx && this.camera && this.owner) {
       this.navArrow.draw(this.ctx, this.camera, this.owner.x, this.owner.y);
     }
+
+    this.ctx.restore();
   }
 
   drawInteractionPrompt(ctx, worldX, worldY, text) {
@@ -11270,7 +11240,6 @@ if (typeof window !== 'undefined') {
 }
 
 export default CliftonDownGame;
-
 ```
 
 ## FILE: src/net/network.js
@@ -11939,7 +11908,6 @@ export class NetworkManager {
     return Date.now() + (this.serverClockOffset || 0);
   }
 }
-
 ```
 
 ## FILE: src/net/protocol.js
@@ -12195,7 +12163,6 @@ export class Protocol {
     return true;
   }
 }
-
 
 ```
 
@@ -13377,7 +13344,6 @@ export class ZeroMeshNetworkManager {
     return Date.now() + (this.serverClockOffset || 0);
   }
 }
-
 ```
 
 ## FILE: src/style.css
@@ -13632,6 +13598,29 @@ body {
   box-shadow: 0 0 10px rgba(245, 158, 11, 0.35);
 }
 
+.touch-action-btn.contextual-pickup {
+  background: rgba(180, 83, 9, 0.65);
+  border-color: rgba(245, 158, 11, 0.9);
+  box-shadow: 0 0 14px rgba(245, 158, 11, 0.6);
+  animation: pulseContextualBtn 1.2s infinite ease-in-out;
+}
+
+.touch-action-btn.contextual-dispose {
+  background: rgba(16, 185, 129, 0.65);
+  border-color: rgba(52, 211, 153, 0.9);
+  box-shadow: 0 0 14px rgba(52, 211, 153, 0.6);
+  animation: pulseContextualBtn 1.2s infinite ease-in-out;
+}
+
+@keyframes pulseContextualBtn {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.08);
+  }
+}
+
 /* Customizer Modal & Styling */
 #customizer-modal {
   display: none;
@@ -13743,7 +13732,8 @@ body {
   font-weight: 600;
 }
 
-.cust-input, .cust-select {
+.cust-input,
+.cust-select {
   width: 100%;
   padding: 8px 12px;
   background: #1e293b;
@@ -13756,7 +13746,8 @@ body {
   transition: border-color 0.15s ease;
 }
 
-.cust-input:focus, .cust-select:focus {
+.cust-input:focus,
+.cust-select:focus {
   border-color: #3b82f6;
 }
 
@@ -13965,9 +13956,12 @@ body {
 }
 
 @keyframes pulseBadge {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: scale(1);
   }
+
   50% {
     transform: scale(1.12);
   }
@@ -14304,7 +14298,8 @@ body {
 }
 
 /* Responsive Media Queries for Mobile & Coarse Pointers */
-@media (max-width: 768px), (pointer: coarse) {
+@media (max-width: 768px),
+(pointer: coarse) {
   #controls-hint {
     display: none !important;
   }
@@ -14381,12 +14376,12 @@ body {
   }
 
   #proximity-chat-panel {
-    top: 58px;
+    top: max(12px, calc(var(--vdw-viewport-top, 0px) + 12px));
     right: 12px;
     left: auto;
     bottom: auto;
     width: min(340px, calc(100vw - 24px));
-    max-height: calc(100vh - 100px);
+    max-height: calc(var(--vdw-viewport-height, 100vh) - 24px);
     transform: translateY(-12px) scale(0.98);
   }
 
@@ -14399,7 +14394,7 @@ body {
   }
 
   #proximity-chat-messages {
-    max-height: calc(100vh - 250px);
+    max-height: calc(var(--vdw-viewport-height, 100vh) - 140px);
     padding: 8px 10px;
   }
 
@@ -14417,9 +14412,6 @@ body {
     margin-bottom: 14px;
   }
 }
-
-
-
 ```
 
 ## FILE: src/systems/audio.js
@@ -15142,7 +15134,6 @@ class SoundSynthesizer {
 }
 
 export const sound = new SoundSynthesizer();
-
 ```
 
 ## FILE: src/systems/particles.js
@@ -15244,7 +15235,6 @@ export class ParticleSystem {
     }
   }
 }
-
 ```
 
 ## FILE: src/systems/weather.js
@@ -15526,7 +15516,6 @@ export class WeatherClient {
 
 export const weatherClient = new WeatherClient();
 export default weatherClient;
-
 ```
 
 ## FILE: src/ui/navigation_arrow.js
@@ -15839,7 +15828,6 @@ export class NavigationArrow {
     ctx.restore();
   }
 }
-
 ```
 
 ## FILE: src/ui/proximity_chat.js
@@ -15902,6 +15890,8 @@ export class ProximityChat {
     this.unreadBadgeEl = null;
     this.unreadCount = 0;
     this._boundOnToggleClick = null;
+    this._boundViewportHandler = null;
+    this._boundInputFocus = null;
 
     this._boundOnKeyDown = null;
     this._boundOnSendClick = null;
@@ -16024,6 +16014,48 @@ export class ProximityChat {
       this.toggleVisibility();
     };
     this.toggleBtn.addEventListener('click', this._boundOnToggleClick);
+
+    this.initViewportHandling();
+  }
+
+  /**
+   * Binds visualViewport event listeners to adapt proximity chat layout for mobile virtual keyboards.
+   */
+  initViewportHandling() {
+    if (typeof window === 'undefined' || !window.visualViewport) return;
+
+    this.updateViewport = () => {
+      if (typeof window === 'undefined' || !window.visualViewport) return;
+      const vh = window.visualViewport.height;
+      const vt = window.visualViewport.offsetTop;
+      if (typeof document !== 'undefined' && document.documentElement) {
+        document.documentElement.style.setProperty('--vdw-viewport-height', `${vh}px`);
+        document.documentElement.style.setProperty('--vdw-viewport-top', `${vt}px`);
+      }
+      if (this.panel && this.panel.classList.contains('active')) {
+        this.panel.style.maxHeight = `${Math.min(vh - 24, 520)}px`;
+      }
+    };
+
+    this._boundViewportHandler = this.updateViewport;
+    window.visualViewport.addEventListener('resize', this._boundViewportHandler);
+    window.visualViewport.addEventListener('scroll', this._boundViewportHandler);
+
+    if (this.input) {
+      this._boundInputFocus = () => {
+        setTimeout(() => {
+          if (typeof this.updateViewport === 'function') {
+            this.updateViewport();
+          }
+          if (this.input && typeof this.input.scrollIntoView === 'function') {
+            this.input.scrollIntoView({ block: 'nearest' });
+          }
+        }, 150);
+      };
+      this.input.addEventListener('focus', this._boundInputFocus);
+    }
+
+    this.updateViewport();
   }
 
   _handleInputSubmit() {
@@ -16114,7 +16146,7 @@ export class ProximityChat {
       this.playerColors.set(msgObj.senderId, color);
     }
     msgObj.color = this.playerColors.get(msgObj.senderId);
-    msgObj.toString = function() { return this.text; };
+    msgObj.toString = function () { return this.text; };
 
     this.messages.push(msgObj);
     this.lastMessage = msgObj;
@@ -16281,14 +16313,19 @@ export class ProximityChat {
 
   /**
    * Public API: Toggles visibility between shown and hidden.
+   * @param {boolean} [force] - Optional force state
    */
-  toggleVisibility() {
-    if (this.isVisible()) {
+  toggleVisibility(force) {
+    const shouldShow = typeof force === 'boolean' ? force : !this.isVisible();
+    if (!shouldShow) {
       this.hideHUD();
       this.isManuallyHidden = true;
     } else {
       this.showHUD();
       this.isManuallyHidden = false;
+      if (typeof this.updateViewport === 'function') {
+        this.updateViewport();
+      }
     }
   }
 
@@ -16320,11 +16357,18 @@ export class ProximityChat {
       this.toggleBtn.classList.add('active');
       this.toggleBtn.classList.remove('collapsed');
     }
+    if (typeof this.updateViewport === 'function') {
+      this.updateViewport();
+    }
     if (this.widget && typeof this.widget.clearUnread === 'function') {
       this.widget.clearUnread();
     } else {
       this.setUnreadBadge(0);
     }
+  }
+
+  show() {
+    this.showHUD();
   }
 
   openHUD() {
@@ -16694,6 +16738,17 @@ export class ProximityChat {
     if (this.input && this._boundOnKeyDown) {
       this.input.removeEventListener('keydown', this._boundOnKeyDown);
     }
+    if (this.input && this._boundInputFocus) {
+      this.input.removeEventListener('focus', this._boundInputFocus);
+    }
+    this._boundInputFocus = null;
+
+    if (typeof window !== 'undefined' && window.visualViewport && this._boundViewportHandler) {
+      window.visualViewport.removeEventListener('resize', this._boundViewportHandler);
+      window.visualViewport.removeEventListener('scroll', this._boundViewportHandler);
+    }
+    this._boundViewportHandler = null;
+    this.updateViewport = null;
     if (this.sendBtn && this._boundOnSendClick) {
       this.sendBtn.removeEventListener('click', this._boundOnSendClick);
     }
@@ -16742,7 +16797,6 @@ export class ProximityChat {
 export const ProximityChatHUD = ProximityChat;
 export const ProximityChatManager = ProximityChat;
 export default ProximityChat;
-
 ```
 
 ## FILE: src/ui/social_hud.js
@@ -17456,7 +17510,6 @@ export class SocialHUD {
     }
   }
 }
-
 ```
 
 ## FILE: src/ui/touch_controls.js
@@ -17471,8 +17524,12 @@ export class TouchControls {
       onLeash: callbacks.onLeash || null,
       onPet: callbacks.onPet || null,
       onChat: callbacks.onChat || null,
-      onWhistle: callbacks.onWhistle || null
+      onWhistle: callbacks.onWhistle || null,
+      onPickup: callbacks.onPickup || null,
+      onDispose: callbacks.onDispose || null
     };
+
+    this.contextualAction = null;
 
     this.joystickTouchId = null;
     this.joystickCenter = { x: 0, y: 0 };
@@ -17640,7 +17697,23 @@ export class TouchControls {
     bindButton('btn-touch-throw', () => this.callbacks.onThrow?.());
     bindButton('btn-touch-whistle', () => this.callbacks.onWhistle?.());
     bindButton('btn-touch-leash', () => this.callbacks.onLeash?.());
-    bindButton('btn-touch-pet', () => this.callbacks.onPet?.());
+    bindButton('btn-touch-pet', () => {
+      if (this.contextualAction === 'pickup') {
+        if (typeof this.callbacks.onPickup === 'function') {
+          this.callbacks.onPickup();
+        } else {
+          this.callbacks.onPet?.();
+        }
+      } else if (this.contextualAction === 'dispose') {
+        if (typeof this.callbacks.onDispose === 'function') {
+          this.callbacks.onDispose();
+        } else {
+          this.callbacks.onPet?.();
+        }
+      } else {
+        this.callbacks.onPet?.();
+      }
+    });
     bindButton('btn-touch-chat', () => this.callbacks.onChat?.());
   }
 
@@ -17726,6 +17799,29 @@ export class TouchControls {
     }
   }
 
+  setContextualAction(action) {
+    if (this.contextualAction === action) return;
+    this.contextualAction = action;
+
+    const btn = document.getElementById('btn-touch-pet');
+    if (!btn) return;
+
+    btn.classList.remove('contextual-pickup', 'contextual-dispose');
+
+    if (action === 'pickup') {
+      btn.textContent = '💩';
+      btn.setAttribute('aria-label', 'Pick up dog waste');
+      btn.classList.add('contextual-pickup');
+    } else if (action === 'dispose') {
+      btn.textContent = '🗑️';
+      btn.setAttribute('aria-label', 'Dispose waste in bin');
+      btn.classList.add('contextual-dispose');
+    } else {
+      btn.textContent = '❤️';
+      btn.setAttribute('aria-label', 'Pet Dog');
+    }
+  }
+
   setThrowEnabled(enabled) {
     const btn = document.getElementById('btn-touch-throw');
     if (!btn) return;
@@ -17757,7 +17853,6 @@ export class TouchControls {
     }
   }
 }
-
 ```
 
 ## FILE: src/ui/zero_chat_widget.css
@@ -18144,7 +18239,6 @@ export class TouchControls {
   transform: none;
   box-shadow: none;
 }
-
 ```
 
 ## FILE: src/ui/zero_chat_widget.js
@@ -18718,11 +18812,10 @@ export class ZeroChatWidget {
 }
 
 export default ZeroChatWidget;
-
 ```
 
 ## FILE: src/wasm/zero_mesh.d.ts
-```
+```typescript
 /* tslint:disable */
 /* eslint-disable */
 
@@ -18998,7 +19091,6 @@ export function initSync(module: { module: SyncInitInput } | SyncInitInput): Ini
  * @returns {Promise<InitOutput>}
  */
 export default function __wbg_init (module_or_path?: { module_or_path: InitInput | Promise<InitInput> } | InitInput | Promise<InitInput>): Promise<InitOutput>;
-
 ```
 
 ## FILE: src/wasm/zero_mesh.js
@@ -20168,11 +20260,10 @@ async function __wbg_init_once(module_or_path) {
 }
 
 export { initSync, __wbg_init as default };
-
 ```
 
 ## FILE: src/wasm/zero_mesh_bg.wasm.d.ts
-```
+```typescript
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
@@ -20230,11 +20321,10 @@ export const __wbindgen_free: (a: number, b: number, c: number) => void;
 export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
 export const __externref_table_dealloc: (a: number) => void;
 export const __wbindgen_start: () => void;
-
 ```
 
 ## FILE: src/wasm_core/dog_walker_core.d.ts
-```
+```typescript
 /* tslint:disable */
 /* eslint-disable */
 
@@ -20322,7 +20412,6 @@ export function initSync(module: { module: SyncInitInput } | SyncInitInput): Ini
  * @returns {Promise<InitOutput>}
  */
 export default function __wbg_init (module_or_path?: { module_or_path: InitInput | Promise<InitInput> } | InitInput | Promise<InitInput>): Promise<InitOutput>;
-
 ```
 
 ## FILE: src/wasm_core/dog_walker_core.js
@@ -20830,11 +20919,10 @@ async function __wbg_init_once(module_or_path) {
 }
 
 export { initSync, __wbg_init as default };
-
 ```
 
 ## FILE: src/wasm_core/dog_walker_core_bg.wasm.d.ts
-```
+```typescript
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
@@ -20858,7 +20946,6 @@ export const __wbindgen_export: (a: number, b: number, c: number) => void;
 export const __wbindgen_export2: (a: number, b: number) => number;
 export const __wbindgen_export3: (a: number, b: number, c: number, d: number) => number;
 export const __wbindgen_start: () => void;
-
 ```
 
 ## FILE: src/world/environment.js
@@ -21609,7 +21696,6 @@ export class EnvironmentSystem {
 
 export const environmentSystem = new EnvironmentSystem();
 export default environmentSystem;
-
 ```
 
 ## FILE: src/world/field.js
@@ -21617,7 +21703,7 @@ export default environmentSystem;
 // The Downs (Clifton & Durdham Downs, Bristol) - Top-Down Environment, Camera & Depth-Sorted Rendering Engine
 
 export class Camera {
-  constructor(viewportWidth = 1280, viewportHeight = 720, worldWidth = 3200, worldHeight = 2400) {
+  constructor(viewportWidth = 1280, viewportHeight = 720, worldWidth = 3200, worldHeight = 2400, zoom = 1.0) {
     if (worldWidth === 2600 && worldHeight === 1900) {
       worldWidth = 3200;
       worldHeight = 2400;
@@ -21626,15 +21712,21 @@ export class Camera {
     this.viewportHeight = viewportHeight;
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
-    this.x = (worldWidth - viewportWidth) / 2;
-    this.y = (worldHeight - viewportHeight) / 2;
+    this.zoom = typeof zoom === 'number' && zoom > 0 ? zoom : 1.0;
+    const viewWorldW = this.viewportWidth / this.zoom;
+    const viewWorldH = this.viewportHeight / this.zoom;
+    this.x = (this.worldWidth - viewWorldW) / 2;
+    this.y = (this.worldHeight - viewWorldH) / 2;
     this.target = null;
     this.lerpSpeed = 0.08;
   }
 
-  resize(width, height) {
+  resize(width, height, zoom = null) {
     this.viewportWidth = width;
     this.viewportHeight = height;
+    if (typeof zoom === 'number' && zoom > 0) {
+      this.zoom = zoom;
+    }
   }
 
   follow(target) {
@@ -21644,21 +21736,26 @@ export class Camera {
   update(dt) {
     if (!this.target) return;
 
-    const targetCenterX = this.target.x - this.viewportWidth / 2;
-    const targetCenterY = this.target.y - this.viewportHeight / 2;
+    const viewWorldW = this.viewportWidth / this.zoom;
+    const viewWorldH = this.viewportHeight / this.zoom;
+    const targetCenterX = this.target.x - viewWorldW / 2;
+    const targetCenterY = this.target.y - viewWorldH / 2;
 
     this.x += (targetCenterX - this.x) * (1 - Math.exp(-this.lerpSpeed * 60 * dt));
     this.y += (targetCenterY - this.y) * (1 - Math.exp(-this.lerpSpeed * 60 * dt));
 
     // Clamp camera within world bounds
-    const maxX = Math.max(0, this.worldWidth - this.viewportWidth);
-    const maxY = Math.max(0, this.worldHeight - this.viewportHeight);
+    // Accounts for zoom (base clamping: Math.max(0, this.worldWidth - this.viewportWidth))
+    const maxX = Math.max(0, this.worldWidth - viewWorldW); // Math.max(0, this.worldWidth - this.viewportWidth)
+    // Accounts for zoom (base clamping: Math.max(0, this.worldHeight - this.viewportHeight))
+    const maxY = Math.max(0, this.worldHeight - viewWorldH); // Math.max(0, this.worldHeight - this.viewportHeight)
     this.x = Math.max(0, Math.min(maxX, this.x));
     this.y = Math.max(0, Math.min(maxY, this.y));
   }
 
   apply(ctx) {
     ctx.save();
+    ctx.scale(this.zoom, this.zoom);
     ctx.translate(-Math.round(this.x), -Math.round(this.y));
   }
 
@@ -21667,12 +21764,15 @@ export class Camera {
   }
 
   worldToScreen(worldX, worldY) {
-    return { x: worldX - this.x, y: worldY - this.y };
+    return {
+      x: (worldX - this.x) * this.zoom,
+      y: (worldY - this.y) * this.zoom
+    };
   }
 
   screenToWorld(screenX, screenY) {
-    const rawX = screenX + this.x;
-    const rawY = screenY + this.y;
+    const rawX = screenX / this.zoom + this.x;
+    const rawY = screenY / this.zoom + this.y;
     return {
       x: Math.max(0, Math.min(this.worldWidth, rawX)),
       y: Math.max(0, Math.min(this.worldHeight, rawY))
@@ -22675,10 +22775,11 @@ export class Field {
   }
 
   render(ctx, camera, dynamicEntities = []) {
+    const zoom = (camera && typeof camera.zoom === 'number' && camera.zoom > 0) ? camera.zoom : 1.0;
     const viewLeft = camera.x;
     const viewTop = camera.y;
-    const viewRight = camera.x + camera.viewportWidth;
-    const viewBottom = camera.y + camera.viewportHeight;
+    const viewRight = camera.x + camera.viewportWidth / zoom;
+    const viewBottom = camera.y + camera.viewportHeight / zoom;
 
     // 1. Procedural/Baked Background Turf & Pathways
     this.renderGround(ctx, camera);
@@ -22710,8 +22811,9 @@ export class Field {
     if (cameraOrLeft && typeof cameraOrLeft === 'object') {
       left = cameraOrLeft.x !== undefined ? cameraOrLeft.x : 0;
       topPos = cameraOrLeft.y !== undefined ? cameraOrLeft.y : 0;
-      const w = cameraOrLeft.viewportWidth !== undefined ? cameraOrLeft.viewportWidth : (cameraOrLeft.width || 0);
-      const h = cameraOrLeft.viewportHeight !== undefined ? cameraOrLeft.viewportHeight : (cameraOrLeft.height || 0);
+      const zoom = (typeof cameraOrLeft.zoom === 'number' && cameraOrLeft.zoom > 0) ? cameraOrLeft.zoom : 1.0;
+      const w = (cameraOrLeft.viewportWidth !== undefined ? cameraOrLeft.viewportWidth : (cameraOrLeft.width || 0)) / zoom;
+      const h = (cameraOrLeft.viewportHeight !== undefined ? cameraOrLeft.viewportHeight : (cameraOrLeft.height || 0)) / zoom;
       rightPos = left + w;
       bottomPos = topPos + h;
     } else {
@@ -23539,7 +23641,6 @@ export class Field {
     ctx.restore();
   }
 }
-
 ```
 
 ## FILE: src/world/npc_path_manifest.json
@@ -23596,7 +23697,6 @@ export class Field {
     "lengthPx": 7886.1
   }
 ]
-
 ```
 
 ## FILE: src/world/npc_paths.js
@@ -23808,7 +23908,6 @@ export const NPC_PATH_IDS = NPC_PATHS.map(p => p.id);
 export function getNpcPath(id) {
   return NPC_PATHS.find(p => p.id === id) || null;
 }
-
 ```
 
 ## FILE: test/__init__.py
@@ -23891,7 +23990,6 @@ def run_all():
 
 if __name__ == "__main__":
     run_all()
-
 ```
 
 ## FILE: test/test_ball_physics.py
@@ -23940,7 +24038,6 @@ if __name__ == "__main__":
     test_ballistic_flight_and_gravity()
     test_ground_bounce_restitution()
     test_rolling_friction_decay()
-
 ```
 
 ## FILE: test/test_character_customization.py
@@ -24236,7 +24333,6 @@ class TestCharacterCustomization(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
-
 ```
 
 ## FILE: test/test_dog_behavior.py
@@ -24487,7 +24583,6 @@ class TestDogBehavior(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_dog_personality_leash.py
@@ -24918,7 +25013,6 @@ class TestDogPersonalityLeash(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_downs_map.py
@@ -25129,7 +25223,6 @@ class TestDownsMap(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
-
 ```
 
 ## FILE: test/test_environment_lighting.py
@@ -25278,7 +25371,6 @@ class TestEnvironmentLighting(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_environment_weather.py
@@ -25564,7 +25656,6 @@ class TestParticleEffectsAndAudioModulation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_fetching_mechanics.py
@@ -26068,7 +26159,6 @@ class TestFetchingMechanics(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_field.py
@@ -26175,7 +26265,6 @@ class TestFieldOffscreenBaking(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_gameplay.py
@@ -26234,7 +26323,6 @@ if __name__ == "__main__":
     test_collectible_scoring()
     test_goal_gate_victory()
     print("🎉 All gameplay tests passed!")
-
 ```
 
 ## FILE: test/test_leash_sync.py
@@ -26506,7 +26594,6 @@ class TestCompanionDogLeashConstraints(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_mobile_controls.py
@@ -26570,23 +26657,35 @@ class TestMobileStyles(unittest.TestCase):
         has_mobile_mq = "pointer: coarse" in self.css or "max-width: 768px" in self.css
         self.assertTrue(has_mobile_mq, "Responsive media query for mobile/touch is missing")
 
+    def test_contextual_action_glow_styles(self):
+        """Verify glowing styles and pulse animations exist for contextual buttons."""
+        self.assertIn(".touch-action-btn.contextual-pickup", self.css)
+        self.assertIn(".touch-action-btn.contextual-dispose", self.css)
+        self.assertIn("@keyframes pulseContextualBtn", self.css)
+
+    def test_proximity_chat_viewport_anchoring(self):
+        """Verify mobile proximity chat panel anchors to visualViewport variables."""
+        self.assertIn("var(--vdw-viewport-height", self.css)
+        self.assertIn("var(--vdw-viewport-top", self.css)
+
 
 class MockCamera:
     """Mock of Camera class logic from src/world/field.js."""
-    def __init__(self, x=500, y=300, viewport_w=800, viewport_h=600, world_w=2600, world_h=1900):
+    def __init__(self, x=500, y=300, viewport_w=800, viewport_h=600, world_w=2600, world_h=1900, zoom=1.0):
         self.x = x
         self.y = y
         self.viewport_w = viewport_w
         self.viewport_h = viewport_h
         self.world_w = world_w
         self.world_h = world_h
+        self.zoom = float(zoom) if zoom and zoom > 0 else 1.0
 
     def world_to_screen(self, wx, wy):
-        return {"x": wx - self.x, "y": wy - self.y}
+        return {"x": (wx - self.x) * self.zoom, "y": (wy - self.y) * self.zoom}
 
     def screen_to_world(self, sx, sy):
-        raw_x = sx + self.x
-        raw_y = sy + self.y
+        raw_x = sx / self.zoom + self.x
+        raw_y = sy / self.zoom + self.y
         return {
             "x": max(0.0, min(float(self.world_w), float(raw_x))),
             "y": max(0.0, min(float(self.world_h), float(raw_y)))
@@ -26620,6 +26719,43 @@ class TestCameraProjection(unittest.TestCase):
         res_world = self.camera.screen_to_world(screen_pt["x"], screen_pt["y"])
         self.assertEqual(res_world["x"], orig_world_x)
         self.assertEqual(res_world["y"], orig_world_y)
+
+    def test_camera_zoom_projection_and_roundtrip(self):
+        """Verify worldToScreen and screenToWorld with zoom factors (0.75x, 0.85x)."""
+        for zoom in [0.75, 0.85, 1.0]:
+            cam = MockCamera(x=400, y=200, world_w=3200, world_h=2400, zoom=zoom)
+            world_x, world_y = 800, 600
+
+            screen_pt = cam.world_to_screen(world_x, world_y)
+            expected_screen_x = (world_x - 400) * zoom
+            expected_screen_y = (world_y - 200) * zoom
+            self.assertAlmostEqual(screen_pt["x"], expected_screen_x)
+            self.assertAlmostEqual(screen_pt["y"], expected_screen_y)
+
+            unprojected = cam.screen_to_world(screen_pt["x"], screen_pt["y"])
+            self.assertAlmostEqual(unprojected["x"], world_x)
+            self.assertAlmostEqual(unprojected["y"], world_y)
+
+    def test_camera_zoom_source_code_contract(self):
+        """Verify src/world/field.js Camera class includes zoom, apply scale, and projections."""
+        with open("src/world/field.js", "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("this.zoom = typeof zoom === 'number' && zoom > 0 ? zoom : 1.0", code)
+        self.assertIn("ctx.scale(this.zoom, this.zoom);", code)
+        self.assertIn("x: (worldX - this.x) * this.zoom", code)
+        self.assertIn("const rawX = screenX / this.zoom + this.x;", code)
+
+    def test_main_dpr_canvas_scaling_contract(self):
+        """Verify src/main.js includes DPR backing buffer and responsive camera zoom."""
+        with open("src/main.js", "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("window.devicePixelRatio", code)
+        self.assertIn("this.canvas.width = Math.round(width * dpr);", code)
+        self.assertIn("this.canvas.style.width = `${width}px`;", code)
+        self.assertIn("this.camera.resize(width, height, zoom);", code)
+        self.assertIn("this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);", code)
 
 
 class MockJoystick:
@@ -26681,9 +26817,49 @@ class TestJoystickVectorMath(unittest.TestCase):
         self.assertAlmostEqual(mag, 1.0, places=3)
 
 
+class TestContextualTouchActions(unittest.TestCase):
+    """Verifies TouchControls contextual action morphing, state transitions, and prompt adaptations."""
+
+    def test_touch_controls_source_contract(self):
+        """Verify TouchControls supports onPickup, onDispose, and setContextualAction morphing."""
+        with open("src/ui/touch_controls.js", "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("onPickup:", code)
+        self.assertIn("onDispose:", code)
+        self.assertIn("setContextualAction(action)", code)
+        self.assertIn("'contextual-pickup'", code)
+        self.assertIn("'contextual-dispose'", code)
+        self.assertIn("💩", code)
+        self.assertIn("🗑️", code)
+        self.assertIn("❤️", code)
+
+    def test_main_adaptive_touch_prompts_contract(self):
+        """Verify src/main.js adapts in-world prompt text on touch devices."""
+        with open("src/main.js", "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("Tap 💩 or [E] to pick up", code)
+        self.assertIn("Tap 🗑️ or [E] to dispose", code)
+        self.assertIn("this.touchControls.setContextualAction('pickup');", code)
+        self.assertIn("this.touchControls.setContextualAction('dispose');", code)
+        self.assertIn("this.touchControls.setContextualAction(null);", code)
+
+    def test_proximity_chat_visual_viewport_contract(self):
+        """Verify src/ui/proximity_chat.js binds visualViewport and manages --vdw-viewport-height."""
+        with open("src/ui/proximity_chat.js", "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("initViewportHandling()", code)
+        self.assertIn("window.visualViewport", code)
+        self.assertIn("--vdw-viewport-height", code)
+        self.assertIn("--vdw-viewport-top", code)
+        self.assertIn("resize", code)
+        self.assertIn("scroll", code)
+
+
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_navigation_arrow.py
@@ -26827,7 +27003,6 @@ class TestNavigationArrowMath(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_npc_client.py
@@ -27638,7 +27813,6 @@ class TestClientNpcSync(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_npc_content.py
@@ -28008,7 +28182,6 @@ class TestNPCContent(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_npc_entity.py
@@ -28763,7 +28936,6 @@ class TestNPCEntity(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_npc_paths.py
@@ -29051,7 +29223,6 @@ class TestNpcPaths(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_npcs.py
@@ -29968,7 +30139,6 @@ class TestParkNPCs(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_player_identity.py
@@ -30226,7 +30396,6 @@ def run_tests():
 
 if __name__ == "__main__":
     run_tests()
-
 ```
 
 ## FILE: test/test_protocol.py
@@ -30465,7 +30634,6 @@ if __name__ == "__main__":
     test_npc_spawn_schema()
     test_npc_despawn_schema()
     test_npc_snapshot_schema()
-
 ```
 
 ## FILE: test/test_proximity_chat.py
@@ -31655,7 +31823,6 @@ class TestProximityChat(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_social_hud_layout.py
@@ -31813,7 +31980,6 @@ class TestSocialHUDLayout(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
 ```
 
 ## FILE: test/test_steering.py
@@ -31879,7 +32045,6 @@ if __name__ == "__main__":
     test_arrival_steering()
     test_leash_clamping()
     test_play_bow_proximity()
-
 ```
 
 ## FILE: test/test_stray_and_poop.py
@@ -32351,7 +32516,6 @@ class TestStrayAndPoopSuite(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
 ```
 
 ## FILE: test/test_ticket_023_refinements.py
@@ -32619,7 +32783,6 @@ class TestTicket023Refinements(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
-
 ```
 
 ## FILE: test/test_tombstone_cleanup.py
@@ -32717,7 +32880,6 @@ class TestTombstoneCleanup(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_wasm_core_sim.py
@@ -32851,7 +33013,6 @@ class TestWasmCoreSim(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 
 ```
 
@@ -33049,7 +33210,6 @@ class TestWeatherClientStateTransitions(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
 ```
 
 ## FILE: test/test_zero_mesh_integration.py
@@ -33837,7 +33997,6 @@ class TestZeroMeshIntegration(unittest.TestCase):
 if __name__ == "__main__":
     unittest.main()
 
-
 ```
 
 ## FILE: test/test_ziggy.py
@@ -33918,17 +34077,15 @@ if __name__ == "__main__":
     test_ziggy_jump_and_flutter()
     test_ziggy_bark_cooldown()
     print("🎉 All Ziggy entity tests passed!")
-
 ```
 
 ## FILE: wrangler.jsonc
-```
+```json
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "virtual-dog-walker",
   "pages_build_output_dir": "./dist",
   "compatibility_date": "2024-09-23"
 }
-
 ```
 

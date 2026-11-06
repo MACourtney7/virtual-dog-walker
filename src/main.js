@@ -183,6 +183,7 @@ export class CliftonDownGame {
     // Environment & Weather Systems
     this.weatherClient = weatherClient;
     this.environment = environmentSystem;
+    this.field.environment = this.environment;
     this.weatherClient.startAutoRefresh();
     this.weatherClient.addListener((weather) => {
       sound.setWeather(weather);
@@ -381,6 +382,9 @@ export class CliftonDownGame {
     this.net.onPet = (peerId) => {
       const p = this.remotePlayers.get(peerId);
       if (p) {
+        if (p.owner && typeof p.owner.triggerPet === 'function') {
+          p.owner.triggerPet(0.8);
+        }
         p.dog.pet();
       }
     };
@@ -695,6 +699,9 @@ export class CliftonDownGame {
   petDog() {
     const distToDog = Math.hypot(this.owner.x - this.dog.x, this.owner.y - this.dog.y);
     if (distToDog < 90) {
+      if (typeof this.owner.triggerPet === 'function') {
+        this.owner.triggerPet(0.8);
+      }
       this.dog.pet();
       sound.playPet();
       this.hud.showToast('❤️ Good dog!');
@@ -706,6 +713,9 @@ export class CliftonDownGame {
 
   pickUpPoop() {
     if (!this.activePoopPileNearPlayer) return;
+    if (typeof this.owner.triggerPickup === 'function') {
+      this.owner.triggerPickup(0.8);
+    }
     const pile = this.activePoopPileNearPlayer;
     if (this.field && typeof this.field.removePoopPile === 'function') {
       this.field.removePoopPile(pile.id);
@@ -929,14 +939,15 @@ export class CliftonDownGame {
       }
     }
 
-    // 1. Update Field & Ambient Particles
-    this.field.update(dt);
-
     // 2. Gather all other dogs for social play-bow reactions
     const allDogs = [this.dog];
     for (const p of this.remotePlayers.values()) {
       allDogs.push(p.dog);
     }
+
+    // 1. Update Field & Ambient Particles with dynamic entities for leaf scattering
+    const allFieldEntities = [this.owner, ...allDogs, ...this.npcs.values()];
+    this.field.update(dt, allFieldEntities);
 
     const nowSec = this.getCurrentServerTime();
     const npcList = Array.from(this.npcs.values());

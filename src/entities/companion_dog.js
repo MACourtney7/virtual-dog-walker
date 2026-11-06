@@ -13,7 +13,9 @@ export const DogState = {
   BARKING: 'BARKING',
   RECALLED: 'RECALLED',
   LOST: 'LOST',
-  POOPING: 'POOPING'
+  POOPING: 'POOPING',
+  ZOOMIES: 'ZOOMIES',
+  SNIFFING_TRAIL: 'SNIFFING_TRAIL'
 };
 
 export const CoatPreset = {
@@ -162,10 +164,61 @@ export class CompanionDog {
     this.nextPoopTime = 150 + Math.random() * 90;
     this.poopSquatDuration = 0;
 
+    // Richer Canine Mechanics: Scent trails, Sticks, Zoomies & Gait
+    this.hasStick = false;
+    this.carriedStick = null;
+    this.zoomiesTimer = 0;
+    this.zoomiesPhase = 0;
+    this.zoomiesCenter = { x: this.x, y: this.y };
+    this.scentDropTimer = 0;
+    this.targetScent = null;
+    this.sniffTime = 0;
+    this.noseTwitch = 0;
+    this.gaitMode = 'IDLE'; // 'IDLE' | 'WALK' | 'TROT' | 'GALLOP'
+    this.gaitPhase = 0;
+    this.gallopPuffTimer = 0;
+
     // Event callbacks
     this.onStrayTriggered = null;
     this.onStrayResolved = null;
     this.onPoopDropped = null;
+  }
+
+  triggerZoomies() {
+    if (this.owner && this.owner.isLeashed) return false;
+    if (this.state === DogState.LOST || this.state === DogState.POOPING) return false;
+    this.dropStick();
+    this.state = DogState.ZOOMIES;
+    this.zoomiesTimer = 4.2;
+    this.zoomiesPhase = 0;
+    this.zoomiesCenter = { x: this.x, y: this.y };
+    this.emoteBubble = '⚡';
+    this.emoteTimer = 2.0;
+    this.wagSpeed = 22;
+    return true;
+  }
+
+  pickupStick(stick) {
+    if (!stick || this.hasBall || this.hasStick) return false;
+    this.hasStick = true;
+    this.carriedStick = stick;
+    stick.isCarried = true;
+    stick.carrier = this;
+    this.emoteBubble = '🪵';
+    this.emoteTimer = 2.5;
+    this.wagSpeed = 15;
+    return true;
+  }
+
+  dropStick() {
+    if (this.carriedStick) {
+      this.carriedStick.x = this.x;
+      this.carriedStick.y = this.y;
+      this.carriedStick.isCarried = false;
+      this.carriedStick.carrier = null;
+      this.carriedStick = null;
+    }
+    this.hasStick = false;
   }
 
   setPersonality(p) {
@@ -240,6 +293,7 @@ export class CompanionDog {
     this.socialTargetDog = null;
     this.isReturningToOwner = false;
     this.isPullingLeash = false;
+    this.dropStick();
     if (this.hasBall && this.targetBall) {
       this.hasBall = false;
       this.targetBall.drop(this.x, this.y);
@@ -279,6 +333,11 @@ export class CompanionDog {
         size: 10 + Math.random() * 4
       });
     }
+
+    // Occasional burst of figure-eight zoomies when happiness reaches 100%
+    if (this.happiness >= 100 && this.owner && !this.owner.isLeashed && Math.random() < 0.45) {
+      this.triggerZoomies();
+    }
   }
 
   fetchBall(ball) {
@@ -289,6 +348,7 @@ export class CompanionDog {
     if (this.state === DogState.LOST || this.state === DogState.POOPING) {
       return;
     }
+    this.dropStick();
     this.targetBall = ball;
     this.state = DogState.FETCHING;
     this.wagSpeed = 15;
@@ -363,6 +423,36 @@ export class CompanionDog {
       }
     }
 
+    // Dynamic Gait cadence & galloping particles
+    if (curSpeed < 10) {
+      this.gaitMode = 'IDLE';
+    } else if (this.state === DogState.FETCHING || this.state === DogState.RECALLED || this.state === DogState.ZOOMIES || curSpeed >= 220) {
+      this.gaitMode = 'GALLOP';
+      this.gaitPhase += dt * 16.5;
+      this.gallopPuffTimer += dt;
+      if (this.gallopPuffTimer >= 0.28) {
+        this.gallopPuffTimer = 0;
+        if (field && field.particleSystem) {
+          field.particleSystem.emitGallopPuff(this.x, this.y, this.angle);
+        }
+      }
+    } else if (curSpeed >= 65) {
+      this.gaitMode = 'TROT';
+      this.gaitPhase += dt * 11.0;
+    } else {
+      this.gaitMode = 'WALK';
+      this.gaitPhase += dt * 6.5;
+    }
+
+    // Scent trail deposition: dog leaves subtle scent nodes while trotting/walking
+    if (field && typeof field.addScent === 'function') {
+      this.scentDropTimer += dt;
+      if (this.scentDropTimer >= 2.2 && curSpeed > 15) {
+        this.scentDropTimer = 0;
+        field.addScent(this.x, this.y, 'dog', this);
+      }
+    }
+
     // 1. Check ball status & enforce strict prohibition of ball chasing on-leash / while lost / while pooping
     if (isLeashed) {
       if (this.state === DogState.FETCHING) {
@@ -418,12 +508,20 @@ export class CompanionDog {
         this.updateRecalled(dt);
         break;
 
+      case DogState.ZOOMIES:
+        this.updateZoomies(dt, field);
+        break;
+
+      case DogState.SNIFFING_TRAIL:
+        this.updateSniffingTrail(dt, field);
+        break;
+
       case DogState.SOCIAL_GREET:
         this.updateSocialGreet(dt);
         break;
 
       case DogState.ROAMING:
-        this.updateRoaming(dt, otherDogs);
+        this.updateRoaming(dt, otherDogs, field);
         break;
 
       case DogState.PLAY_BOW:
@@ -448,7 +546,7 @@ export class CompanionDog {
 
       case DogState.FOLLOWING:
       default:
-        this.updateFollowing(dt, otherDogs);
+        this.updateFollowing(dt, otherDogs, field);
         break;
     }
 
@@ -465,6 +563,12 @@ export class CompanionDog {
     // 3. Movement integration
     this.x += this.vx * dt;
     this.y += this.vy * dt;
+
+    // Sync carried stick position
+    if (this.hasStick && this.carriedStick) {
+      this.carriedStick.x = this.x;
+      this.carriedStick.y = this.y;
+    }
 
     // Leash constraint & pulling physics: If leashed to owner, hard clamp to max leash length
     if (this.owner && this.owner.isLeashed && this.state !== DogState.FETCHING) {
@@ -667,12 +771,12 @@ export class CompanionDog {
     return false;
   }
 
-  updateFollowing(dt, otherDogs = []) {
+  updateFollowing(dt, otherDogs = [], field = null) {
     if (!this.owner) return;
 
     if (!this.owner.isLeashed) {
       this.state = DogState.ROAMING;
-      this.updateRoaming(dt, otherDogs);
+      this.updateRoaming(dt, otherDogs, field);
       return;
     }
 
@@ -725,7 +829,7 @@ export class CompanionDog {
     }
   }
 
-  updateRoaming(dt, otherDogs = []) {
+  updateRoaming(dt, otherDogs = [], field = null) {
     if (!this.owner) return;
 
     if (this.owner.isLeashed) {
@@ -735,6 +839,40 @@ export class CompanionDog {
     }
 
     if (this.checkSocialInteractions(otherDogs)) {
+      return;
+    }
+
+    // 1. Woodland stick pickup check (trotting near fallen oak/chestnut grove sticks)
+    if (!this.hasStick && !this.hasBall && field && Array.isArray(field.sticks)) {
+      for (const stick of field.sticks) {
+        if (!stick.isCarried && Math.hypot(this.x - stick.x, this.y - stick.y) < 28) {
+          if (Math.random() < 0.35) {
+            this.pickupStick(stick);
+            break;
+          }
+        }
+      }
+    }
+
+    // 2. Scent trail detection (investigating squirrel or canine scent trails)
+    if (!this.hasStick && !this.hasBall && field && typeof field.getNearbyScents === 'function') {
+      if (Math.random() < 0.08) {
+        const nearbyScents = field.getNearbyScents(this.x, this.y, 85);
+        if (nearbyScents.length > 0) {
+          const chosen = nearbyScents[Math.floor(Math.random() * nearbyScents.length)];
+          this.targetScent = chosen;
+          this.state = DogState.SNIFFING_TRAIL;
+          this.stateTimer = 2.8 + Math.random() * 2.0;
+          this.emoteBubble = '👃';
+          this.emoteTimer = 1.8;
+          return;
+        }
+      }
+    }
+
+    // 3. Occasional zoomies burst when happiness reaches 100%
+    if (this.happiness >= 100 && !this.owner.isLeashed && Math.random() < 0.002) {
+      this.triggerZoomies();
       return;
     }
 
@@ -1066,6 +1204,88 @@ export class CompanionDog {
     }
   }
 
+  updateZoomies(dt, field) {
+    if (this.owner && this.owner.isLeashed) {
+      this.state = DogState.FOLLOWING;
+      return;
+    }
+    this.zoomiesTimer -= dt;
+    this.zoomiesPhase += dt * 3.8;
+    const rx = 72;
+    const ry = 48;
+    const targetX = this.zoomiesCenter.x + Math.sin(this.zoomiesPhase) * rx;
+    const targetY = this.zoomiesCenter.y + Math.sin(this.zoomiesPhase * 2) * ry * 0.5;
+    const dx = targetX - this.x;
+    const dy = targetY - this.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const sprint = this.sprintSpeed * 1.15;
+    this.vx = (dx / dist) * sprint;
+    this.vy = (dy / dist) * sprint;
+    this.angle = Math.atan2(this.vy, this.vx);
+    this.wagSpeed = 24;
+
+    if (field && field.particleSystem && Math.random() < 0.35) {
+      field.particleSystem.emitGallopPuff(this.x, this.y, this.angle);
+    }
+
+    if (this.zoomiesTimer <= 0) {
+      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
+      this.emoteBubble = '👅';
+      this.emoteTimer = 2.0;
+    }
+  }
+
+  updateSniffingTrail(dt, field) {
+    this.stateTimer -= dt;
+    this.sniffTime += dt;
+    this.noseTwitch = Math.sin(this.sniffTime * 25) * 1.6;
+
+    // Snout position for vapor particles
+    const snoutDist = 20;
+    const sx = this.x + Math.cos(this.angle) * snoutDist;
+    const sy = this.y + Math.sin(this.angle) * snoutDist;
+    if (field && field.particleSystem && Math.random() < 0.22) {
+      field.particleSystem.emitSniffParticles(sx, sy, this.angle);
+    }
+
+    // Follow or inspect target scent node
+    if (this.targetScent && this.targetScent.life > 0) {
+      const dx = this.targetScent.x - this.x;
+      const dy = this.targetScent.y - this.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist > 12) {
+        const sniffSpeed = this.speed * 0.38;
+        this.vx = (dx / dist) * sniffSpeed;
+        this.vy = (dy / dist) * sniffSpeed;
+        this.angle = Math.atan2(this.vy, this.vx);
+      } else {
+        this.vx *= 0.5;
+        this.vy *= 0.5;
+        // Seek next connected scent if available
+        if (field && typeof field.getNearbyScents === 'function') {
+          const nearby = field.getNearbyScents(this.x, this.y, 65).filter(s => s !== this.targetScent);
+          if (nearby.length > 0) {
+            this.targetScent = nearby[Math.floor(Math.random() * nearby.length)];
+          }
+        }
+      }
+    } else {
+      this.vx *= 0.5;
+      this.vy *= 0.5;
+    }
+
+    this.wagSpeed = 8;
+    if (this.owner && this.owner.isMoving && this.owner.isLeashed) {
+      this.state = DogState.FOLLOWING;
+    } else if (this.owner && !this.owner.isLeashed && Math.hypot(this.x - this.owner.x, this.y - this.owner.y) > 160) {
+      this.state = DogState.ROAMING;
+    } else if (this.stateTimer <= 0) {
+      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
+      this.targetScent = null;
+    }
+  }
+
   draw(ctx) {
     ctx.save();
 
@@ -1093,22 +1313,60 @@ export class CompanionDog {
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
 
-    // Play-bow or squat posture squash/stretch
+    // Play-bow, squat posture, or dynamic gait squash/stretch
+    let stretchX = 1.0;
+    let stretchY = 1.0;
+    let trotBob = 0;
     if (this.state === DogState.PLAY_BOW) {
-      ctx.scale(1.1, 0.85);
+      stretchX = 1.1;
+      stretchY = 0.85;
     } else if (this.state === DogState.POOPING) {
-      ctx.scale(0.88, 1.12);
+      stretchX = 0.88;
+      stretchY = 1.12;
       ctx.translate(-2, 0);
+    } else if (this.gaitMode === 'GALLOP') {
+      const cycle = Math.sin(this.gaitPhase);
+      const stretch = 1.0 + Math.max(0, cycle) * 0.28 - Math.max(0, -cycle) * 0.12;
+      stretchX = stretch;
+      stretchY = 1.0 / Math.sqrt(stretch);
+    } else if (this.gaitMode === 'TROT') {
+      trotBob = Math.abs(Math.sin(this.gaitPhase)) * 1.5;
     }
+    ctx.scale(stretchX, stretchY);
 
-    // Paws (front and back)
-    const legOffset = Math.sin(Date.now() * 0.012) * (Math.hypot(this.vx, this.vy) > 10 ? 3 : 0);
+    // Paws (front and back) responding to dynamic gait transitions (walk, rhythmic Spaniel trot, gallop)
     const pawColor = this.coat.hasEyePatch ? '#f1f5f9' : (this.coat.tanColor || this.coat.bodyColor);
     ctx.fillStyle = pawColor;
-    ctx.fillRect(-10, -9 - legOffset, 5, 4);
-    ctx.fillRect(-10, 5 + legOffset, 5, 4);
-    ctx.fillRect(8, -9 + legOffset, 5, 4);
-    ctx.fillRect(8, 5 - legOffset, 5, 4);
+
+    let flx = 8, fly = -9;
+    let frx = 8, fry = 5;
+    let rlx = -10, rly = -9;
+    let rrx = -10, rry = 5;
+
+    if (this.gaitMode === 'GALLOP') {
+      const reach = Math.sin(this.gaitPhase) * 6.5;
+      flx += reach;
+      frx += reach;
+      rlx -= reach;
+      rrx -= reach;
+    } else if (this.gaitMode === 'TROT') {
+      const diag1 = Math.sin(this.gaitPhase) * 4.5;
+      const diag2 = Math.sin(this.gaitPhase + Math.PI) * 4.5;
+      flx += diag1;
+      rrx += diag1;
+      frx += diag2;
+      rlx += diag2;
+    } else if (this.gaitMode === 'WALK') {
+      flx += Math.sin(this.gaitPhase) * 3.0;
+      frx += Math.sin(this.gaitPhase + Math.PI * 0.5) * 3.0;
+      rlx += Math.sin(this.gaitPhase + Math.PI) * 3.0;
+      rrx += Math.sin(this.gaitPhase + Math.PI * 1.5) * 3.0;
+    }
+
+    ctx.fillRect(rlx, rly, 5, 4);
+    ctx.fillRect(rrx, rry, 5, 4);
+    ctx.fillRect(flx, fly, 5, 4);
+    ctx.fillRect(frx, fry, 5, 4);
 
     // Feathered Wagging Tail matching breed coat colors with tufted brush tip
     ctx.save();
@@ -1130,16 +1388,16 @@ export class CompanionDog {
     ctx.fill();
     ctx.restore();
 
-    // Torso (rich coat)
+    // Torso (rich coat, with Spaniel trot bounce)
     ctx.fillStyle = this.coat.bodyColor;
     ctx.beginPath();
-    ctx.ellipse(-2, 0, 13, 8.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(-2, -trotBob, 13, 8.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
     // Subtle coat dorsal sheen
     ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
     ctx.beginPath();
-    ctx.ellipse(-2, -2, 10, 4.5, -0.05, 0, Math.PI * 2);
+    ctx.ellipse(-2, -2 - trotBob, 10, 4.5, -0.05, 0, Math.PI * 2);
     ctx.fill();
 
     // Creamy white chest bib
@@ -1203,17 +1461,41 @@ export class CompanionDog {
     ctx.arc(15.8, 1.0, 0.5, 0, Math.PI * 2);
     ctx.fill();
 
-    // Truffle Nose
+    // Truffle Nose (with sniffing twitch)
+    const noseTwitchY = (this.state === DogState.SNIFFING_TRAIL || this.state === DogState.IDLE_SNIFF) ? (this.noseTwitch || 0) : 0;
     ctx.fillStyle = this.coat.noseColor || '#1e293b';
     ctx.beginPath();
-    ctx.ellipse(19.2, 0, 1.8, 1.6, 0, 0, Math.PI * 2);
+    ctx.ellipse(19.2, noseTwitchY, 1.8, 1.6, 0, 0, Math.PI * 2);
     ctx.fill();
 
     // Nose specular shine
     ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
     ctx.beginPath();
-    ctx.arc(18.8, -0.6, 0.6, 0, Math.PI * 2);
+    ctx.arc(18.8, -0.6 + noseTwitchY, 0.6, 0, Math.PI * 2);
     ctx.fill();
+
+    // Clamped woodland stick held proudly across jaws
+    if (this.hasStick) {
+      ctx.save();
+      // Soft stick shadow
+      ctx.fillStyle = 'rgba(20, 35, 15, 0.35)';
+      ctx.fillRect(16, -13, 3.5, 26);
+
+      // Bark body
+      ctx.fillStyle = '#4a2e18';
+      ctx.fillRect(15.5, -14, 3.5, 28);
+
+      // Wood grain core
+      ctx.fillStyle = '#85512b';
+      ctx.fillRect(16.5, -10, 1.5, 20);
+
+      // Small green leaf/bud on branch tip
+      ctx.fillStyle = '#65a30d';
+      ctx.beginPath();
+      ctx.arc(17.2, -14, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
 
     // Expressive Eyes with amber iris, dark pupils, and specular catchlights
     ctx.fillStyle = '#261b12';
@@ -1249,11 +1531,12 @@ export class CompanionDog {
       ctx.fill();
     }
 
-    // Floppy Ears (with spring rotation responding to trot speed inertia)
+    // Floppy Ears (with spring rotation responding to trot speed inertia and streamlined gallop sweep)
+    const gallopSweep = (this.gaitMode === 'GALLOP') ? -0.52 : 0;
     // Left ear
     ctx.save();
     ctx.translate(9, -6);
-    ctx.rotate(this.leftEar.angle);
+    ctx.rotate(this.leftEar.angle + gallopSweep);
     ctx.fillStyle = this.coat.earRoot || this.coat.bodyColor;
     ctx.beginPath();
     ctx.ellipse(-1, -4, 4.6, 8.2, -Math.PI * 0.15, 0, Math.PI * 2);
@@ -1268,7 +1551,7 @@ export class CompanionDog {
     // Right ear
     ctx.save();
     ctx.translate(9, 6);
-    ctx.rotate(this.rightEar.angle);
+    ctx.rotate(this.rightEar.angle + gallopSweep);
     ctx.fillStyle = this.coat.earRoot || this.coat.bodyColor;
     ctx.beginPath();
     ctx.ellipse(-1, 4, 4.6, 8.2, Math.PI * 0.15, 0, Math.PI * 2);

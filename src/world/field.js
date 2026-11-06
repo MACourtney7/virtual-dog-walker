@@ -1,4 +1,5 @@
 // The Downs (Clifton & Durdham Downs, Bristol) - Top-Down Environment, Camera & Depth-Sorted Rendering Engine
+import { ParticleSystem } from '../systems/particles.js';
 
 export class Camera {
   constructor(viewportWidth = 1280, viewportHeight = 720, worldWidth = 3200, worldHeight = 2400, zoom = 1.0) {
@@ -113,6 +114,11 @@ export class Field {
     this.streetlamps = [];
     this.poopPiles = [];
     this.windTime = 0;
+    this.environment = null;
+    this.particleSystem = new ParticleSystem();
+    this.leafClusters = [];
+    this.sticks = [];
+    this.scentTrails = [];
 
     this.initScenery();
     this.initParticles();
@@ -638,6 +644,68 @@ export class Field {
       depthY: l.y + 8,     // y + 8 for accurate 2D Y-sorting
       isLamp: true
     }));
+
+    // 9. Autumn Fallen Leaf Clusters around Chestnut & Oak Groves
+    const leafColors = ['#b45309', '#c2410c', '#d97706', '#78350f', '#991b1b', '#ea580c', '#eab308'];
+    this.leafClusters = [];
+    for (const tree of this.trees) {
+      if (tree.type === 'chestnut' || tree.type === 'oak') {
+        const numClusters = 2 + Math.floor(Math.random() * 2);
+        for (let c = 0; c < numClusters; c++) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = tree.radius * 0.45 + Math.random() * (tree.radius * 0.55);
+          const cx = tree.x + Math.cos(angle) * dist;
+          const cy = tree.depthY + Math.sin(angle) * (dist * 0.45);
+          const leafCount = 10 + Math.floor(Math.random() * 8);
+          const leaves = [];
+          for (let l = 0; l < leafCount; l++) {
+            leaves.push({
+              dx: (Math.random() - 0.5) * 28,
+              dy: (Math.random() - 0.5) * 18,
+              color: leafColors[Math.floor(Math.random() * leafColors.length)],
+              w: 4.0 + Math.random() * 3.5,
+              h: 2.2 + Math.random() * 1.8,
+              angle: Math.random() * Math.PI * 2
+            });
+          }
+          this.leafClusters.push({
+            id: `leaf-cluster-${tree.id}-${c}`,
+            x: cx,
+            y: cy,
+            radius: 20,
+            treeType: tree.type,
+            isScattered: false,
+            scatterTimer: 0,
+            leaves: leaves
+          });
+        }
+      }
+    }
+
+    // 10. Fallen Woodland Sticks around Oak & Chestnut Groves
+    this.sticks = [];
+    let stickIndex = 0;
+    for (const tree of this.trees) {
+      if (tree.type === 'oak' || tree.type === 'chestnut') {
+        if (Math.random() < 0.45) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = tree.radius * 0.4 + Math.random() * (tree.radius * 0.5);
+          this.sticks.push({
+            id: `stick-${stickIndex++}`,
+            x: tree.x + Math.cos(angle) * dist,
+            y: tree.depthY + Math.sin(angle) * (dist * 0.5),
+            length: 20 + Math.random() * 8,
+            angle: Math.random() * Math.PI,
+            treeId: tree.id,
+            isCarried: false,
+            carrier: null
+          });
+        }
+      }
+    }
+
+    // 11. Initial Ambient Squirrel Scent Trails around Oak Groves
+    this.initSquirrelTrails();
   }
 
   initParticles() {
@@ -701,8 +769,79 @@ export class Field {
     return nearest;
   }
 
-  update(dt) {
+  // --- Scent Trails System for Dogs & Ambient Squirrels ---
+
+  initSquirrelTrails() {
+    this.scentTrails = [];
+    const oakTrees = (this.trees || []).filter(t => t.type === 'oak');
+    if (oakTrees.length >= 2) {
+      for (let s = 0; s < 3; s++) {
+        const startTree = oakTrees[s % oakTrees.length];
+        const nextTree = oakTrees[(s + 1) % oakTrees.length];
+        const steps = 6;
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const curveX = (Math.random() - 0.5) * 40;
+          const curveY = (Math.random() - 0.5) * 40;
+          this.scentTrails.push({
+            id: `squirrel-scent-${s}-${i}`,
+            x: startTree.x + (nextTree.x - startTree.x) * t + curveX,
+            y: startTree.depthY + (nextTree.depthY - startTree.depthY) * t + curveY,
+            type: 'squirrel',
+            sourceId: 'squirrel',
+            life: 35.0 + Math.random() * 20.0,
+            maxLife: 55.0
+          });
+        }
+      }
+    }
+  }
+
+  spawnSquirrelScentTrail() {
+    const oakTrees = (this.trees || []).filter(t => t.type === 'oak');
+    if (oakTrees.length >= 2) {
+      const idx = Math.floor(Math.random() * (oakTrees.length - 1));
+      const t1 = oakTrees[idx];
+      const t2 = oakTrees[idx + 1];
+      for (let i = 0; i < 5; i++) {
+        const t = i / 4;
+        this.addScent(
+          t1.x + (t2.x - t1.x) * t + (Math.random() - 0.5) * 30,
+          t1.depthY + (t2.depthY - t1.depthY) * t + (Math.random() - 0.5) * 30,
+          'squirrel'
+        );
+      }
+    }
+  }
+
+  addScent(x, y, type = 'dog', source = null) {
+    if (!Array.isArray(this.scentTrails)) this.scentTrails = [];
+    if (this.scentTrails.length >= 100) {
+      this.scentTrails.shift();
+    }
+    const maxLife = type === 'squirrel' ? 35.0 : 22.0;
+    this.scentTrails.push({
+      id: 'scent-' + Math.random().toString(36).substr(2, 9),
+      x,
+      y,
+      type,
+      sourceId: source ? (source.id || source.name || 'entity') : null,
+      life: maxLife,
+      maxLife
+    });
+  }
+
+  getNearbyScents(x, y, radius = 90) {
+    if (!Array.isArray(this.scentTrails)) return [];
+    return this.scentTrails.filter(s => s.life > 0 && Math.hypot(s.x - x, s.y - y) <= radius);
+  }
+
+  update(dt, dynamicEntities = []) {
     this.windTime += dt;
+
+    if (this.particleSystem && typeof this.particleSystem.update === 'function') {
+      this.particleSystem.update(dt);
+    }
 
     // Update poop piles and cull cleaned ones
     for (let i = this.poopPiles.length - 1; i >= 0; i--) {
@@ -725,6 +864,53 @@ export class Field {
       if (p.y > this.height) p.y = 0;
       if (p.x < 0) p.x = this.width;
       if (p.y < 0) p.y = this.height;
+    }
+
+    // Update Scent Trails
+    if (Array.isArray(this.scentTrails)) {
+      for (let i = this.scentTrails.length - 1; i >= 0; i--) {
+        const s = this.scentTrails[i];
+        s.life -= dt;
+        if (s.life <= 0) {
+          this.scentTrails.splice(i, 1);
+        }
+      }
+      if (this.scentTrails.length < 8 && Math.random() < 0.05) {
+        this.spawnSquirrelScentTrail();
+      }
+    }
+
+    // Update Leaf Clusters and trigger scattering when dogs or entities sprint through
+    if (Array.isArray(this.leafClusters)) {
+      for (const cluster of this.leafClusters) {
+        if (cluster.isScattered) {
+          cluster.scatterTimer -= dt;
+          if (cluster.scatterTimer <= 0) {
+            cluster.isScattered = false;
+          }
+        }
+      }
+
+      // Check dynamic entities for sprint impacts
+      const entitiesToCheck = Array.isArray(dynamicEntities) ? dynamicEntities : [];
+      for (const ent of entitiesToCheck) {
+        if (!ent || typeof ent.x !== 'number' || typeof ent.y !== 'number') continue;
+        const speed = Math.hypot(ent.vx || 0, ent.vy || 0);
+        // Sprints (> 125 px/s) trigger leaf explosion
+        if (speed > 125) {
+          for (const cluster of this.leafClusters) {
+            if (cluster.isScattered) continue;
+            const dist = Math.hypot(ent.x - cluster.x, ent.y - cluster.y);
+            if (dist < cluster.radius + (ent.radius || 14)) {
+              cluster.isScattered = true;
+              cluster.scatterTimer = 18.0;
+              if (this.particleSystem && typeof this.particleSystem.emitFallenLeaves === 'function') {
+                this.particleSystem.emitFallenLeaves(cluster.x, cluster.y, ent.vx || 0, ent.vy || 0, cluster.leaves);
+              }
+            }
+          }
+        }
+      }
     }
   }
 
@@ -1082,6 +1268,11 @@ export class Field {
     // 1. Procedural/Baked Background Turf & Pathways
     this.renderGround(ctx, camera);
 
+    // 1b. Ground Layers: Scent Trails, Woodland Sticks & Autumn Leaf Clusters
+    this.renderScentTrails(ctx, viewLeft, viewTop, viewRight, viewBottom);
+    this.renderWoodlandSticks(ctx, viewLeft, viewTop, viewRight, viewBottom);
+    this.renderLeafClusters(ctx, viewLeft, viewTop, viewRight, viewBottom);
+
     // 2. Gather Scenery and Dynamic Entities for Depth-Sorted Pass
     const renderList = this.getDepthSortedRenderList(viewLeft, viewRight, viewTop, viewBottom, dynamicEntities);
 
@@ -1359,14 +1550,26 @@ export class Field {
     ctx.restore();
   }
 
-  // Render mature tree with layered leafy canopies, distinct species hues, and soft ground shadows
+  // Render mature tree with layered leafy canopies, distinct species hues, wind-rippled sway, and soft directional ground shadows
   renderTree(ctx, tree) {
     ctx.save();
 
-    // 1. Soft Ground Shadow
-    ctx.fillStyle = 'rgba(22, 42, 16, 0.35)';
+    // 1. Soft Directional Ground Shadow (lengthens during GOLDEN_HOUR and adjusts by time of day)
+    const shadow = (this.environment && typeof this.environment.getShadowParameters === 'function')
+      ? this.environment.getShadowParameters()
+      : { offsetX: 8, offsetY: 6, lengthFactor: 1.0, color: 'rgba(22, 42, 16, 0.35)', skewX: 0.15 };
+
+    ctx.fillStyle = shadow.color;
     ctx.beginPath();
-    ctx.ellipse(tree.x + 8, tree.depthY + 6, tree.radius * 0.92, tree.radius * 0.44, 0, 0, Math.PI * 2);
+    ctx.ellipse(
+      tree.x + shadow.offsetX,
+      tree.depthY + shadow.offsetY,
+      tree.radius * 0.92 * shadow.lengthFactor,
+      tree.radius * 0.44,
+      shadow.skewX || 0.15,
+      0,
+      Math.PI * 2
+    );
     ctx.fill();
 
     // 2. Trunk with textured bark details
@@ -1395,15 +1598,24 @@ export class Field {
       baseColor = '#2f581e';
       midColor = '#467b2d';
       lightColor = '#63a03f';
+    } else if (tree.type === 'oak') {
+      baseColor = '#1f3c18';
+      midColor = '#2f5724';
+      lightColor = '#487c37';
     }
+
+    // Wind-rippled canopy sway: offsetting tree foliage puffs by Math.sin(this.windTime + tree.x)
+    const windOffset = Math.sin(this.windTime + tree.x);
+    const windSwayX = windOffset * (tree.radius * 0.08);
+    const windSwayY = Math.cos(this.windTime * 0.8 + tree.y * 0.02) * (tree.radius * 0.03);
 
     // Base dark canopy
     ctx.fillStyle = baseColor;
     ctx.beginPath();
-    ctx.arc(tree.x, tree.y, tree.radius, 0, Math.PI * 2);
+    ctx.arc(tree.x + windSwayX * 0.5, tree.y + windSwayY * 0.5, tree.radius, 0, Math.PI * 2);
     ctx.fill();
 
-    // Mid puff foliage clusters
+    // Mid puff foliage clusters with individualized wind-rippled sway
     ctx.fillStyle = midColor;
     const puffs = [
       { dx: -tree.radius * 0.45, dy: -tree.radius * 0.22, r: tree.radius * 0.55 },
@@ -1412,16 +1624,19 @@ export class Field {
       { dx: -tree.radius * 0.28, dy: tree.radius * 0.24, r: tree.radius * 0.46 },
       { dx: tree.radius * 0.32, dy: tree.radius * 0.22, r: tree.radius * 0.48 }
     ];
-    for (const p of puffs) {
+    for (let idx = 0; idx < puffs.length; idx++) {
+      const p = puffs[idx];
+      const puffWindX = Math.sin(this.windTime + tree.x + idx * 1.3) * (tree.radius * 0.08);
+      const puffWindY = Math.cos(this.windTime * 0.9 + tree.y + idx * 1.1) * (tree.radius * 0.035);
       ctx.beginPath();
-      ctx.arc(tree.x + p.dx, tree.y + p.dy, p.r, 0, Math.PI * 2);
+      ctx.arc(tree.x + p.dx + puffWindX, tree.y + p.dy + puffWindY, p.r, 0, Math.PI * 2);
       ctx.fill();
     }
 
     // Top sunlight highlights
     ctx.fillStyle = lightColor;
     ctx.beginPath();
-    ctx.arc(tree.x - tree.radius * 0.18, tree.y - tree.radius * 0.28, tree.radius * 0.44, 0, Math.PI * 2);
+    ctx.arc(tree.x - tree.radius * 0.18 + windSwayX * 0.7, tree.y - tree.radius * 0.28 + windSwayY * 0.7, tree.radius * 0.44, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.restore();
@@ -1844,6 +2059,96 @@ export class Field {
     ctx.restore();
   }
 
+  renderLeafClusters(ctx, left, top, right, bottom) {
+    if (!Array.isArray(this.leafClusters)) return;
+    ctx.save();
+    for (const cluster of this.leafClusters) {
+      if (cluster.isScattered) continue;
+      if (
+        cluster.x + cluster.radius < left ||
+        cluster.x - cluster.radius > right ||
+        cluster.y + cluster.radius < top ||
+        cluster.y - cluster.radius > bottom
+      ) {
+        continue;
+      }
+      for (const leaf of cluster.leaves) {
+        ctx.save();
+        ctx.translate(cluster.x + leaf.dx, cluster.y + leaf.dy);
+        ctx.rotate(leaf.angle);
+        ctx.fillStyle = leaf.color;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, leaf.w, leaf.h, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+    ctx.restore();
+  }
+
+  renderWoodlandSticks(ctx, left, top, right, bottom) {
+    if (!Array.isArray(this.sticks)) return;
+    ctx.save();
+    for (const stick of this.sticks) {
+      if (stick.isCarried) continue;
+      if (stick.x < left - 30 || stick.x > right + 30 || stick.y < top - 30 || stick.y > bottom + 30) continue;
+
+      ctx.save();
+      ctx.translate(stick.x, stick.y);
+      ctx.rotate(stick.angle);
+
+      // Soft ground stick shadow
+      ctx.fillStyle = 'rgba(20, 35, 15, 0.28)';
+      ctx.fillRect(-stick.length / 2, 2, stick.length, 2);
+
+      // Fallen woodland stick twig body
+      ctx.strokeStyle = '#54361e';
+      ctx.lineWidth = 3.0;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-stick.length / 2, 0);
+      ctx.lineTo(stick.length / 2, 0);
+      ctx.stroke();
+
+      // Small secondary twig fork
+      ctx.strokeStyle = '#6c4728';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(-stick.length * 0.15, 0);
+      ctx.lineTo(-stick.length * 0.05, -5.0);
+      ctx.stroke();
+
+      // Tiny green bud on fork
+      ctx.fillStyle = '#65a30d';
+      ctx.beginPath();
+      ctx.arc(-stick.length * 0.05, -5.0, 1.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  renderScentTrails(ctx, left, top, right, bottom) {
+    if (!Array.isArray(this.scentTrails)) return;
+    ctx.save();
+    for (const scent of this.scentTrails) {
+      if (scent.x < left - 20 || scent.x > right + 20 || scent.y < top - 20 || scent.y > bottom + 20) continue;
+      const alpha = Math.max(0, Math.min(0.65, (scent.life / (scent.maxLife || 22)) * 0.65));
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = scent.type === 'squirrel' ? 'rgba(245, 158, 11, 0.7)' : 'rgba(56, 189, 248, 0.7)';
+      ctx.fillStyle = scent.type === 'squirrel' ? '#f59e0b' : '#38bdf8';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(scent.x, scent.y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(scent.x, scent.y, 5.0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   renderParticles(ctx, left, top, right, bottom) {
     ctx.save();
     ctx.fillStyle = '#f8fafc';
@@ -1856,6 +2161,11 @@ export class Field {
       }
     }
     ctx.restore();
+
+    // Render active dynamic particle system (autumn leaves, gallop dust, sniffing rings)
+    if (this.particleSystem && typeof this.particleSystem.draw === 'function') {
+      this.particleSystem.draw(ctx);
+    }
   }
 
   renderPerimeterWalls(ctx) {

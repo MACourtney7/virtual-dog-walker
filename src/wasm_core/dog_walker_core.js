@@ -41,6 +41,26 @@ export class WasmWorldSim {
         }
     }
     /**
+     * Exact port of `Field.resolveCircleCollision` (56px perimeter, trees/benches/bins/tower/rocks).
+     * @param {number} x
+     * @param {number} y
+     * @param {number} radius
+     * @returns {Float64Array}
+     */
+    resolve_field_collision(x, y, radius) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+            wasm.wasmworldsim_resolve_field_collision(retptr, this.__wbg_ptr, x, y, radius);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var v1 = getArrayF64FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export(r0, r1 * 8, 8);
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
      * @param {Float64Array | number[]} waypoints_flat
      * @param {number} speed
      * @param {number} spawn_time
@@ -66,12 +86,50 @@ export class WasmWorldSim {
         }
     }
     /**
+     * Exact in-progress NPC path sample (see `npc_sim::sample_path_exact`).
+     * Returns [x, y, vx, vy, angle, hasAngle(0/1)].
+     * @param {Float64Array | number[]} waypoints_flat
+     * @param {number} speed
+     * @param {number} distance
+     * @returns {Float64Array}
+     */
+    sample_npc_path(waypoints_flat, speed, distance) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+            const val2 = +speed;
+            const val3 = +distance;
+            const ptr0 = passArrayF64ToWasm0(waypoints_flat, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmworldsim_sample_npc_path(retptr, this.__wbg_ptr, ptr0, len0, val2, val3);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var v4 = getArrayF64FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export(r0, r1 * 8, 8);
+            return v4;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
      * @param {string} colliders_json
      */
     set_colliders(colliders_json) {
         const ptr0 = passStringToWasm0(colliders_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         const len0 = WASM_VECTOR_LEN;
         wasm.wasmworldsim_set_colliders(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * Replace the exact field obstacle set (JSON array of
+     * `{"kind":"circle","x","y","r"}` / `{"kind":"rect","x","y","hw","hh"}`), in the same order as
+     * `Field.resolveCircleCollision` applies them.
+     * @param {string} obstacles_json
+     * @returns {boolean}
+     */
+    set_world_obstacles(obstacles_json) {
+        const ptr0 = passStringToWasm0(obstacles_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmworldsim_set_world_obstacles(this.__wbg_ptr, ptr0, len0);
+        return ret !== 0;
     }
     /**
      * @param {number} dt
@@ -81,6 +139,32 @@ export class WasmWorldSim {
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.wasmworldsim_step_ball(retptr, this.__wbg_ptr, dt);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var v1 = getArrayF64FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export(r0, r1 * 8, 8);
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Ear spring integration towards JS-computed targets. Returns [lAngle, lVel, rAngle, rVel].
+     * @param {number} left_angle
+     * @param {number} left_v
+     * @param {number} right_angle
+     * @param {number} right_v
+     * @param {number} target_left
+     * @param {number} target_right
+     * @param {number} spring_k
+     * @param {number} spring_damp
+     * @param {number} dt
+     * @returns {Float64Array}
+     */
+    step_ear_targets(left_angle, left_v, right_angle, right_v, target_left, target_right, spring_k, spring_damp, dt) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+            wasm.wasmworldsim_step_ear_targets(retptr, this.__wbg_ptr, left_angle, left_v, right_angle, right_v, target_left, target_right, spring_k, spring_damp, dt);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             var v1 = getArrayF64FromWasm0(r0, r1).slice();
@@ -131,6 +215,33 @@ export class WasmWorldSim {
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.wasmworldsim_step_leash(retptr, this.__wbg_ptr, dog_x, dog_y, dog_vx, dog_vy, owner_x, owner_y, max_length, stiffness, damping, dt);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var v1 = getArrayF64FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export(r0, r1 * 8, 8);
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Stateless TennisBall step (matches `toy.js`). `state` = [x, y, z, vx, vy, vz].
+     * Returns [x, y, z, vx, vy, vz]. Independent of the single internal `ball`.
+     * @param {number} x
+     * @param {number} y
+     * @param {number} z
+     * @param {number} vx
+     * @param {number} vy
+     * @param {number} vz
+     * @param {number} dt
+     * @param {number} world_w
+     * @param {number} world_h
+     * @returns {Float64Array}
+     */
+    step_toy_ball(x, y, z, vx, vy, vz, dt, world_w, world_h) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+            wasm.wasmworldsim_step_toy_ball(retptr, this.__wbg_ptr, x, y, z, vx, vy, vz, dt, world_w, world_h);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             var v1 = getArrayF64FromWasm0(r0, r1).slice();

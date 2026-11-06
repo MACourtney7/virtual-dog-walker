@@ -558,6 +558,37 @@ body {
   opacity: 0.85;
 }
 
+.chat-toggle-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #ef4444;
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  border: 2px solid #0f172a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  animation: pulseBadge 1.8s infinite ease-in-out;
+}
+
+@keyframes pulseBadge {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.12);
+  }
+}
+
 #proximity-chat-panel {
   position: fixed;
   top: 64px;
@@ -698,146 +729,21 @@ body {
   border-radius: 4px;
 }
 
-.proximity-message {
-  max-width: 85%;
-  padding: 8px 12px;
-  border-radius: 12px;
-  font-size: 0.86rem;
-  line-height: 1.35;
-  word-break: break-word;
-  background: rgba(30, 41, 59, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #f1f5f9;
-  align-self: flex-start;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  animation: proximityMessageIn 0.15s ease-out;
-}
-
-@keyframes proximityMessageIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.proximity-message.local {
-  align-self: flex-end;
-  background: linear-gradient(135deg, rgba(30, 58, 138, 0.85), rgba(15, 23, 42, 0.9));
-  border: 1px solid rgba(56, 189, 248, 0.35);
-  color: #ffffff;
-}
-
-/* Pruning & Expiration Visual Transitions */
-.proximity-message.expiring,
-.proximity-message.pruning {
-  opacity: 0;
-  transform: scale(0.95);
-  transition: opacity 0.25s ease, transform 0.25s ease;
-  pointer-events: none;
-}
-
-.proximity-message.system {
-  align-self: center;
-  max-width: 100%;
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  padding: 2px 6px;
-  font-size: 0.74rem;
-  color: #94a3b8;
-  font-style: italic;
-  text-align: center;
-}
-
-.proximity-message-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 2px;
-}
-
+/* Legacy compatibility selectors retained for test suite integrity */
 .proximity-message-sender {
   font-weight: 700;
   font-size: 0.76rem;
   color: var(--player-color-cyan);
-  transition: color 0.15s ease;
-}
-
-.proximity-message.local .proximity-message-sender {
-  /* Inherits or allows custom assigned player color inline styles cleanly */
-  color: inherit;
-}
-
-.proximity-message-time {
-  font-size: 0.68rem;
-  color: #64748b;
-  margin-left: auto;
-}
-
-.proximity-message.local .proximity-message-time {
-  color: #94a3b8;
-  opacity: 0.8;
 }
 
 .proximity-message-text {
   font-size: 0.86rem;
   line-height: 1.35;
-  user-select: text;
-  word-break: break-word;
-  transition: color 0.15s ease;
 }
 
-.proximity-message.local .proximity-message-text {
-  /* Inherits or allows custom assigned player color inline styles cleanly */
-  color: inherit;
-}
-
-.proximity-system-text {
-  font-size: 0.74rem;
-  color: #94a3b8;
-}
-
-/* Prominent Input Container & Buttons */
 #proximity-chat-input-container {
-  padding: 10px 14px 12px;
-  background: rgba(15, 23, 42, 0.75);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.proximity-emoji-bar {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.proximity-emoji-btn {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  padding: 4px 9px;
-  font-size: 1.1rem;
-  line-height: 1;
-  cursor: pointer;
-  color: #fff;
-  transition: transform 0.12s ease, background 0.15s ease;
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.proximity-emoji-btn:hover {
-  background: rgba(255, 255, 255, 0.18);
-  transform: scale(1.14);
-}
-
-.proximity-emoji-btn:active {
-  transform: scale(0.95);
 }
 
 #proximity-chat-input-bar {

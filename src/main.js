@@ -16,7 +16,7 @@ import { NPC_PATHS, getNpcPath } from './world/npc_paths.js';
 import { NavigationArrow } from './ui/navigation_arrow.js';
 import { weatherClient, WeatherType } from './systems/weather.js';
 import { environmentSystem, TimeOfDay } from './world/environment.js';
-import { initWasmSim } from './engine/wasm_sim_bridge.js';
+import { initWasmSim, syncWorldObstacles } from './engine/wasm_sim_bridge.js';
 
 export class CliftonDownGame {
   constructor() {
@@ -203,6 +203,7 @@ export class CliftonDownGame {
             ? this.field.getColliders()
             : [];
           this.wasmSim.set_colliders(JSON.stringify(colliders));
+          syncWorldObstacles(this.field);
         }
       })
       .catch(() => {});
@@ -239,6 +240,7 @@ export class CliftonDownGame {
         ? this.field.getColliders()
         : [];
       this.wasmSim.set_colliders(JSON.stringify(colliders));
+      syncWorldObstacles(this.field);
     }
 
     // Set initial local profile metadata for networking

@@ -1,5 +1,5 @@
 // Tennis Ball Toy - Ballistic 2.5D Trajectory, Bouncing & Canine Fetching Mechanics
-import { getWasmSim } from '../engine/wasm_sim_bridge.js';
+import { stepToyBall } from '../engine/wasm_sim_bridge.js';
 
 export class TennisBall {
   constructor(x = 0, y = 0) {
@@ -93,38 +93,9 @@ export class TennisBall {
       return;
     }
 
-    // 2.5D Ballistic motion
-    this.x += this.vx * dt;
-    this.y += this.vy * dt;
-    this.vz -= this.gravity * dt;
-    this.z += this.vz * dt;
-
-    // Ground bounce
-    if (this.z <= 0) {
-      this.z = 0;
-      if (Math.abs(this.vz) > 40) {
-        this.vz = -this.vz * this.restitution;
-        this.vx *= 0.82;
-        this.vy *= 0.82;
-      } else {
-        this.vz = 0;
-        this.vx *= Math.pow(this.friction, dt * 60);
-        this.vy *= Math.pow(this.friction, dt * 60);
-      }
-    }
-
-    // World boundary bounce
-    if (field) {
-      const minX = 70;
-      const maxX = field.width - 70;
-      const minY = 70;
-      const maxY = field.height - 70;
-
-      if (this.x < minX) { this.x = minX; this.vx = -this.vx * 0.7; }
-      if (this.x > maxX) { this.x = maxX; this.vx = -this.vx * 0.7; }
-      if (this.y < minY) { this.y = minY; this.vy = -this.vy * 0.7; }
-      if (this.y > maxY) { this.y = maxY; this.vy = -this.vy * 0.7; }
-    }
+    // 2.5D Ballistic motion (gravity, bounce, rolling friction, world-edge bounce):
+    // dog_walker_core Wasm is the simulation authority; exact JS fallback lives in the bridge.
+    stepToyBall(this, dt, field);
 
     // Depth sorting base Y is the ground position
     this.depthY = this.y;

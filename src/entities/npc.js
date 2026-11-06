@@ -12,7 +12,7 @@ import {
   ODD_PHRASES
 } from './npc_content.js';
 import { getNpcPath, NPC_PATHS } from '../world/npc_paths.js';
-import { sampleNpcState } from '../engine/wasm_sim_bridge.js';
+import { sampleNpcPath } from '../engine/wasm_sim_bridge.js';
 
 export const NPCState = {
   WALKING: 'WALKING',
@@ -90,6 +90,13 @@ export class ParkNPC {
         this.segmentLengths.push(segLen);
         this.totalLength += segLen;
       }
+    }
+
+    // Flat [x0,y0,x1,y1,...] copy for the dog_walker_core path sampler
+    this.flatWaypoints = new Float64Array(this.waypoints.length * 2);
+    for (let i = 0; i < this.waypoints.length; i++) {
+      this.flatWaypoints[2 * i] = this.waypoints[i].x;
+      this.flatWaypoints[2 * i + 1] = this.waypoints[i].y;
     }
 
     // Precompute finish time
@@ -178,65 +185,17 @@ export class ParkNPC {
         this.done = false;
       }
     } else {
-      let accumulated = 0;
-      let interpolated = false;
-      let dx = 0;
-      let dy = 0;
-      let segLen = 0;
-      let activeIndex = -1;
-      let activeRemaining = 0;
-
-      for (let i = 0; i < this.segmentLengths.length; i++) {
-        segLen = this.segmentLengths[i];
-        if (accumulated + segLen >= distance) {
-          const remaining = distance - accumulated;
-          const segT = segLen > 0.000001 ? (remaining / segLen) : 0;
-          const p1 = this.waypoints[i];
-          const p2 = this.waypoints[i + 1];
-          dx = p2.x - p1.x;
-          dy = p2.y - p1.y;
-          this.x = p1.x + dx * segT;
-          this.y = p1.y + dy * segT;
-          interpolated = true;
-          activeIndex = i;
-          activeRemaining = remaining;
-          break;
-        }
-        accumulated += segLen;
-      }
-
-      if (!interpolated && this.waypoints.length >= 2) {
-        const lastIdx = this.waypoints.length - 2;
-        const p1 = this.waypoints[lastIdx];
-        const p2 = this.waypoints[lastIdx + 1];
-        dx = p2.x - p1.x;
-        dy = p2.y - p1.y;
-        segLen = this.segmentLengths[lastIdx] || 0;
-        this.x = p2.x;
-        this.y = p2.y;
-        activeIndex = lastIdx;
-        activeRemaining = segLen;
-      }
-
+      // In-progress polyline sampling: dog_walker_core Wasm is the authority
+      // (exact JS fallback lives in the bridge).
+      const sample = sampleNpcPath(this.flatWaypoints, this.speed, distance);
+      this.x = sample.x;
+      this.y = sample.y;
       this.depthY = this.y + 12;
-      if (Math.hypot(dx, dy) > 0.000001) {
-        const segAngle = Math.atan2(dy, dx);
-        const distToNext = segLen - activeRemaining;
-        if (activeIndex >= 0 && activeIndex + 1 < this.segmentLengths.length && distToNext < 25.0) {
-          const nextP1 = this.waypoints[activeIndex + 1];
-          const nextP2 = this.waypoints[activeIndex + 2];
-          const nextAngle = Math.atan2(nextP2.y - nextP1.y, nextP2.x - nextP1.x);
-          let angleDiff = nextAngle - segAngle;
-          while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-          while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-          const blendFactor = Math.max(0, Math.min(0.5, (1.0 - distToNext / 25.0) * 0.5));
-          this.angle = segAngle + angleDiff * blendFactor;
-        } else {
-          this.angle = segAngle;
-        }
+      if (sample.hasAngle) {
+        this.angle = sample.angle;
       }
-      this.vx = segLen > 0.000001 ? (dx / segLen) * this.speed : 0;
-      this.vy = segLen > 0.000001 ? (dy / segLen) * this.speed : 0;
+      this.vx = sample.vx;
+      this.vy = sample.vy;
       if (elapsed > 0 && elapsed < 0.5) {
         this.opacity = 0.25 + 0.75 * (elapsed / 0.5);
       } else {

@@ -126,6 +126,109 @@ pub fn sample_npc_state(
     }
 }
 
+/// Result of sampling the interpolated part of an NPC path.
+/// `has_angle` is false when the active segment is degenerate (JS keeps the previous angle).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PathSample {
+    pub x: f64,
+    pub y: f64,
+    pub vx: f64,
+    pub vy: f64,
+    pub angle: f64,
+    pub has_angle: bool,
+}
+
+/// Exact port of the in-progress (distance < total length) branch of `ParkNPC.setClock` in
+/// `src/entities/npc.js` (25px corner blend, 0.5 max blend, segment-direction velocity).
+/// `waypoints_flat` is `[x0, y0, x1, y1, ...]`. Finish/fade/speech remain in JS.
+pub fn sample_path_exact(waypoints_flat: &[f64], speed: f64, distance: f64) -> PathSample {
+    let n = waypoints_flat.len() / 2;
+    let wp = |i: usize| (waypoints_flat[2 * i], waypoints_flat[2 * i + 1]);
+    if n < 2 {
+        let (x, y) = if n == 1 { wp(0) } else { (0.0, 0.0) };
+        return PathSample { x, y, vx: 0.0, vy: 0.0, angle: 0.0, has_angle: false };
+    }
+    let seg_count = n - 1;
+    let mut seg_len_v = Vec::with_capacity(seg_count);
+    for i in 0..seg_count {
+        let (ax, ay) = wp(i);
+        let (bx, by) = wp(i + 1);
+        seg_len_v.push((bx - ax).hypot(by - ay));
+    }
+
+    let mut accumulated = 0.0;
+    let mut interpolated = false;
+    let (mut x, mut y) = wp(0);
+    let (mut dx, mut dy) = (0.0, 0.0);
+    let mut seg_len = 0.0;
+    let mut active_index: isize = -1;
+    let mut active_remaining = 0.0;
+
+    for i in 0..seg_count {
+        seg_len = seg_len_v[i];
+        if accumulated + seg_len >= distance {
+            let remaining = distance - accumulated;
+            let seg_t = if seg_len > 0.000001 { remaining / seg_len } else { 0.0 };
+            let (p1x, p1y) = wp(i);
+            let (p2x, p2y) = wp(i + 1);
+            dx = p2x - p1x;
+            dy = p2y - p1y;
+            x = p1x + dx * seg_t;
+            y = p1y + dy * seg_t;
+            interpolated = true;
+            active_index = i as isize;
+            active_remaining = remaining;
+            break;
+        }
+        accumulated += seg_len;
+    }
+
+    if !interpolated {
+        let last_idx = n - 2;
+        let (p1x, p1y) = wp(last_idx);
+        let (p2x, p2y) = wp(last_idx + 1);
+        dx = p2x - p1x;
+        dy = p2y - p1y;
+        seg_len = seg_len_v[last_idx];
+        x = p2x;
+        y = p2y;
+        active_index = last_idx as isize;
+        active_remaining = seg_len;
+    }
+
+    let mut angle = 0.0;
+    let mut has_angle = false;
+    if dx.hypot(dy) > 0.000001 {
+        let seg_angle = dy.atan2(dx);
+        let dist_to_next = seg_len - active_remaining;
+        if active_index >= 0 && (active_index as usize) + 1 < seg_count && dist_to_next < 25.0 {
+            let ai = active_index as usize;
+            let (n1x, n1y) = wp(ai + 1);
+            let (n2x, n2y) = wp(ai + 2);
+            let next_angle = (n2y - n1y).atan2(n2x - n1x);
+            let mut angle_diff = next_angle - seg_angle;
+            while angle_diff < -std::f64::consts::PI {
+                angle_diff += std::f64::consts::PI * 2.0;
+            }
+            while angle_diff > std::f64::consts::PI {
+                angle_diff -= std::f64::consts::PI * 2.0;
+            }
+            let blend = ((1.0 - dist_to_next / 25.0) * 0.5).max(0.0).min(0.5);
+            angle = seg_angle + angle_diff * blend;
+        } else {
+            angle = seg_angle;
+        }
+        has_angle = true;
+    }
+
+    let (vx, vy) = if seg_len > 0.000001 {
+        ((dx / seg_len) * speed, (dy / seg_len) * speed)
+    } else {
+        (0.0, 0.0)
+    };
+    PathSample { x, y, vx, vy, angle, has_angle }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -171,5 +274,32 @@ mod tests {
         // Angle should be interpolated between 0.0 and PI/2
         assert!(s.angle > 0.0);
         assert!(s.angle < std::f64::consts::PI / 2.0);
+    }
+
+    #[test]
+    fn test_sample_path_exact_straight_and_corner_blend() {
+        // L-shaped path: east 100px then south 100px.
+        let wp = [0.0, 0.0, 100.0, 0.0, 100.0, 100.0];
+        let s = sample_path_exact(&wp, 20.0, 50.0);
+        assert!((s.x - 50.0).abs() < 1e-9 && s.y.abs() < 1e-9);
+        assert!(s.has_angle && s.angle.abs() < 1e-9);
+        assert!((s.vx - 20.0).abs() < 1e-9 && s.vy.abs() < 1e-9);
+        // 10px before the corner => blended angle between 0 and pi/2 (bounded by half).
+        let s = sample_path_exact(&wp, 20.0, 90.0);
+        assert!(s.angle > 0.0 && s.angle <= std::f64::consts::FRAC_PI_4 + 1e-9);
+        // Velocity follows the *segment* direction (JS semantics), not the blended angle.
+        assert!((s.vx - 20.0).abs() < 1e-9 && s.vy.abs() < 1e-9);
+        // Second segment heads south.
+        let s = sample_path_exact(&wp, 20.0, 150.0);
+        assert!((s.x - 100.0).abs() < 1e-9 && (s.y - 50.0).abs() < 1e-9);
+        assert!((s.angle - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_sample_path_exact_degenerate_segment_keeps_angle_unset() {
+        let wp = [10.0, 10.0, 10.0, 10.0];
+        let s = sample_path_exact(&wp, 20.0, 0.0);
+        assert!(!s.has_angle);
+        assert_eq!((s.vx, s.vy), (0.0, 0.0));
     }
 }

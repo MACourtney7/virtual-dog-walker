@@ -1,4 +1,5 @@
 // Human Owner Player Avatar - 8-Way Movement, Customization & Interaction Controller
+import { resolveFieldCollision } from '../engine/wasm_sim_bridge.js';
 
 export class Owner {
   constructor(x = 1200, y = 900, name = 'Walker', isLocal = true) {
@@ -85,9 +86,7 @@ export class Owner {
 
     // Resolve world obstacle & boundary collisions
     if (field) {
-      const resolved = field.resolveCircleCollision(this.x, this.y, this.radius);
-      this.x = resolved.x;
-      this.y = resolved.y;
+      resolveFieldCollision(this, this.radius, field);
     }
 
     this.depthY = this.y + 12;

@@ -53,6 +53,8 @@ export class ProximityChat {
 
     this.isManuallyHidden = false;
     this.toggleBtn = null;
+    this.unreadBadgeEl = null;
+    this.unreadCount = 0;
     this._boundOnToggleClick = null;
 
     this._boundOnKeyDown = null;
@@ -127,6 +129,9 @@ export class ProximityChat {
         if (typeof this.onBurnSession === 'function') {
           this.onBurnSession();
         }
+      },
+      onUnreadCountChange: (count) => {
+        this.setUnreadBadge(count);
       }
     });
 
@@ -154,13 +159,17 @@ export class ProximityChat {
     toggleBtn.setAttribute('type', 'button');
     toggleBtn.setAttribute('aria-label', 'Toggle Chat');
     toggleBtn.setAttribute('title', 'Toggle Chat');
-    toggleBtn.innerHTML = '<span class="chat-toggle-icon">💬</span>';
+    toggleBtn.innerHTML = `
+      <span class="chat-toggle-icon">💬</span>
+      <span class="chat-toggle-badge" id="chat-toggle-badge" style="display: none;">0</span>
+    `;
 
     const parentElem = this.container || document.body;
     if (parentElem) {
       parentElem.appendChild(toggleBtn);
     }
     this.toggleBtn = toggleBtn;
+    this.unreadBadgeEl = toggleBtn.querySelector('#chat-toggle-badge');
 
     // Toggle button click handler
     this._boundOnToggleClick = (e) => {
@@ -263,6 +272,15 @@ export class ProximityChat {
 
     this.messages.push(msgObj);
     this.lastMessage = msgObj;
+
+    // Increment unread count if panel is collapsed/hidden
+    if (!this.isVisible()) {
+      if (this.widget && typeof this.widget.incrementUnread === 'function') {
+        this.widget.incrementUnread();
+      } else {
+        this.setUnreadBadge(this.unreadCount + 1);
+      }
+    }
 
     // Auto-unhide logic: If in an active cluster, automatically unhide panel when message is added
     if (this.isClusterActive() || this.activeCluster) {
@@ -429,6 +447,22 @@ export class ProximityChat {
   }
 
   /**
+   * Updates unread badge on #chat-toggle-btn.
+   * @param {number} count
+   */
+  setUnreadBadge(count) {
+    this.unreadCount = Math.max(0, count || 0);
+    if (!this.unreadBadgeEl) return;
+    if (this.unreadCount > 0) {
+      this.unreadBadgeEl.textContent = this.unreadCount > 99 ? '99+' : String(this.unreadCount);
+      this.unreadBadgeEl.style.display = 'inline-flex';
+    } else {
+      this.unreadBadgeEl.textContent = '0';
+      this.unreadBadgeEl.style.display = 'none';
+    }
+  }
+
+  /**
    * Slides in HUD panel.
    */
   showHUD() {
@@ -439,6 +473,11 @@ export class ProximityChat {
     if (this.toggleBtn) {
       this.toggleBtn.classList.add('active');
       this.toggleBtn.classList.remove('collapsed');
+    }
+    if (this.widget && typeof this.widget.clearUnread === 'function') {
+      this.widget.clearUnread();
+    } else {
+      this.setUnreadBadge(0);
     }
   }
 
@@ -470,7 +509,22 @@ export class ProximityChat {
   updateParticipantsBadge() {
     if (this.widget && typeof this.widget.setPeers === 'function') {
       const activePeers = this.getActivePeers();
-      this.widget.setPeers(activePeers, activePeers.length);
+      const peerMeta = {};
+      if (this.participants && Array.isArray(this.participants)) {
+        for (const p of this.participants) {
+          if (!p.isLocal) {
+            peerMeta[p.id] = {
+              name: p.name,
+              color: this.playerColors.get(p.id) || null
+            };
+          }
+        }
+      }
+      if (peerMeta && Object.keys(peerMeta).length > 0) {
+        this.widget.setPeers(this.activeCluster, this.activeCluster.length, peerMeta);
+      } else {
+        this.widget.setPeers(this.activeCluster, this.activeCluster.length);
+      }
     }
     if (!this.pillsContainer || typeof document === 'undefined') return;
     if (this.pillsContainer.id === 'proximity-pills-list') {
@@ -678,9 +732,6 @@ export class ProximityChat {
         this.activeCluster = currentPeerIds;
         this.participants = newParticipants;
         this.updateParticipantsBadge();
-        if (this.widget && typeof this.widget.setPeers === 'function') {
-          this.widget.setPeers(this.activeCluster, this.activeCluster.length);
-        }
         if (!this.isManuallyHidden) {
           this.showHUD();
         }
@@ -719,9 +770,6 @@ export class ProximityChat {
           this.activeCluster = currentPeerIds;
           this.participants = newParticipants;
           this.updateParticipantsBadge();
-          if (this.widget && typeof this.widget.setPeers === 'function') {
-            this.widget.setPeers(this.activeCluster, this.activeCluster.length);
-          }
           if (typeof this.onClusterChanged === 'function') {
             this.onClusterChanged(this.getActivePeers());
           }

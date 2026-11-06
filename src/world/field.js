@@ -119,6 +119,35 @@ export class Field {
     return null;
   }
 
+  /**
+   * Exact obstacle list mirroring `resolveCircleCollision` (same order and geometry) for the
+   * Rust/Wasm `set_world_obstacles` API. Entries with non-finite geometry are skipped, exactly
+   * like the JS comparisons (`dist < NaN` is false).
+   */
+  getWorldObstacles() {
+    const out = [];
+    const fin = (...v) => v.every((n) => typeof n === 'number' && Number.isFinite(n));
+    for (const t of (this.trees || [])) {
+      if (fin(t.x, t.depthY, t.trunkRadius)) out.push({ kind: 'circle', x: t.x, y: t.depthY, r: t.trunkRadius });
+    }
+    for (const b of (this.benches || [])) {
+      const isVertical = b.angle && Math.abs(Math.sin(b.angle)) > 0.7;
+      const hw = (isVertical ? b.h : b.w) / 2;
+      const hh = (isVertical ? b.w : b.h) / 2;
+      if (fin(b.x, b.y, hw, hh)) out.push({ kind: 'rect', x: b.x, y: b.y, hw, hh });
+    }
+    for (const b of (this.bins || [])) {
+      if (fin(b.x, b.y, b.radius)) out.push({ kind: 'circle', x: b.x, y: b.y, r: b.radius });
+    }
+    if (this.waterTower && fin(this.waterTower.x, this.waterTower.y, this.waterTower.radius)) {
+      out.push({ kind: 'circle', x: this.waterTower.x, y: this.waterTower.y, r: this.waterTower.radius });
+    }
+    for (const r of (this.rockOutcrops || [])) {
+      if (fin(r.x, r.depthY)) out.push({ kind: 'circle', x: r.x, y: r.depthY - 8, r: r.r || 24 });
+    }
+    return out;
+  }
+
   getColliders() {
     const colliders = [];
     if (Array.isArray(this.trees)) {

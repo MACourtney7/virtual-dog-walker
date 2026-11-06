@@ -161,6 +161,69 @@ impl BallSim {
     }
 }
 
+/// Tuning constants mirroring `src/entities/toy.js` (`TennisBall`) exactly so the Wasm
+/// path is behaviourally identical to the JS fallback.
+pub const TOY_GRAVITY: f64 = 720.0;
+pub const TOY_RESTITUTION: f64 = 0.62;
+pub const TOY_FRICTION: f64 = 0.94;
+pub const TOY_BOUNCE_THRESHOLD: f64 = 40.0;
+pub const TOY_BOUNCE_TANGENT_DAMPING: f64 = 0.82;
+pub const TOY_BOUNDARY_MARGIN: f64 = 70.0;
+pub const TOY_BOUNDARY_DAMPING: f64 = 0.7;
+
+/// Stateless 2.5D tennis-ball integration step (one ball per call; safe for any number of
+/// local/remote balls). Returns `[x, y, z, vx, vy, vz]`.
+pub fn step_toy_ball(
+    state: [f64; 6],
+    dt: f64,
+    world_w: f64,
+    world_h: f64,
+) -> [f64; 6] {
+    let [mut x, mut y, mut z, mut vx, mut vy, mut vz] = state;
+
+    x += vx * dt;
+    y += vy * dt;
+    vz -= TOY_GRAVITY * dt;
+    z += vz * dt;
+
+    if z <= 0.0 {
+        z = 0.0;
+        if vz.abs() > TOY_BOUNCE_THRESHOLD {
+            vz = -vz * TOY_RESTITUTION;
+            vx *= TOY_BOUNCE_TANGENT_DAMPING;
+            vy *= TOY_BOUNCE_TANGENT_DAMPING;
+        } else {
+            vz = 0.0;
+            let f = TOY_FRICTION.powf(dt * 60.0);
+            vx *= f;
+            vy *= f;
+        }
+    }
+
+    let min_x = TOY_BOUNDARY_MARGIN;
+    let max_x = world_w - TOY_BOUNDARY_MARGIN;
+    let min_y = TOY_BOUNDARY_MARGIN;
+    let max_y = world_h - TOY_BOUNDARY_MARGIN;
+    if x < min_x {
+        x = min_x;
+        vx = -vx * TOY_BOUNDARY_DAMPING;
+    }
+    if x > max_x {
+        x = max_x;
+        vx = -vx * TOY_BOUNDARY_DAMPING;
+    }
+    if y < min_y {
+        y = min_y;
+        vy = -vy * TOY_BOUNDARY_DAMPING;
+    }
+    if y > max_y {
+        y = max_y;
+        vy = -vy * TOY_BOUNDARY_DAMPING;
+    }
+
+    [x, y, z, vx, vy, vz]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -216,5 +279,49 @@ mod tests {
         assert!(hit);
         // vx should have reversed direction or deflected away
         assert!(sim.state.vx <= 0.0 || sim.state.x < 150.0);
+    }
+
+    #[test]
+    fn test_toy_ball_gravity_and_bounce_restitution() {
+        // Launch up from the ground; first descent through z<=0 must bounce with restitution.
+        let mut st = [500.0, 500.0, 12.0, 100.0, 0.0, 180.0];
+        let mut bounced = false;
+        for _ in 0..240 {
+            let before_vz = st[5];
+            st = step_toy_ball(st, 1.0 / 60.0, 3200.0, 2400.0);
+            if st[2] == 0.0 && before_vz < -40.0 {
+                assert!(st[5] > 0.0);
+                bounced = true;
+                break;
+            }
+        }
+        assert!(bounced);
+    }
+
+    #[test]
+    fn test_toy_ball_rolling_friction_decay() {
+        let mut st = [500.0, 500.0, 0.0, 100.0, 0.0, 0.0];
+        let v0 = st[3];
+        st = step_toy_ball(st, 1.0 / 60.0, 3200.0, 2400.0);
+        assert!(st[3] < v0 && st[3] > 0.0);
+        assert!((st[3] - v0 * TOY_FRICTION).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_toy_ball_world_boundary_bounce() {
+        let st = step_toy_ball([71.0, 500.0, 0.0, -300.0, 0.0, 0.0], 1.0 / 60.0, 3200.0, 2400.0);
+        assert_eq!(st[0], 70.0);
+        assert!(st[3] > 0.0);
+        let st = step_toy_ball([500.0, 2400.0 - 71.0, 0.0, 0.0, 300.0, 0.0], 1.0 / 60.0, 3200.0, 2400.0);
+        assert_eq!(st[1], 2400.0 - 70.0);
+        assert!(st[4] < 0.0);
+    }
+
+    #[test]
+    fn test_toy_ball_is_stateless_and_independent() {
+        let a = step_toy_ball([100.0, 100.0, 50.0, 10.0, 20.0, 0.0], 0.016, 3200.0, 2400.0);
+        let _ = step_toy_ball([900.0, 900.0, 5.0, -80.0, 40.0, 100.0], 0.016, 3200.0, 2400.0);
+        let a2 = step_toy_ball([100.0, 100.0, 50.0, 10.0, 20.0, 0.0], 0.016, 3200.0, 2400.0);
+        assert_eq!(a, a2);
     }
 }

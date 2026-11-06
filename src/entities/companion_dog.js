@@ -1,6 +1,6 @@
 // Companion Dog Entity - Canine Steering AI, Floppy Ear Springs, Leash Mechanics & Ball Fetching
 import { PoopPile } from './waste.js';
-import { stepLeashConstraint } from '../engine/wasm_sim_bridge.js';
+import { stepLeashConstraint, resolveFieldCollision, stepEarSpringsToTargets } from '../engine/wasm_sim_bridge.js';
 
 export const DogState = {
   FOLLOWING: 'FOLLOWING',
@@ -513,9 +513,7 @@ export class CompanionDog {
 
     // Obstacle and world boundary collisions
     if (field) {
-      const resolved = field.resolveCircleCollision(this.x, this.y, this.radius);
-      this.x = resolved.x;
-      this.y = resolved.y;
+      resolveFieldCollision(this, this.radius, field);
     }
 
     this.depthY = this.y + 6;
@@ -528,15 +526,8 @@ export class CompanionDog {
     const targetLeftEar = speedLag - trotBob + lateralLag;
     const targetRightEar = speedLag + trotBob - lateralLag;
 
-    // Left ear spring
-    const leftForce = -this.springK * (this.leftEar.angle - targetLeftEar) - this.springDamp * this.leftEar.vel;
-    this.leftEar.vel += leftForce * dt;
-    this.leftEar.angle += this.leftEar.vel * dt;
-
-    // Right ear spring
-    const rightForce = -this.springK * (this.rightEar.angle - targetRightEar) - this.springDamp * this.rightEar.vel;
-    this.rightEar.vel += rightForce * dt;
-    this.rightEar.angle += this.rightEar.vel * dt;
+    // Ear springs integrated by dog_walker_core (exact JS fallback in the bridge)
+    stepEarSpringsToTargets(this.leftEar, this.rightEar, targetLeftEar, targetRightEar, this.springK, this.springDamp, dt);
 
     // 5. Tail Wagging - scales wag frequency proportional to playfulness
     const movingWag = Math.hypot(this.vx, this.vy) > 10 ? 1.5 : 1.0;

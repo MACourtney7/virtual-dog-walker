@@ -23,8 +23,12 @@ class TestWasmCoreSim(unittest.TestCase):
             text=True
         )
         self.assertEqual(res.returncode, 0, f"cargo test failed:\n{res.stdout}\n{res.stderr}")
-        self.assertTrue("passed" in res.stdout and ("15 passed" in res.stdout or "16 passed" in res.stdout))
-        print("✅ dog_walker_core native Rust tests passed (>= 15)")
+        self.assertIn("test result: ok.", res.stdout)
+        import re
+        match = re.search(r"(\d+) passed", res.stdout)
+        self.assertIsNotNone(match)
+        self.assertGreaterEqual(int(match.group(1)), 15)
+        print(f"✅ dog_walker_core native Rust tests passed ({match.group(1)} >= 15)")
 
     def test_dual_wasm_build_artifacts_exist(self):
         """Verify scripts/build_wasm.sh generated wasm and js files for both zero_mesh and dog_walker_core."""
@@ -93,13 +97,33 @@ class TestWasmCoreSim(unittest.TestCase):
                 src = f.read()
                 self.assertIn("wasm_sim_bridge", src, f"Expected wasm_sim_bridge import in {rel_file}")
 
-        # Verify CompanionDog invokes stepLeashConstraint
+        # Verify CompanionDog invokes stepLeashConstraint, resolveFieldCollision and stepEarSpringsToTargets
         dog_path = os.path.join(PROJECT_ROOT, "src", "entities", "companion_dog.js")
         with open(dog_path) as f:
             dog_src = f.read()
             self.assertIn("stepLeashConstraint(this, this.owner, 65, 4.0, 5.0, dt)", dog_src)
+            self.assertIn("resolveFieldCollision", dog_src)
+            self.assertIn("stepEarSpringsToTargets", dog_src)
 
-        print("✅ wasm_sim_bridge.js cleanly integrated into entity simulation loop")
+        # Verify Owner invokes resolveFieldCollision
+        owner_path = os.path.join(PROJECT_ROOT, "src", "entities", "owner.js")
+        with open(owner_path) as f:
+            owner_src = f.read()
+            self.assertIn("resolveFieldCollision", owner_src)
+
+        # Verify TennisBall invokes stepToyBall
+        toy_path = os.path.join(PROJECT_ROOT, "src", "entities", "toy.js")
+        with open(toy_path) as f:
+            toy_src = f.read()
+            self.assertIn("stepToyBall", toy_src)
+
+        # Verify ParkNPC invokes sampleNpcPath
+        npc_path = os.path.join(PROJECT_ROOT, "src", "entities", "npc.js")
+        with open(npc_path) as f:
+            npc_src = f.read()
+            self.assertIn("sampleNpcPath", npc_src)
+
+        print("✅ wasm_sim_bridge.js cleanly integrated into entity simulation loop (5/5 call sites verified)")
 
 if __name__ == "__main__":
     unittest.main()

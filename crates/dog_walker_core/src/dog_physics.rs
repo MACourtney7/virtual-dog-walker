@@ -67,6 +67,29 @@ pub fn step_ear_springs(
     *right_angle += *right_v * dt;
 }
 
+/// Integrates the two ear springs towards caller-supplied targets (the game computes the
+/// targets from trot bob / lateral lag in JS; this performs only the spring integration).
+/// Mirrors the inline integration in `src/entities/companion_dog.js`.
+pub fn step_ear_springs_to_targets(
+    left_angle: &mut f64,
+    left_v: &mut f64,
+    right_angle: &mut f64,
+    right_v: &mut f64,
+    target_left: f64,
+    target_right: f64,
+    spring_k: f64,
+    spring_damp: f64,
+    dt: f64,
+) {
+    let left_force = -spring_k * (*left_angle - target_left) - spring_damp * *left_v;
+    *left_v += left_force * dt;
+    *left_angle += *left_v * dt;
+
+    let right_force = -spring_k * (*right_angle - target_right) - spring_damp * *right_v;
+    *right_v += right_force * dt;
+    *right_angle += *right_v * dt;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -134,5 +157,21 @@ mod tests {
         }
         assert!(l_ang.abs() < 0.1);
         assert!(r_ang.abs() < 0.1);
+    }
+
+    #[test]
+    fn test_ear_targets_integration_matches_inline_js_formula() {
+        let (mut la, mut lv, mut ra, mut rv) = (0.1_f64, 0.0_f64, -0.05_f64, 0.2_f64);
+        let (tl, tr, k, d, dt) = (-0.02_f64, 0.03_f64, 180.0_f64, 14.0_f64, 1.0 / 60.0);
+        // Reference: inline formula from companion_dog.js
+        let lf = -k * (la - tl) - d * lv;
+        let exp_lv = lv + lf * dt;
+        let exp_la = la + exp_lv * dt;
+        let rf = -k * (ra - tr) - d * rv;
+        let exp_rv = rv + rf * dt;
+        let exp_ra = ra + exp_rv * dt;
+        step_ear_springs_to_targets(&mut la, &mut lv, &mut ra, &mut rv, tl, tr, k, d, dt);
+        assert!((la - exp_la).abs() < 1e-12 && (lv - exp_lv).abs() < 1e-12);
+        assert!((ra - exp_ra).abs() < 1e-12 && (rv - exp_rv).abs() < 1e-12);
     }
 }

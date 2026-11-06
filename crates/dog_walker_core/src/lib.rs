@@ -4,16 +4,17 @@ pub mod dog_physics;
 pub mod math;
 pub mod npc_sim;
 
-use ball_physics::BallSim;
-use collision::{resolve_entity_collisions, Collider};
-use dog_physics::{step_ear_springs, step_leash_constraint};
-use npc_sim::sample_npc_state;
+use ball_physics::{step_toy_ball, BallSim};
+use collision::{resolve_entity_collisions, resolve_field_collisions, Collider, WorldObstacle};
+use dog_physics::{step_ear_springs, step_ear_springs_to_targets, step_leash_constraint};
+use npc_sim::{sample_npc_state, sample_path_exact};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub struct WasmWorldSim {
     ball: BallSim,
     colliders: Vec<Collider>,
+    obstacles: Vec<WorldObstacle>,
     world_width: f64,
     world_height: f64,
 }
@@ -25,6 +26,7 @@ impl WasmWorldSim {
         Self {
             ball: BallSim::new(),
             colliders: Vec::new(),
+            obstacles: Vec::new(),
             world_width,
             world_height,
         }
@@ -119,6 +121,67 @@ impl WasmWorldSim {
             if bounced { 1.0 } else { 0.0 },
             s.bounce_count as f64,
         ]
+    }
+
+    /// Stateless TennisBall step (matches `toy.js`). `state` = [x, y, z, vx, vy, vz].
+    /// Returns [x, y, z, vx, vy, vz]. Independent of the single internal `ball`.
+    pub fn step_toy_ball(
+        &self,
+        x: f64,
+        y: f64,
+        z: f64,
+        vx: f64,
+        vy: f64,
+        vz: f64,
+        dt: f64,
+        world_w: f64,
+        world_h: f64,
+    ) -> Vec<f64> {
+        step_toy_ball([x, y, z, vx, vy, vz], dt, world_w, world_h).to_vec()
+    }
+
+    /// Replace the exact field obstacle set (JSON array of
+    /// `{"kind":"circle","x","y","r"}` / `{"kind":"rect","x","y","hw","hh"}`), in the same order as
+    /// `Field.resolveCircleCollision` applies them.
+    pub fn set_world_obstacles(&mut self, obstacles_json: &str) -> bool {
+        match serde_json::from_str::<Vec<WorldObstacle>>(obstacles_json) {
+            Ok(o) => {
+                self.obstacles = o;
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Exact port of `Field.resolveCircleCollision` (56px perimeter, trees/benches/bins/tower/rocks).
+    pub fn resolve_field_collision(&self, x: f64, y: f64, radius: f64) -> Vec<f64> {
+        let (nx, ny) = resolve_field_collisions(x, y, radius, self.world_width, self.world_height, &self.obstacles);
+        vec![nx, ny]
+    }
+
+    /// Ear spring integration towards JS-computed targets. Returns [lAngle, lVel, rAngle, rVel].
+    pub fn step_ear_targets(
+        &self,
+        left_angle: f64,
+        left_v: f64,
+        right_angle: f64,
+        right_v: f64,
+        target_left: f64,
+        target_right: f64,
+        spring_k: f64,
+        spring_damp: f64,
+        dt: f64,
+    ) -> Vec<f64> {
+        let (mut la, mut lv, mut ra, mut rv) = (left_angle, left_v, right_angle, right_v);
+        step_ear_springs_to_targets(&mut la, &mut lv, &mut ra, &mut rv, target_left, target_right, spring_k, spring_damp, dt);
+        vec![la, lv, ra, rv]
+    }
+
+    /// Exact in-progress NPC path sample (see `npc_sim::sample_path_exact`).
+    /// Returns [x, y, vx, vy, angle, hasAngle(0/1)].
+    pub fn sample_npc_path(&self, waypoints_flat: &[f64], speed: f64, distance: f64) -> Vec<f64> {
+        let s = sample_path_exact(waypoints_flat, speed, distance);
+        vec![s.x, s.y, s.vx, s.vy, s.angle, if s.has_angle { 1.0 } else { 0.0 }]
     }
 
     pub fn sample_npc(

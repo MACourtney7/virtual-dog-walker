@@ -155,6 +155,83 @@ export class EnvironmentSystem {
     return strObj;
   }
 
+  // --- Directional Sun/Moon Ground Shadow Engine ---
+
+  /**
+   * Calculates directional ground shadow parameters (length multiplier, offsets, skew, and color).
+   * Shadows dramatically lengthen during GOLDEN_HOUR and DAWN, stay short at midday DAY,
+   * and take on soft cool tones at NIGHT.
+   */
+  getShadowParameters(hour = null) {
+    const tod = this.getTimeOfDay(hour);
+    const h = hour !== null && hour !== undefined
+      ? ((hour % 24) + 24) % 24
+      : this.getCurrentHour();
+
+    let lengthFactor = 1.0;
+    let offsetX = 8;
+    let offsetY = 6;
+    let color = 'rgba(22, 42, 16, 0.35)';
+    let skewX = 0.15;
+
+    switch (tod) {
+      case TimeOfDay.GOLDEN_HOUR: {
+        // Golden Hour (17:00 - 19:30): low warm sun in West, shadows dramatically lengthen toward East/North-East
+        const progress = Math.min(1.0, Math.max(0, (h - 17.0) / 2.5));
+        lengthFactor = 2.4 + progress * 0.8; // Lengthens between 2.4x and 3.2x!
+        offsetX = 20 + progress * 10;
+        offsetY = 10 + progress * 6;
+        skewX = 0.55 + progress * 0.2;
+        color = 'rgba(42, 26, 14, 0.45)'; // Rich warm golden hour sepia shadow
+        break;
+      }
+      case TimeOfDay.DAWN: {
+        // Dawn (05:00 - 07:00): low morning sun in East, lengthened shadows toward West
+        lengthFactor = 2.0;
+        offsetX = -18;
+        offsetY = 9;
+        skewX = -0.45;
+        color = 'rgba(28, 22, 38, 0.38)';
+        break;
+      }
+      case TimeOfDay.DUSK: {
+        lengthFactor = 1.6;
+        offsetX = 14;
+        offsetY = 9;
+        skewX = 0.35;
+        color = 'rgba(18, 24, 40, 0.44)';
+        break;
+      }
+      case TimeOfDay.NIGHT: {
+        // Soft silver-blue moonlight shadow
+        lengthFactor = 1.25;
+        offsetX = -10;
+        offsetY = 8;
+        skewX = -0.25;
+        color = 'rgba(10, 16, 32, 0.48)';
+        break;
+      }
+      case TimeOfDay.DAY:
+      default: {
+        lengthFactor = 1.0;
+        offsetX = 8;
+        offsetY = 6;
+        skewX = 0.15;
+        color = 'rgba(22, 42, 16, 0.35)';
+        break;
+      }
+    }
+
+    return {
+      timeOfDay: tod,
+      lengthFactor,
+      offsetX,
+      offsetY,
+      skewX,
+      color
+    };
+  }
+
   // --- Weather State Management ---
 
   setWeather(weather) {

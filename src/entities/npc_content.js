@@ -148,6 +148,9 @@ export function npcIdentityFromSeed(seed, type = 'walker') {
     ? JOGGER_SHOES[Math.floor(rng() * JOGGER_SHOES.length)]
     : WALKER_SHOES[Math.floor(rng() * WALKER_SHOES.length)];
 
+  const accessories = ['BACKPACK', 'SCARF', 'HOODIE', 'NONE'];
+  const accessory = accessories[Math.floor(rng() * accessories.length)];
+
   return {
     name,
     skinTone,
@@ -156,7 +159,8 @@ export function npcIdentityFromSeed(seed, type = 'walker') {
     hatColor,
     jacketColor,
     pantsColor,
-    shoeColor
+    shoeColor,
+    accessory
   };
 }
 

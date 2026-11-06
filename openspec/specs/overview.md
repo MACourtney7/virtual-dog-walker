@@ -18,7 +18,14 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
   - 8 public park dog-waste bins strategically placed at path intersections and overlooks with collision resolution and depth-sorted rendering.
   - 12 authentic Victorian cast-iron streetlamps with warm incandescent lighting cores (`#fef08a`, `glowRadius: 120px`).
   - Active canine waste pile registry (`this.poopPiles`) and nearest-bin spatial queries (`getNearestBin(x, y)`).
-  - Ambient particle system: floating dandelion seeds/pollen and wind streaks.
+  - Ambient particle system: floating dandelion seeds/pollen, wind streaks, and dynamic gallop/sniff/leaf emitters.
+  - **Tree Canopy Wind Sway & Directional Ground Shadows**:
+    - Procedural sweet chestnut, oak, and lime trees feature wind-rippled canopy foliage puff sway calculated via `Math.sin(this.windTime + tree.x) * (2.8 * gustFactor)`.
+    - Directional sun and moon ground shadows (`environment.getShadowParameters()`) that dynamically skew and elongate up to 3.2x factor during `GOLDEN_HOUR` with warm sepia glow (`rgba(42, 26, 14, 0.45)`).
+  - **Fallen Woodland Sticks & Autumn Leaf Clusters**:
+    - Oak and chestnut groves spawn fallen woodland sticks (`this.sticks`) and multi-leaf autumn clusters (`this.leafClusters`).
+    - Entities sprinting (> 125 px/s) through unscattered leaf clusters trigger explosive scattering into fluttering, spinning, air-resistant `LeafParticle`s that drift and settle back to earth.
+    - Scent trails (`this.scentTrails`) weave through the oak groves, deposited by wildlife squirrels and wandering dogs.
   - **Static Ground & Path Offscreen Canvas Baking (Render Optimization)**:
     - Complete static park background (base turf, Avon cliff gradient, mown stripes, procedural grass blade flecks, gravel pathways, and wildflowers) is pre-rendered once at initialization into a 3200 × 2400 `OffscreenCanvas` (`this.bakedCanvas`, with DOM `<canvas>` fallback).
     - `renderGround(ctx, camera)` executes a single `ctx.drawImage()` call blitting only the visible camera viewport window from the baked canvas, eliminating per-frame `Math.sin()` noise loops and Bezier path stroking operations at 60 FPS.
@@ -41,7 +48,11 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 ## 3. Entities, Canine Companion & Ambient Life
 - **Owner Avatar (`src/entities/owner.js`)**:
   - 8-directional movement (<kbd>WASD</kbd> / touch joystick) with acceleration and deceleration.
-  - Expressive 2D top-down / soft isometric vector rendering with directional facial cues, natural walking leg oscillation, dual-tone shoes, torso jacket with collar lapels, and arm swing.
+  - **8-Way Directional Silhouette & 6-Stage Depth Layering**:
+    - Shoulders and hips project orthogonally to `this.angle`, replacing flat 2D silhouettes with smooth directional turns.
+    - Rigorous 6-stage depth layering: (1) Far limb layer behind torso, (2) Back accessories, (3) 3D directional torso/jacket with thickness shading and lapel/zipper details, (4) Front accessories, (5) Near limb layer in front of torso, (6) Head, face, and hairstyle.
+  - **Accessories**: Customizable accessories (`BACKPACK`, `SCARF`, `HOODIE`, `NONE`) with front and rear perspective transforms.
+  - **Animated Kneeling / Bending Pose**: `triggerPet()` and `triggerPickup()` trigger smooth crouching/bending animations (`petTimer`, `bendTimer`) lowering the torso by 4.5px and extending the near arm downward.
   - Customizable hairstyles (`SHORT`, `WAVY`, `PONYTAIL`, `BEANIE`) with layered rear plumes and forehead bangs.
   - Diverse palette tokens for skin tones, hair colors, jacket colors, pants colors, and player names.
   - Clean baseline player naming: default name is `"Walker"` with local avatar nametag dynamically displaying `"${this.name} (You)"` in yellow (`#fde047`), while remote avatars display `"${this.name}"` in white (`#f8fafc`).
@@ -63,7 +74,15 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
     - *Obedience*: Scales leash responsiveness, heel arrival deadband, and idle stray run-off probability.
   - Overhauled Leash Dynamics:
     - When leashed, dog strictly respects max 105px lead length and never breaks into ball fetching; looks towards thrown balls with eager pull and renders lead taut under tension.
-  - Multi-state steering AI (`FOLLOWING`, `ROAMING`, `SOCIAL_GREET`, `PLAY_BOW`, `IDLE_SNIFF`, `SITTING`, `FETCHING`, `BARKING`, `RECALLED`, `LOST`, `POOPING`):
+  - Multi-state steering AI (`FOLLOWING`, `ROAMING`, `SOCIAL_GREET`, `PLAY_BOW`, `IDLE_SNIFF`, `SITTING`, `FETCHING`, `BARKING`, `RECALLED`, `LOST`, `POOPING`, `ZOOMIES`, `SNIFFING_TRAIL`):
+    - *Scent Trails & Sniffing*: Deposition of short-lived scent trail nodes; off-leash dogs investigate squirrel and canine scent trails with animated nose twitching and snout vapor particles.
+    - *Figure-Eight Zoomies*: Reaching 100% happiness triggers spontaneous high-speed figure-eight "zoomies" with rapid tail wags and gallop puffs.
+    - *Woodland Stick Carrying*: Trotting near fallen sticks under oak groves allows picking them up to proudly carry clamped across jaws (`this.hasStick`), automatically dropping them upon whistle recall or ball throw.
+    - *Dynamic Gait Transitions*: Visual distinction across four discrete gaits:
+      - `IDLE`: Resting stationary stance.
+      - `WALK`: 4-beat staggered sequence with gentle torso sway.
+      - `TROT`: 2-beat diagonal stride pairs with Spaniel vertical bounce bob (`trotBob = 1.5px`).
+      - `GALLOP`: Full-extension leap reaching forward +14px and kicking rear -15px, volume-preserving torso squash & stretch (length expands to 17.2px), streamlined ear sweep (`gallopSweep = -0.52` streaming ears back), and periodic gallop dust puffs (`emitGallopPuff`).
     - *Idle Stray Run-Off Engine*: Standing still without whistling for >35s triggers a stray roll inversely weighted by obedience (50% down to 1%). When triggered, dog sprints to a secluded park spot, enters `DogState.LOST`, and activates the HUD compass arrow. Approaching within 55px or whistling recalls the dog.
     - *Poop Lifecycle*: Periodic event while walking (~150–240s); dog pauses in squatted posture (`DogState.POOPING`) and spawns a depth-sorted `PoopPile` entity on the turf.
     - *Canine Social Greetings*: Detects other dogs within 110px, initiating mutual sniffing greetings, circular orbits, rapid tail wagging, and play-bows.
@@ -181,7 +200,10 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 ---
 
 ## 8. Test Suite & CI/CD
-- `python3 test/run_tests.py`: Comprehensive test runner executing 27 test suites covering:
+- `python3 test/run_tests.py`: Comprehensive test runner executing 28 test suites covering:
+  - Directional player and NPC models, depth layering, accessories, and animated kneeling/bending poses (`test_phase3_visuals_and_mechanics.py`).
+  - Canine scent trails, sniffing particles, figure-eight zoomies, stick carrying, and visual walk/trot/gallop gait transitions (`test_phase3_visuals_and_mechanics.py`).
+  - Wind-rippled tree canopy sway, Golden Hour directional ground shadows, and autumn leaf cluster scattering (`test_phase3_visuals_and_mechanics.py`).
   - Physics ballistics, arrival steering, leash clamping and off-lead rendering.
   - Ball possession lifecycle, canine fetch perimeter exemption, and single active ball limits (`test_fetching_mechanics.py`).
   - Real-time leash synchronization, entity interpolator discrete propagation, network packet schemas.

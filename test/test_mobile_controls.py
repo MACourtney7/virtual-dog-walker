@@ -57,6 +57,17 @@ class TestMobileStyles(unittest.TestCase):
         has_mobile_mq = "pointer: coarse" in self.css or "max-width: 768px" in self.css
         self.assertTrue(has_mobile_mq, "Responsive media query for mobile/touch is missing")
 
+    def test_contextual_action_glow_styles(self):
+        """Verify glowing styles and pulse animations exist for contextual buttons."""
+        self.assertIn(".touch-action-btn.contextual-pickup", self.css)
+        self.assertIn(".touch-action-btn.contextual-dispose", self.css)
+        self.assertIn("@keyframes pulseContextualBtn", self.css)
+
+    def test_proximity_chat_viewport_anchoring(self):
+        """Verify mobile proximity chat panel anchors to visualViewport variables."""
+        self.assertIn("var(--vdw-viewport-height", self.css)
+        self.assertIn("var(--vdw-viewport-top", self.css)
+
 
 class MockCamera:
     """Mock of Camera class logic from src/world/field.js."""
@@ -204,6 +215,47 @@ class TestJoystickVectorMath(unittest.TestCase):
         self.assertAlmostEqual(res["angle"], math.pi / 4, places=3)
         mag = math.hypot(res["vx"], res["vy"])
         self.assertAlmostEqual(mag, 1.0, places=3)
+
+
+class TestContextualTouchActions(unittest.TestCase):
+    """Verifies TouchControls contextual action morphing, state transitions, and prompt adaptations."""
+
+    def test_touch_controls_source_contract(self):
+        """Verify TouchControls supports onPickup, onDispose, and setContextualAction morphing."""
+        with open("src/ui/touch_controls.js", "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("onPickup:", code)
+        self.assertIn("onDispose:", code)
+        self.assertIn("setContextualAction(action)", code)
+        self.assertIn("'contextual-pickup'", code)
+        self.assertIn("'contextual-dispose'", code)
+        self.assertIn("💩", code)
+        self.assertIn("🗑️", code)
+        self.assertIn("❤️", code)
+
+    def test_main_adaptive_touch_prompts_contract(self):
+        """Verify src/main.js adapts in-world prompt text on touch devices."""
+        with open("src/main.js", "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("Tap 💩 or [E] to pick up", code)
+        self.assertIn("Tap 🗑️ or [E] to dispose", code)
+        self.assertIn("this.touchControls.setContextualAction('pickup');", code)
+        self.assertIn("this.touchControls.setContextualAction('dispose');", code)
+        self.assertIn("this.touchControls.setContextualAction(null);", code)
+
+    def test_proximity_chat_visual_viewport_contract(self):
+        """Verify src/ui/proximity_chat.js binds visualViewport and manages --vdw-viewport-height."""
+        with open("src/ui/proximity_chat.js", "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("initViewportHandling()", code)
+        self.assertIn("window.visualViewport", code)
+        self.assertIn("--vdw-viewport-height", code)
+        self.assertIn("--vdw-viewport-top", code)
+        self.assertIn("resize", code)
+        self.assertIn("scroll", code)
 
 
 if __name__ == "__main__":

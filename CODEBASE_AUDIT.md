@@ -1,5 +1,235 @@
 # virtual_dog_walker Codebase Dump
 
+## FILE: .agents/mcp_config.json
+```json
+{
+  "mcpServers": {
+    "software-factory": {
+      "command": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/target/release/factory-mcp",
+      "args": ["--root", "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/virtual-dog-walker"],
+      "env": {
+        "FACTORY_REPO_ROOT": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/virtual-dog-walker",
+        "RUST_LOG": "info"
+      }
+    }
+  }
+}
+
+```
+
+## FILE: .agents/plugins.json
+```json
+{
+  "entries": [
+    {
+      "path": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory"
+    }
+  ]
+}
+
+```
+
+## FILE: .assetsignore
+```
+target/
+crates/
+.factory/
+.git/
+node_modules/
+server/
+test/
+openspec/
+scripts/
+Cargo.toml
+Cargo.lock
+factory.yaml
+requirements.txt
+*.py
+*.md
+
+```
+
+## FILE: .github/workflows/ci.yml
+```yaml
+name: CI & Deployment
+
+'on':
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  test:
+    name: Run Automated Test Suites
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout virtual_dog_walker
+        uses: actions/checkout@v4
+        with:
+          path: virtual_dog_walker
+
+      - name: Checkout zero_protocol sibling
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/zero-protocol
+          path: zero_protocol
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout zero_chat sibling
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/zero-chat
+          path: zero_chat
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen-cli
+        run: cargo install -q wasm-bindgen-cli --version 0.2.130
+
+      - name: Run Cargo Tests
+        working-directory: virtual_dog_walker
+        run: cargo test
+
+      - name: Run Test Runner
+        working-directory: virtual_dog_walker
+        run: python3 test/run_tests.py
+
+  deploy:
+    name: Deploy to Cloudflare Pages
+    needs: test
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Check Cloudflare Credentials
+        id: check_creds
+        run: |
+          if [ -z "${{ secrets.CLOUDFLARE_API_TOKEN }}" ]; then
+            echo "::warning ::CLOUDFLARE_API_TOKEN secret is not configured in GitHub repository settings. Skipping deployment."
+            echo "has_token=false" >> $GITHUB_OUTPUT
+          else
+            echo "has_token=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Checkout virtual_dog_walker
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: actions/checkout@v4
+        with:
+          path: virtual_dog_walker
+
+      - name: Checkout zero_protocol sibling
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/zero-protocol
+          path: zero_protocol
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Checkout zero_chat sibling
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/zero-chat
+          path: zero_chat
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install Rust toolchain
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen-cli
+        if: steps.check_creds.outputs.has_token == 'true'
+        run: cargo install -q wasm-bindgen-cli --version 0.2.130
+
+      - name: Set up Node.js
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Dependencies
+        if: steps.check_creds.outputs.has_token == 'true'
+        working-directory: virtual_dog_walker
+        run: npm install
+
+      - name: Build Application
+        if: steps.check_creds.outputs.has_token == 'true'
+        working-directory: virtual_dog_walker
+        run: npm run build
+
+      - name: Ensure Cloudflare Pages project exists
+        if: steps.check_creds.outputs.has_token == 'true'
+        working-directory: virtual_dog_walker
+        run: npx wrangler pages project create virtual-dog-walker --production-branch=main || true
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy to Cloudflare Pages
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: virtual_dog_walker
+          command: 'pages deploy dist --project-name=virtual-dog-walker --branch=main --commit-dirty=true'
+
+```
+
+## FILE: .gitignore
+```
+# Agentic Software Factory runtime
+.factory/
+.agents/
+
+# Operating System files
+.DS_Store
+Thumbs.db
+
+# Logs & Environment
+*.log
+npm-debug.log*
+yarn-debug.log*
+.env
+.env.local
+
+# Node / Web builds
+node_modules/
+dist/
+build/
+coverage/
+
+# Python / Virtual Envs
+__pycache__/
+*.py[cod]
+.venv/
+env/
+
+# Rust
+target/
+
+# Tunnel helper binaries
+server/.bin/
+.bin/
+
+```
+
 ## FILE: AGENTS.md
 ```markdown
 # Agent Directives: Agentic Software Factory
@@ -435,6 +665,69 @@ impl BallSim {
     }
 }
 
+/// Tuning constants mirroring `src/entities/toy.js` (`TennisBall`) exactly so the Wasm
+/// path is behaviourally identical to the JS fallback.
+pub const TOY_GRAVITY: f64 = 720.0;
+pub const TOY_RESTITUTION: f64 = 0.62;
+pub const TOY_FRICTION: f64 = 0.94;
+pub const TOY_BOUNCE_THRESHOLD: f64 = 40.0;
+pub const TOY_BOUNCE_TANGENT_DAMPING: f64 = 0.82;
+pub const TOY_BOUNDARY_MARGIN: f64 = 70.0;
+pub const TOY_BOUNDARY_DAMPING: f64 = 0.7;
+
+/// Stateless 2.5D tennis-ball integration step (one ball per call; safe for any number of
+/// local/remote balls). Returns `[x, y, z, vx, vy, vz]`.
+pub fn step_toy_ball(
+    state: [f64; 6],
+    dt: f64,
+    world_w: f64,
+    world_h: f64,
+) -> [f64; 6] {
+    let [mut x, mut y, mut z, mut vx, mut vy, mut vz] = state;
+
+    x += vx * dt;
+    y += vy * dt;
+    vz -= TOY_GRAVITY * dt;
+    z += vz * dt;
+
+    if z <= 0.0 {
+        z = 0.0;
+        if vz.abs() > TOY_BOUNCE_THRESHOLD {
+            vz = -vz * TOY_RESTITUTION;
+            vx *= TOY_BOUNCE_TANGENT_DAMPING;
+            vy *= TOY_BOUNCE_TANGENT_DAMPING;
+        } else {
+            vz = 0.0;
+            let f = TOY_FRICTION.powf(dt * 60.0);
+            vx *= f;
+            vy *= f;
+        }
+    }
+
+    let min_x = TOY_BOUNDARY_MARGIN;
+    let max_x = world_w - TOY_BOUNDARY_MARGIN;
+    let min_y = TOY_BOUNDARY_MARGIN;
+    let max_y = world_h - TOY_BOUNDARY_MARGIN;
+    if x < min_x {
+        x = min_x;
+        vx = -vx * TOY_BOUNDARY_DAMPING;
+    }
+    if x > max_x {
+        x = max_x;
+        vx = -vx * TOY_BOUNDARY_DAMPING;
+    }
+    if y < min_y {
+        y = min_y;
+        vy = -vy * TOY_BOUNDARY_DAMPING;
+    }
+    if y > max_y {
+        y = max_y;
+        vy = -vy * TOY_BOUNDARY_DAMPING;
+    }
+
+    [x, y, z, vx, vy, vz]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,6 +783,50 @@ mod tests {
         assert!(hit);
         // vx should have reversed direction or deflected away
         assert!(sim.state.vx <= 0.0 || sim.state.x < 150.0);
+    }
+
+    #[test]
+    fn test_toy_ball_gravity_and_bounce_restitution() {
+        // Launch up from the ground; first descent through z<=0 must bounce with restitution.
+        let mut st = [500.0, 500.0, 12.0, 100.0, 0.0, 180.0];
+        let mut bounced = false;
+        for _ in 0..240 {
+            let before_vz = st[5];
+            st = step_toy_ball(st, 1.0 / 60.0, 3200.0, 2400.0);
+            if st[2] == 0.0 && before_vz < -40.0 {
+                assert!(st[5] > 0.0);
+                bounced = true;
+                break;
+            }
+        }
+        assert!(bounced);
+    }
+
+    #[test]
+    fn test_toy_ball_rolling_friction_decay() {
+        let mut st = [500.0, 500.0, 0.0, 100.0, 0.0, 0.0];
+        let v0 = st[3];
+        st = step_toy_ball(st, 1.0 / 60.0, 3200.0, 2400.0);
+        assert!(st[3] < v0 && st[3] > 0.0);
+        assert!((st[3] - v0 * TOY_FRICTION).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_toy_ball_world_boundary_bounce() {
+        let st = step_toy_ball([71.0, 500.0, 0.0, -300.0, 0.0, 0.0], 1.0 / 60.0, 3200.0, 2400.0);
+        assert_eq!(st[0], 70.0);
+        assert!(st[3] > 0.0);
+        let st = step_toy_ball([500.0, 2400.0 - 71.0, 0.0, 0.0, 300.0, 0.0], 1.0 / 60.0, 3200.0, 2400.0);
+        assert_eq!(st[1], 2400.0 - 70.0);
+        assert!(st[4] < 0.0);
+    }
+
+    #[test]
+    fn test_toy_ball_is_stateless_and_independent() {
+        let a = step_toy_ball([100.0, 100.0, 50.0, 10.0, 20.0, 0.0], 0.016, 3200.0, 2400.0);
+        let _ = step_toy_ball([900.0, 900.0, 5.0, -80.0, 40.0, 100.0], 0.016, 3200.0, 2400.0);
+        let a2 = step_toy_ball([100.0, 100.0, 50.0, 10.0, 20.0, 0.0], 0.016, 3200.0, 2400.0);
+        assert_eq!(a, a2);
     }
 }
 
@@ -555,6 +892,75 @@ pub fn resolve_entity_collisions(
     clamp_world_bounds(x, y, radius, world_w, world_h, 36.0);
 }
 
+/// Obstacle kinds mirroring `Field.resolveCircleCollision` in `src/world/field.js` exactly
+/// (trees, oriented-AABB benches, bins, water tower, rock outcrops, in that order).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum WorldObstacle {
+    Circle { x: f64, y: f64, r: f64 },
+    Rect { x: f64, y: f64, hw: f64, hh: f64 },
+}
+
+pub const FIELD_WORLD_MARGIN: f64 = 56.0;
+
+fn push_out_circle(nx: &mut f64, ny: &mut f64, cx: f64, cy: f64, min_dist: f64) {
+    let dx = *nx - cx;
+    let dy = *ny - cy;
+    let dist = dx.hypot(dy);
+    if dist < min_dist {
+        if dist > 0.001 {
+            let overlap = min_dist - dist;
+            *nx += (dx / dist) * overlap;
+            *ny += (dy / dist) * overlap;
+        } else {
+            *ny += min_dist;
+        }
+    }
+}
+
+/// Exact port of `Field.resolveCircleCollision`: a single perimeter clamp (56px) followed by
+/// sequential obstacle push-outs. No post-clamp (matches JS behaviour).
+pub fn resolve_field_collisions(
+    x: f64,
+    y: f64,
+    radius: f64,
+    world_w: f64,
+    world_h: f64,
+    obstacles: &[WorldObstacle],
+) -> (f64, f64) {
+    let min_x = FIELD_WORLD_MARGIN + radius;
+    let max_x = world_w - FIELD_WORLD_MARGIN - radius;
+    let min_y = FIELD_WORLD_MARGIN + radius;
+    let max_y = world_h - FIELD_WORLD_MARGIN - radius;
+    let mut nx = x.max(min_x).min(max_x);
+    let mut ny = y.max(min_y).min(max_y);
+
+    for ob in obstacles {
+        match *ob {
+            WorldObstacle::Circle { x: cx, y: cy, r } => {
+                push_out_circle(&mut nx, &mut ny, cx, cy, radius + r);
+            }
+            WorldObstacle::Rect { x: bx, y: by, hw, hh } => {
+                let closest_x = (bx - hw).max(nx.min(bx + hw));
+                let closest_y = (by - hh).max(ny.min(by + hh));
+                let dx = nx - closest_x;
+                let dy = ny - closest_y;
+                let dist = dx.hypot(dy);
+                if dist < radius {
+                    if dist > 0.001 {
+                        let overlap = radius - dist;
+                        nx += (dx / dist) * overlap;
+                        ny += (dy / dist) * overlap;
+                    } else {
+                        ny += radius;
+                    }
+                }
+            }
+        }
+    }
+    (nx, ny)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -591,6 +997,39 @@ mod tests {
         // Entity should be pushed away from both colliders
         assert!(x > 100.0);
         assert!(y > 100.0);
+    }
+
+    #[test]
+    fn test_field_collision_matches_js_margin_and_circle() {
+        // 56px perimeter margin (not 36), single clamp.
+        let (x, y) = resolve_field_collisions(10.0, 10.0, 16.0, 3200.0, 2400.0, &[]);
+        assert_eq!((x, y), (72.0, 72.0));
+        let obs = [WorldObstacle::Circle { x: 500.0, y: 500.0, r: 20.0 }];
+        let (x, y) = resolve_field_collisions(510.0, 500.0, 10.0, 3200.0, 2400.0, &obs);
+        assert!((x - 530.0).abs() < 1e-9 && (y - 500.0).abs() < 1e-9);
+        // Exactly-overlapping centre pushes along +y by minDist (JS else-branch).
+        let (_, y) = resolve_field_collisions(500.0, 500.0, 10.0, 3200.0, 2400.0, &obs);
+        assert!((y - 530.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_field_collision_rect_bench_closest_point() {
+        let obs = [WorldObstacle::Rect { x: 1000.0, y: 1000.0, hw: 30.0, hh: 10.0 }];
+        // Circle (r=8) touching top edge from above-center: pushed up out of the rect.
+        let (x, y) = resolve_field_collisions(1000.0, 1000.0 - 10.0 - 3.0, 8.0, 3200.0, 2400.0, &obs);
+        assert!((x - 1000.0).abs() < 1e-9);
+        assert!((y - (1000.0 - 10.0 - 8.0)).abs() < 1e-9);
+        // Centre inside rect (dist == 0) pushes +y by radius.
+        let (_, y2) = resolve_field_collisions(1000.0, 1000.0, 8.0, 3200.0, 2400.0, &obs);
+        assert!((y2 - 1008.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_world_obstacle_json_roundtrip() {
+        let json = r#"[{"kind":"circle","x":1.0,"y":2.0,"r":3.0},{"kind":"rect","x":4.0,"y":5.0,"hw":6.0,"hh":7.0}]"#;
+        let v: Vec<WorldObstacle> = serde_json::from_str(json).unwrap();
+        assert_eq!(v.len(), 2);
+        assert_eq!(v[1], WorldObstacle::Rect { x: 4.0, y: 5.0, hw: 6.0, hh: 7.0 });
     }
 }
 
@@ -667,6 +1106,29 @@ pub fn step_ear_springs(
     *right_angle += *right_v * dt;
 }
 
+/// Integrates the two ear springs towards caller-supplied targets (the game computes the
+/// targets from trot bob / lateral lag in JS; this performs only the spring integration).
+/// Mirrors the inline integration in `src/entities/companion_dog.js`.
+pub fn step_ear_springs_to_targets(
+    left_angle: &mut f64,
+    left_v: &mut f64,
+    right_angle: &mut f64,
+    right_v: &mut f64,
+    target_left: f64,
+    target_right: f64,
+    spring_k: f64,
+    spring_damp: f64,
+    dt: f64,
+) {
+    let left_force = -spring_k * (*left_angle - target_left) - spring_damp * *left_v;
+    *left_v += left_force * dt;
+    *left_angle += *left_v * dt;
+
+    let right_force = -spring_k * (*right_angle - target_right) - spring_damp * *right_v;
+    *right_v += right_force * dt;
+    *right_angle += *right_v * dt;
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -735,6 +1197,22 @@ mod tests {
         assert!(l_ang.abs() < 0.1);
         assert!(r_ang.abs() < 0.1);
     }
+
+    #[test]
+    fn test_ear_targets_integration_matches_inline_js_formula() {
+        let (mut la, mut lv, mut ra, mut rv) = (0.1_f64, 0.0_f64, -0.05_f64, 0.2_f64);
+        let (tl, tr, k, d, dt) = (-0.02_f64, 0.03_f64, 180.0_f64, 14.0_f64, 1.0 / 60.0);
+        // Reference: inline formula from companion_dog.js
+        let lf = -k * (la - tl) - d * lv;
+        let exp_lv = lv + lf * dt;
+        let exp_la = la + exp_lv * dt;
+        let rf = -k * (ra - tr) - d * rv;
+        let exp_rv = rv + rf * dt;
+        let exp_ra = ra + exp_rv * dt;
+        step_ear_springs_to_targets(&mut la, &mut lv, &mut ra, &mut rv, tl, tr, k, d, dt);
+        assert!((la - exp_la).abs() < 1e-12 && (lv - exp_lv).abs() < 1e-12);
+        assert!((ra - exp_ra).abs() < 1e-12 && (rv - exp_rv).abs() < 1e-12);
+    }
 }
 
 ```
@@ -747,16 +1225,17 @@ pub mod dog_physics;
 pub mod math;
 pub mod npc_sim;
 
-use ball_physics::BallSim;
-use collision::{resolve_entity_collisions, Collider};
-use dog_physics::{step_ear_springs, step_leash_constraint};
-use npc_sim::sample_npc_state;
+use ball_physics::{step_toy_ball, BallSim};
+use collision::{resolve_entity_collisions, resolve_field_collisions, Collider, WorldObstacle};
+use dog_physics::{step_ear_springs, step_ear_springs_to_targets, step_leash_constraint};
+use npc_sim::{sample_npc_state, sample_path_exact};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
 pub struct WasmWorldSim {
     ball: BallSim,
     colliders: Vec<Collider>,
+    obstacles: Vec<WorldObstacle>,
     world_width: f64,
     world_height: f64,
 }
@@ -768,6 +1247,7 @@ impl WasmWorldSim {
         Self {
             ball: BallSim::new(),
             colliders: Vec::new(),
+            obstacles: Vec::new(),
             world_width,
             world_height,
         }
@@ -862,6 +1342,67 @@ impl WasmWorldSim {
             if bounced { 1.0 } else { 0.0 },
             s.bounce_count as f64,
         ]
+    }
+
+    /// Stateless TennisBall step (matches `toy.js`). `state` = [x, y, z, vx, vy, vz].
+    /// Returns [x, y, z, vx, vy, vz]. Independent of the single internal `ball`.
+    pub fn step_toy_ball(
+        &self,
+        x: f64,
+        y: f64,
+        z: f64,
+        vx: f64,
+        vy: f64,
+        vz: f64,
+        dt: f64,
+        world_w: f64,
+        world_h: f64,
+    ) -> Vec<f64> {
+        step_toy_ball([x, y, z, vx, vy, vz], dt, world_w, world_h).to_vec()
+    }
+
+    /// Replace the exact field obstacle set (JSON array of
+    /// `{"kind":"circle","x","y","r"}` / `{"kind":"rect","x","y","hw","hh"}`), in the same order as
+    /// `Field.resolveCircleCollision` applies them.
+    pub fn set_world_obstacles(&mut self, obstacles_json: &str) -> bool {
+        match serde_json::from_str::<Vec<WorldObstacle>>(obstacles_json) {
+            Ok(o) => {
+                self.obstacles = o;
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
+    /// Exact port of `Field.resolveCircleCollision` (56px perimeter, trees/benches/bins/tower/rocks).
+    pub fn resolve_field_collision(&self, x: f64, y: f64, radius: f64) -> Vec<f64> {
+        let (nx, ny) = resolve_field_collisions(x, y, radius, self.world_width, self.world_height, &self.obstacles);
+        vec![nx, ny]
+    }
+
+    /// Ear spring integration towards JS-computed targets. Returns [lAngle, lVel, rAngle, rVel].
+    pub fn step_ear_targets(
+        &self,
+        left_angle: f64,
+        left_v: f64,
+        right_angle: f64,
+        right_v: f64,
+        target_left: f64,
+        target_right: f64,
+        spring_k: f64,
+        spring_damp: f64,
+        dt: f64,
+    ) -> Vec<f64> {
+        let (mut la, mut lv, mut ra, mut rv) = (left_angle, left_v, right_angle, right_v);
+        step_ear_springs_to_targets(&mut la, &mut lv, &mut ra, &mut rv, target_left, target_right, spring_k, spring_damp, dt);
+        vec![la, lv, ra, rv]
+    }
+
+    /// Exact in-progress NPC path sample (see `npc_sim::sample_path_exact`).
+    /// Returns [x, y, vx, vy, angle, hasAngle(0/1)].
+    pub fn sample_npc_path(&self, waypoints_flat: &[f64], speed: f64, distance: f64) -> Vec<f64> {
+        let s = sample_path_exact(waypoints_flat, speed, distance);
+        vec![s.x, s.y, s.vx, s.vy, s.angle, if s.has_angle { 1.0 } else { 0.0 }]
     }
 
     pub fn sample_npc(
@@ -1102,6 +1643,109 @@ pub fn sample_npc_state(
     }
 }
 
+/// Result of sampling the interpolated part of an NPC path.
+/// `has_angle` is false when the active segment is degenerate (JS keeps the previous angle).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct PathSample {
+    pub x: f64,
+    pub y: f64,
+    pub vx: f64,
+    pub vy: f64,
+    pub angle: f64,
+    pub has_angle: bool,
+}
+
+/// Exact port of the in-progress (distance < total length) branch of `ParkNPC.setClock` in
+/// `src/entities/npc.js` (25px corner blend, 0.5 max blend, segment-direction velocity).
+/// `waypoints_flat` is `[x0, y0, x1, y1, ...]`. Finish/fade/speech remain in JS.
+pub fn sample_path_exact(waypoints_flat: &[f64], speed: f64, distance: f64) -> PathSample {
+    let n = waypoints_flat.len() / 2;
+    let wp = |i: usize| (waypoints_flat[2 * i], waypoints_flat[2 * i + 1]);
+    if n < 2 {
+        let (x, y) = if n == 1 { wp(0) } else { (0.0, 0.0) };
+        return PathSample { x, y, vx: 0.0, vy: 0.0, angle: 0.0, has_angle: false };
+    }
+    let seg_count = n - 1;
+    let mut seg_len_v = Vec::with_capacity(seg_count);
+    for i in 0..seg_count {
+        let (ax, ay) = wp(i);
+        let (bx, by) = wp(i + 1);
+        seg_len_v.push((bx - ax).hypot(by - ay));
+    }
+
+    let mut accumulated = 0.0;
+    let mut interpolated = false;
+    let (mut x, mut y) = wp(0);
+    let (mut dx, mut dy) = (0.0, 0.0);
+    let mut seg_len = 0.0;
+    let mut active_index: isize = -1;
+    let mut active_remaining = 0.0;
+
+    for i in 0..seg_count {
+        seg_len = seg_len_v[i];
+        if accumulated + seg_len >= distance {
+            let remaining = distance - accumulated;
+            let seg_t = if seg_len > 0.000001 { remaining / seg_len } else { 0.0 };
+            let (p1x, p1y) = wp(i);
+            let (p2x, p2y) = wp(i + 1);
+            dx = p2x - p1x;
+            dy = p2y - p1y;
+            x = p1x + dx * seg_t;
+            y = p1y + dy * seg_t;
+            interpolated = true;
+            active_index = i as isize;
+            active_remaining = remaining;
+            break;
+        }
+        accumulated += seg_len;
+    }
+
+    if !interpolated {
+        let last_idx = n - 2;
+        let (p1x, p1y) = wp(last_idx);
+        let (p2x, p2y) = wp(last_idx + 1);
+        dx = p2x - p1x;
+        dy = p2y - p1y;
+        seg_len = seg_len_v[last_idx];
+        x = p2x;
+        y = p2y;
+        active_index = last_idx as isize;
+        active_remaining = seg_len;
+    }
+
+    let mut angle = 0.0;
+    let mut has_angle = false;
+    if dx.hypot(dy) > 0.000001 {
+        let seg_angle = dy.atan2(dx);
+        let dist_to_next = seg_len - active_remaining;
+        if active_index >= 0 && (active_index as usize) + 1 < seg_count && dist_to_next < 25.0 {
+            let ai = active_index as usize;
+            let (n1x, n1y) = wp(ai + 1);
+            let (n2x, n2y) = wp(ai + 2);
+            let next_angle = (n2y - n1y).atan2(n2x - n1x);
+            let mut angle_diff = next_angle - seg_angle;
+            while angle_diff < -std::f64::consts::PI {
+                angle_diff += std::f64::consts::PI * 2.0;
+            }
+            while angle_diff > std::f64::consts::PI {
+                angle_diff -= std::f64::consts::PI * 2.0;
+            }
+            let blend = ((1.0 - dist_to_next / 25.0) * 0.5).max(0.0).min(0.5);
+            angle = seg_angle + angle_diff * blend;
+        } else {
+            angle = seg_angle;
+        }
+        has_angle = true;
+    }
+
+    let (vx, vy) = if seg_len > 0.000001 {
+        ((dx / seg_len) * speed, (dy / seg_len) * speed)
+    } else {
+        (0.0, 0.0)
+    };
+    PathSample { x, y, vx, vy, angle, has_angle }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1148,7 +1792,521 @@ mod tests {
         assert!(s.angle > 0.0);
         assert!(s.angle < std::f64::consts::PI / 2.0);
     }
+
+    #[test]
+    fn test_sample_path_exact_straight_and_corner_blend() {
+        // L-shaped path: east 100px then south 100px.
+        let wp = [0.0, 0.0, 100.0, 0.0, 100.0, 100.0];
+        let s = sample_path_exact(&wp, 20.0, 50.0);
+        assert!((s.x - 50.0).abs() < 1e-9 && s.y.abs() < 1e-9);
+        assert!(s.has_angle && s.angle.abs() < 1e-9);
+        assert!((s.vx - 20.0).abs() < 1e-9 && s.vy.abs() < 1e-9);
+        // 10px before the corner => blended angle between 0 and pi/2 (bounded by half).
+        let s = sample_path_exact(&wp, 20.0, 90.0);
+        assert!(s.angle > 0.0 && s.angle <= std::f64::consts::FRAC_PI_4 + 1e-9);
+        // Velocity follows the *segment* direction (JS semantics), not the blended angle.
+        assert!((s.vx - 20.0).abs() < 1e-9 && s.vy.abs() < 1e-9);
+        // Second segment heads south.
+        let s = sample_path_exact(&wp, 20.0, 150.0);
+        assert!((s.x - 100.0).abs() < 1e-9 && (s.y - 50.0).abs() < 1e-9);
+        assert!((s.angle - std::f64::consts::FRAC_PI_2).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_sample_path_exact_degenerate_segment_keeps_angle_unset() {
+        let wp = [10.0, 10.0, 10.0, 10.0];
+        let s = sample_path_exact(&wp, 20.0, 0.0);
+        assert!(!s.has_angle);
+        assert_eq!((s.vx, s.vy), (0.0, 0.0));
+    }
 }
+
+```
+
+## FILE: docs/VirtualDogWalker_Roadmap_Tickets.md
+```markdown
+VirtualDogWalker Roadmap Tickets
+Below are the 3 sequential tickets for your implementation agent to execute, formatted as OpenSpec Task Briefs.
+
+
+
+ticket_id: "ticket-029"
+
+title: "Edge-to-Edge Global NPC Paths, Relaxed Pacing, and Authoritative Sync Hardening"
+
+role: "IMPLEMENTER"
+
+thinking_level: "MEDIUM"
+
+target_files:
+
+  - "src/entities/npc_content.js"
+
+  - "src/entities/npc.js"
+
+  - "src/world/npc_paths.js"
+
+  - "src/world/npc_path_manifest.json"
+
+  - "party/server.js"
+
+  - "src/main.js"
+
+  - "src/net/network.js"
+
+  - "test/test_npc_content.py"
+
+  - "test/test_npc_paths.py"
+
+  - "test/test_npc_entity.py"
+
+  - "test/test_npc_server.py"
+
+  - "test/test_npc_client.py"
+1. Problem Statement & Objectives
+The current NPC implementation suffers from four user-visible issues:
+
+Interior Spawning/Despawning: 6 of the 10 paths in src/world/npc_paths.js are closed loops whose start and end waypoints lie inside the central park (e.g., central-meadow-ramble starts and ends at (1200, 950) near the player spawn). NPCs materialize and vanish in the middle of the meadow rather than entering and exiting at the map boundaries.
+Excessive Movement Speed: Walkers (35 px/s) and joggers (80 px/s) traverse the map too rapidly and animate frantically.
+Startup Solo-Spawn Race Condition: CliftonDownGame calls updateLocalSpawner(0) in the constructor before the asynchronous WebSocket connection completes (CONNECTING state), spawning 5 unsynced local NPCs at t=0 in the middle of the map before NPC_SNAPSHOT arrives.
+Synchronized Wave Spawning: ParkServer.initSpawner() spawns all initial NPCs with spawnTime = Date.now(), causing all NPCs to start at distance = 0 simultaneously rather than being naturally distributed across the park.
+Core Deliverables
+Slow Down NPCs: Reduce NPC_SPEED in npc_content.js and party/server.js to walker: 22 (px/s) and jogger: 48 (px/s), and reduce walkPhase animation multipliers in npc.js (walker: 6.2, jogger: 9.8).
+Strictly Edge-to-Edge Paths: Replace all closed interior loops in src/world/npc_paths.js and src/world/npc_path_manifest.json with 10 point-to-point edge-to-edge paths. Every path MUST start at a map boundary edge and terminate at a different map boundary edge while maintaining full obstacle clearance.
+Deterministic Bidirectional Traversal: Support path direction reversal derived deterministically from seed (or path definition) or ensure all 10 routes traverse varied boundary-to-boundary corridors.
+Smooth Entry Fade-In & Angular Turning: Add a 0.5s fade-in at spawn (elapsed < 0.5) to match the 0.5s fade-out at completion, and smooth this.angle transitions across waypoint corners.
+Global Sync & Pre-Warmed Server Spawner: Fix the client startup race condition in src/main.js, default WebSocket routing cleanly to PartyServer in src/net/network.js, and pre-warm spawnTime offsets in party/server.js so initial NPCs are distributed mid-path and despawn at staggered intervals.
+
+
+
+ticket_id: "ticket-030"
+
+title: "Static Ground & Path Offscreen Baking (Render Optimization)"
+
+role: "IMPLEMENTER"
+
+thinking_level: "LOW"
+
+target_files:
+
+  - "src/world/field.js"
+
+  - "src/main.js"
+1. Problem Statement & Objectives
+Currently, the game calculates Math.sin hashes for grass patches, clips and draws Durdham Down mowing stripes, and strokes multi-layered Bezier gravel paths on every single frame (60fps) in renderGround(). This causes unnecessary CPU/GPU overhead for static geometry.
+Core Deliverables
+Offscreen Canvas Initialization: Create an OffscreenCanvas sized to the full world dimensions (3200x2400) during field.js initialization.
+One-Time Bake: Execute the existing renderGround() drawing logic exactly once onto this offscreen canvas (baking the grass, stripes, wildflowers, and paths).
+Optimized Render Loop: Update the main game loop's renderGround() to simply ctx.drawImage() the relevant viewport rect from the OffscreenCanvas instead of recalculating shapes every frame.
+
+
+
+ticket_id: "ticket-031"
+
+title: "Dead Platformer Code Pruning"
+
+role: "IMPLEMENTER"
+
+thinking_level: "LOW"
+
+target_files:
+
+  - "src/engine/physics.js"
+
+  - "src/entities/ziggy.js"
+
+  - "src/entities/collectibles.js"
+
+  - "src/entities/hazards.js"
+
+  - "src/level/park_level.js"
+
+  - "src/entities/tombstone.js"
+
+  - "test/test_physics.py" (if exists)
+
+  - "test/test_platformer.py" (if exists)
+1. Problem Statement & Objectives
+The repository contains 6 unused files left over from an earlier side-scrolling platformer iteration ("Ziggy's Park Adventure"). These files clutter the codebase and create confusion for future LLM context windows.
+Core Deliverables
+Delete Files: Completely remove the 6 target files listed above.
+Prune Imports: Search the remaining codebase (src/main.js, etc.) for any lingering import statements referencing these deleted files and remove them.
+Clean Tests: Delete any associated Python unit tests targeting these specific platformer files to ensure python3 test/run_tests.py continues to pass cleanly.
+
+```
+
+## FILE: docs/roadmap-chat-visual-overhaul.md
+```markdown
+# Multi-Ticket Roadmap: Chat Visual Overhaul & Spatial HUD Streamlining
+
+## 1. Executive Summary
+
+This roadmap establishes the architecture, dependency graph, file blast radiuses, and ticket specifications for the visual and behavioral overhaul of the chat system in **Virtual Dog Walker**.
+
+The current chat implementation forms ad-hoc proximity clusters and displays messages in a floating bottom-right container with fading turf tombstones upon parting. However, this implementation obstructs ongoing gameplay, conflicts with top-bar HUD elements, causes visual noise with lingering world-space tombstones, and produces confusing redundancy between overhead speech bubbles and panel chat messages.
+
+This overhaul resolves these issues through five cohesive, cognitively sized tickets:
+1. **Tombstone Subsystem Removal & Turf Cleanup** (`ticket-018`)
+2. **HUD Top-Bar Reorganization & Button Relocation** (`ticket-019`)
+3. **Top-Right Downward Chat Sidebar, Toggle Button & Auto-Unhide** (`ticket-020`)
+4. **Proximity Chat Retention Expiry & Player Color Palette** (`ticket-021`)
+5. **Speech Bubble Duality Routing & Comprehensive Test Suite** (`ticket-022`)
+
+---
+
+## 2. Architecture & Subsystem Decomposition
+
+```
++-----------------------------------------------------------------------------------+
+|                        CHAT VISUAL OVERHAUL ARCHITECTURE                          |
++-----------------------------------------------------------------------------------+
+  |
+  +--> [HUD Layout & Real Estate] (`ticket-019`)
+  |      - "Share Park" & "Style" buttons relocated from top-right to top-left dock
+  |      - Unobtrusive responsive stacking alongside "The Downs" & player count badge
+  |      - Vacates the entire top-right viewport for sidebar anchoring
+  |
+  +--> [Top-Right Chat Sidebar & Toggle Interface] (`ticket-020`)
+  |      - Fixed top-right positioning below header dock; grows downward
+  |      - Glassmorphic collapsible sidebar container with quick emoji bar & input
+  |      - Pinned circular/pill chat toggle icon (💬) in top-right corner to show/hide
+  |      - Auto-unhide trigger: any message sent/received in proximity expands sidebar
+  |
+  +--> [Chat History Retention & Speaker Identification] (`ticket-021`)
+  |      - 5-Minute (300s) message retention timer starts when players part proximity
+  |      - Parted peer's messages cleanly purged upon timer expiry; canceled upon return
+  |      - Dynamic accessible color assignment from curated palette on first message
+  |      - Sender name and message text colorized for quick visual differentiation
+  |
+  +--> [Speech Bubble vs Sidebar Duality & Clean Turf] (`ticket-018`, `ticket-022`)
+  |      - Proximity chat: messages appear ONLY in sidebar; overhead bubbles SUPPRESSED
+  |      - Distant/Solo chat: overhead speech bubbles displayed; sidebar untouched
+  |      - Complete elimination of parting tombstone entities, packets, and turf clutter
++-----------------------------------------------------------------------------------+
+```
+
+---
+
+## 3. Ticket Breakdown & Cognitive Sizing
+
+### Ticket-018: Tombstone Subsystem Removal & Turf Cleanup
+- **Domain**: World Entities / Net Protocol / Engine Cleanup
+- **Cognitive Sizing**: `LOW` [L]
+- **Target Files**:
+  - `src/entities/tombstone.js` (remove/deprecate entity)
+  - `src/world/field.js` (remove tombstone list, registration, render pass, update ticks)
+  - `src/net/protocol.js` (remove `PacketType.TOMBSTONE_DROP` and helper)
+  - `src/main.js` (remove tombstone parting instantiations and network handlers)
+- **Acceptance Criteria**:
+  - No tombstone entities are created, updated, or rendered when conversation clusters dissolve.
+  - No `TOMBSTONE_DROP` network packets are broadcast or handled.
+  - Turf remains completely clear of parting markers.
+  - Existing game loop, camera, and y-sorted rendering pipelines operate without regression.
+
+### Ticket-019: HUD Top-Bar Reorganization & Button Relocation
+- **Domain**: UI / HUD Layout / CSS Styling
+- **Cognitive Sizing**: `LOW` [L]
+- **Target Files**:
+  - `src/ui/social_hud.js` (relocate Share Park and Style buttons to top-left panel)
+  - `src/style.css` (realign HUD flex containers, ensure responsive packing)
+- **Acceptance Criteria**:
+  - "Share Park" (`#btn-room-action`) and "Style" (`#btn-customize`) buttons are relocated adjacent to the top-left title badge ("The Downs").
+  - The top-right corner of the viewport is completely freed of HUD buttons on desktop, tablet, and mobile layouts.
+  - Share Park click actions (copy URL/toast prompt) and Style click actions (open customizer modal) remain 100% operational.
+  - Top bar remains non-obstructive to canvas gameplay.
+
+### Ticket-020: Top-Right Downward Chat Sidebar, Toggle Button & Auto-Unhide
+- **Domain**: UI / Proximity Chat Component / CSS Styling
+- **Cognitive Sizing**: `MEDIUM` [M]
+- **Target Files**:
+  - `src/ui/proximity_chat.js` (DOM restructuring, toggle button handler, auto-unhide on message)
+  - `src/style.css` (fixed top-right anchor, downward vertical flex, collapsible slide animation)
+- **Acceptance Criteria**:
+  - Chat sidebar (`#proximity-chat-panel`) is anchored to the top-right corner and expands downwards.
+  - A prominent top-right toggle button (`#chat-toggle-btn` with `💬` icon) toggles the sidebar between hidden and visible states.
+  - When players are in proximity and any message is sent or received, if the sidebar is hidden, it automatically unhides/expands.
+  - Smooth glassmorphic styling with clear typography, participant pills, downward message flow, and integrated input/emojis.
+
+### Ticket-021: Proximity Chat Retention Expiry & Player Color Palette
+- **Domain**: Chat State Machine / Retention Timer / Color Engine
+- **Cognitive Sizing**: `MEDIUM` [M]
+- **Target Files**:
+  - `src/ui/proximity_chat.js` (departure timer map, tick expiration, color palette map)
+- **Acceptance Criteria**:
+  - When a player leaves another player's proximity, a 5-minute (300,000 ms) timer begins for that departed player's messages.
+  - If the player returns to proximity before 5 minutes elapse, the departure timer is cleared and their messages are retained.
+  - When the 5-minute timer expires, that parted player's messages are purged from the chat sidebar history and DOM.
+  - When a player in proximity sends a message for the first time, their sender name and message text are assigned a distinct, accessible color from a curated palette, persisting for that player across the session.
+
+### Ticket-022: Speech Bubble Duality Routing & Comprehensive Test Suite
+- **Domain**: Social Event Routing / Avatar Overhead Bubbles / Acceptance Tests
+- **Cognitive Sizing**: `HIGH` [H]
+- **Target Files**:
+  - `src/entities/owner.js` (suppress overhead speech bubble when message originates from proximity chat)
+  - `src/main.js` (coordinate message routing: in-proximity -> sidebar only; out-of-proximity -> overhead bubble only)
+  - `test/test_proximity_chat.py` (updated unit and acceptance test suite)
+  - `test/run_tests.py` (verify integration test suite execution)
+- **Acceptance Criteria**:
+  - When players are in proximity, chat messages appear ONLY in the chat sidebar; overhead speech bubbles are NOT rendered.
+  - When a player is NOT in proximity with any player, chat text appears as an overhead speech bubble above their avatar; their text is NOT added to the sidebar.
+  - Automated test suite in `test/test_proximity_chat.py` validates all five tickets:
+    - Tombstone removal and turf cleanliness.
+    - Top-bar button relocation.
+    - Top-right sidebar DOM, toggle icon, and auto-unhide logic.
+    - 5-minute retention expiration and message purging.
+    - Unique player color assignment on first message.
+    - Speech bubble vs sidebar exclusivity.
+  - Zero test failures across `python3 test/run_tests.py`.
+
+---
+
+## 4. File Blast Radius & Dependency Matrix
+
+| File Path | T-018 | T-019 | T-020 | T-021 | T-022 |
+|---|:---:|:---:|:---:|:---:|:---:|
+| `src/entities/tombstone.js` | 🗑️ Remove | | | | |
+| `src/world/field.js` | ✏️ Clean | | | | |
+| `src/net/protocol.js` | ✏️ Clean | | | | |
+| `src/ui/social_hud.js` | | ✏️ Reorganize | | | |
+| `src/style.css` | | ✏️ Top Bar | ✏️ Sidebar | | |
+| `src/ui/proximity_chat.js` | | | ✏️ Layout/Toggle | ✏️ Timer/Colors | |
+| `src/entities/owner.js` | | | | | ✏️ Bubble Duality |
+| `src/main.js` | ✏️ Parting | | | | ✏️ Route Duality |
+| `test/test_proximity_chat.py` | | | | | 🧪 Full Suite |
+
+---
+
+## 5. Concurrency DAG & Phasing Plan
+
+```mermaid
+flowchart TD
+    subgraph Wave 1 [Wave 1: Subsystem Cleanup & HUD Relocation]
+        T18["Ticket-018: Tombstone Subsystem Removal & Turf Cleanup"]
+        T19["Ticket-019: HUD Top-Bar Reorganization & Button Relocation"]
+    end
+
+    subgraph Wave 2 [Wave 2: Sidebar Container & Collapsible Toggle]
+        T20["Ticket-020: Top-Right Downward Chat Sidebar, Toggle Button & Auto-Unhide"]
+    end
+
+    subgraph Wave 3 [Wave 3: Retention Engine & Speaker Differentiation]
+        T21["Ticket-021: Proximity Chat Retention Expiry & Player Color Palette"]
+    end
+
+    subgraph Wave 4 [Wave 4: Spatial Duality & Acceptance Verification]
+        T22["Ticket-022: Speech Bubble Duality Routing & Comprehensive Test Suite"]
+    end
+
+    T19 --> T20
+    T20 --> T21
+    T18 --> T22
+    T21 --> T22
+```
+
+```
+
+## FILE: docs/roadmap-the-downs.md
+```markdown
+# Multi-Ticket Roadmap: "The Downs" Social Sandbox Expansion
+
+## 1. Executive Summary
+
+This roadmap establishes the architecture, dependency graph, file blast radiuses, and ticket specifications for the major expansion of **Virtual Dog Walker**, transforming the park into **"The Downs"** inspired by the real **Clifton and Durdham Downs** in Bristol, UK.
+
+The expansion encompasses seven cohesive, cognitively bounded feature domains:
+1. **The Downs Map Redesign, Bins & Nature Audio** (`ticket-011`)
+2. **Enhanced Character & Canine Customization & 2D Aesthetics** (`ticket-012`)
+3. **Canine Personality System & Leash Physics Overhaul** (`ticket-013`)
+4. **Canine Stray Run-Off, Directional Arrows & Dog Poop/Bin Mechanics** (`ticket-014`)
+5. **Ad-Hoc Proximity Group Chat & Tombstone Lifecycle** (`ticket-015`)
+6. **Park NPCs: Autonomous Walkers & Joggers** (`ticket-016`)
+7. **UTC Day/Night Sepia Twilight & Clifton Downs Live Weather** (`ticket-017`)
+
+---
+
+## 2. Architecture & Subsystem Decomposition
+
+```
++-----------------------------------------------------------------------------------+
+|                                  THE DOWNS CORE                                   |
++-----------------------------------------------------------------------------------+
+  |
+  +--> [World & Environment]
+  |      - "The Downs" Meadow Map: Ladies Mile, Sea Walls, Water Tower, Observatory
+  |      - Public Dog-Waste Bins & Teak Benches
+  |      - Day/Night Sepia Twilight Lighting Shader (UTC)
+  |      - Live Clifton Downs Weather Integration (Open-Meteo API + Canvas Particles)
+  |      - Rich Procedural Web Audio Nature Soundscape (Breeze, Birdsong, Foliage)
+  |
+  +--> [Entities & Canine AI]
+  |      - Enhanced 2D Vector/Sprite Aesthetics (Owner Avatars & Dogs)
+  |      - Dog Personality Engine: (Playfulness, Shyness, Barkyness, Obedience) [1-5]
+  |      - Overhauled Leash Dynamics: No Ball Chasing on Lead, Lead Pulling Physics
+  |      - Idle Stray Run-Off Event (Obedience-weighted) + Navigation Compass Arrow
+  |      - Dog Poop Event + Pickup + Navigation Arrow to Nearest Dog Bin
+  |      - Ambient NPCs: Leisure Walkers & Athletic Joggers with Trail Navigation
+  |
+  +--> [Social & Multiplayer UI]
+  |      - Ad-Hoc Spatial Proximity Chat Clusters (Dynamic Join/Leave for 2+ Players)
+  |      - Walking-Alongside Conversation Persistence
+  |      - Parting "Tombstone" Chat Markers on the Turf (Gradual Dissolve)
+  |      - Tabbed Human & Canine Customizer with Profile Persistence & Net Sync
++-----------------------------------------------------------------------------------+
+```
+
+---
+
+## 3. Ticket Breakdown & Cognitive Sizing
+
+### Ticket-011: The Downs Map Redesign Inspired by Clifton & Durdham Downs, Waste Bins & Nature Soundscape
+- **Domain**: World / Rendering / Audio
+- **Cognitive Sizing**: `HIGH` [H]
+- **Target Files**:
+  - `src/world/field.js` (expand coordinate space, Ladies Mile avenue, Sea Walls overlook, Observatory clearing, Water Tower, dog waste bins)
+  - `src/systems/audio.js` (expanded multi-track procedural nature soundscape: rustling leaves, blackbird, robin, woodpigeon calls)
+  - `index.html` (rename title and header branding to "The Downs")
+- **Acceptance Criteria**:
+  - Map geometry reflects Clifton & Durdham Downs layout with named paths and landmark clearings.
+  - At least 8 dog-waste bins strategically placed alongside teaks benches and path intersections.
+  - Web Audio nature soundscape plays soothing ambient wind and authentic British birdsong with smooth volume modulation.
+  - Zero regression in camera clamping, y-sorting depth, or collision resolution.
+
+### Ticket-012: Enhanced Character & Canine Customization & 2D Aesthetics
+- **Domain**: Entities / Avatars / UI / Styling
+- **Cognitive Sizing**: `MEDIUM` [M]
+- **Target Files**:
+  - `src/entities/owner.js` (enhanced 2D avatar rendering: hairstyle, outfit styles, skin tones, shoes, fluid walk cycles)
+  - `src/entities/companion_dog.js` (enhanced 2D dog rendering: ear textures, snout details, collar charm, paw strides)
+  - `src/ui/social_hud.js` (tabbed customizer for Walker and Dog)
+  - `src/style.css` (customizer styling polish)
+- **Acceptance Criteria**:
+  - Owner avatar has selectable hair styles/colors, jacket styles, pants, and skin tones.
+  - Dog companion has expanded coat presets and collar color customization.
+  - Visuals remain crisp, charming 2D top-down style.
+  - Customization saves to `localStorage` and synchronizes across multiplayer peers via `HELLO` and `SYNC_STATE`.
+
+### Ticket-013: Canine Personality System & Leash Physics Overhaul
+- **Domain**: Dog AI / Leash Physics / Protocol
+- **Cognitive Sizing**: `HIGH` [H]
+- **Target Files**:
+  - `src/entities/companion_dog.js` (personality trait integration, leash pulling force, leash ball-chase prohibition)
+  - `src/ui/social_hud.js` (personality attribute sliders 1–5 in customizer)
+  - `src/net/protocol.js` (include personality attributes in peer metadata and sync packets)
+- **Acceptance Criteria**:
+  - Dog personality attributes: Playfulness, Shyness, Barkyness, Obedience (scale 1 to 5).
+  - When leashed, dog NEVER breaks into `FETCHING` state or chases balls; looks towards ball with eager pull.
+  - Leashed dog strictly respects maximum leash length, but exerts pulling force on lead when wanting to move.
+  - Leash line renders taut when pulling occurs.
+  - Personality settings persist and affect steering and vocalization behaviors.
+
+### Ticket-014: Canine Stray Run-Off, Directional Arrows & Dog Poop/Bin Mechanics
+- **Domain**: Gameplay Loops / Events / Navigation HUD
+- **Cognitive Sizing**: `MEDIUM` [M]
+- **Target Files**:
+  - `src/entities/companion_dog.js` (idle detection, stray trigger, poop timer & drop animation)
+  - `src/world/field.js` (poop entity management, bin registry query)
+  - `src/ui/navigation_arrow.js` (new directional HUD compass arrow for lost dog and nearest bin)
+  - `src/main.js` (poop pickup interaction <kbd>E</kbd>/tap, bin disposal)
+- **Acceptance Criteria**:
+  - Standing idle for >40 seconds without whistling triggers stray run-off roll, weighted inversely by Obedience.
+  - Lost dog runs off/teleports to secluded meadow spot and waits; directional HUD arrow points directly to dog.
+  - Reaching dog or whistling recalls dog and clears the lost arrow.
+  - Periodic dog poop event spawns a clean-up prompt; picking up poop activates a directional HUD arrow to the nearest bin.
+  - Disposing poop in bin grants positive feedback chime.
+
+### Ticket-015: Ad-Hoc Proximity Group Chat & Tombstone Lifecycle
+- **Domain**: Social / Spatial Networking / UI
+- **Cognitive Sizing**: `HIGH` [H]
+- **Target Files**:
+  - `src/ui/proximity_chat.js` (new ad-hoc spatial group chat manager)
+  - `src/entities/tombstone.js` (new world-space fading conversation tombstone entity)
+  - `src/ui/social_hud.js` (prominent active conversation display)
+  - `src/net/protocol.js` & `party/server.js` (spatial chat relay)
+  - `src/style.css`
+- **Acceptance Criteria**:
+  - Proximity clusters form dynamically when 2+ players are within ~200px.
+  - Prominent on-screen conversation interface displays active participants and chat thread.
+  - Players seamlessly join/leave the chat as they walk into or out of proximity.
+  - Walking alongside keeps players continuously in the conversation.
+  - When players part and exit proximity with all peers, the conversation drops as a fading "tombstone" marker on the turf that dissolves over 10 seconds.
+
+### Ticket-016: Park NPCs: Autonomous Walkers & Joggers
+- **Domain**: Ambient Entities / Path Navigation
+- **Cognitive Sizing**: `MEDIUM` [M]
+- **Target Files**:
+  - `src/entities/npc.js` (new `WalkerNPC` and `JoggerNPC` classes)
+  - `src/world/field.js` (NPC update and render in y-sorted pipeline)
+  - `src/main.js` (NPC population management)
+- **Acceptance Criteria**:
+  - Pedestrian walkers stroll along footpaths, pause at benches or scenic overlooks.
+  - Joggers run at athletic pace (~260 px/s) along perimeter and Ladies Mile path loops.
+  - NPCs avoid collisions with players and dogs; dogs react according to their personality traits.
+  - Y-sorted rendering with natural depth sorting.
+
+### Ticket-017: UTC Day/Night Sepia Twilight & Clifton Downs Live Weather
+- **Domain**: Atmospheric Shaders / Live Weather API / Audio
+- **Cognitive Sizing**: `MEDIUM` [M]
+- **Target Files**:
+  - `src/world/environment.js` (new day/night lighting pass & weather controller)
+  - `src/systems/weather.js` (Open-Meteo live API client + offline fallback simulation)
+  - `src/world/field.js` (sepia twilight lighting filter, streetlamp glows, rain particles)
+  - `src/systems/audio.js` (weather audio modulation: rain on leaves, wind gusts)
+- **Acceptance Criteria**:
+  - Day/night cycle synchronized with UTC / Bristol sunrise and sunset.
+  - Night renders with an evocative sepia twilight color grading and warm glowing park lamps.
+  - Clifton Downs weather fetched live via Open-Meteo API with offline simulated fallback.
+  - Weather states (clear, overcast, drizzle, rain, fog) trigger matching particle overlays and sound effects.
+
+---
+
+## 4. File Blast Radius & Dependency Matrix
+
+| File Path | T-011 | T-012 | T-013 | T-014 | T-015 | T-016 | T-017 |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| `src/world/field.js` | ✏️ Core | | | 🔍 Bins | | 🔍 Paths | 🎨 Light |
+| `src/systems/audio.js` | ✏️ Core | | | | | | 🔊 Rain |
+| `src/entities/owner.js` | | ✏️ Core | | | | | |
+| `src/entities/companion_dog.js` | | ✏️ Draw | ✏️ Leash/AI | ✏️ Stray/Poop | | 🔍 React | |
+| `src/ui/social_hud.js` | | ✏️ Style | ✏️ Personality | | ✏️ Chat Link | | 🔍 Weather |
+| `src/ui/proximity_chat.js` (new) | | | | | ✏️ Core | | |
+| `src/ui/navigation_arrow.js` (new) | | | | ✏️ Core | | | |
+| `src/entities/npc.js` (new) | | | | | | ✏️ Core | |
+| `src/world/environment.js` (new) | | | | | | | ✏️ Core |
+| `src/systems/weather.js` (new) | | | | | | | ✏️ Core |
+| `src/net/protocol.js` | | 🔍 Meta | ✏️ Schema | | ✏️ Chat | | |
+| `src/main.js` | | | | ✏️ Wire | ✏️ Wire | ✏️ Wire | ✏️ Wire |
+
+---
+
+## 5. Concurrency DAG & Phasing Plan
+
+```mermaid
+flowchart TD
+    subgraph Wave 1 [Wave 1: World & Identity Foundations]
+        T11["Ticket-011: The Downs Map Redesign, Bins & Nature Audio"]
+        T12["Ticket-012: Enhanced Character & Dog Customization"]
+    end
+
+    subgraph Wave 2 [Wave 2: Canine AI, Leash Dynamics & Proximity Chat]
+        T13["Ticket-013: Dog Personality System & Leash Physics Overhaul"]
+        T15["Ticket-015: Ad-Hoc Proximity Group Chat & Tombstones"]
+    end
+
+    subgraph Wave 3 [Wave 3: Gameplay Events & Ambient Life]
+        T14["Ticket-014: Canine Stray Run-Off & Dog Poop/Bin Mechanics"]
+        T16["Ticket-016: Park NPCs (Walkers & Joggers)"]
+    end
+
+    subgraph Wave 4 [Wave 4: Atmospheric Environment]
+        T17["Ticket-017: UTC Day/Night Sepia Twilight & Live Clifton Weather"]
+    end
+
+    T11 --> T14
+    T11 --> T16
+    T11 --> T17
+    T12 --> T13
+    T13 --> T14
+```
 
 ```
 
@@ -1200,6 +2358,4104 @@ verification:
     <script type="module" src="src/main.js"></script>
   </body>
 </html>
+
+```
+
+## FILE: openspec/changes/archive/ticket-001/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-001"
+title: "Ziggy the Cocker Spaniel: 2D Platformer Adventure"
+state: "PLANNING"
+created_at: "2026-10-10T18:01:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-001/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Objective
+Build the foundational release of **"Ziggy: The Great Park Adventure"**, a charming, highly responsive 2D platformer starring **Ziggy the Cocker Spaniel**. Ziggy is modeled faithfully after real-world reference photos (`docs/reference/ziggy_face.png`, `docs/reference/ziggy_standing.jpg`) featuring his signature **chocolate & tan** working cocker spaniel coat, honey-tan eyebrow pips, long silky crimped ears with spring physics, white chest patch, wagging feathered tail, and canine platforming mechanics (variable jumping, mid-air ear-flutter glide, and sonic bark ability).
+
+## 2. Character Design & Visual Palette (Faithful to Reference)
+- **Visual Design Spec (from Reference Photos)**:
+  - **Coat & Body**: Rich deep chocolate brown (`#2E1A14`, `#3B231A`).
+  - **Signature Eyebrows**: Warm honey-tan circular eyebrow pips (`#D89B54`, `#E2AA68`) positioned directly above the eyes for maximum expressiveness.
+  - **Muzzle & Cheeks**: Tan muzzle fading to a liver/truffle brown nose (`#5E372E`).
+  - **Eyes**: Soulful amber/hazel eyes (`#C6933A`) with responsive pupil scaling based on state (wide during jumps/barks, alert when running).
+  - **Ears**: Long, crimped/wavy cocker spaniel ears with chocolate roots and golden-chestnut highlights (`#9E5528`, `#B66E3A`) featuring real-time spring damper physics.
+  - **Chest**: Distinctive creamy white chest bib (`#F4EFE6`) visible beneath collar/harness.
+  - **Legs & Feathering**: Honey-tan feathered boots on all four paws.
+  - **Tail**: High-set feathered tail with golden-tan underside that wags enthusiastically when moving.
+  - **Gear**: Dark harness with teal collar accent (`#1B6B65`) and gold bone charm (`#F3C948`).
+
+## 3. Scope Boundaries
+- **In-Scope**:
+  - **Hero Character (Ziggy)**:
+    - Procedurally rendered 2D canvas sprite faithfully adhering to the color palette and markings above.
+    - Kinematic movement: horizontal acceleration, deceleration/skid, coyote time (5-frame window), jump input buffering, and variable jump height.
+    - **Ear-Flap Flutter**: Mid-air secondary jump/glide where Ziggy's fluffy ears flap for extra hangtime and distance.
+    - **Bark Action**: Emits an expanding sonic ring wave that startles park critters (squirrels, pigeons) and triggers a real-time procedural bark audio effect.
+  - **Platforming & Environment**:
+    - Parallax scrolling multi-layered park world (sunlit sky, rolling green hills, park benches, garden fences, wooden bridges).
+    - Solid ground collision, sloped edges, and one-way pass-through platforms (jump up through, drop down with S/Down + Jump).
+  - **Collectibles & Hazards**:
+    - Golden Bones (points & completion tally), Tennis Balls (super speed boost), Sausages (health recovery).
+    - Hazards: Mud puddles (traction reduction/slowdown), oscillating garden sprinklers, mischievous squirrels.
+    - Level Goal: The Golden Dog Park Gate (triggers victory dance and level clear screen).
+  - **Audio & Visual Polish**:
+    - Web Audio API procedural sound engine: authentic resonant canine barks, boing leaps, bone pickup chimes, and playful background chiptune music.
+    - Particle FX: Dirt kick-up when sprinting/landing, sparkles on bone pickup, water droplets near sprinklers.
+    - Paw-print lives counter (🐾), bone score, bark energy meter, and game over / level complete screens.
+  - **Test Suite**:
+    - Vitest unit tests covering vector physics, gravity/jump equations, collision resolution, and collectible scoring.
+- **Out-of-Scope**:
+  - Level editor (reserved for subsequent tickets).
+  - Multiplayer / co-op (future roadmap).
+
+## 4. Requirements & Acceptance Criteria
+- [ ] **REQ-1: Vite & TypeScript Platformer Foundation**
+  - Project scaffolding with TypeScript, Vite, and Vitest.
+  - Zero external raster asset dependency (procedural canvas rendering + Web Audio).
+  - *Verification*: `npm run build` passes with zero errors; `npm test` runs with passing tests.
+- [ ] **REQ-2: Kinematic Platforming Physics & Collisions**
+  - Axis-Aligned Bounding Box (AABB) collision detection with solid tiles and one-way platforms.
+  - Coyote time and jump input buffering for crisp, responsive platforming.
+  - *Verification*: Vitest unit tests for gravity, jump curves, platform resting, and collision clipping prevention.
+- [ ] **REQ-3: Ziggy Hero Entity & Canine Mechanics**
+  - Fully animated Chocolate & Tan Cocker Spaniel matching the reference design tokens (tan eyebrows, chest bib, ear highlights, tail wag).
+  - Floppy ear spring physics responding to velocity and air resistance.
+  - "Bark" ability emitting a circular expansion wave with cooldown and procedural sound effect.
+  - *Verification*: State machine unit tests and interactive browser testing.
+- [ ] **REQ-4: Park Level, Collectibles, & Enemies**
+  - Multi-tier park level layout with hills, benches, platforms, bone trails, and park gate goal.
+  - Interactive squirrels that scurry away when barked at.
+  - Collectible pickup registration and score tracking.
+  - *Verification*: Unit tests verifying bone collection and win condition triggers.
+- [ ] **REQ-5: Procedural Canine Audio & UI Polish**
+  - Web Audio API synthesis generating sound effects without external MP3/WAV files.
+  - HUD overlay featuring Paw-Print lives, Bone Counter, Bark energy meter, and Victory screen.
+  - *Verification*: Audio synthesis plays cleanly on user interaction; 60fps canvas performance.
+
+## 5. Architectural Design & Impacted Modules
+- **New Modules / Files**:
+  - `docs/reference/ziggy_face.png`, `docs/reference/ziggy_standing.jpg`: Canonical character reference.
+  - `package.json`, `tsconfig.json`, `vite.config.ts`: Modern dev toolchain.
+  - `index.html`: Canvas container and retro-modern HUD styling.
+  - `src/main.ts`: Game loop orchestrator (`requestAnimationFrame` + delta time clamp).
+  - `src/engine/physics.ts`: AABB collision resolver, gravity, and raycast floor checks.
+  - `src/entities/ziggy.ts`: Ziggy player controller, floppy ear physics, and chocolate & tan sprite renderer.
+  - `src/entities/collectibles.ts`: Bones, tennis balls, and treats.
+  - `src/entities/hazards.ts`: Squirrels, sprinklers, and mud patches.
+  - `src/level/park_level.ts`: Tilemap generator and parallax background layers.
+  - `src/systems/audio.ts`: Procedural Web Audio canine bark & synth effects.
+  - `src/systems/particles.ts`: Grass/dust kick-up and sparkle bursts.
+  - `src/ui/hud.ts`: Canvas HUD overlays (paws, bones, score, win/lose states).
+  - `test/physics.test.ts`: Automated physics and collision tests.
+  - `test/gameplay.test.ts`: Collectible scoring and state progression tests.
+- **Modified Modules**:
+  - `factory.yaml`: Tech stack and validation commands.
+  - `openspec/specs/overview.md`: Repository overview updated for Ziggy platformer.
+
+## 6. Decomposition Plan (Architect Briefs)
+| Brief ID | Role | Target Thinking Level | Description | Dependencies |
+| :--- | :--- | :---: | :--- | :--- |
+| `brief-01-scaffold` | Implementer | `LOW` | Vite + TypeScript + Vitest repo scaffolding and package configuration | None |
+| `brief-02-physics-engine` | Implementer | `MEDIUM` | Kinematic 2D platforming physics, AABB collisions, one-way ledges, and unit tests | `brief-01-scaffold` |
+| `brief-03-ziggy-hero` | Implementer | `MEDIUM` | Chocolate & tan Ziggy sprite rendering (tan eyebrows, chest bib, ear springs, bark shockwave, ear-flap glide) | `brief-02-physics-engine` |
+| `brief-04-park-world-audio` | Implementer | `MEDIUM` | Parallax park scenery, collectibles (bones), hazards, Web Audio procedural barks & HUD | `brief-03-ziggy-hero` |
+| `brief-val-01` | Validator | `LOW` | Run Vitest unit tests, type-check, and verify production build | `brief-04-park-world-audio` |
+| `brief-rev-01` | Reviewer | `HIGH` | Deep architectural review: 60fps frame budgeting, memory leak audit, and control fluidity | `brief-val-01` |
+
+```
+
+## FILE: openspec/changes/archive/ticket-002/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-002"
+title: "Clifton Down Social Sandbox: Multiplayer Dog Walking Field"
+state: "PLANNING"
+created_at: "2026-10-10T21:10:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-002/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Objective
+Pivot the game from a 2D side-scrolling platformer into a relaxing, charming **social multiplayer sandbox** set in an expansive, sun-dappled open field inspired by **Clifton Down** (Bristol, UK). 
+
+Players inhabit the park as an **Owner and Dog companion** walking together across rolling green turf, sweet chestnut/oak trees, wildflower patches, and park benches. Players can self-host or create rooms entirely within the browser via WebRTC (or via a lightweight standalone Node.js WebSocket server) allowing others to join with their dogs. Features include companion following physics, ball/stick fetching, dog-to-dog greeting/sniffing interactions, barking, leash toggling, and in-game speech/emote bubbles.
+
+---
+
+## 2. Character Design & Visual Setting (Clifton Down)
+- **Environment Aesthetic**:
+  - **The Meadow**: Rolling lush green grass (`#4A7C38`, `#5E9E47`, `#3B632D`) with subtle wind-sway grass blade particles, dirt footpaths, and wildflower clusters (buttercups `#F3C948`, clover `#FFFFFF`, bluebells `#6B8BE8`).
+  - **Landmarks & Features**: Mature sweet chestnut and English oak trees casting soft canopy shadows, wooden park benches, and a distant panoramic vista inspired by the Avon Gorge & Clifton Observatory.
+  - **Atmosphere & Day/Dusk Lighting**: Warm golden hour sunlight, soft dynamic shadows, floating pollen/dandelion seeds, and procedurally synthesized ambient nature audio (wind through leaves, birdsong, grass footsteps).
+- **Owner & Dog Entities**:
+  - **Owner**: Stylized top-down human avatar with customizable jacket/sweater color, walking animation cycles, and directional facing (8-way).
+  - **Dog Companion (Ziggy & Friends)**:
+    - Retains Ziggy's signature **chocolate & tan** cocker spaniel coat (`#2E1A14`, `#D89B54`), honey eyebrow pips, white chest bib, and springy floppy ear physics from Ticket-001.
+    - Customizable coat options for visitors (Golden, Black, Tri-Color, Liver).
+    - Canine steering behaviors: trot beside owner, wander to sniff interesting trees/grass patches, wagging tail physics, play-bow animation when greeting other dogs, and sitting when owner rests.
+
+---
+
+## 3. Scope Boundaries
+- **In-Scope**:
+  - **Sandbox World & Top-Down Engine**:
+    - Expansive 2D top-down continuous canvas meadow (e.g. 2400x1800 px coordinate space) with camera tracking the local player.
+    - Y-sorted depth rendering (players, dogs, trees, and benches correctly layer as entities walk in front of or behind objects).
+    - Boundary collision (park perimeter stonewalls/railings and solid tree trunks).
+  - **Companion Dog & Player Mechanics**:
+    - Dual entity control: Keyboard-focused navigation via WASD or Arrow keys.
+    - Dog autonomous companion steering: follows owner naturally, stays within comfortable leash distance, stops to sniff, or explores off-leash.
+    - Leash Toggle (`L` key): switch between loose lead (stays within 80px) and off-lead roaming (runs freely, plays with others).
+    - Ball Fetching (`Space` or `T` key): throw a tennis ball ahead in facing direction; dogs track the ball, sprint to catch it, and happily bring it back.
+    - Bark Ability (`B` key): emit procedural canine bark sound with expanding sound-ring and "Woof!" emote bubble.
+    - Petting Interaction (`E` key): bend down to pet the dog with heart particle FX and happy tail-wag burst.
+  - **Multiplayer Networking (Pure In-Browser WebRTC P2P)**:
+    - **Zero-Server Browser-to-Browser P2P (WebRTC via PeerJS DataChannels)**: Host clicks "Host Field" to generate a shareable room link or short code (e.g. `?room=clifton-xyz`); visitors paste or open the link to join the host's field instantly with zero backend or server installation.
+    - State synchronization: player position, facing, dog position, animation state, ball physics, bark events, and chat bubbles.
+    - Local fallback: works 100% offline in Solo Mode if no network is active.
+  - **Social Interactions**:
+    - Proximity dog-to-dog greeting: when two dogs meet within 60px, they trigger a friendly sniff and excited tail-wag interaction.
+    - Speech & Emote bubbles (`Enter` to type chat or click emote buttons like 👋, 🐾, ❤️, 🎾).
+    - Player name tags and custom coat/outfit picker.
+  - **Audio & Sensory Polish**:
+    - Web Audio API procedural soundscape: birds, rustling breeze, grass footstep sounds, authentic cocker spaniel barks, ball bounce pops.
+- **Out-of-Scope**:
+  - Complex combat, health bars, or fail states (pure peaceful social sandbox).
+  - External server hosting or persistent account databases (pure ephemeral peer-to-peer browser rooms).
+  - 3D rendering engine (maintains lightweight, instant-loading 2D HTML5 canvas).
+
+---
+
+## 4. Requirements & Acceptance Criteria
+- [x] **REQ-1: Top-Down Open Field Engine & Clifton Down Meadow**
+  - Smooth 2D canvas viewport with camera tracking local player across an expansive park.
+  - Y-sorted entity rendering for trees, benches, owners, dogs, and tennis balls.
+  - Ambient grass blade particles and wind breeze effects.
+  - *Verification*: 60 FPS rendering, correct depth sorting when walking above/below trees and benches.
+- [x] **REQ-2: Owner & Companion Dog Physics (Keyboard Focused)**
+  - 8-directional movement for Owner avatar with walk animations via WASD / Arrow keys.
+  - Natural steering behavior for Dog companion (following, loose leash constraint, wandering, sitting, play-bowing).
+  - Keyboard actions: Leash toggle (`L`), Ball throw (`Space`/`T`), Petting (`E`), and Barking (`B`).
+  - Tennis ball trajectory with bounce physics and canine retrieval behavior.
+  - *Verification*: Unit tests for companion steering vectors, leash constraints, and ball trajectory.
+- [x] **REQ-3: Pure In-Browser WebRTC Peer-to-Peer Multiplayer**
+  - Host generates room; shareable URL / room code.
+  - Remote peers connect over WebRTC DataChannel (PeerJS).
+  - Low-latency position interpolation (lerp) for remote owners and dogs.
+  - Host authoritative ball physics and player join/leave sync.
+  - *Verification*: Two browser tabs connect via room link, walk together in the field, see each other's dogs, and throw/fetch balls simultaneously.
+- [x] **REQ-4: Social Sandbox Interactions & Chat/Emotes**
+  - In-game chat and emote bubbles floating above avatars (`Enter` to trigger).
+  - Dog-to-dog proximity greeting reaction (sniff, tail wag, friendly bounce).
+  - Dog & Owner customization modal (name, jacket color, dog coat color: chocolate & tan, golden, black).
+  - *Verification*: Chat messages appear correctly over avatar heads in both host and client views.
+- [x] **REQ-5: Procedural Soundscape & Polished HUD**
+  - Ambient park audio (breeze, birdsong, grass footsteps, barks) via Web Audio API.
+  - Minimalist glassmorphic park HUD showing room code, copy link button, player count, and controls guide.
+  - *Verification*: Audio activates cleanly upon interaction; HUD buttons respond with smooth feedback.
+
+---
+
+## 5. Architectural Design & Impacted Modules
+- **New Modules / Files**:
+  - `src/world/field.js`: Clifton Down continuous terrain, rolling turf, trees, benches, perimeter boundaries, and grass particle systems.
+  - `src/entities/owner.js`: Human player avatar, 8-way movement, walk cycle rendering, outfit customization.
+  - `src/entities/companion_dog.js`: Top-down canine companion entity, steering physics, leash dynamics, ear & tail wag animations.
+  - `src/entities/toy.js`: Tennis ball physics, bouncing, and fetch target tracking.
+  - `src/net/network.js`: WebRTC peer-to-peer room manager (PeerJS DataChannel protocol, room code generation, message serialization).
+  - `src/ui/social_hud.js`: Room code display, invite link copier, chat/emote bubbles, and character customizer.
+  - `test/steering.test.js`: Companion dog steering behavior and leash distance tests.
+  - `test/network.test.js`: Serialization and packet schema verification.
+- **Modified Modules**:
+  - `index.html`: Update title, viewport, HUD overlays, and social sandbox styling.
+  - `src/main.js`: Main loop orchestrating sandbox field, player, companion dog, network, and audio.
+  - `src/systems/audio.js`: Expand Web Audio engine with nature ambiance (breeze, birdsong, footsteps).
+  - `factory.yaml`: Update project metadata and validation commands.
+  - `README.md`: Document social sandbox gameplay and WebRTC room sharing.
+
+---
+
+## 6. Decomposition Plan (Architect Briefs)
+
+| Batch | Brief ID | Role | Target Thinking Level | Description | Files Scope | Dependencies |
+| :---: | :--- | :--- | :---: | :--- | :--- | :--- |
+| **1** | `brief-01-field-engine` | Implementer | `MEDIUM` | Clifton Down top-down world, camera viewport, Y-sorted rendering, tree/bench obstacles, and ambient grass/wind particles | `src/world/field.js`, `src/style.css` | None (Parallel) |
+| **1** | `brief-02-owner-dog` | Implementer | `HIGH` | Owner avatar, companion dog steering AI, leash mechanics, tail/ear physics, ball throw & fetch | `src/entities/owner.js`, `src/entities/companion_dog.js`, `src/entities/toy.js` | None (Parallel) |
+| **1** | `brief-03-networking` | Implementer | `HIGH` | WebRTC in-browser P2P transport (PeerJS), message protocols, state synchronization, and optional Node server | `src/net/*`, `server/server.js` | None (Parallel) |
+| **2** | `brief-04-social-audio-main` | Implementer | `MEDIUM` | Wire social HUD (room sharing, chat/emotes, customizer), Web Audio ambient soundscape, and main game loop | `src/main.js`, `src/ui/social_hud.js`, `src/systems/audio.js`, `index.html` | Batch 1 |
+| **2** | `brief-val-tests` | Validator | `LOW` | Automated tests for steering math, ball physics, and network packet serialization | `test/*` | Batch 1 |
+| **3** | `brief-rev-audit` | Reviewer | `HIGH` | Comprehensive architectural audit, multiplayer latency verification, and code quality review | Full diff | Batch 2 |
+
+```
+
+## FILE: openspec/changes/archive/ticket-003/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-003"
+title: "Clifton Down: Dedicated Multiplayer Microserver with Zero-Port Tunneling"
+state: "PLANNING"
+created_at: "2026-10-10T21:52:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-003/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Objective
+The pure in-browser WebRTC peer-to-peer networking (PeerJS with default STUN) implemented in Ticket-002 struggles across external networks and firewalls:
+1. **NAT Traversal Restrictions**: Residential routers, symmetric NATs, mobile cellular hotspots, and academic/corporate networks block direct peer connections without a dedicated relay.
+2. **Host Tab Throttling**: When an in-browser host minimizes their browser tab or navigates away, Chrome/Safari throttle timers and frame rates, inducing severe lag or disconnection for remote visitors.
+3. **Complex Port Forwarding**: Players do not want to configure home router port forwarding or reveal personal home IP addresses.
+
+To achieve a seamless, robust **"Minecraft-style but browser-based"** hosting experience with minimal host infrastructure and zero port forwarding, Ticket-003 introduces a **lightweight dedicated microserver** (`server/server.py` and optional runner) paired with an automated **zero-port public tunnel** (e.g. Cloudflare Quick Tunnel) and a unified client networking adapter (`src/net/ws_network.js` & `src/net/network.js`).
+
+A player runs a single command:
+```bash
+python3 server/host.py
+```
+This starts the microserver, serves the game static assets, handles WebSocket multiplayer rooms, automatically spins up a secure public HTTPS/WSS URL (`https://<subdomain>.trycloudflare.com`), and outputs a one-click invite link. Guests outside the network simply click the link in their web browser—no installation, no port forwarding, no accounts.
+
+---
+
+## 2. System Architecture & Tunneling Design
+
+### 2.1 Microserver Architecture (`server/server.py`)
+- Built on Python 3 using asynchronous I/O (`aiohttp` / native asynchronous WebSockets).
+- **Dual Responsibility**:
+  1. **Static HTTP File Server**: Serves `index.html`, `src/`, styles, and assets on `http://127.0.0.1:8080`.
+  2. **WebSocket Game Room Relay**: Listens on `/ws` (or root WebSocket handler) to manage room channels (`room_id`), player handshakes (`HELLO`, `WELCOME`), high-frequency state broadcasts (`SYNC_STATE` at 16Hz), ball physics sync (`BALL_THROWN`, `BALL_SYNC`), dog barks (`BARK`), pets (`PET`), and chat/emotes.
+- **Heartbeat & Disconnection Hygiene**:
+  - Pings clients every 15s; gracefully removes abandoned peers, broadcasts `PEER_LEFT` notifications, and frees idle rooms after all players leave.
+- **Non-Throttled Dedicated Loop**:
+  - Runs in a persistent background terminal process unaffected by browser tab minimization, sleep states, or client focus loss.
+
+### 2.2 Zero-Config Public Tunneling (`server/host.py`)
+- Launches the local microserver on an available port.
+- Automatically provisions a public tunnel without requiring router port-forwarding, accounts, or API keys:
+  - Supports **Cloudflare Quick Tunnels** via standalone `cloudflared` binary downloader or system runner (`cloudflared tunnel --url http://127.0.0.1:8080`).
+  - Fallback to local LAN IP display and standard port mode if offline or no tunnel available.
+- Prints a clear, attractive CLI banner with:
+  - Local URL: `http://localhost:8080`
+  - Local Network URL: `http://192.168.x.x:8080`
+  - **Public Invite Link**: `https://<random-id>.trycloudflare.com/?server=wss://<random-id>.trycloudflare.com/ws&room=<room-id>`
+- Displays active connected player counts in real time on the console.
+
+### 2.3 Universal Client Networking Engine (`src/net/network.js` & `src/net/ws_network.js`)
+- **Transport Abstraction**:
+  - The game client dynamically detects its connection mode:
+    - **WebSocket Microserver Mode**: If loaded via the host server or if `?server=...` is present in the URL, connects via native `WebSocket` directly to the microserver.
+    - **WebRTC P2P Fallback Mode**: If running purely as a static standalone file without a server, falls back gracefully to the existing PeerJS P2P engine.
+- **Protocol Parity**:
+  - Retains 100% compatibility with existing `Protocol` packet schemas (`HELLO`, `WELCOME`, `SYNC_STATE`, `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, `EMOTE`, `PEER_LEFT`).
+- **Smooth Interpolation**:
+  - Employs `EntityInterpolator` for smooth remote entity positions (owner and dog) with zero stutter.
+- **HUD Integration (`src/ui/social_hud.js`)**:
+  - Status indicator displays "Connected via Dedicated Microserver (WSS)" with low ping badge.
+  - "Copy Invite Link" copies the complete public tunnel URL with room code preloaded.
+
+---
+
+## 3. Scope Boundaries
+
+### In-Scope
+1. **Dedicated Python Asynchronous Microserver (`server/server.py`)**:
+   - Single-process, high-throughput WebSocket & static file server.
+   - Authoritative room management and packet multiplexing.
+   - Automated cleanup of disconnected peers and empty rooms.
+2. **Zero-Port Tunnel Automation (`server/host.py`)**:
+   - Interactive CLI runner with colorful terminal output.
+   - Automatic tunnel initialization (Cloudflare Quick Tunnel / local fallback).
+   - Instant invite link generation.
+3. **Client WebSocket Network Adapter (`src/net/ws_network.js`)**:
+   - Resilient WebSocket connection with exponential backoff auto-reconnect.
+   - Synchronized player state, canine companion positions, ball physics, barking, and chat.
+   - Unified interface matching `NetworkManager` so `main.js` transitions seamlessly.
+4. **Enhanced In-Game HUD & Connection Experience (`src/ui/social_hud.js`)**:
+   - Shows active connection mode (`Dedicated Microserver` vs `Peer P2P`).
+   - One-click "Copy Server Link" toast.
+   - Visual ping/latency and connected player list.
+5. **Test Suite & Verification (`test/test_server.py`, `test/run_tests.py`)**:
+   - Unit and integration tests for microserver handshake, packet routing, room isolation, and disconnection handling.
+   - CLI runner sanity checks.
+
+### Out-of-Scope
+- Complex database persistence or user accounts (rooms remain lightweight, privacy-preserving, and ephemeral).
+- Paid cloud infrastructure requirements (zero cost, zero port forwarding, runs on local machine or free tiers).
+
+---
+
+## 4. Requirements & Acceptance Criteria
+
+- [ ] **REQ-1: Asynchronous Microserver Room Engine (`server/server.py`)**
+  - Starts an HTTP and WebSocket server on `127.0.0.1:8080` (or configurable port).
+  - Handles concurrent rooms isolated by `room_id`.
+  - Routes `HELLO`, `WELCOME`, `SYNC_STATE`, `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, and `EMOTE` between room members.
+  - Broadcasts `PEER_LEFT` when a connection closes and cleanly recycles memory.
+  - *Verification*: Automated test suite connects two simulated WebSocket clients, verifies handshakes, bidirectional state relaying, and disconnect cleanup.
+
+- [ ] **REQ-2: Zero-Port Tunnel & Host CLI Runner (`server/host.py`)**
+  - Single executable command `python3 server/host.py`.
+  - Spawns the microserver and initiates a zero-port public tunnel.
+  - Prints clear, formatted invite links for local, LAN, and public players.
+  - Graceful shutdown on <kbd>Ctrl+C</kbd> cleanly terminating tunnel and server child processes.
+  - *Verification*: CLI smoke test verifies startup, link generation, and clean shutdown.
+
+- [ ] **REQ-3: Client-Side Universal Network Adapter (`src/net/ws_network.js` & `src/net/network.js`)**
+  - Connects to microserver WebSocket when server parameter is present or host matches server origin.
+  - Exchanges player profile metadata on join.
+  - Feeds remote entity updates into `EntityInterpolator` at 60 FPS.
+  - Broadcasts local owner and dog snapshots at 16 Hz.
+  - Falls back to offline solo mode or PeerJS P2P if microserver is unreachable.
+  - *Verification*: In-browser testing with multiple tabs and automated schema verification.
+
+- [ ] **REQ-4: Social HUD & Share Link UX Polish (`src/ui/social_hud.js`)**
+  - HUD displays server connection badge, room ID, and player count.
+  - "Share Park" button copies the public tunnel URL.
+  - In-game toast notifications when peers join, leave, bark, or pet.
+  - *Verification*: UI correctly formats share URLs and displays peer connection status changes.
+
+- [ ] **REQ-5: End-to-End Test Suite Update (`test/run_tests.py`)**
+  - Extends existing test suite to validate WebSocket microserver protocols, room routing, payload integrity, and tunnel helpers alongside existing physics tests.
+  - *Verification*: `python3 test/run_tests.py` passes with 100% green status.
+
+---
+
+## 5. Architectural Design & Impacted Files
+- **New Files**:
+  - `server/server.py`: Asynchronous WebSocket and HTTP static file server.
+  - `server/host.py`: CLI host launcher with auto-tunneling and invite URL generator.
+  - `src/net/ws_network.js`: Client WebSocket transport adapter.
+  - `test/test_server.py`: Microserver integration test suite.
+- **Modified Files**:
+  - `src/net/network.js`: Unified network manager supporting both WebSocket microserver and fallback P2P modes.
+  - `src/main.js`: Auto-detection of server query parameter and integration with WS adapter.
+  - `src/ui/social_hud.js`: HUD connection indicator and invite URL handling.
+  - `test/run_tests.py`: Registration of microserver test cases.
+  - `README.md`: Clear instructions for hosting a park via `python3 server/host.py`.
+
+```
+
+## FILE: openspec/changes/archive/ticket-004/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-004"
+title: "Clifton Down: PartyKit Global Edge Multiplayer Rooms & Single-URL Web Hosting"
+state: "PLANNING"
+created_at: "2026-10-10T22:33:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-004/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Objective
+While Ticket-003 successfully established a dedicated Python microserver with zero-port Cloudflare tunneling for local desktop hosts, running a game still requires the host player to clone the repository, install Python/dependencies, and execute terminal commands (`python3 server/host.py`).
+
+To achieve the ultimate **zero-install, 100% in-browser multiplayer sandbox** that scales infinitely at $0 idle cost and seamlessly paves the way for a future mobile app wrapper, Ticket-004 integrates **PartyKit** (by Cloudflare). 
+
+With PartyKit:
+1. **On-Demand Edge Rooms**: Each park meadow (room) is an ephemeral actor spun up at the global edge in milliseconds when the first player arrives, running at single-digit latency across 300+ edge data centers.
+2. **Single-URL Deployment**: PartyKit serves both the static game frontend (`index.html`, `src/`) and the real-time WebSocket room relay under a single URL (`https://clifton-down.<subdomain>.partykit.dev`).
+3. **Zero Host Setup**: A host player simply opens their browser tab, clicks "Create Park", and shares the invite link. Guests click the link on their laptops, tablets, or phones and join instantly.
+4. **Mobile Ready**: The exact same PartyKit endpoint and client codebase are ready to be wrapped in Capacitor (iOS/Android) with zero backend changes.
+
+---
+
+## 2. System Architecture & Edge Design
+
+### 2.1 PartyKit Room Relay (`party/main.js`)
+- Runs as an edge serverless actor adhering to the PartyKit standard lifecycle:
+  - `onConnect(conn, room)`: Assigns a unique `peerId`, registers player connection metadata, and sends an initial `WELCOME` packet containing room peer list.
+  - `onMessage(message, sender, room)`: High-throughput, non-blocking packet multiplexing:
+    - Deserializes and validates protocol packets (`HELLO`, `SYNC_STATE`, `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, `EMOTE`).
+    - Broadcasts state updates efficiently to all other peers in the room (`room.broadcast(message, [sender.id])`).
+  - `onClose(conn, room)`: Cleans up peer state and broadcasts `PEER_LEFT` to remaining players.
+  - Scale-to-zero: Once all players disconnect, the room actor terminates cleanly with zero persistent resource consumption.
+
+### 2.2 Project Configuration & Static Serving (`partykit.json`)
+- Configures the PartyKit application:
+  ```json
+  {
+    "$schema": "https://www.partykit.io/schema.json",
+    "name": "clifton-down",
+    "main": "party/main.js",
+    "serve": "./",
+    "compatibilityDate": "2026-10-10"
+  }
+  ```
+- Serves static assets (`index.html`, `src/`, `style.css`) at the root path, providing a unified origin for HTTP and WSS.
+
+### 2.3 Client PartyKit Adapter & Auto-Detection (`src/net/ws_network.js`, `src/net/network.js`)
+- **Transport Routing**:
+  - Automatically identifies PartyKit runtime environments:
+    - If running on `*.partykit.dev` or `localhost:1999`, connects directly to `wss://<host>/parties/park/<roomId>`.
+    - Supports query parameters `?party=...` and `?room=...` for custom edge domains.
+    - Gracefully retains fallback to local Python microserver or solo sandbox mode.
+- **Protocol Parity**:
+  - Maintains 100% compatibility with existing `Protocol` packet schemas and `EntityInterpolator` 60 FPS remote entity rendering.
+
+### 2.4 Social HUD & One-Click Share UX (`src/ui/social_hud.js`)
+- Status badge indicates "Connected via Global Edge (PartyKit WSS)".
+- "Share Park" button generates a clean URL: `https://<host>/?room=<roomId>`.
+- Displays active player count and room badge with toast feedback.
+
+---
+
+## 3. Scope Boundaries
+
+### In-Scope
+1. **PartyKit Edge Room Server (`party/main.js`)**:
+   - Stateful edge room actor managing connections, handshakes, broadcasts, and cleanup.
+2. **PartyKit Configuration & NPM Setup (`partykit.json`, `package.json`)**:
+   - NPM scripts for local development (`npm run party:dev`) and deployment (`npm run party:deploy`).
+   - Static asset serving configuration.
+3. **Client PartyKit Integration (`src/net/ws_network.js`, `src/net/network.js`)**:
+   - Universal URL builder supporting PartyKit route paths (`/parties/park/:room`).
+   - Connection recovery with exponential backoff.
+4. **HUD & Sharing Polish (`src/ui/social_hud.js`)**:
+   - Connection status badges and 1-click shareable URLs.
+5. **Validation Test Suite (`test/test_partykit.py`, `test/run_tests.py`)**:
+   - Tests validating message routing, handshake schemas, and client URL generation.
+
+### Out-of-Scope
+- Cloudflare paid add-ons or custom databases (ephemeral memory rooms are zero-cost and privacy-preserving).
+- Native iOS/Android store compilation (reserved for follow-up Capacitor ticket).
+
+---
+
+## 4. Requirements & Acceptance Criteria
+
+- [ ] **REQ-1: PartyKit Edge Server Room Relay (`party/main.js`)**
+  - Exports a standard PartyKit server object with `onConnect`, `onMessage`, and `onClose`.
+  - Sends `WELCOME` with unique `peerId` to joining players.
+  - Broadcasts `SYNC_STATE`, `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, and `EMOTE` between room members.
+  - Broadcasts `PEER_LEFT` when a player disconnects.
+  - *Verification*: Unit tests simulating room connections, handshakes, and packet relays pass with 100% green status.
+
+- [ ] **REQ-2: PartyKit Configuration & Static Serving (`partykit.json`, `package.json`)**
+  - Defines `partykit.json` mapping `party/main.js` and static assets.
+  - Provides `package.json` scripts (`party:dev` -> `partykit dev`, `party:deploy` -> `partykit deploy`).
+  - *Verification*: Verification script confirms valid JSON configuration and entry point resolution.
+
+- [ ] **REQ-3: Client-Side PartyKit Auto-Detection & Adapter (`src/net/ws_network.js`, `src/net/network.js`)**
+  - Connects to `/parties/park/<roomId>` when loaded on PartyKit host or when `?party=` parameter is present.
+  - Maintains existing 16 Hz sync rate and smooth 60 FPS entity interpolation.
+  - Falls back smoothly to offline solo mode if connection fails.
+  - *Verification*: Protocol tests confirm valid schema encoding and connection URL generation.
+
+- [ ] **REQ-4: Social HUD Edge Badge & Share Experience (`src/ui/social_hud.js`)**
+  - Displays "Global Edge (WSS)" connection badge.
+  - One-click "Share Park" button copies `https://<host>/?room=<roomId>`.
+  - *Verification*: HUD tests verify correct badge rendering and share link construction.
+
+- [ ] **REQ-5: Full Test Suite Integration (`test/run_tests.py`)**
+  - Extends test suite with PartyKit protocol and room schema validation.
+  - *Verification*: `python3 test/run_tests.py` passes 100% green.
+
+---
+
+## 5. Architectural Design & Impacted Files
+- **New Files**:
+  - `party/main.js`: PartyKit edge room server.
+  - `partykit.json`: PartyKit configuration and static asset mapping.
+  - `package.json`: NPM package manifest with PartyKit dev dependencies and runner scripts.
+  - `test/test_partykit.py`: PartyKit schema and protocol integration tests.
+- **Modified Files**:
+  - `src/net/ws_network.js`: Dynamic PartyKit endpoint formatting (`/parties/park/:room`).
+  - `src/net/network.js`: PartyKit runtime auto-detection.
+  - `src/ui/social_hud.js`: HUD edge status badges.
+  - `test/run_tests.py`: Registration of PartyKit test suite.
+  - `README.md`: PartyKit local development and deployment instructions.
+
+```
+
+## FILE: openspec/changes/archive/ticket-005/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-005"
+title: "Virtual Dog Walker: Migrate to PartyServer on Cloudflare Workers with Shared Public Commons"
+state: "COMPLETED"
+created_at: "2026-10-11T11:21:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-005/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Objective
+With the upcoming deprecation of the third-party hosted PartyKit platform (`*.partykit.dev`) in October 2026, real-time edge workloads are transitioning to **PartyServer** (`partyserver`), Cloudflare's official open-source library that runs directly inside the developer's own Cloudflare account as a native Worker using Durable Objects and `wrangler`.
+
+Simultaneously, the game's current private room model introduces unnecessary friction for a social sandbox: players must create rooms, copy room codes, or share special query parameters just to see each other. 
+
+**Ticket-005 accomplishes two foundational goals**:
+1. **Migration to PartyServer (`partyserver`) on Cloudflare Workers**:
+   - Replaces the deprecated `partykit` CLI with standard Cloudflare `wrangler` and the `partyserver` package.
+   - Deploys the room relay and static game frontend directly to the user's permanent Cloudflare account (`https://virtual-dog-walker.<subdomain>.workers.dev`) at $0 cost.
+2. **The Always-Open Shared Public Commons**:
+   - Replaces the private room lobby model with a single shared public meadow (`the-commons`) by default.
+   - Anyone visiting the site or opening the app immediately walks into the shared park alongside all other online dog-walkers.
+   - Private rooms remain available as an optional opt-in feature via `?room=<custom-id>`.
+
+---
+
+## 2. System Architecture & Edge Design
+
+### 2.1 PartyServer Room Engine (`party/server.js`)
+- Inherits from `Server` in `partyserver`:
+  - `onConnect(conn, ctx)`: Generates `peerId = conn.id` and transmits `WELCOME` packet with current room peer list and server timestamp.
+  - `onMessage(conn, message)`: Multiplexes `HELLO`, `SYNC_STATE`, `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, `EMOTE` across room peers using `this.broadcast(message, [conn.id])`.
+  - `onClose(conn)`: Emits `PEER_LEFT` to remaining players.
+- Exports Cloudflare Worker `fetch` handler using `routePartykitRequest` from `partyserver` with automatic fallback to static asset bindings.
+
+### 2.2 Always-Open Public Commons (`the-commons`)
+- **Default Room Assignment**:
+  - The default room identifier is universally set to `the-commons`.
+  - Visiting the root domain without parameters connects directly to `the-commons`.
+- **Optional Private Meadows**:
+  - If a player specifically desires a private session, appending `?room=<custom-code>` routes to an isolated Durable Object instance.
+
+### 2.3 Cloudflare Worker Manifest (`wrangler.jsonc`)
+- Replaces `partykit.json` with native Cloudflare configuration:
+  - Worker name: `virtual-dog-walker`
+  - Main entry point: `party/server.js`
+  - Durable Object bindings for `ParkServer`
+  - Static asset serving: `assets: { directory: "./", binding: "ASSETS" }`
+  - Compatibility flags: `nodejs_compat`
+
+### 2.4 Client Transport & HUD Polish (`src/net/`, `src/ui/social_hud.js`)
+- `ws_network.js` & `network.js`:
+  - Default connection room: `the-commons`.
+  - Auto-detects Cloudflare Worker domains (`*.workers.dev`, `localhost:8787`).
+- `social_hud.js`:
+  - Displays **`🌳 Clifton Commons`** badge when connected to the public meadow.
+  - "Share Park" button copies the clean base URL (`https://<domain>/`) without cluttering query params.
+  - Includes a discreet "Private Meadow" action for optional private rooms.
+
+---
+
+## 3. Scope Boundaries
+
+### In-Scope
+1. **PartyServer Room Engine (`party/server.js`)**:
+   - Replaces `party/main.js` with `partyserver` `Server` class.
+2. **Cloudflare Worker Configuration (`wrangler.jsonc`, `package.json`)**:
+   - Replaces `partykit.json` with `wrangler.jsonc`.
+   - Updates `package.json` with `partyserver` dependency and scripts (`dev` -> `wrangler dev`, `deploy` -> `wrangler deploy`).
+3. **Always-Open Commons Default**:
+   - Updates `src/net/network.js` and `src/net/ws_network.js` to default room `the-commons`.
+4. **Social HUD Commons Polish (`src/ui/social_hud.js`)**:
+   - Displays "Clifton Commons" status and clean URL sharing.
+5. **Automated Test Suite & CI (`test/test_partyserver.py`, `test/run_tests.py`)**:
+   - Unit tests validating PartyServer lifecycle, room multiplexing, and commons routing.
+   - Master test runner verification.
+
+### Out-of-Scope
+- Complex database persistence / external relational databases (ephemeral in-memory Durable Objects provide $0 cost).
+- Native iOS/Android store compilation (reserved for follow-up Capacitor ticket).
+
+---
+
+## 4. Requirements & Acceptance Criteria
+
+- [ ] **REQ-1: PartyServer Edge Room Relay (`party/server.js`)**
+  - Inherits from `partyserver` `Server` class.
+  - Handles `onConnect`, `onMessage`, and `onClose` with zero packet reflection.
+  - Exports a standard Cloudflare Worker `fetch` handler routing WebSocket and HTTP requests.
+  - *Verification*: Automated unit tests verify lifecycle handshakes, packet propagation, and disconnection broadcasts.
+
+- [ ] **REQ-2: Cloudflare Worker Manifest (`wrangler.jsonc`, `package.json`)**
+  - Defines `wrangler.jsonc` configuring Durable Object bindings for `ParkServer` and static asset mapping (`assets: "./"`).
+  - Configures `package.json` with `"dev": "wrangler dev"` and `"deploy": "wrangler deploy"`.
+  - Removes deprecated `partykit.json` and `partykit` CLI dependencies.
+  - *Verification*: Verification script confirms valid JSONC schema and entry point resolution.
+
+- [ ] **REQ-3: Always-Open Public Commons Engine (`src/net/ws_network.js`, `src/net/network.js`)**
+  - Default room is set to `the-commons`.
+  - Auto-detects Cloudflare Worker origins (`*.workers.dev`, `localhost:8787`).
+  - Preserves optional private room query parameters (`?room=...`).
+  - *Verification*: Schema and URL tests confirm correct connection endpoints and fallback behavior.
+
+- [ ] **REQ-4: Social HUD Commons Polish (`src/ui/social_hud.js`)**
+  - Status pill displays "🌳 Clifton Commons" when in the public meadow.
+  - "Share Park" button copies clean public URL with toast confirmation.
+  - *Verification*: UI tests verify badge text and clean share link generation.
+
+- [ ] **REQ-5: Test Suite & CI Integration (`test/test_partyserver.py`, `test/run_tests.py`)**
+  - Tests PartyServer room lifecycle, commons routing, and schema integrity.
+  - `python3 test/run_tests.py` passes 100% green.
+
+---
+
+## 5. Architectural Design & Impacted Files
+- **New Files**:
+  - `party/server.js`: PartyServer implementation using Cloudflare Durable Objects.
+  - `wrangler.jsonc`: Native Cloudflare Worker and Durable Object configuration.
+  - `test/test_partyserver.py`: Automated PartyServer test suite.
+- **Removed Files**:
+  - `partykit.json` (deprecated)
+  - `party/main.js` (superseded by `party/server.js`)
+- **Modified Files**:
+  - `package.json`: Updated dependencies (`partyserver`, `wrangler`) and scripts.
+  - `src/net/ws_network.js`: Default room `the-commons` and PartyServer endpoint routing.
+  - `src/net/network.js`: Cloudflare Worker auto-detection.
+  - `src/ui/social_hud.js`: Commons badge and 1-click clean share URL.
+  - `test/run_tests.py`: Registration of PartyServer test suite.
+  - `README.md`: Updated development and deployment instructions using `wrangler`.
+
+```
+
+## FILE: openspec/changes/archive/ticket-006/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-006"
+title: "Virtual Dog Walker: Mobile Browser Support with Responsive Touch Controls and Dynamic Viewport"
+state: "COMPLETED"
+created_at: "2026-10-11T12:24:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-006/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Objective
+*Virtual Dog Walker (Clifton Down)* is currently built around desktop keyboard and mouse input (<kbd>WASD</kbd>, <kbd>Space</kbd>, <kbd>L</kbd>, <kbd>B</kbd>, <kbd>E</kbd>, <kbd>Enter</kbd>). When players open the game on mobile browsers (iOS Safari, Android Chrome, iPadOS, tablets), they cannot steer their owner avatar, throw tennis balls, bark, pet their dog, toggle the leash, or comfortably chat. Furthermore, mobile browsers suffer from pinch-to-zoom collisions, double-tap zoom delays, browser rubber-banding/scrolling, and strict audio auto-play locks on touch devices.
+
+**Ticket-006 achieves first-class mobile browser compatibility**:
+1. **Responsive Virtual Touch Joystick & Action Buttons**:
+   - A smooth, floating or fixed virtual analog joystick on the bottom-left for 360° fluid owner movement.
+   - A glassmorphic virtual action bar on the bottom-right for essential canine interactions: Throw Ball (🎾), Leash Toggle (🦮), Bark (🐕), Pet (❤️), and Chat (💬).
+   - In-world tap/touch interactions: tap the dog to pet, tap the open field to throw the tennis ball directly toward the touched point.
+2. **Mobile Viewport & Canvas Ergonomics**:
+   - Prevention of accidental pinch-zoom, double-tap zooming, and pull-to-refresh via optimized `<meta name="viewport">` and CSS `touch-action: none`.
+   - Notch and home-bar support using CSS `env(safe-area-inset-top)` and `env(safe-area-inset-bottom)`.
+   - Seamless dynamic resizing across portrait, landscape, and orientation switches.
+3. **Touch Audio Auto-Unlock**:
+   - Reliable Web Audio context activation on first touch (`touchstart`/`pointerdown`) for iOS Safari and mobile Chrome.
+4. **Mobile Responsive UI / HUD**:
+   - Dynamic scaling of the top bar, player count badge, style modal, and chat input.
+   - Automatic hiding of desktop keyboard hints (`#controls-hint`) on touch-enabled devices.
+
+---
+
+## 2. System Architecture & Mobile Design
+
+### 2.1 Virtual Touch Controller (`src/ui/touch_controls.js`)
+- **Virtual Analog Joystick**:
+  - Anchored on the bottom-left of the screen (`touch-joystick-zone`).
+  - Implements a subtle base ring (radius ~50-60px) and a movable thumb knob.
+  - Multi-touch safe: tracks unique `touch.identifier` so thumb dragging doesn't interfere with right-hand button taps.
+  - Computes normalized displacement vector `(dx, dy)` with deadzone threshold (10%) and clamped max radius.
+  - Maps vector to owner input velocity and angle:
+    - Sets `owner.keys.up`, `down`, `left`, `right` proportionally or feeds direct joystick vector `(vx, vy)` to the owner entity for smooth 360° analog locomotion.
+  - Auto-centers knob on `touchend` / `touchcancel`.
+- **Touch Action Buttons (Bottom-Right)**:
+  - Ergonomic radial or staggered grid cluster:
+    - **🎾 Throw**: Launches ball in avatar facing direction, or towards last touched direction. Triggers subtle haptic feedback (`navigator.vibrate?.(25)`).
+    - **🦮 Leash**: Toggles leash on/off with visual icon toggle.
+    - **🐕 Bark**: Triggers dog bark with sonic pulse.
+    - **❤️ Pet**: Triggers petting interaction and heart emitter.
+    - **💬 Chat**: Opens mobile-optimized quick chat and emote bar.
+- **In-World Touch & Tap Gestures (`src/main.js`)**:
+  - `touchstart`/`pointerdown` on canvas (outside joystick and HUD):
+    - Tapping within proximity of companion dog triggers pet action.
+    - Tapping on the open field translates screen coordinates to world coordinates through `camera.screenToWorld()` and throws the tennis ball towards that position.
+- **Device Capability Detection**:
+  - Detected via `'ontouchstart' in window || navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches`.
+  - Gracefully active on mobile/tablets while completely non-intrusive on desktop mice/keyboards.
+
+### 2.2 Viewport, Canvas & Safe-Area Constraints (`index.html`, `src/style.css`)
+- **Viewport Meta Configuration**:
+  - `<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />`
+  - Mobile web app meta tags (`mobile-web-app-capable`, `apple-mobile-web-app-capable`, `apple-mobile-web-app-status-bar-style: black-translucent`).
+- **CSS Touch Lock & Safe Area**:
+  - `touch-action: none` and `user-select: none` applied across `#game-container`, `#game-canvas`, and touch controls.
+  - Top HUD padded with `max(16px, env(safe-area-inset-top))` and bottom controls padded with `max(16px, env(safe-area-inset-bottom))`.
+  - Dynamic viewport height handling (`height: 100vh; height: 100dvh;`).
+
+### 2.3 Mobile Audio Unlock (`src/main.js`, `src/systems/audio.js`)
+- Audio context initialization attached to `'touchstart'`, `'touchend'`, and `'pointerdown'` on `window` and canvas.
+- Calls `sound.unlockAudio()` and `sound.startAmbientBreeze()` immediately upon first touch interaction.
+
+### 2.4 Mobile Responsive HUD & Modals (`src/ui/social_hud.js`, `src/style.css`)
+- On screens ≤ 768px or `@media (pointer: coarse)`:
+  - Hides desktop `<kbd>` controls hint (`#controls-hint`).
+  - Compresses top bar spacing so Clifton Commons badge, player counter, and share button fit neatly on narrow portrait screens (360px–430px wide).
+  - Positions chat bar with virtual keyboard awareness (`window.visualViewport` listener adjusting bottom offset when software keyboard opens).
+  - Limits customizer modal width and ensures touch-friendly 44px+ hit targets on buttons and swatches.
+
+### 2.5 Automated Testing (`test/test_mobile_controls.py`, `test/run_tests.py`)
+- Unit tests verifying:
+  - Joystick vector calculations, angle determination, deadzone clamping, and normalization.
+  - Touch-to-world coordinate projection math.
+  - Viewport metadata and CSS touch-action rules verification.
+  - Registration in `test/run_tests.py`.
+
+---
+
+## 3. Scope Boundaries
+
+### In-Scope
+1. **Virtual Touch Controller Component (`src/ui/touch_controls.js`)**:
+   - Analog joystick on left with thumb tracking and deadzone.
+   - Action buttons on right (Throw, Leash, Bark, Pet, Chat).
+   - In-world canvas tap-to-throw and tap-to-pet.
+2. **Mobile Viewport & CSS System (`index.html`, `src/style.css`)**:
+   - `viewport-fit=cover`, `user-scalable=no`, `touch-action: none`.
+   - Safe-area insets (`env(safe-area-inset-*)`).
+   - `dvh` dynamic viewport height and responsive layouts for small screens.
+3. **Mobile Audio Initialization (`src/main.js`, `src/systems/audio.js`)**:
+   - Mobile Safari/Chrome touch gesture audio unlocking.
+4. **HUD & Modal Mobile Adaptation (`src/ui/social_hud.js`, `src/style.css`)**:
+   - Hide desktop kbd hints on touch devices.
+   - Responsive top bar and touch-friendly buttons.
+5. **Screen to World Raycasting (`src/world/field.js`)**:
+   - Adding `screenToWorld(screenX, screenY)` helper to `Camera` for tap-to-throw accuracy.
+6. **Automated Unit Tests (`test/test_mobile_controls.py`, `test/run_tests.py`)**:
+   - Testing mobile joystick vector math, clamp logic, and viewport configurations.
+
+### Out-of-Scope
+- Native App Store packaging (Capacitor/Cordova IPA/APK generation).
+- Bluetooth gamepad controller mapping (handled in future gamepad ticket).
+
+---
+
+## 4. Requirements & Acceptance Criteria
+
+- [x] **REQ-1: Viewport & Safe-Area Mobile Configuration (`index.html`, `src/style.css`)**
+  - Viewport meta tag configures `viewport-fit=cover, maximum-scale=1.0, user-scalable=no`.
+  - Mobile web app capable meta tags configured for iOS/Android full-screen experience.
+  - `#game-container` and `#game-canvas` enforce `touch-action: none` and `user-select: none`.
+  - UI overlays respect `env(safe-area-inset-top)` and `env(safe-area-inset-bottom)`.
+  - *Verification*: Automated unit test validates `index.html` meta tags and CSS attributes.
+
+- [x] **REQ-2: Camera Screen-to-World Coordinate Conversion (`src/world/field.js`)**
+  - `Camera` provides `screenToWorld(screenX, screenY)` mapping client touch/mouse coordinates to world coordinates, accounting for viewport offset and world bounds.
+  - *Verification*: Unit test validates coordinate conversion with various camera offsets and clamp limits.
+
+- [x] **REQ-3: Virtual Touch Controller Engine (`src/ui/touch_controls.js`)**
+  - Implements floating/fixed analog joystick with thumb tracking, deadzone (10%), and normalized directional vector output.
+  - Provides touch action buttons for Throw (🎾), Leash (🦮), Bark (🐕), Pet (❤️), Chat (💬).
+  - Only active or displayed when touch capabilities are present (`navigator.maxTouchPoints > 0` or coarse pointer).
+  - *Verification*: Unit tests verify joystick vector calculation, deadzone clamping, and button callback dispatching.
+
+- [x] **REQ-4: In-Game Tap Interactions & Mobile Audio Unlock (`src/main.js`, `src/systems/audio.js`)**
+  - Touch/tap on field throws ball towards tapped world point.
+  - Tapping near companion dog triggers pet action with heart emitter and sound.
+  - Audio unlocks on first `touchstart`/`pointerdown` user gesture.
+  - *Verification*: Verification of audio unlock handlers and tap dispatch logic in game loop.
+
+- [x] **REQ-5: Mobile Responsive HUD & Test Suite CI (`src/ui/social_hud.js`, `src/style.css`, `test/test_mobile_controls.py`, `test/run_tests.py`)**
+  - Hides desktop `<kbd>` hint on touch/mobile devices; compacts top bar for 360px+ screens.
+  - Test suite `test/test_mobile_controls.py` covers touch math, vector normalization, and viewport integrity.
+  - `python3 test/run_tests.py` passes 100% green.
+  - *Verification*: Master test runner executes all tests with zero errors.
+
+---
+
+## 5. Architectural Design & Impacted Files
+- **New Files**:
+  - `src/ui/touch_controls.js`: Virtual analog joystick and touch action buttons component.
+  - `test/test_mobile_controls.py`: Unit tests for touch math, camera projection, and mobile configuration.
+- **Modified Files**:
+  - `index.html`: Mobile meta tags (`viewport-fit=cover`, `user-scalable=no`, web-app-capable).
+  - `src/style.css`: Mobile touch-action rules, safe-area insets, mobile joystick/button styling, responsive breakpoints.
+  - `src/world/field.js`: Added `screenToWorld` coordinate conversion method on `Camera`.
+  - `src/main.js`: Integration of `TouchControls`, tap-to-throw, tap-to-pet, and touch audio unlock.
+  - `src/ui/social_hud.js`: Touch-friendly HUD responsive tweaks.
+  - `src/systems/audio.js`: Explicit `unlockAudio` method.
+  - `test/run_tests.py`: Integration of `test_mobile_controls.py` into test runner.
+
+```
+
+## FILE: openspec/changes/archive/ticket-007/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-007"
+title: "Fix Cloudflare PartyServer Multiplayer Routing, Handshake Synchronization, and HUD Status Diagnostics"
+state: "COMPLETED"
+created_at: "2026-10-11T13:58:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-007/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Root Cause Analysis
+
+When players visit the deployed game at `https://play.virtual-dog-walker.workers.dev` across multiple browser windows, incognito sessions, and mobile devices, they cannot see or interact with each other in the park. Each client remains isolated in solo mode despite the top HUD displaying a green badge indicating they are connected to `🌳 Clifton Commons`.
+
+### 1.1 Root Cause Breakdown
+
+1. **PartyServer Route & Durable Object Binding Mismatch (Cloudflare Error 1101)**:
+   - In `wrangler.jsonc`, the Durable Object binding is defined as `ParkServer`:
+     ```jsonc
+     "durable_objects": { "bindings": [{ "name": "ParkServer", "class_name": "ParkServer" }] }
+     ```
+   - In `src/net/ws_network.js`, `buildWebSocketUrl` constructs the WebSocket endpoint using path segment `/parties/park/${roomId}`:
+     ```javascript
+     return new URL(`${clean}/parties/park/${roomId}`);
+     ```
+   - In `partyserver` (`routePartykitRequest`), route matching parses `/parties/:server/:name` and looks up `map[server.toLowerCase()]` where `map` keys are derived from the lowercase binding names in `env` (i.e. `map["parkserver"] = env.ParkServer`).
+   - Because `:server` in the client URL is `"park"`, `map["park"]` evaluates to `undefined`. `partyserver` subsequently invokes `undefined.idFromName(roomId)`, triggering an unhandled `TypeError` inside the Cloudflare Worker, resulting in HTTP 500 (Cloudflare Error 1101).
+   - In contrast, requests sent to `/parties/parkserver/the-commons` successfully upgrade to WebSocket and transmit the `WELCOME` packet.
+
+2. **Misleading HUD Connection State**:
+   - In `src/ui/social_hud.js`, `updateNetworkState(status, message)` checks `if (this.net.isPartyKit || this.net.isDedicatedServer)`. Because this flag is statically set on initialization, the HUD renders the green `🌳 Clifton Commons` badge unconditionally—even when the WebSocket connection has errored, closed, or dropped to solo mode.
+
+3. **Handshake & SenderId De-Synchronization**:
+   - On `ws.onopen`, the client sends `HELLO` with a temporary randomized ID (`walker-XXXX`).
+   - When the server's `WELCOME` packet subsequently arrives assigning the authoritative `conn.id` (`peerId`), the client updates `this.peerId` but never re-broadcasts `HELLO` with the new ID.
+   - Consequently, remote peers record metadata for `walker-XXXX`, while high-frequency `SYNC_STATE` packets arrive stamped with `conn.id`, leading to orphaned entity entries or desynchronization.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 PartyServer Namespace Aliasing & Robust Error Handling (`party/server.js`)
+- **Dual Namespace Aliasing**:
+  - In `party/server.js`'s `fetch` export, explicitly alias `env.park = env.ParkServer` and `env.parkserver = env.ParkServer` before invoking `routePartykitRequest(request, env)`.
+  - Ensures both `/parties/park/:room` and `/parties/parkserver/:room` match the `ParkServer` Durable Object namespace.
+- **Worker Crash Guard (`try...catch`)**:
+  - Enclose `routePartykitRequest` in a defensive `try...catch` block. If routing encounters an unexpected error, log the exception and return a structured JSON response instead of crashing with Cloudflare 1101.
+- **Authoritative Sender Stamping & Lifecycle Relay**:
+  - In `ParkServer.onMessage(conn, message)`, enforce `data.senderId = conn.id` on all relayed payloads so message senders can never desynchronize from their connection ID.
+  - In `ParkServer.onConnect(conn, ctx)`, send `WELCOME` with assigned `peerId: conn.id` and the list of active peer IDs.
+
+### 2.2 Client URL Path Resolution & Handshake Alignment (`src/net/ws_network.js`, `src/net/network.js`)
+- **Canonical WebSocket URL**:
+  - In `buildWebSocketUrl`, standardize `:server` segment to `parkserver` (while retaining server-side aliasing for backwards compatibility with any cached clients).
+- **Post-Welcome Handshake Broadcast**:
+  - In `handlePacket(WELCOME)`: when `packet.peerId` updates `this.peerId`, immediately broadcast `Protocol.createHello(this.peerId, this.localMeta.name, this.localMeta.jacketColor, this.localMeta.coatName)`.
+  - This ensures all peers in the room possess complete player metadata mapped to the exact authoritative connection ID used in `SYNC_STATE`.
+
+### 2.3 Accurate Real-Time Network HUD & Diagnostics (`src/ui/social_hud.js`)
+- **Status-Driven Diagnostics**:
+  - Base the badge appearance strictly on live `status`:
+    - `WSStatus.CONNECTED` / `NetStatus.CONNECTED_PEER`: Green badge (`🌳 Clifton Commons` or `🔒 Meadow (<id>)`).
+    - `WSStatus.CONNECTING`: Yellow badge (`⏳ Connecting...`).
+    - `WSStatus.RECONNECTING`: Amber badge (`🔄 Reconnecting...`).
+    - `WSStatus.OFFLINE` / `WSStatus.ERROR`: Gray badge (`Offline (Solo)`).
+  - Surface actionable toast notifications when connection drops or is restored.
+
+### 2.4 Automated Testing & Verification (`test/test_partyserver.py`, `test/run_tests.py`)
+- Unit tests verifying:
+  - Both `/parties/park/...` and `/parties/parkserver/...` route matching patterns.
+  - `WELCOME` packet handling and post-welcome `HELLO` re-dispatch.
+  - Authoritative `senderId` stamping in `ParkServer.onMessage`.
+  - HUD status badge rendering across `CONNECTED`, `CONNECTING`, `RECONNECTING`, and `OFFLINE` states.
+  - Integration verification in `test/run_tests.py`.
+
+---
+
+## 3. Scope Boundaries
+
+### In-Scope
+1. `party/server.js`: Namespace aliasing (`env.park = env.ParkServer`), `try...catch` routing guard, authoritative `conn.id` stamping.
+2. `src/net/ws_network.js`: WebSocket route alignment, post-`WELCOME` metadata handshake dispatch.
+3. `src/ui/social_hud.js`: State-driven badge coloring and diagnostics.
+4. `test/test_partyserver.py` & `test/run_tests.py`: Comprehensive test coverage for routing, handshakes, and status badges.
+
+### Out-of-Scope
+- Modifying game canvas rendering or entity physics loops.
+- Altering mobile touch controls or audio unlock mechanisms.
+- Changing Cloudflare billing or subscription tiers.
+
+---
+
+## 4. Worker Decomposition Plan
+
+Following the **Anti-Monolith Mandate** and **Mandatory Concurrency** rules:
+
+- **Worker 1 (`impl-server-routing`) [LOW/MEDIUM]**:
+  - Focus: `party/server.js`
+  - Responsibilities: Namespace aliasing in worker `fetch`, error guard, authoritative `conn.id` stamping in `onMessage`.
+- **Worker 2 (`impl-client-handshake-hud`) [MEDIUM]**:
+  - Focus: `src/net/ws_network.js`, `src/ui/social_hud.js`
+  - Responsibilities: WebSocket URL path alignment, post-welcome handshake dispatch, live status-driven HUD badge states.
+- **Worker 3 (`impl-test-verification`) [LOW]**:
+  - Focus: `test/test_partyserver.py`
+  - Responsibilities: Automated unit tests validating routing aliasing, handshake flow, and status badge diagnostics.
+
+---
+
+## 5. Acceptance Criteria
+
+- [ ] `AC-1`: Requests to `https://play.virtual-dog-walker.workers.dev` via WebSocket upgrade on `/parties/park/:room` or `/parties/parkserver/:room` succeed with HTTP 101 Switching Protocols and receive a valid `WELCOME` packet without Cloudflare Error 1101.
+- [ ] `AC-2`: Multiple clients (desktop browser, incognito window, mobile device) joining `the-commons` receive each other's `HELLO` metadata and bidirectional `SYNC_STATE` updates, rendering remote walkers and companion dogs in real time.
+- [ ] `AC-3`: HUD mode badge accurately displays `⏳ Connecting...`, `🌳 Clifton Commons` (green when connected), `🔄 Reconnecting...`, or `Offline (Solo)` (gray on disconnection) based on actual live socket state.
+- [ ] `AC-4`: Disconnecting a client broadcasts `PEER_LEFT` and removes the remote avatar from all remaining clients' viewports.
+- [ ] `AC-5`: All automated tests in `test/run_tests.py` pass cleanly with 100% success rate.
+
+```
+
+## FILE: openspec/changes/archive/ticket-008/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-008"
+title: "Virtual Dog Walker: Player Identity, Peer Metadata Handshake & Style Synchronization"
+state: "COMPLETED"
+created_at: "2026-10-11T14:35:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-008/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Root Cause Analysis
+
+When multiple players connect to the park (e.g., standard browser tab, incognito tab, and mobile browser), visual identity and character styling desynchronize:
+1. **Existing Browser Tab sees all characters as "You (Walker)"**:
+   - The initial local avatar name was initialized to `"You (Walker)"` in `src/main.js`. Because clients broadcast their raw `this.owner.name` in `HELLO`, remote clients adopt `"You (Walker)"` as their display name, resulting in every player appearing identical to the local player.
+2. **Late-Joining Tabs (Incognito & Mobile) see existing players as "Friend" in green jacket**:
+   - In `party/server.js`, `onConnect` only transmitted string connection IDs in `WELCOME.peers` (`[ otherConn.id ]`) with no associated player metadata (`name`, `jacketColor`, `dogCoatName`).
+   - Existing players never re-dispatched `HELLO` upon receiving notice of a new joiner.
+   - Consequently, newly connected clients fall back to the placeholder fallback: `name: "Friend"` and `jacketColor: "#14532d"` (dark green).
+3. **Static Instantiation Barrier (`src/main.js`)**:
+   - Once a remote player was instantiated in `this.remotePlayers`, `main.js`'s `update(dt)` loop only synchronized physics coordinates (`x`, `y`, `vx`, `vy`, `angle`, `isMoving`, `isLeashed`), never updating `remote.owner.name`, `remote.owner.jacketColor`, or `remote.dog.coat` if metadata arrived or changed after instantiation.
+4. **Lack of Local Style Persistence**:
+   - Changes configured in the Style modal (`SocialHUD`) were not stored in `localStorage`, meaning every reload reverted back to default uncustomized profiles.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 Server Peer Metadata Registry (`party/server.js`)
+- **Stateful Room Peer Registry**:
+  - `ParkServer` maintains `this.peers = new Map()` mapping `conn.id` to `{ id, name, jacketColor, dogCoatName }`.
+  - When `HELLO` arrives from a client in `onMessage`, update the registry:
+    ```javascript
+    if (data.type === "HELLO") {
+      this.peers.set(conn.id, {
+        id: conn.id,
+        name: data.name || "Walker",
+        jacketColor: data.jacketColor || "#1e3a8a",
+        dogCoatName: data.dogCoatName || "Chocolate & Tan (Ziggy)"
+      });
+    }
+    ```
+  - In `onConnect(conn, ctx)`: send `WELCOME` containing full peer objects:
+    ```javascript
+    peers: Array.from(this.peers.values()).filter(p => p.id !== conn.id)
+    ```
+  - In `onClose(conn)`: remove `conn.id` from `this.peers`.
+
+### 2.2 Client Metadata Handling & Bidirectional Handshake (`src/net/ws_network.js`, `src/main.js`)
+- **Rich `WELCOME.peers` Ingestion (`src/net/ws_network.js`)**:
+  - In `handlePacket(WELCOME)`: iterate over `packet.peers`. If peer item is an object with `{ id, name, jacketColor, coatName }`, pass full metadata to `ensureRemotePeer` and `onPeerJoin`.
+- **Bidirectional Handshake**:
+  - When an existing client receives `HELLO` from a new peer, it replies by sending `HELLO` so the new peer is guaranteed to possess its profile even if network packets arrive out of order.
+- **Dynamic Entity Reflection (`src/main.js`)**:
+  - In `update(dt)`, continuously synchronize metadata from `interpolatorData.meta`:
+    - If `interpolatorData.meta.name` differs from `remote.owner.name`, update it.
+    - If `interpolatorData.meta.jacketColor` differs from `remote.owner.jacketColor`, update it.
+    - If `interpolatorData.meta.coatName` differs from `remote.dog.coat.name`, update dog coat preset.
+
+### 2.3 Distinct Nametags & Style Persistence (`src/entities/owner.js`, `src/ui/social_hud.js`)
+- **Nametag Distinction (`src/entities/owner.js`, `src/main.js`)**:
+  - Default player name initialized to `"Walker"` (or `"Park Walker"`).
+  - In `Owner.render(ctx)`:
+    - If `this.isLocal` is true: render yellow nametag (`#fde047`) displaying `"${this.name} (You)"` or `"You"`.
+    - If `this.isLocal` is false: render white nametag (`#f8fafc`) displaying `"${this.name}"`.
+- **LocalStorage Profile Persistence (`src/ui/social_hud.js`, `src/main.js`)**:
+  - Save profile to `localStorage.getItem("clifton_walker_profile")` on modal save.
+  - Load saved profile on game initialization so a player's customized name, jacket color, and dog coat persist across tab reloads.
+
+### 2.4 Automated Testing & Verification (`test/test_player_identity.py`, `test/run_tests.py`)
+- Unit tests verifying:
+  - `ParkServer` stores and transmits rich peer metadata in `WELCOME`.
+  - Client properly applies remote peer jacket colors and names.
+  - Nametag rendering distinguishes local `"You"` from remote player names.
+  - Full suite integration in `test/run_tests.py`.
+
+---
+
+## 3. Scope Boundaries
+
+### In-Scope
+1. `party/server.js`: Peer metadata registry and rich `WELCOME.peers` payload.
+2. `src/net/ws_network.js`: Rich peer ingestion and bidirectional `HELLO` response.
+3. `src/main.js`: Dynamic remote entity meta synchronization and local nametag separation.
+4. `src/entities/owner.js`: Local vs remote nametag rendering (`"${name} (You)"` vs `"${name}"`).
+5. `src/ui/social_hud.js`: `localStorage` profile saving and loading.
+6. `test/test_player_identity.py`: Comprehensive automated tests.
+
+### Out-of-Scope
+- Modifying physics collision mechanics, ball trajectory, or leash dynamics.
+- Changing Cloudflare Worker routing or Durable Object infrastructure.
+
+---
+
+## 4. Worker Decomposition Plan
+
+- **Worker 1 (`impl-server-peer-state`) [LOW/MEDIUM]**:
+  - Focus: `party/server.js`
+  - Responsibilities: Stateful peer registry in `ParkServer`, populating rich peer metadata in `WELCOME`.
+- **Worker 2 (`impl-client-meta-sync`) [MEDIUM]**:
+  - Focus: `src/net/ws_network.js`, `src/main.js`, `src/entities/owner.js`
+  - Responsibilities: Ingesting rich peers, dynamic metadata reflection in render loop, distinct local vs remote nametag text.
+- **Worker 3 (`impl-style-storage-tests`) [LOW]**:
+  - Focus: `src/ui/social_hud.js`, `test/test_player_identity.py`
+  - Responsibilities: `localStorage` profile persistence, comprehensive automated test suite.
+
+---
+
+## 5. Acceptance Criteria
+
+- [ ] `AC-1`: When a new player joins an existing room, the `WELCOME` packet includes the true `name`, `jacketColor`, and `dogCoatName` of all already-connected peers.
+- [ ] `AC-2`: Existing players no longer display as placeholder `"Friend"` in green jacket (`#14532d`) to late-joining tabs or mobile browsers.
+- [ ] `AC-3`: The local player sees their own nametag as `"${this.name} (You)"` (in yellow), while all remote players see the player's true name without `"(You)"` (in white).
+- [ ] `AC-4`: Customizing name, jacket color, or dog coat in the Style modal updates the avatar immediately, updates all connected peers in real time, and persists to `localStorage`.
+- [ ] `AC-5`: All automated tests in `test/run_tests.py` pass cleanly with 100% success rate.
+
+```
+
+## FILE: openspec/changes/archive/ticket-009/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-009"
+title: "Virtual Dog Walker: Real-Time Leash State Synchronization & Entity Interpolator Discrete Property Propagation"
+state: "COMPLETED"
+created_at: "2026-10-11T15:00:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-009/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Root Cause Analysis
+
+When a player toggles their dog off-leash (via the <kbd>L</kbd> key or the touch action button 🦮), the leash is removed in their own window, but in other connected client windows (browser tab, incognito window, mobile browser) the dog continues to appear on-leash with the red nylon lead rendered.
+
+### Root Causes
+1. **`EntityInterpolator` Omits Non-Spatial Discrete Properties (`src/net/network.js`)**:
+   - `EntityInterpolator` maintains `this.current` and `this.target`.
+   - On the first snapshot, `this.current = { ...snapshot }`, initializing `this.current.isLeashed = true`.
+   - On subsequent snapshots received via `SYNC_STATE`, `setTarget(snapshot)` updates `this.target`, setting `this.target.isLeashed = false`.
+   - However, in `update(dt)`, `EntityInterpolator` only updates spatial continuous values (`x`, `y`, `vx`, `vy`, `angle`). It **never copies or propagates discrete properties** (such as `isLeashed`, `isMoving`, or `state`) from `this.target` to `this.current`.
+   - As a result, `this.current.isLeashed` remains permanently `true` for all remote peers.
+2. **Remote Entity Reflection Stuck on Leashed (`src/main.js`, `src/entities/companion_dog.js`)**:
+   - In `src/main.js`, `update(dt)` sets `remote.owner.isLeashed = ownerState.isLeashed;`.
+   - Because `ownerState.isLeashed` from `ownerInterpolator` is stuck at `true`, `remote.owner.isLeashed` never becomes `false`.
+   - In `CompanionDog.prototype.draw(ctx)`, the condition `if (this.owner && this.owner.isLeashed && this.state !== DogState.FETCHING)` evaluates to `true` continuously, drawing `this.drawLeash(ctx)` in all other windows.
+3. **Lack of Instantaneous Packet Dispatch on Leash Toggle (`src/main.js`)**:
+   - `toggleLeash()` in `src/main.js` toggles `this.owner.isLeashed` locally and displays a toast message, but does not immediately broadcast a `SYNC_STATE` packet. It waits for the 16Hz interval timer (up to ~62.5ms delay). Immediately broadcasting on toggle provides zero-latency visual responsiveness across the network.
+4. **Dog Behavioral State Desynchronization (`state`)**:
+   - Dog behavioral states (`DogState.FOLLOWING`, `SNIFFING`, `SITTING`, `PLAY_BOW`, `FETCHING`) sent in `dog.state` also suffered from the discrete property omission in `dogInterpolator`, preventing remote dogs from smoothly reflecting sitting or sniffing states.
+5. **Mobile Touch Control Visual Feedback (`src/ui/touch_controls.js`)**:
+   - The touch leash button (`btn-touch-leash`) lacked active/inactive visual toggling to indicate whether the player is currently on-lead or off-lead.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 Discrete Property Propagation in `EntityInterpolator` (`src/net/network.js`)
+- Update `EntityInterpolator.setTarget(snapshot)`:
+  - Immediately copy all non-continuous discrete properties (`isLeashed`, `isMoving`, `state`, etc.) from `snapshot` to `this.current` so discrete state changes take effect with zero interpolation delay:
+    ```javascript
+    for (const key of Object.keys(snapshot)) {
+      if (key !== 'x' && key !== 'y' && key !== 'angle') {
+        this.current[key] = snapshot[key];
+      }
+    }
+    ```
+- Update `EntityInterpolator.update(dt)`:
+  - Continuously synchronize non-continuous discrete properties from `this.target` to `this.current`:
+    ```javascript
+    for (const key of Object.keys(this.target)) {
+      if (key !== 'x' && key !== 'y' && key !== 'angle') {
+        this.current[key] = this.target[key];
+      }
+    }
+    ```
+
+### 2.2 Instantaneous Leash Broadcast & Remote Entity Sync (`src/main.js`)
+- In `toggleLeash()`:
+  - In addition to toggling `this.owner.isLeashed` and showing toast notifications, immediately broadcast a `SYNC_STATE` packet via `this.net.broadcast(Protocol.createSyncState(this.net.peerId, this.owner, this.dog))` if connected.
+  - Update mobile touch leash button visual state via `this.touchControls.setLeashed(this.owner.isLeashed)`.
+- In `update(dt)`:
+  - Ensure `remote.owner.isLeashed = !!ownerState.isLeashed;`.
+  - Ensure `remote.dog.state = dogState.state;` updates the dog entity posture.
+
+### 2.3 Mobile Leash Button State Indication (`src/ui/touch_controls.js`)
+- Add `setLeashed(isLeashed)` method to `TouchControls`:
+  - When `isLeashed` is `true`: button display `🦮` with normal glassmorphic styling.
+  - When `isLeashed` is `false`: button display `🐕` with active/highlighted off-lead indicator styling (`aria-pressed="false"`, class `.off-leash`).
+
+### 2.4 Automated Testing & Verification (`test/test_leash_sync.py`, `test/run_tests.py`)
+- Author Python unit tests verifying:
+  - `EntityInterpolator` accurately propagates `isLeashed: false` and `isLeashed: true` upon snapshot arrival.
+  - `EntityInterpolator` preserves continuous `x`/`y`/`angle` interpolation while instantaneously updating discrete flags (`isLeashed`, `isMoving`, `state`).
+  - `Protocol.createSyncState` correctly serializes `isLeashed`.
+  - Integration with `test/run_tests.py` ensuring full regression coverage.
+
+---
+
+## 3. Scope Boundaries
+
+### In-Scope
+1. `src/net/network.js`: `EntityInterpolator` discrete property synchronization in `setTarget` and `update`.
+2. `src/main.js`: Instantaneous broadcast on leash toggle, syncing `remote.owner.isLeashed` and `remote.dog.state`.
+3. `src/ui/touch_controls.js`: Leash button state indicator (`setLeashed(isLeashed)`).
+4. `test/test_leash_sync.py`: Unit and regression test suite.
+5. `test/run_tests.py`: Integration into the main test runner.
+
+### Out-of-Scope
+- Modifying canvas drawing geometry for leash catenary curve in `CompanionDog.prototype.drawLeash`.
+- Changing server-side `party/server.js` message routing (PartyServer already transparently relays `SYNC_STATE`).
+
+---
+
+## 4. Worker Decomposition Plan
+
+- **Worker 1 (`impl-interpolator-discrete-sync`) [MEDIUM]**:
+  - Focus: `src/net/network.js`, `src/main.js`
+  - Responsibilities: Implement discrete property propagation in `EntityInterpolator` (`isLeashed`, `isMoving`, `state`), update `toggleLeash()` in `src/main.js` to immediately broadcast `SYNC_STATE`, and verify remote entity state reflection.
+- **Worker 2 (`impl-ui-feedback-tests`) [LOW/MEDIUM]**:
+  - Focus: `src/ui/touch_controls.js`, `test/test_leash_sync.py`, `test/run_tests.py`
+  - Responsibilities: Implement `setLeashed(isLeashed)` in `TouchControls` with visual toggle indication, author automated unit test suite in `test/test_leash_sync.py`, and register in `test/run_tests.py`.
+
+---
+
+## 5. Acceptance Criteria
+
+- [x] `AC-1`: When a player takes their dog off-leash (pressing <kbd>L</kbd> or tapping the touch leash button), all other connected client windows (desktop, incognito, mobile) immediately remove the red leash graphic connecting the owner to the dog.
+- [x] `AC-2`: When a player re-leashes their dog, all other connected client windows immediately re-draw the red catenary leash between the owner and the dog.
+- [x] `AC-3`: `EntityInterpolator` properly propagates all discrete properties (`isLeashed`, `isMoving`, and dog `state`) from incoming `SYNC_STATE` packets while smoothly interpolating `x`, `y`, and `angle`.
+- [x] `AC-4`: The mobile touch action button (`btn-touch-leash`) visually reflects the active leash status (e.g. toggling between `🦮` on-lead and `🐕` off-lead).
+- [x] `AC-5`: All automated tests in `test/run_tests.py` (including the new leash synchronization tests) pass with 100% green status.
+
+```
+
+## FILE: openspec/changes/archive/ticket-010/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-010"
+title: "Virtual Dog Walker: Realistic On-Leash Heel, Bounded Off-Leash Roaming, Dog-to-Dog Social Interactions & Whistle Recall Command"
+state: "COMPLETED"
+created_at: "2026-10-11T17:20:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-010/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Functional Goals
+
+Currently in *Virtual Dog Walker (Clifton Down)*:
+1. **Unrealistic Relative Positioning**:
+   - The companion dog follows at a static offset (62px behind the owner at a 135° angle).
+   - When on-leash, the dog should walk closely at the owner's side/heel (~38–48px) with natural slack in the lead and natural turning deceleration.
+2. **Missing Off-Leash Roaming Mode**:
+   - When taken off-leash, the dog still executes the same static follow routine behind the human unless fetching a tennis ball.
+   - When off-leash, dogs should exhibit genuine exploratory roaming behavior (trotting ahead, sniffing grass/flower patches, circling back), while remaining **organically bounded within a comfortable distance (~160–220px)** from the human so they never get lost or wander across the map.
+3. **Limited Dog-to-Dog Social Dynamics**:
+   - Currently, dogs only trigger a brief play-bow if within 58px of another dog with a 2% chance per frame.
+   - Dogs in a public park should be naturally social: noticing other dogs within proximity (~90–120px), approaching for friendly snout/butt sniff greetings, wagging their tails, exchanging happy emotes (`🐾`, `🐶`, `❤️`), and engaging in playful circles or play-bows.
+4. **Missing Whistle / Recall Command**:
+   - Players have no way to call their dog back when off-lead.
+   - A whistle command should immediately recall the dog to sprint/trot back to the human, follow closely at heel for a short while (~10 seconds), and then seamlessly resume autonomous roaming if off-lead.
+   - The whistle command should feature a high-pitched procedural training whistle sound effect, keyboard (<kbd>H</kbd> / <kbd>R</kbd>) and mobile touch action button support, and multiplayer network synchronization so other park visitors hear and observe the recall.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 Canine Steering AI & State Machine (`src/entities/companion_dog.js`)
+- **Expanded `DogState` Enum**:
+  ```javascript
+  export const DogState = {
+    FOLLOWING: 'FOLLOWING',       // On-leash close heel follow (~38–48px)
+    ROAMING: 'ROAMING',           // Off-leash autonomous exploration within bounded radius
+    SOCIAL_GREET: 'SOCIAL_GREET', // Approaching & sniffing nearby canine peer
+    PLAY_BOW: 'PLAY_BOW',         // Playful social crouch & tail wag
+    IDLE_SNIFF: 'IDLE_SNIFF',     // Sniffing turf/flowers
+    SITTING: 'SITTING',           // Sitting at rest
+    FETCHING: 'FETCHING',         // Ball retrieval
+    BARKING: 'BARKING',           // Vocal bark
+    RECALLED: 'RECALLED'          // Rapid sprint back to human upon whistle, followed by timed heel
+  };
+  ```
+- **On-Leash Close Heel (`DogState.FOLLOWING`)**:
+  - Target follow distance reduced to ~38–48px at the owner's side.
+  - Matches owner velocity smoothly; when owner stops, transitions gracefully to idle sniff or sit.
+- **Bounded Off-Leash Roaming (`DogState.ROAMING`)**:
+  - When off-leash (`!this.owner.isLeashed`), dog enters `ROAMING` mode.
+  - Generates organic wander targets in front of or around the owner.
+  - **Bounded Perimeter**: Max roam radius = 200px from owner.
+    - If distance exceeds 150px, steering steering vector biases back toward owner.
+    - If distance exceeds 210px (e.g. human walks away), dog automatically trots back to close the distance.
+  - Randomly pauses for 2–4 seconds to sniff interesting grass spots (`IDLE_SNIFF`).
+- **Dog-to-Dog Social Greetings (`DogState.SOCIAL_GREET` & `PLAY_BOW`)**:
+  - Scans `otherDogs` list: if an unfamiliar dog is within 120px and both are not fetching:
+    - Approaching dog steers toward the peer dog to initiate a friendly sniff greeting.
+    - When within 35px: enters mutual sniffing circle, wags tail rapidly (`wagSpeed = 16`), displays friendly emote (`🐾`, `🐶`, `❤️`).
+    - After 2.5–3 seconds, transitions to playful play-bow (`PLAY_BOW`) or resumes roaming.
+- **Whistle Recall & Timed Heel (`DogState.RECALLED`)**:
+  - Triggered via `dog.whistleRecall()`:
+    - Dog perks up, shows `!` or `🎵` emote bubble.
+    - Sprints back toward owner (`sprintSpeed = 290 px/s`).
+    - When distance to owner < 36px, transitions to close heel following with `this.recallHeelTimer = 10.0` seconds.
+    - Once the 10-second timer elapses, dog smoothly resumes `ROAMING` (if off-leash) or `FOLLOWING` (if on-leash).
+
+### 2.2 Procedural Whistle Audio Engine (`src/systems/audio.js`)
+- **Web Audio Whistle Synthesizer (`playWhistle()`)**:
+  - Dual-oscillator high-frequency training whistle sound:
+    - Main oscillator: sine wave with rapid upward chirp from 2400 Hz to 2850 Hz.
+    - Overtone oscillator: subtle harmonic at ~3600 Hz.
+    - Vibrato modulation: LFO at 18 Hz creating authentic acoustic whistle warble.
+    - Envelope: sharp attack (15ms), steady sustain (180ms), quick decay (60ms).
+
+### 2.3 Network Protocol & Multiplayer Handshake (`src/net/protocol.js`, `src/net/ws_network.js`, `src/net/network.js`)
+- **New Packet Type**: `PacketType.WHISTLE = 'WHISTLE'`.
+- `Protocol.createWhistle(peerId, x, y)`:
+  - Transmits whistle trigger across WebSocket / PartyServer.
+- On receipt of `WHISTLE`:
+  - Remote client plays sound effect `audioEngine.playWhistle()`.
+  - Remote owner avatar displays whistle toast/emote, and their companion dog enters `RECALLED` sprint.
+
+### 2.4 User Interface & Controls (`src/main.js`, `src/ui/touch_controls.js`, `src/ui/social_hud.js`)
+- **Desktop Input**:
+  - Bound to <kbd>H</kbd> (Heel) and <kbd>R</kbd> (Recall/Whistle).
+  - Toast message: `📯 Whistle! Ziggy recalled to heel`.
+- **Mobile Touch Controller**:
+  - Added action button `#btn-touch-whistle` with icon `📯` on `#touch-action-pad`.
+  - Haptic feedback pulse on tap.
+- **HUD Guidance**:
+  - Updated `<kbd>` controls legend in `SocialHUD`: `<kbd>H</kbd> Whistle/Heel`.
+
+### 2.5 Automated Testing Suite (`test/test_dog_behavior.py`, `test/run_tests.py`)
+- Unit tests verifying:
+  - Close follow distance clamping when on-leash.
+  - Off-leash bounded roaming perimeter constraint (dog distance never exceeds max roam radius).
+  - Social proximity detection and greeting state transitions.
+  - Whistle recall sprint and 10-second heel timer countdown.
+  - `WHISTLE` packet serialization and protocol integration.
+
+---
+
+## 3. Scope Boundaries
+
+### In-Scope
+1. `src/entities/companion_dog.js`: On-leash heel follow, bounded off-leash roaming, social canine greetings, whistle recall state.
+2. `src/systems/audio.js`: High-frequency procedural training whistle synthesizer (`playWhistle`).
+3. `src/net/protocol.js`: `WHISTLE` packet schema definition.
+4. `src/net/ws_network.js` & `src/net/network.js`: Whistle packet broadcasting and dispatching.
+5. `src/main.js`: Whistle command execution, keyboard bindings (<kbd>H</kbd>/<kbd>R</kbd>), and remote peer whistle handling.
+6. `src/ui/touch_controls.js` & `src/ui/social_hud.js`: Touch action button `📯`, HUD controls guide.
+7. `test/test_dog_behavior.py` & `test/run_tests.py`: Comprehensive automated test suite.
+
+### Out-of-Scope
+- Changing canine sprite art or adding 3D skeletal animations.
+- Modifying Cloudflare Worker routing or PartyServer durable object infrastructure.
+
+---
+
+## 4. Worker Decomposition Plan
+
+- **Worker 1 (`impl-dog-roam-social`) [HIGH]**:
+  - Focus: `src/entities/companion_dog.js`
+  - Responsibilities: Realistic on-leash close heel follow, bounded off-leash roaming AI with return bias, social dog-to-dog greeting interactions (mutual sniff, circling, emote bubbles, play-bow), and whistle recall state machine with timed heel.
+- **Worker 2 (`impl-whistle-audio-net`) [MEDIUM]**:
+  - Focus: `src/systems/audio.js`, `src/net/protocol.js`, `src/net/ws_network.js`, `src/net/network.js`, `src/main.js`
+  - Responsibilities: Implement Web Audio procedural training whistle (`playWhistle()`), define `WHISTLE` packet schema, wire network broadcast and remote peer reception, and bind desktop keyboard triggers (<kbd>H</kbd>/<kbd>R</kbd>).
+- **Worker 3 (`impl-touch-hud-tests`) [LOW/MEDIUM]**:
+  - Focus: `src/ui/touch_controls.js`, `src/ui/social_hud.js`, `src/style.css`, `test/test_dog_behavior.py`, `test/run_tests.py`
+  - Responsibilities: Add mobile touch action button `📯` (`btn-touch-whistle`), update HUD controls guidance, implement comprehensive unit test suite in `test/test_dog_behavior.py`, and register with `run_tests.py`.
+
+---
+
+## 5. Acceptance Criteria
+
+- [x] `AC-1`: When on-leash, the dog walks closely beside the human (~38–48px) at heel, matching speed with natural lead tension.
+- [x] `AC-2`: When off-leash, the dog enters autonomous roaming mode, exploring and sniffing naturally while staying within a bounded radius (~160–220px) of the human.
+- [x] `AC-3`: When two dogs come within proximity (~90–120px), they approach and engage in social canine interactions (friendly sniffing, circling, tail wagging, emote bubbles, and play-bows).
+- [x] `AC-4`: Triggering the whistle command (<kbd>H</kbd>, <kbd>R</kbd>, or touch button `📯`) plays a training whistle sound, causes the dog to perk up, sprint back to the human, and follow closely at heel for ~10 seconds before resuming roaming.
+- [x] `AC-5`: The whistle event is synchronized over the network so other connected players hear the whistle and see the owner's dog recall to heel.
+- [x] `AC-6`: All automated unit tests in `test/run_tests.py` pass with 100% green status.
+
+```
+
+## FILE: openspec/changes/archive/ticket-011/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-011"
+title: "The Downs: Map Redesign Inspired by Clifton & Durdham Downs, Waste Bins & Nature Soundscape"
+state: "COMPLETED"
+created_at: "2026-10-11T19:22:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-011/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Functional Goals
+
+Currently in *Virtual Dog Walker*:
+1. **Generic Meadow Layout**:
+   - The current map is a generic rectangular field (2600 × 1900 px) with scattered trees and benches, lacking the iconic character and authentic geography of **The Downs** (Clifton & Durdham Downs in Bristol, UK).
+   - The user has requested to redesign the map layout to be inspired by Clifton and Durdham Downs and rename the park to **"The Downs"**.
+2. **Missing Iconic Landmarks & Pathways**:
+   - The Downs is characterized by distinct geographical features:
+     - **Ladies Mile**: wide, prominent central tree-lined avenue cutting across the plateau.
+     - **Sea Walls / Avon Gorge Rim**: western cliff edge with stone boundary walls, viewing promontories, and dramatic crags.
+     - **The Water Tower & Cafe Clearing**: northern/northeastern landmark zone.
+     - **Clifton Observatory & Rock Slide**: southern elevated promontory.
+     - Natural gravel cross-tracks and wildflower meadows.
+3. **Missing Public Dog-Waste Bins**:
+   - Essential for realistic park dog walking and as prerequisite infrastructure for upcoming gameplay loops (dog poop cleanup in `ticket-014`).
+   - Distinctive public park dog-waste bins must be placed at strategic junctions, path entries, and near teak benches.
+4. **Enhanced 2D Visual Aesthetics**:
+   - The visual style must remain 2D top-down / soft isometric tilt, but significantly more appealing:
+     - Multi-toned turf with textured grass flecks, mown path edges, and varied flora.
+     - Mature English oak, sweet chestnut, and lime tree avenues with layered foliage and soft drop shadows.
+     - Weathered stone perimeter walls and railings.
+5. **Enhanced Nature Soundscape**:
+   - Expand the Web Audio procedural nature synthesizer to deliver a rich, peaceful ambient soundscape:
+     - Gentle canopy wind with natural organic swelling.
+     - Rich authentic British birdsong variety (blackbird, European robin, chaffinch, woodpigeon).
+     - Rustling meadow grasses.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 The Downs Map Geometry & Landmarks (`src/world/field.js`)
+- **Expanded Coordinates & Zones**:
+  - Coordinate space: `3200 × 2400 px` providing expansive walking space for multiple players and dogs.
+  - Defined zones:
+    1. **North Zone (Durdham Down Grasslands)**: Expansive open turf, Water Tower monument (`x: 2400, y: 450`), cafe pavilion benches.
+    2. **Central Boulevard (Ladies Mile Avenue)**: Wide dual-bordered gravel avenue crossing diagonally (`x: 400, y: 1900` to `x: 2700, y: 500`) with avenues of sweet chestnuts and lime trees.
+    3. **West Edge (Sea Walls / Avon Gorge Overlook)**: Stone perimeter walls, iron railing viewpoints, rocky limestone crags, and panoramic vista benches overlooking the Avon Gorge.
+    4. **South Zone (Clifton Down Woodland & Observatory)**: Denser tree copses, winding woodland trails, teak benches, and limestone boulder features.
+- **Dog-Waste Bins (`this.bins`)**:
+  - Array of 8 dog-waste bin entities (`{ id, x, y, radius: 12, depthY: y + 8, isBin: true }`).
+  - Placed alongside main path intersections, Sea Walls lookout, Water Tower clearing, and near benches.
+  - Collision resolution integrated into `resolveCircleCollision`.
+  - Distinctive 2D rendering: dark green cylinder (`#1b4332`) with red canister band (`#b91c1c`), dark top slot, white paw/dog decal, and soft drop shadow.
+
+### 2.2 Visual Rendering Pipeline (`src/world/field.js`)
+- **Enhanced 2D Procedural Turf & Foliage**:
+  - Multi-shade grass rendering using perlin/noise variation with soft lawn mower striping on open greens.
+  - Distinct path rendering: broad gravel avenues with rough edges, sandy dirt trails, and cobblestone/flagstone landmark plazas.
+  - Shaded tree canopies with depth-sorted trunks and transparent overpass foliage highlights.
+- **Y-Sorted Depth Sorting**:
+  - Scenery objects (trees, benches, bins, monuments) collected into `renderList` along with dynamic entities (owners, dogs, tennis balls).
+  - Sorted ascending by base coordinate (`depthY`).
+
+### 2.3 Web Audio Procedural Nature Soundscape (`src/systems/audio.js`)
+- **Continuous Layered Ambient Audio**:
+  - **Wind in Canopy**: Dual-filtered pink noise with slow sinusoidal LFO (0.1 Hz) modulating low-pass cutoff between 260 Hz and 440 Hz for breathing canopy breeze.
+  - **British Birdsong Synth**:
+    - Blackbird melodic piping (`playBlackbird()`, whistle motifs 1800–2600 Hz).
+    - Robin warbles (`playRobin()`, high-frequency chirps 3200–4200 Hz with vibrato).
+    - Woodpigeon rhythmic coos (`playWoodpigeon()`, low soft pulses at 380–420 Hz).
+  - Background audio auto-unlocks on first user interaction (<kbd>touchstart</kbd> / <kbd>click</kbd>) and supports mute toggling.
+
+### 2.4 User Interface & Branding (`index.html`, `src/ui/social_hud.js`)
+- Title tag and header updated: `"The Downs - Virtual Dog Walker"`.
+- HUD status pill updated from `"Clifton Down"` to `"The Downs"`.
+
+---
+
+## 3. Acceptance Criteria & Traceability Matrix
+
+| ID | Criterion | Status | Verification Method |
+|---|---|:---:|---|
+| **AC-011.1** | Map renamed to "The Downs" in `index.html`, `src/world/field.js`, and `src/ui/social_hud.js`. | **VERIFIED** | Code inspection & DOM verification (`test/test_downs_map.py`) |
+| **AC-011.2** | Map layout implements The Downs geography (Ladies Mile avenue, Sea Walls overlook, Water Tower clearing). | **VERIFIED** | Geometric coordinate & visual inspection (`Field.render`) |
+| **AC-011.3** | At least 8 dog-waste bins placed along paths and benches with collision and depth sorting. | **VERIFIED** | Automated unit test verifying bin registry & collisions (`test_dog_waste_bin_registry`) |
+| **AC-011.4** | Enhanced 2D rendering with multi-tone turf, distinctive gravel/dirt paths, and layered foliage. | **VERIFIED** | Canvas rendering inspection in worktree and test suite |
+| **AC-011.5** | Web Audio nature soundscape plays procedural wind and authentic birdsong varieties. | **VERIFIED** | Automated audio synthesizer test (`test_audio_nature_soundscape_methods`) |
+| **AC-011.6** | Camera follow smoothly clamps within expanded world bounds without jitter. | **VERIFIED** | Unit test camera math & boundaries (`test_camera_viewport_clamping`) |
+| **AC-011.7** | Zero regressions in existing test suite (`python3 test/run_tests.py`). | **VERIFIED** | Automated test runner passed 10/10 test suites |
+
+---
+
+## 4. Testing & Verification Strategy
+
+- **Automated Tests (`test/test_downs_map.py`)**:
+  - Verified map dimensions (3200 × 2400) and landmark coordinate definitions.
+  - Verified bin registry contains 8 bins with valid positions and collision radii.
+  - Verified camera viewport clamping across expanded 3200×2400 space.
+  - Verified audio nature soundscape synthesis methods exist and execute cleanly.
+- **Regression Suite (`test/run_tests.py`)**:
+  - Full suite execution covering all 10 modules: physics, steering, leash sync, mobile controls, and map geometry.
+
+```
+
+## FILE: openspec/changes/archive/ticket-012/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-012"
+title: "Enhanced Character & Canine Customization & 2D Aesthetics"
+state: "COMPLETED"
+created_at: "2026-10-11T19:54:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-012/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Functional Goals
+
+Currently in *Virtual Dog Walker*:
+1. **Limited Avatar Customization**:
+   - The human Owner avatar only allows configuring a name and jacket color from 5 swatches. Hairstyle, hair color, skin tone, pants, and footwear cannot be chosen in the UI.
+   - The companion dog only supports 3 coat presets, with a fixed teal collar and no collar color choice.
+2. **Visual Polish (2D Aesthetics)**:
+   - The user requested: *"upgrade customation of human and dog characters, improve appearance of the characters and maps, it should remain 2d, it should be more visually appealing"*.
+   - Both characters should have expressive, charming 2D vector detailing (facial features, ear spring physics, tailored hair silhouettes, body shading, and animated walk cycles) while staying strictly 2D top-down / soft isometric tilt.
+3. **Modal UI Ergonomics**:
+   - The customizer modal is a single cramped column. It needs a clean, modern glassmorphic tabbed layout ("👤 Walker" and "🐕 Dog Companion") that works comfortably on both desktop and mobile touch screens.
+4. **Multiplayer Metadata Synchronization**:
+   - Expanded customization attributes (hair style, hair color, collar color, expanded coat breeds) must persist in `localStorage` and synchronize across multiplayer peers via `HELLO` and `WELCOME` packets so all visitors see each other's custom characters.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 Owner Avatar Model & 2D Vector Rendering (`src/entities/owner.js`)
+- **Customization Attributes**:
+  - `hairStyle`: `'SHORT'`, `'WAVY'`, `'PONYTAIL'`, `'BEANIE'`
+  - `hairColor`: Palette (Brown `#451a03`, Blonde `#eab308`, Black `#171717`, Auburn `#9a3412`, Silver `#94a3b8`)
+  - `jacketColor`: Rich palette (Navy `#1e3a8a`, Forest `#14532d`, Crimson `#831843`, Amber `#b45309`, Slate `#334155`, Ochre `#d97706`)
+  - `pantsColor`: Palette (Denim `#1e293b`, Tan `#78350f`, Olive `#365314`, Dark Gray `#1f2937`)
+  - `skinTone`: Diverse palette (`#fed7aa`, `#fcd34d`, `#d97706`, `#92400e`, `#7c2d12`)
+  - `shoeColor`: Dark slate `#0f172a` or white trainer `#f8fafc`
+- **Enhanced 2D Draw Pipeline**:
+  - Head with soft drop shadow, ears, subtle nose tilt indicator based on `angle`.
+  - Distinct hair rendering per `hairStyle` (swept bangs for Short, flowing tufts for Wavy, bun/plume for Ponytail, snug ribbed cap with pom-pom for Beanie).
+  - Jacket torso with collar lapels, arm sway during walk cycle.
+  - Foot swing animation with dual-tone shoes.
+
+### 2.2 Companion Dog Model & 2D Vector Rendering (`src/entities/companion_dog.js`)
+- **Expanded `CoatPreset`**:
+  - `CHOCOLATE_TAN`: Cocker Spaniel (Ziggy) - Rich chocolate with tan brow pips and muzzle.
+  - `GOLDEN`: Golden Retriever - Warm honey-gold with lighter chest bib.
+  - `BLACK_LAB`: Black Labrador - Sleek charcoal black with hazel highlights.
+  - `JACK_RUSSELL`: Jack Russell Terrier - Crisp white coat with chestnut eye patch and ear markings.
+  - `RED_SETTER`: Irish Red Setter - Deep mahogany chestnut with silky ear fringe.
+- **Collar Customization (`collarColor`)**:
+  - Palette (Teal `#0d9488`, Crimson `#dc2626`, Royal Blue `#2563eb`, Gold `#eab308`, Amethyst `#7c3aed`).
+  - Rendered with metallic gold charm tag reflecting light.
+- **Enhanced 2D Draw Pipeline**:
+  - Snout highlighting, whisker dots, expressive dark canine eyes with catchlights.
+  - Floppy ear physics damper responding to trot inertia.
+  - Animated wagging tail with coat-matching brush/feathering.
+
+### 2.3 Tabbed Customizer UI (`src/ui/social_hud.js`, `src/style.css`)
+- **Glassmorphic Tabbed Modal**:
+  - Tab 1: **👤 Walker** (Name, Skin tone swatches, Hair style buttons, Hair color swatches, Jacket swatches, Pants swatches).
+  - Tab 2: **🐕 Dog Companion** (Coat / Breed selector, Collar color swatches).
+- **Profile Storage**:
+  - Serialized to `localStorage.getItem('clifton_walker_profile')` with backward-compatible defaults.
+
+### 2.4 Multiplayer Protocol Synchronization (`src/net/protocol.js`, `src/net/ws_network.js`, `src/net/network.js`, `server/server.py`, `src/main.js`)
+- `Protocol.createHello(peerId, name, jacketColor, dogCoatName, extraMeta)`:
+  - Carries `hairStyle`, `hairColor`, `collarColor`, `pantsColor`, `skinTone`.
+- `ws_network.js`, `network.js`, and `server.py`:
+  - Uniformly preserve and relay all 5 styling fields in `HELLO` and `WELCOME` packets.
+- `remotePlayers` update loop in `src/main.js`:
+  - Dynamically updates remote avatar styling when metadata is received.
+
+---
+
+## 3. Acceptance Criteria & Traceability Matrix
+
+| ID | Criterion | Status | Verification Method |
+|---|---|:---:|---|
+| **AC-012.1** | Owner avatar renders with selectable `hairStyle`, `hairColor`, `jacketColor`, `pantsColor`, and `skinTone`. | **VERIFIED** | Automated test in `test/test_character_customization.py` (`test_owner_avatar_customization_attributes`) |
+| **AC-012.2** | Dog companion supports 5 coat presets and customizable `collarColor`. | **VERIFIED** | Automated test in `test/test_character_customization.py` (`test_companion_dog_coat_presets_and_collar`) |
+| **AC-012.3** | Customizer in `SocialHUD` features a tabbed interface ("Walker" and "Dog Companion") with intuitive swatches. | **VERIFIED** | Automated test in `test/test_character_customization.py` (`test_customizer_tabbed_structure`) |
+| **AC-012.4** | Customizer profile serializes and persists across reloads via `localStorage`. | **VERIFIED** | Automated test in `test/test_character_customization.py` (`test_local_storage_profile_schema`) |
+| **AC-012.5** | Multiplayer `HELLO` / `WELCOME` protocols propagate expanded styling to remote avatars. | **VERIFIED** | Automated tests across `ws_network.js`, `network.js`, and `server.py` |
+| **AC-012.6** | Zero regressions in existing test suite (`python3 test/run_tests.py`). | **VERIFIED** | Full test runner passed 11/11 test suites |
+
+---
+
+## 4. Testing & Verification Strategy
+
+- **Automated Tests (`test/test_character_customization.py`)**:
+  - Verified `Owner` attributes and `draw()` for all hairstyles and color tokens.
+  - Verified `CompanionDog` coat presets and collar color rendering.
+  - Verified `localStorage` profile serialization and deserialization backward compatibility.
+  - Verified `Protocol.createHello()`, `ws_network.js`, `network.js`, and `server.py` net sync.
+- **Regression Suite (`test/run_tests.py`)**:
+  - Full suite execution covering all 11 test modules.
+
+```
+
+## FILE: openspec/changes/archive/ticket-013/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-013"
+title: "Canine Personality System & Leash Dynamics Overhaul"
+state: "PLANNING"
+created_at: "2026-10-11T20:13:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-013/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Functional Goals
+
+Currently in *Virtual Dog Walker*:
+1. **Uniform Dog Behaviors**:
+   - Every dog behaves with identical steering parameters, greeting probabilities, and vocalization triggers regardless of character or breed.
+   - The user requested: *"dog personality menu part of customisation: (playfulness, shyness, barkyness, obidiance) out of 5 scale"*.
+2. **Unrealistic Ball Chasing on Leash**:
+   - Currently, if a ball is thrown while the dog is leashed, the dog can enter `FETCHING` state, violating physical reality and owner control.
+   - The user requested: *"dogs do not chase ball when on leash, dogs respect lead length but can pull on lead"*.
+3. **Leash Pulling Physics**:
+   - When on-leash, a dog should strictly respect the lead length clamp, but should be capable of pulling against the lead (stretching the lead taut, exerting slight tension, leaning forward) when excited by moving objects or stimuli.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 Dog Personality Engine (`src/entities/companion_dog.js`)
+- **Personality Attributes (1 to 5 scale)**:
+  - `playfulness` (1–5, default 3):
+    - Influences frequency and speed of play-bow transitions, tail wag intensity, and enthusiasm during ball fetch.
+  - `shyness` (1–5, default 2):
+    - Influences social interaction radius and hesitancy when greeting unknown canine peers (high shyness = wider greeting berth, lower greeting approach probability; low shyness = eager approach).
+  - `barkyness` (1–5, default 2):
+    - Influences spontaneous barking probability when idle or excited, and reaction sensitivity to remote dog barks.
+  - `obedience` (1–5, default 4):
+    - Influences heel alignment precision, promptness of sprint recall during whistle, leash pulling resistance, and resistance to idle run-off (in `ticket-014`).
+- **Personality Data Model**:
+  ```javascript
+  this.personality = {
+    playfulness: 3,
+    shyness: 2,
+    barkyness: 2,
+    obedience: 4
+  };
+  ```
+
+### 2.2 Leash Dynamics Overhaul (`src/entities/companion_dog.js`)
+- **No Ball Chasing On-Leash**:
+  - In `update()` / `fetchBall()`: if `this.owner && this.owner.isLeashed`, the dog **NEVER** enters `DogState.FETCHING` and does not chase thrown balls.
+  - Instead, the dog turns its head eagerly toward the ball, wags its tail if playful, and pulls against the leash toward the ball direction.
+- **Leash Pulling Physics & Taut Lead Rendering**:
+  - Max leash length: `105px`.
+  - When the dog desires to move away from the owner (e.g. towards an active ball or distant peer):
+    - Dog enters a pulling posture (`isPullingLeash = true`).
+    - Distance is strictly clamped to max leash length.
+    - Leash render switches from a slack catenary curve to a taut, tensioned straight line with subtle vibrational jitter.
+
+### 2.3 Customizer UI Personality Editor (`src/ui/social_hud.js`, `src/style.css`)
+- In `#customizer-modal` under the **🐕 Dog Companion** tab:
+  - Add 4 personality sliders or 1–5 pip rating bars for:
+    - 🎾 Playfulness (1–5)
+    - 🙈 Shyness (1–5)
+    - 🗣️ Barkyness (1–5)
+    - 🎓 Obedience (1–5)
+- Persist personality in `clifton_walker_profile` in `localStorage`.
+
+### 2.4 Multiplayer Protocol & Net Sync (`src/net/protocol.js`, `src/main.js`)
+- Include `personality` in peer metadata packet handshakes.
+
+---
+
+## 3. Acceptance Criteria & Traceability Matrix
+
+| ID | Criterion | Verification Method |
+|---|---|---|
+| **AC-013.1** | Dog companion model incorporates 4 personality traits (Playfulness, Shyness, Barkyness, Obedience on a 1–5 scale). | Unit test inspecting dog personality object |
+| **AC-013.2** | Dog personality attributes modify AI steering, greeting approach frequency, and spontaneous barking. | Unit test behavioral steering simulation |
+| **AC-013.3** | Leashed dog strictly NEVER breaks into `FETCHING` state or chases balls when on lead. | Unit test ball throw with leashed dog |
+| **AC-013.4** | Leashed dog respects maximum lead length clamp, but pulls against lead with taut leash rendering. | Unit test distance clamp and pulling flag |
+| **AC-013.5** | Personality editor integrated into Dog Companion tab of `SocialHUD` with `localStorage` persistence. | DOM and profile schema unit test |
+| **AC-013.6** | Zero regressions across test suite (`python3 test/run_tests.py`). | Automated test runner execution |
+
+---
+
+## 4. Testing & Verification Strategy
+- Implement automated test suite `test/test_dog_personality_leash.py` and integrate into `test/run_tests.py`.
+
+```
+
+## FILE: openspec/changes/archive/ticket-014/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-014"
+title: "Canine Stray Run-Off, Directional Navigation Arrow & Dog Waste/Bin Mechanics"
+state: "PLANNING"
+created_at: "2026-10-11T20:33:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-014/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Functional Goals
+
+Currently in *Virtual Dog Walker*:
+1. **No Consequence for Idle Neglect**:
+   - The dog always waits patiently even if the human stands completely still for long periods without engaging or whistling.
+   - The user requested: *"if player stands around still without wistleing for too long the dog may run off (probablity effected vt obidience), teleport dog to somewhere random on the map (dog stays still) and show arrow onscreen so owner must go get dog"*.
+2. **Missing Dog Waste & Bin Mechanics**:
+   - Public dog parks require responsible ownership. The user requested:
+     - *"dog poop probability, player has to pick it up and then arrow appears on screen to nearest bin for player to go to next"*.
+   - Dog-waste bins were placed in `ticket-011` (`field.bins`) but have not yet been wired into gameplay interactions.
+3. **Reusable Directional HUD Navigation Arrow**:
+   - The game needs an intuitive, non-intrusive directional navigation arrow on the screen margin to guide the owner to their stray dog and to the nearest waste bin.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 Directional Navigation Compass Arrow (`src/ui/navigation_arrow.js`)
+- **Visual Presentation**:
+  - Anchored on the screen viewport perimeter pointing toward the off-screen target world coordinate `(targetX, targetY)`.
+  - Calculates bearing angle: `Math.atan2(targetY - playerY, targetX - playerX)`.
+  - Clamps arrow position along an inner screen ellipse/box with padding (~40px from viewport edge).
+  - Renders a clean glassmorphic chevron/arrow with soft pulsing animation, target icon (`🐕` or `🗑️`), and distance badge in meters/yards (`${Math.round(dist / 20)}m`).
+- **API**:
+  - `setTarget(x, y, type, label, color)`
+  - `clearTarget()`
+  - `draw(ctx, camera, playerX, playerY)`
+
+### 2.2 Canine Idle Stray / Run-Off Engine (`src/entities/companion_dog.js`)
+- **Idle Tracking & Whistle Reset**:
+  - Tracks `this.ownerStillTimer`: accumulates elapsed time when local owner velocity `Math.hypot(vx, vy) < 2` and dog is off-leash.
+  - Calling `whistleRecall()` or walking resets `this.ownerStillTimer = 0`.
+- **Obedience-Scaled Run-Off Trigger**:
+  - When `this.ownerStillTimer > 35` seconds:
+    - Probability roll evaluated every 5s:
+      - Obedience 1: 50% probability
+      - Obedience 2: 30% probability
+      - Obedience 3: 15% probability
+      - Obedience 4: 5% probability
+      - Obedience 5: 1% probability
+    - If triggered: Dog transitions to `DogState.LOST`.
+    - Teleports or sprints to a random secluded turf location on The Downs (`x: 200..3000, y: 200..2200`).
+    - Dog stays still in `LOST` state, sniffing or looking around.
+    - Activates `NavigationArrow` pointing toward dog: `setTarget(dog.x, dog.y, 'DOG', 'Find your dog!', '#f59e0b')`.
+- **Retrieval & Rejoin**:
+  - When owner approaches within 50px or triggers whistle recall (<kbd>H</kbd> / touch button):
+    - Dog perks up happily, emits `❤️` or `🐾` emote bubble, rejoins close heel, and clears the navigation arrow.
+
+### 2.3 Dog Poop & Bin Disposal Loop (`src/entities/waste.js`, `src/world/field.js`, `src/main.js`)
+- **Poop Trigger & Entity**:
+  - Periodic event while walking in the park (~every 150–240 seconds of active walking).
+  - Dog pauses for 2 seconds in squat posture, then spawns a `PoopPile` entity on `field` at `(dog.x, dog.y)` with depth sorting (`depthY = y + 4`).
+- **Pickup Interaction**:
+  - Player walking near poop pile (<36px) receives prompt: *"Press [E] or tap to pick up waste"*.
+  - On interaction: Poop pile is removed, player receives bag toast: *"Collected in poop bag 🟤"*, and player enters `hasPoopBag = true`.
+- **Bin Navigation & Disposal**:
+  - Queries `field.getNearestBin(player.x, player.y)`.
+  - Activates `NavigationArrow` pointing toward nearest bin: `setTarget(bin.x, bin.y, 'BIN', 'Nearest Bin', '#10b981')`.
+  - Walking to bin (<42px) and pressing <kbd>E</kbd> or tapping bin disposes bag:
+    - Clears `hasPoopBag`, clears arrow, plays positive chime, and displays toast: *"Disposed cleanly! The Downs thanks you 🌳"*.
+
+---
+
+## 3. Acceptance Criteria & Traceability Matrix
+
+| ID | Criterion | Verification Method |
+|---|---|---|
+| **AC-014.1** | Reusable `NavigationArrow` HUD component projects screen-clamped directional chevron and distance badge. | Unit test coordinate projection & math |
+| **AC-014.2** | Owner standing still >35s without whistling triggers stray run-off roll, inversely scaled by dog obedience. | Unit test idle timer and probability function |
+| **AC-014.3** | Run-off places dog in stationary `LOST` state and displays directional arrow pointing to dog. | Simulation test of run-off event |
+| **AC-014.4** | Approaching dog or whistling recalls dog and clears the lost dog arrow. | Unit test retrieval and arrow dismissal |
+| **AC-014.5** | Periodic dog poop spawns `PoopPile` entity; picking it up displays arrow pointing to nearest dog bin. | Unit test poop event, pickup, and nearest bin query |
+| **AC-014.6** | Reaching bin disposes of waste bag cleanly and dismisses navigation arrow. | Integration test of disposal interaction |
+| **AC-014.7** | Zero regressions across test runner (`python3 test/run_tests.py`). | Automated test runner execution |
+
+---
+
+## 4. Testing & Verification Strategy
+- Implement automated test suite `test/test_stray_and_poop.py` and integrate into `test/run_tests.py`.
+
+```
+
+## FILE: openspec/changes/archive/ticket-015/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-015"
+title: "Ad-Hoc Proximity Group Chat & Tombstone Lifecycle"
+state: "PLANNING"
+created_at: "2026-10-11T20:13:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-015/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Functional Goals
+
+Currently in *Virtual Dog Walker*:
+1. **Chat is Global & Fleeting**:
+   - Chat messages are broadcast globally across the entire room with brief floating overhead speech bubbles that disappear after a few seconds.
+   - The user specified that **chat is a key feature of the game** and requires an intimate, spatial, and ad-hoc social experience:
+     - *"chats should form ad-hoc based on proximity, chats are formed with other players when they are close enough to eachother, this can include multiple players, as players move in/out of proximity to 'join/leave' the chat, if players walk alongside they stay in the chat with one and other, when players walk away and are in no proximity with players the chat falls to the ground as a 'tombstone' that fades away"*
+     - *"chats should be a key feature on screen when they form"*
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 Spatial Proximity Clustering (`src/ui/proximity_chat.js`)
+- **Proximity Detection Radius**:
+  - Distance threshold: `200 px` between owner avatars.
+- **Dynamic Cluster Formation**:
+  - Spatial clustering evaluates distances between local player and remote players.
+  - When 2 or more players are within 200px, a conversation cluster is formed.
+  - Multi-player support: Any player walking within 200px of any participant in the cluster dynamically joins the conversation.
+  - Walking Alongside: As players walk together, their inter-player distance remains under 200px, keeping the conversation seamlessly active.
+
+### 2.2 Prominent On-Screen Conversation HUD (`src/ui/proximity_chat.js`, `src/style.css`)
+- **Active Cluster UI**:
+  - When a cluster forms, a prominent, glassmorphic conversation panel smoothly slides in on-screen.
+  - Displays:
+    - Active participants badge (e.g. `💬 Chat with: Walker, Sarah`).
+    - Scrolling conversation message thread.
+    - Prominent input bar with quick emoji triggers (👋, 🐾, ❤️, ☕).
+  - High visibility ensures players immediately recognize they are in an active conversation.
+
+### 2.3 Parting "Tombstone" Lifecycle (`src/entities/tombstone.js`, `src/world/field.js`)
+- **Tombstone Dropping Event**:
+  - When a player walks away and is no longer in proximity with any conversation partner:
+    - The active conversation panel closes.
+    - A `ChatTombstone` entity is spawned at the parting world coordinate `(x, y)`.
+- **Tombstone Visuals & Lifecycle**:
+  - Rendered on turf with 2D depth sorting (`depthY = y + 8`).
+  - Styled as an elegant, weathered stone park marker / memorial plaque displaying:
+    - Carved stone silhouette with soft ground drop shadow.
+    - Snippet of the final chat message or participant names.
+  - Fading Dissolve: Lifespan of 10 seconds; alpha smoothly decays from 1.0 to 0.0 before the entity is culled from `Field`.
+
+### 2.4 Multiplayer Packet Protocol (`src/net/protocol.js`, `party/server.js`)
+- Proximity chat messages relayed with sender coordinates and cluster context.
+- Tombstone drop event packet or local instantiation based on parting peer distance.
+
+---
+
+## 3. Acceptance Criteria & Traceability Matrix
+
+| ID | Criterion | Verification Method |
+|---|---|---|
+| **AC-015.1** | Dynamic proximity clustering detects players within 200px and establishes ad-hoc group conversation. | Unit test spatial clustering math |
+| **AC-015.2** | Prominent on-screen conversation HUD activates when 2+ players enter proximity. | DOM & UI visibility unit test |
+| **AC-015.3** | Walking alongside maintains active conversation without disconnection. | Locomotion simulation unit test |
+| **AC-015.4** | Players dynamically join/leave cluster as they move into or out of proximity range. | Multi-agent proximity state test |
+| **AC-015.5** | Exiting proximity with all peers drops a world-space `ChatTombstone` that fades away over 10 seconds. | Tombstone entity lifecycle unit test |
+| **AC-015.6** | Zero regressions in test runner (`python3 test/run_tests.py`). | Automated test runner execution |
+
+---
+
+## 4. Testing & Verification Strategy
+- Implement automated test suite `test/test_proximity_chat.py` and integrate into `test/run_tests.py`.
+
+```
+
+## FILE: openspec/changes/archive/ticket-016/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-016"
+title: "Park NPCs: Autonomous Walkers & Joggers along The Downs Trails"
+state: "PLANNING"
+created_at: "2026-10-12T17:54:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-016/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Functional Goals
+
+While *Virtual Dog Walker* features online multiplayer peers, single players or players visiting during quiet periods experience an empty park. To bring authentic life and atmosphere to **The Downs**:
+1. **Autonomous Pedestrians & Athletic Joggers**:
+   - The park needs ambient NPC walkers leisurely strolling along walking trails and stopping at benches or viewpoints.
+   - Athletic joggers running brisk loops along Ladies Mile and the park perimeter.
+2. **Canine & Player Interaction**:
+   - Dogs should react to nearby passersby according to their personality traits (barkyness, shyness, playfulness).
+   - NPCs should exhibit gentle steering avoidance so they don't awkwardly walk through players or dogs.
+3. **Seamless Integration**:
+   - Must render seamlessly in the existing y-sorted depth pipeline with zero performance degradation.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 NPC Entity Classes (`src/entities/npc.js`)
+- **Base Class `ParkNPC`**:
+  - Properties: `x, y, vx, vy, speed, radius, depthY, waypointIndex, waypoints, state, pauseTimer`.
+  - Methods: `update(dt, obstacles, avoidanceEntities)`, `draw(ctx)`.
+- **Subclass `WalkerNPC`**:
+  - Strolls at leisure pace (~75–100 px/s).
+  - Navigates footpath waypoint loops connecting trails, viewpoints (Sea Walls), and benches.
+  - Occasionally pauses for 4–10 seconds at benches or scenic overlooks (`pauseTimer`).
+  - Distinct casual attire and randomized appearance.
+- **Subclass `JoggerNPC`**:
+  - Athletic running pace (~240–280 px/s).
+  - Continuous running loops along Ladies Mile avenue and perimeter trails.
+  - Dynamic running animation with rhythmic bobbing and athletic sportswear colors.
+
+### 2.2 Waypoint Navigation & Path Graph (`src/world/field.js`)
+- Register predefined waypoints based on authentic Downs geography:
+  - Ladies Mile Avenue loop
+  - Sea Walls overlook path
+  - Durdham Down meadow trail
+- Method `getParkWaypoints(loopType)` returning coordinate arrays.
+
+### 2.3 Canine Interaction & Steering Avoidance
+- In `CompanionDog.update()`:
+  - If a jogger or walker passes close (<80px):
+    - Barkyness roll: bark at joggers if barkyness >= 3.
+    - Shyness roll: give wide berth if shyness >= 3.
+    - Playfulness roll: tail wag or play bow if playfulness >= 4.
+
+---
+
+## 3. Acceptance Criteria & Traceability Matrix
+
+| ID | Criterion | Verification Method |
+|---|---|---|
+| **AC-016.1** | `WalkerNPC` traverses designated park path loops at walking speed and pauses at benches/overlooks. | Unit & simulation test of waypoint traversal |
+| **AC-016.2** | `JoggerNPC` executes continuous athletic running loops along Ladies Mile and perimeter. | Unit test of jogger speed and loop cycle |
+| **AC-016.3** | NPCs execute mutual soft avoidance steering around players and dogs. | Unit test avoidance displacement |
+| **AC-016.4** | Dogs react to passing NPCs based on personality traits (bark, shy berth, or play wag). | Unit test dog personality reaction to NPC |
+| **AC-016.5** | NPCs render in the y-sorted depth list with natural shadows and clothing variety. | Rendering pipeline test |
+| **AC-016.6** | Zero regressions across automated test suites (`python3 test/run_tests.py`). | Test runner verification |
+
+---
+
+## 4. Testing & Verification Strategy
+- Author `test/test_npcs.py` covering waypoint advancement, speed bounds, avoidance steering, and dog interaction.
+
+```
+
+## FILE: openspec/changes/archive/ticket-017/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-017"
+title: "UTC Day/Night Sepia Twilight & Clifton Downs Live Weather Simulation"
+state: "PLANNING"
+created_at: "2026-10-12T17:54:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-017/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Functional Goals
+
+To achieve maximum immersion and a distinct sense of place for **The Downs**:
+1. **Dynamic Lighting Pass**:
+   - The park should reflect real-time time of day (UTC / Bristol local time), transitioning through bright daylight, warm golden hour, evocative sepia twilight, and dark night illuminated by glowing park lamps.
+2. **Live Clifton Weather**:
+   - Integrates live meteorological data for Clifton, Bristol (coordinates `51.464, -2.628`) via Open-Meteo API with offline simulated fallback.
+   - Weather states (clear, overcast, drizzle, rain, fog) trigger canvas particle overlays and modulated audio soundscape.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 Live Weather Client (`src/systems/weather.js`)
+- Fetch Clifton Downs weather via `https://api.open-meteo.com/v1/forecast?latitude=51.464&longitude=-2.628&current_weather=true`.
+- Fallback to simulated diurnal weather cycle if offline or network unavailable.
+- Exports weather types: `'CLEAR'`, `'OVERCAST'`, `'DRIZZLE'`, `'RAIN'`, `'FOG'`.
+
+### 2.2 Environment & Lighting Shader Pass (`src/world/environment.js`)
+- Diurnal sun angle calculated from UTC/local hour.
+- Renders full-screen ambient lighting overlay:
+  - Daytime: warm subtle sun tint.
+  - Golden Hour / Twilight: rich sepia-tinted amber gradient.
+  - Night: deep navy/charcoal ambient shadow with radial light halos around park streetlamps and landmarks.
+- Weather particle simulation (rain streaks, mist drifting).
+
+### 2.3 Audio & Scenery Integration (`src/systems/audio.js`, `src/world/field.js`)
+- Modulate ambient nature soundscape: rain on leaves, distant rumble, wind gusts during precipitation.
+- Streetlamp glow sources registered in `field.js`.
+
+---
+
+## 3. Acceptance Criteria & Traceability Matrix
+
+| ID | Criterion | Verification Method |
+|---|---|---|
+| **AC-017.1** | Day/night cycle calculates diurnal lighting state from UTC / local time. | Unit test diurnal calculation |
+| **AC-017.2** | Sepia twilight and night passes composite smooth atmospheric lighting with streetlamp cutouts. | Canvas compositing test |
+| **AC-017.3** | Live weather client retrieves Clifton conditions with robust offline simulation fallback. | Unit test weather parser & fallback |
+| **AC-017.4** | Weather conditions drive particle effects (rain streaks, mist) and audio volume adjustments. | Unit test particle & audio binding |
+| **AC-017.5** | Zero regressions across test suites (`python3 test/run_tests.py`). | Test runner verification |
+
+---
+
+## 4. Testing & Verification Strategy
+- Author `test/test_environment_weather.py` covering diurnal lighting math, weather API response decoding, and particle lifecycle.
+
+```
+
+## FILE: openspec/changes/archive/ticket-018/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-018"
+roadmap_id: "chat-visual-overhaul"
+title: "Tombstone Subsystem Removal & Turf Cleanup"
+state: "PLANNING"
+created_at: "2026-10-12T20:10:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-018/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Functional Goals
+
+In ticket-015, parting tombstones were introduced to drop stone markers on the turf when players leave proximity. In practice, these tombstones clutter the field, distract from park gameplay, and add unneeded network/rendering overhead.
+
+The goal of this ticket is to completely eliminate the tombstone dropping mechanism:
+1. Deprecate/remove `ChatTombstone` in `src/entities/tombstone.js`.
+2. Remove tombstone arrays, updates, and y-sorted rendering passes from `src/world/field.js`.
+3. Remove `PacketType.TOMBSTONE_DROP` and helper methods from `src/net/protocol.js`.
+4. Remove tombstone instantiations and network handlers from `src/main.js`.
+5. Ensure the turf remains clean and natural when players leave each other's proximity.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 Turf & Entity Cleanup (`src/world/field.js`)
+- Remove `this.tombstones = []` registry from `Field` constructor.
+- Remove `addTombstone(tombstone)` method.
+- Remove tombstone update ticks and lifespan culling from `Field.update(dt)`.
+- Remove tombstone entries from the `Field.draw(...)` y-sorted depth render queue.
+
+### 2.2 Network Protocol Streamlining (`src/net/protocol.js`)
+- Deprecate or remove `PacketType.TOMBSTONE_DROP`.
+- Remove `Protocol.createTombstoneDrop(...)` packet constructor.
+
+### 2.3 Parting Event Lifecycle (`src/main.js`)
+- In `onClusterDissolved`, remove `ChatTombstone` creation and `field.addTombstone`.
+- Remove `this.net.onTombstoneDrop` handler.
+- Remove `TOMBSTONE_DROP` packet filtering in message dispatch.
+- Remove `ChatTombstone` import from `src/entities/tombstone.js`.
+
+---
+
+## 3. Acceptance Criteria & Traceability Matrix
+
+| ID | Criterion | Verification Method |
+|---|---|---|
+| **AC-018.1** | When players leave conversation proximity, zero tombstone markers or ground entities are spawned on the turf. | Unit test verifying empty tombstone collection on parting |
+| **AC-018.2** | `Field.draw()` renders without references to tombstone entities. | Inspection of field render loop & test runner |
+| **AC-018.3** | `TOMBSTONE_DROP` packets are no longer emitted or processed by the networking protocol. | Protocol schema test verification |
+| **AC-018.4** | Zero regressions in existing test suite (`python3 test/run_tests.py`). | Automated test suite execution |
+
+---
+
+## 4. Testing & Verification Strategy
+- Verify that `Field` updates and renders cleanly without errors when players walk apart.
+- Ensure no lingering references break existing unit tests.
+
+```
+
+## FILE: openspec/changes/archive/ticket-019/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-019"
+roadmap_id: "chat-visual-overhaul"
+title: "HUD Top-Bar Reorganization & Button Relocation"
+state: "PLANNING"
+created_at: "2026-10-12T20:10:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-019/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Functional Goals
+
+Currently, `SocialHUD` positions two floating panels at the top edge of the screen:
+- Top-Left: "The Downs" title badge, room mode badge, and player count pill.
+- Top-Right: "Share Park" button (`#btn-room-action`) and "Style" button (`#btn-customize`).
+
+Placing the buttons in the top-right corner conflicts directly with the new chat sidebar and collapsible chat toggle icon.
+
+The goal of this ticket is to:
+1. Relocate the "Share Park" and "Style" buttons away from the top-right corner, grouping them neatly into the top-left HUD panel.
+2. Ensure the top-right corner of the viewport is completely vacant for the new chat sidebar and toggle button.
+3. Preserve all button IDs, styling, responsive behaviors, and event listeners.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 DOM Restructuring (`src/ui/social_hud.js`)
+- Consolidate the HUD structure inside `#hud-overlay`:
+  - Group "The Downs" title, player count pill, "Share Park" button (`#btn-room-action`), and "Style" button (`#btn-customize`) within the top-left container.
+  - Remove the dedicated top-right `.hud-panel` block from `#hud-overlay`.
+
+### 2.2 CSS Layout & Responsive Styling (`src/style.css`)
+- Update `#hud-overlay`:
+  - Align items cleanly along the top-left edge.
+  - Ensure `.hud-panel` wraps or shrinks gracefully on smaller screen viewports (mobile/tablet 360px–768px).
+- Maintain distinct pill and button aesthetics:
+  - "The Downs" pill retains forest green / slate styling.
+  - "Share Park" button retains blue gradient styling (`.btn-share`).
+  - "Style" button retains subtle translucent glass style with 🎨 icon.
+
+---
+
+## 3. Acceptance Criteria & Traceability Matrix
+
+| ID | Criterion | Verification Method |
+|---|---|---|
+| **AC-019.1** | "Share Park" (`#btn-room-action`) and "Style" (`#btn-customize`) buttons are located in the top-left area alongside park badges. | DOM node structure inspection test |
+| **AC-019.2** | The top-right corner of the screen contains zero conflicting HUD buttons across desktop and mobile viewports. | CSS selector & bounding layout test |
+| **AC-019.3** | Clicking "Share Park" continues to copy the URL or trigger prompt, and clicking "Style" opens the customizer modal. | Event listener verification |
+| **AC-019.4** | Zero regressions in automated test runner (`python3 test/run_tests.py`). | Automated test suite execution |
+
+---
+
+## 4. Testing & Verification Strategy
+- Add DOM structure assertions in test suite to verify top-right clearance and top-left grouping.
+- Ensure no button listeners are broken by DOM repositioning.
+
+```
+
+## FILE: openspec/changes/archive/ticket-020/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-020"
+roadmap_id: "chat-visual-overhaul"
+title: "Top-Right Downward Chat Sidebar, Toggle Button & Auto-Unhide"
+state: "PLANNING"
+created_at: "2026-10-12T20:10:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-020/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Functional Goals
+
+The current `#proximity-chat-panel` sits in the bottom-right corner of the screen, floating over game action and dog navigation, and cannot be collapsed by the player.
+
+The user requirements mandate:
+1. **Top-Right Locked Placement**: The chat sidebar must be locked to the top-right side of the screen and grow downward.
+2. **Toggle Button**: A chat icon button (💬) must be positioned in the top-right corner to allow players to show/hide the chat sidebar.
+3. **Auto-Unhide**: When players are in each other's proximity and ANY message is sent or received, if the chat sidebar was hidden, it must be automatically unhidden!
+4. **Non-Intrusive Aesthetics**: Sleek glassmorphic container that preserves visibility of the game while keeping active conversation clear.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 Top-Right Toggle Button (`src/ui/proximity_chat.js`, `src/style.css`)
+- Introduce `#chat-toggle-btn`:
+  - Fixed position: `top: 16px; right: 16px; z-index: 60;`.
+  - Glassmorphic circular or rounded-pill button with chat icon `💬`.
+  - Clicking toggles the sidebar between hidden and active states.
+  - Active/collapsed indicator state.
+
+### 2.2 Downward Sidebar Positioning (`src/ui/proximity_chat.js`, `src/style.css`)
+- Update `#proximity-chat-panel`:
+  - Position: `position: fixed; top: 64px; right: 16px; width: 340px; max-width: calc(100vw - 32px);`.
+  - Height & Growth: `max-height: calc(100vh - 120px); display: flex; flex-direction: column;`.
+  - Messages thread: `flex: 1; overflow-y: auto;` growing downwards.
+  - Retain header (participant pills), messages list, quick emoji buttons, and text input bar.
+
+### 2.3 Auto-Unhide Logic (`src/ui/proximity_chat.js`)
+- Maintain internal boolean: `this.isManuallyHidden = false`.
+- On toggle button click: flip state between visible and hidden.
+- When `addMessage` is invoked while players are in proximity:
+  - If the sidebar is currently hidden/collapsed, invoke `showHUD()` / clear hidden state so the message is immediately visible to the player.
+
+---
+
+## 3. Acceptance Criteria & Traceability Matrix
+
+| ID | Criterion | Verification Method |
+|---|---|---|
+| **AC-020.1** | Chat sidebar is fixed to the top-right side of the screen and grows vertically downward. | CSS layout assertions |
+| **AC-020.2** | Top-right chat icon button toggles the chat sidebar visibility between shown and hidden. | DOM click event unit test |
+| **AC-020.3** | When players are in proximity and a message is added, the chat sidebar automatically unhides if it was hidden. | Auto-unhide state test |
+| **AC-020.4** | Message input bar and quick emoji buttons allow sending messages in the downward thread. | Send submission unit test |
+| **AC-020.5** | Zero regressions in test runner (`python3 test/run_tests.py`). | Automated test suite execution |
+
+---
+
+## 4. Testing & Verification Strategy
+- Add DOM structure tests verifying top-right placement, toggle button existence, show/hide class toggling, and auto-unhide event dispatch.
+
+```
+
+## FILE: openspec/changes/archive/ticket-021/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-021"
+roadmap_id: "chat-visual-overhaul"
+title: "Proximity Chat Retention Expiry & Player Color Palette"
+state: "PLANNING"
+created_at: "2026-10-12T20:10:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-021/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Functional Goals
+
+Under the current system:
+1. When players leave proximity, the conversation immediately dissolves and disappears. The user specified that:
+   - *"the chat history should remain in the chat sidebar for 5mins after players leave eachother's chat proximity. when a player leaves another's proximity is when the 5mins timer starts to clear their chat messages from the other player's chat side-bar history."*
+2. Different players have uniform sender colors in the message list, making multi-person conversations hard to follow at a glance:
+   - *"when a player is in proximity and sends a message for the first time their chat name and text should be assigned a colour so that a reader can see different players."*
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 5-Minute (300s) Message Retention Engine (`src/ui/proximity_chat.js`)
+- **Retention Duration**: `RETENTION_DURATION_MS = 5 * 60 * 1000` (300,000 ms).
+- **Departure Tracking**:
+  - Maintain `this.departureTimers = new Map()` mapping `peerId -> departureTimestamp`.
+  - When peer `P` leaves the local player's proximity cluster:
+    - Record `departureTimers.set(P.id, Date.now())`.
+    - Do NOT immediately delete `P`'s messages from `this.messages`.
+    - If `P` returns to proximity before 5 minutes elapse, remove `P.id` from `departureTimers` (canceling message expiration).
+  - In `update(dt)`:
+    - Check active entries in `departureTimers`.
+    - If `now - departureTimestamp >= RETENTION_DURATION_MS`:
+      - Remove all messages sent by `P` from `this.messages`.
+      - Prune DOM elements corresponding to `P`'s messages in `#proximity-chat-messages`.
+      - Delete `P.id` from `departureTimers`.
+
+### 2.2 Dynamic Player Color Palette (`src/ui/proximity_chat.js`, `src/style.css`)
+- **Curated High-Contrast Palette**:
+  - Array of accessible, vibrant colors designed for dark glassmorphism:
+    - Cyan: `#38bdf8`
+    - Emerald: `#4ade80`
+    - Amber: `#fbbf24`
+    - Coral: `#fb7185`
+    - Violet: `#c084fc`
+    - Mint: `#2dd4bf`
+    - Peach: `#f97316`
+    - Azure: `#60a5fa`
+- **Color Assignment on First Message**:
+  - Maintain `this.playerColors = new Map()` mapping `senderId -> colorHex`.
+  - When any player (local or remote) in proximity sends their first message:
+    - If not already assigned, assign the next available color from the palette (or deterministic hash of `senderId`).
+    - Store mapping in `playerColors`.
+- **Message Rendering**:
+  - In message DOM element:
+    - Apply assigned color to `.proximity-message-sender` (`color: ${assignedColor}`).
+    - Apply assigned color or color accent to `.proximity-message-text` (`color: ${assignedColor}`).
+
+---
+
+## 3. Acceptance Criteria & Traceability Matrix
+
+| ID | Criterion | Verification Method |
+|---|---|---|
+| **AC-021.1** | When a player exits proximity, their chat history remains in the sidebar for 5 minutes. | Time-stepped simulator test |
+| **AC-021.2** | When the 5-minute timer expires without reconnection, that departed player's messages are purged from the sidebar. | Pruning verification test |
+| **AC-021.3** | If a parted player re-enters proximity within 5 minutes, their expiration timer is cancelled and history remains. | Re-entry retention test |
+| **AC-021.4** | First-time message sender in proximity is assigned a unique color from the curated palette. | Palette assignment test |
+| **AC-021.5** | Message sender name and text render in the assigned player color. | DOM styling inspection |
+| **AC-021.6** | Zero regressions in test runner (`python3 test/run_tests.py`). | Automated test suite execution |
+
+---
+
+## 4. Testing & Verification Strategy
+- Python simulator tests for 5-minute retention countdown, expiration purge, and re-entry cancellation.
+- DOM tests for unique color assignment and CSS styling application.
+
+```
+
+## FILE: openspec/changes/archive/ticket-022/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-022"
+roadmap_id: "chat-visual-overhaul"
+title: "Speech Bubble Duality Routing & Comprehensive Test Suite"
+state: "PLANNING"
+created_at: "2026-10-12T20:10:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-022/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Functional Goals
+
+Under the current implementation, speech bubbles and chat sidebar messages trigger simultaneously or unpredictably.
+
+The user specified strict rules for speech bubble vs sidebar duality:
+1. **Out of Proximity**:
+   - *"when a player is not in another player's proximity their text should be visible above their head as a speachbubble and their text should not be added into their chat side-bar."*
+2. **In Proximity**:
+   - *"when players' are in eachother's proximity their chat should only appear in their chat side-bar they should not show a speachbubble above their head."*
+3. **Comprehensive Verification**:
+   - Fully integrate all 5 tickets of the roadmap and guarantee 100% test coverage across the chat visual overhaul.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 Speech Bubble vs Sidebar Routing (`src/main.js`, `src/entities/owner.js`)
+- **Proximity Chat Dispatch**:
+  - When local player sends message via `#proximity-chat-input`:
+    - Since local player is in proximity: add to local sidebar via `proximityChat.submitMessage(text)`.
+    - Do NOT call `this.owner.setChat(text)` (suppressing overhead speech bubble).
+  - When remote peer sends `PROXIMITY_CHAT`:
+    - Add to sidebar via `this.proximityChat.addMessage(...)`.
+    - Do NOT call `p.owner.setChat(text)` (suppressing remote overhead speech bubble).
+- **Out-of-Proximity / Solo Chat Dispatch**:
+  - When player sends message via `#chat-input` (or Enter key when no cluster is active):
+    - Call `this.owner.setChat(text)` (displaying overhead speech bubble).
+    - Do NOT add to `proximityChat.messages` (keeping sidebar clear of out-of-range broadcast chatter).
+    - If remote peer receives `CHAT_MESSAGE` while not in proximity: display `p.owner.setChat(text)` (overhead speech bubble only) and do NOT add to `proximityChat`.
+
+### 2.2 Comprehensive Test Suite (`test/test_proximity_chat.py`, `test/run_tests.py`)
+- Overhaul `test/test_proximity_chat.py` to test:
+  - Removal of tombstone dropping behavior and clean parting turf.
+  - Top-bar button relocation away from the top-right corner.
+  - Top-right chat sidebar positioning, toggle button, and auto-unhide behavior.
+  - 5-minute chat retention countdown on departure and expiration purge.
+  - Retention recovery when re-entering proximity within 5 minutes.
+  - Dynamic player color assignment from curated palette on first message.
+  - Exclusivity: In-proximity chat produces sidebar messages and suppresses speech bubbles; out-of-proximity chat produces speech bubbles and bypasses sidebar.
+- Run `python3 test/run_tests.py` to verify full green suite.
+
+---
+
+## 3. Acceptance Criteria & Traceability Matrix
+
+| ID | Criterion | Verification Method |
+|---|---|---|
+| **AC-022.1** | In-proximity chat messages appear in the chat sidebar with overhead speech bubbles suppressed. | Avatar drawing test & chat message assertions |
+| **AC-022.2** | Out-of-proximity messages appear as overhead speech bubbles with zero entries in the chat sidebar. | Message router isolation unit test |
+| **AC-022.3** | Automated test suite in `test/test_proximity_chat.py` passes all ACs across tickets 018 through 022. | Automated test suite execution |
+| **AC-022.4** | All existing test suites pass cleanly via `python3 test/run_tests.py`. | Regression run verification |
+
+---
+
+## 4. Testing & Verification Strategy
+- Update `test/test_proximity_chat.py` with full simulator and DOM assertion coverage.
+- Execute full runner `python3 test/run_tests.py`.
+
+```
+
+## FILE: openspec/changes/archive/ticket-023/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-023"
+title: "UI Refinements: Toolbar & Button Streamlining, Cog Icon & Chat Hotkey"
+state: "COMPLETED"
+created_at: "2026-10-13T21:35:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-023/main"
+max_review_cycles: 3
+---
+```
+
+## 1. Problem Statement & Functional Goals
+
+The user requested a set of UI streamline and declutter refinements to simplify the game interface, eliminate redundant buttons, retire manual barking in favor of autonomous canine behavior, improve desktop key navigation, and align the visual aesthetic:
+1. **Remove "Share Park" button**: Eliminate the `#btn-room-action` button from the top-left HUD panel.
+2. **Retire Manual Bark Feature & Remove Bark Buttons**:
+   - Retire the manual bark trigger entirely: pressing the `B` key on the keyboard should no longer trigger a bark.
+   - Remove the touch bark button (`#btn-touch-bark`) from the mobile touch action pad.
+   - Dogs should only bark of their own accord (autonomous canine behavior based on personality barkyness rolls, NPC reactions, and peer responses).
+3. **Remove bottom toolbar**: Remove `#controls-hint` so no keybindings bar is displayed across the bottom of the game view.
+4. **Clean speech bubble chat input**: After pressing Enter to chat via speech bubble, remove the emoji button group (`#quick-emotes`) so only the `#chat-input` text field remains.
+5. **Relocate Style button as Cog icon**: Move `#btn-customize` to the top-right corner docked adjacent to the group chat icon (`#chat-toggle-btn`), remove the "Style" text, and render exclusively with a cog icon (`⚙️`).
+6. **Top-left Title Purity**: Remove "Clifton Commons" text from the top-left bar badge so the header strictly presents "The Downs".
+7. **Chat Window Hotkey**: Add `C` / `c` keybinding to toggle (hide/show) the proximity group chat window when the player is not actively typing in an input field.
+8. **Group Chat Window Input Streamlining**: Remove the emoji button bar and the send button from the bottom of the proximity group chat window so only the text input box (`#proximity-chat-input`) remains.
+
+---
+
+## 2. System Architecture & Technical Specifications
+
+### 2.1 HUD Overlay & Button Streamlining (`src/ui/social_hud.js`, `src/style.css`)
+- **Top-Left Panel**:
+  - Remove `<button class="btn-share" id="btn-room-action">` from `.hud-panel`.
+  - Guard all references to `btn-room-action` and `btn-room-label` in `social_hud.js` with optional chaining / null checks.
+  - Update `updateNetworkState(status, message)`: replace `badge.textContent = '🌳 Clifton Commons'` with `badge.textContent = 'Online'` (with `#059669` green background) so "Clifton Commons" is never displayed in the top-left header.
+- **Top-Right Cog Button**:
+  - Relocate `#btn-customize` out of `.hud-panel` and style it fixed in the top-right dock:
+    - Desktop: `position: fixed; top: 16px; right: 66px; width: 42px; height: 42px; border-radius: 50%;`
+    - Mobile (`max-width: 768px`): `top: 12px; right: 58px; width: 38px; height: 38px;`
+  - Style `#btn-customize` with circular glassmorphic aesthetics matching `#chat-toggle-btn`.
+  - Replace button content with `<span class="style-toggle-icon">⚙️</span>` without any "Style" text label.
+  - Preserve click listener wiring to launch `#customizer-modal`.
+- **Bottom Toolbar Removal**:
+  - In `src/ui/social_hud.js`, remove keybinding text injection into `#controls-hint`.
+  - In `src/style.css`, enforce `#controls-hint { display: none !important; }`.
+- **Speech Bubble Input Bar**:
+  - Remove `#quick-emotes` element and `.emote-btn` buttons from `#chat-container`.
+  - Keep `#chat-container` displaying only `#chat-input` with clean glassmorphic styling.
+
+### 2.2 Removal of Manual Barking & Touch Action Pad Streamlining (`src/main.js`, `src/ui/touch_controls.js`)
+- **Retire Manual Bark Keyboard Handler**:
+  - In `src/main.js`, remove `case 'KeyB':` from `bindInputs()`. Pressing the `B` key does not trigger barking.
+  - Remove `this.barkDog()` method or mark it deprecated, ensuring dogs only bark autonomously via `CompanionDog.update()`.
+  - Autonomous bark rolls (personality `barkyness`, responses to joggers, and responses to other dogs) remain fully functional.
+- **Touch Action Pad Streamlining**:
+  - In `TouchControls.init()`, remove `<button class="touch-action-btn" id="btn-touch-bark" aria-label="Bark">🐕</button>` from `#touch-action-pad`.
+  - Remove `onBark` callback invocation and binding from `TouchControls`.
+
+### 2.3 Proximity Group Chat Hotkey & Visibility (`src/ui/proximity_chat.js`, `src/main.js`)
+- **Proximity Chat Controller**:
+  - Implement public method `toggleVisibility()` on `ProximityChatHUD`:
+    ```javascript
+    toggleVisibility() {
+      if (this.isVisible()) {
+        this.hideHUD();
+        this.isManuallyHidden = true;
+      } else {
+        this.showHUD();
+        this.isManuallyHidden = false;
+      }
+    }
+    ```
+  - Update toggle button click handler to delegate to `toggleVisibility()`.
+- **Keyboard Listener**:
+  - In `CliftonDownGame.bindInputs()` in `src/main.js`:
+    ```javascript
+    case 'KeyC':
+      e.preventDefault();
+      if (this.proximityChat) {
+        this.proximityChat.toggleVisibility();
+      }
+      break;
+    ```
+  - Ensure the existing input guard (`document.activeElement === chatInput || document.activeElement === proxInput`) prevents `KeyC` from triggering while typing chat messages.
+
+### 2.4 Proximity Group Chat Input Area Streamlining (`src/ui/proximity_chat.js`, `src/style.css`)
+- **DOM Restructuring in `ProximityChatHUD.initHUD()`**:
+  - Remove `.proximity-emoji-bar` and all child `.proximity-emoji-btn` buttons from `#proximity-chat-input-container`.
+  - Remove `#proximity-chat-send-btn` from `#proximity-chat-input-bar`.
+  - `#proximity-chat-input-container` contains solely `#proximity-chat-input-bar` wrapping `#proximity-chat-input`.
+- **Controller Updates**:
+  - Remove `this.emojiBtns` and `this.sendBtn` binding and listeners (or guard them as null-safe).
+  - Pressing Enter inside `#proximity-chat-input` remains the primary method for submitting messages to the proximity group chat.
+- **Styling**:
+  - In `src/style.css`, `#proximity-chat-input` spans 100% of the input row cleanly.
+  - Remove unnecessary margins or padding previously allocated for the emoji bar and send button.
+
+### 2.5 Automated Testing & Regression Suite (`test/test_social_hud_layout.py`, `test/test_proximity_chat.py`)
+- Update `test/test_social_hud_layout.py` to assert:
+  - Absence of `#btn-room-action` in DOM.
+  - Relocation and styling of `#btn-customize` as a top-right cog icon button without "Style" text.
+  - Absence of keybinding controls in `#controls-hint`.
+  - Absence of `#quick-emotes` in `#chat-container`.
+  - Badge text does not contain "Clifton Commons".
+- Update `test/test_proximity_chat.py` to assert:
+  - `KeyB` does not exist in `main.js` input switch (pressing B does not bark).
+  - `#btn-touch-bark` is absent from touch controls DOM.
+  - Autonomous dog barking logic remains intact in companion dog simulation.
+  - `C` keydown event triggers `toggleVisibility()`, and is ignored when typing in chat.
+  - Absence of `.proximity-emoji-bar` and `#proximity-chat-send-btn` in `#proximity-chat-panel`.
+  - `#proximity-chat-input` remains present and functional upon pressing Enter.
+
+---
+
+## 3. Acceptance Criteria & Traceability Matrix
+
+| ID | Criterion | Verification Method |
+|---|---|---|
+| **AC-023.1** | "Share Park" button (`#btn-room-action`) is completely removed from the UI. | DOM inspection & `test_social_hud_layout.py` |
+| **AC-023.2** | Manual Bark feature is retired: pressing `B` does not make the dog bark, and `#btn-touch-bark` is removed from touch controls. Dogs only bark autonomously of their own accord. | Keyboard switch inspection, DOM assertion & autonomous simulation test |
+| **AC-023.3** | Bottom toolbar (`#controls-hint`) is removed so no keybindings are displayed at the bottom of the game view. | DOM inspection & CSS assertion |
+| **AC-023.4** | Speech bubble chat bar (`#chat-container`) contains only the text input box without quick emoji buttons. | DOM inspection & chat bar assertions |
+| **AC-023.5** | Style button (`#btn-customize`) is relocated to the top-right adjacent to the group chat icon, displays only a cog icon (`⚙️`) with no "Style" text, and opens the modal. | CSS layout & DOM assertion |
+| **AC-023.6** | "Clifton Commons" is removed from the top-left bar badge so only "The Downs" is shown as the park title. | DOM text assertion on network connect |
+| **AC-023.7** | Pressing `C` / `c` toggles the proximity group chat panel visibility, but is ignored when typing in chat input fields. | Keyboard event unit test & simulation |
+| **AC-023.8** | Proximity group chat panel (`#proximity-chat-panel`) bottom area contains solely the text input box (`#proximity-chat-input`), with emoji buttons and the send button removed. | DOM inspection & `test_proximity_chat.py` |
+| **AC-023.9** | Full test suite passes cleanly via `python3 test/run_tests.py`. | Regression run verification |
+
+---
+
+## 4. Testing & Verification Strategy
+- Execute `python3 test/test_social_hud_layout.py`.
+- Execute `python3 test/test_proximity_chat.py`.
+- Execute full test runner `python3 test/run_tests.py`.
+
+```
+
+## FILE: openspec/changes/archive/ticket-024/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-024"
+title: "NPC Content Tables (names, phrases, appearance, speeds, PRNG)"
+state: "DRAFT"
+roadmap: "improved-npcs"
+depends_on: []
+created_at: "2026-10-15T19:45:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-024/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/improved-npcs.md`
+
+## 1. Problem Statement
+Centralise NPC data so that name, look and speech are derived deterministically from a server-provided integer seed. Scope: `src/entities/npc_content.js` (new), `test/test_npc_content.py` (new).
+
+## 2. Technical Specification
+- `mulberry32(seed)` PRNG export.
+- `NPC_SPEED = { walker: 35, jogger: 80 }` (px/s; previously 85/260).
+- `FIRST_NAMES` (>= 40 human names), `NPC_TYPES = ['walker','jogger']`.
+- `npcIdentityFromSeed(seed, type)` -> `{ name: "Mary the Walker", skinTone, hairColor, hairStyle, hatColor, jacketColor, pantsColor, shoeColor }`; same seed => identical output on every client.
+- `COMMON_PHRASES` (>= 30: weather, trees, birds, dogs, park, views, fresh air) and `ODD_PHRASES` (>= 10 odd/funny, e.g. "I think that squirrel owes me money.").
+- `pickPhrase(rng)` returns an odd phrase with probability 0.15, else a common one. `nextSpeechDelay(rng)` -> 6-14 s.
+- NPC tag palette constants: `NPC_TAG_STYLE = { text, background, border, font: 'italic 600 11px ...' }` (unique colour not used by player names).
+
+## 3. Acceptance Criteria
+- AC-024.1 Names follow `"<First> the <Walker|Jogger>"`.
+- AC-024.2 Determinism: identical seed/type yields identical identity and phrase sequence.
+- AC-024.3 Phrase pool is majority common; odd frequency ~15% (+/-5%) over 2000 samples.
+- AC-024.4 Speeds are walker 35 / jogger 80.
+- AC-024.5 Tests added and `python3 test/run_tests.py` passes.
+
+
+```
+
+## FILE: openspec/changes/archive/ticket-025/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-025"
+title: "Obstacle-Free Precomputed NPC Path Library + Manifest"
+state: "DRAFT"
+roadmap: "improved-npcs"
+depends_on: []
+created_at: "2026-10-15T19:45:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-025/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/improved-npcs.md`
+
+## 1. Problem Statement
+NPCs get stuck on trees, benches and bins because paths ignore solids. Provide several precomputed, obstacle-clear paths for variety. Scope: `src/world/npc_paths.js` (new), `src/world/npc_path_manifest.json` (new), `test/test_npc_paths.py` (new). `src/world/field.js` is read-only.
+
+## 2. Technical Specification
+- `NPC_PATHS`: array of `{ id, type: 'walker'|'jogger'|'both', waypoints: [{x,y}], }` with >= 8 distinct routes across Ladies Mile, Sea Walls, Durdham Down, woodland and meadow (mix of point-to-point so NPCs enter and exit at world edges/park entrances, and loops).
+- Waypoints and every segment must keep >= (NPC radius 14 + obstacle radius + 6 px) clearance from every tree, bench and bin in `field.js`; segments must stay within world bounds. Paths are authored/generated by an offline script (`tools` or test helper) that routes around obstacles with extra waypoints; final data is committed as static data.
+- `npc_path_manifest.json`: `[{ id, type, lengthPx }]` consumed by JS and Python (ticket-027).
+- `getNpcPath(id)`, `NPC_PATH_IDS`.
+
+## 3. Acceptance Criteria
+- AC-025.1 >= 8 paths, >= 3 usable by joggers and >= 5 by walkers.
+- AC-025.2 A test samples every segment at <= 8 px steps and asserts clearance from all `field.js` trees, benches and bins (obstacle data obtained from `Field` or extracted by the test harness).
+- AC-025.3 Manifest lengths match computed polyline lengths within 1 px.
+- AC-025.4 Tests added and `python3 test/run_tests.py` passes.
+
+
+```
+
+## FILE: openspec/changes/archive/ticket-026/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-026"
+title: "NPC Entity Rewrite: Deterministic Sim, Lifecycle, Name Tag & Speech"
+state: "DRAFT"
+roadmap: "improved-npcs"
+depends_on: ["ticket-024","ticket-025"]
+created_at: "2026-10-15T19:45:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-026/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/improved-npcs.md`
+
+## 1. Problem Statement
+Rework `ParkNPC` so it is a pure function of (path, spawnTime, shared clock), has a finite lifecycle, a clearly NPC-styled tag, and speech. Scope: `src/entities/npc.js`, `test/test_npc_entity.py` (new).
+
+## 2. Technical Specification
+- Constructor takes `{ id, pathId, type, seed, spawnTime }`; identity from ticket-024, path from ticket-025.
+- `update(dt, now)` (or `setClock(now)`) places the NPC at distance `speed * (now - spawnTime)` along the polyline; no pauses/stuck states; no runtime obstacle steering needed.
+- `isFinished(now)` true once distance >= path length; entity then fades (0.5 s) and reports `done` so the game removes it.
+- Late joiners: an NPC whose spawnTime is in the past is placed mid-path immediately.
+- Name tag drawn above head with `NPC_TAG_STYLE` (italic, unique colour/background pill), visually distinct from player tags.
+- Speech: timer driven by seeded RNG; uses `pickPhrase`; shows in existing bubble style for ~4 s. Same seed => same speech timeline on all clients.
+- Keep `WalkerNPC`/`JoggerNPC` exports for compatibility.
+
+## 3. Acceptance Criteria
+- AC-026.1 Position is deterministic for given (path, spawnTime, now).
+- AC-026.2 NPC finishes at final waypoint and `isFinished` flips true; no NPC ever pauses or stalls.
+- AC-026.3 Speeds match ticket-024 constants.
+- AC-026.4 Tag uses italic font and NPC palette; name format "Mary the Walker".
+- AC-026.5 Speech phrases come from content pools and are deterministic per seed.
+- AC-026.6 Tests added and `python3 test/run_tests.py` passes.
+
+
+```
+
+## FILE: openspec/changes/archive/ticket-027/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-027"
+title: "Global NPC Protocol & Server Spawners (PartyServer + Python)"
+state: "DRAFT"
+roadmap: "improved-npcs"
+depends_on: ["ticket-025"]
+created_at: "2026-10-15T19:45:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-027/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/improved-npcs.md`
+
+## 1. Problem Statement
+Make NPC spawning global and server-authoritative. Scope: `src/net/protocol.js`, `party/server.js`, `server/server.py`, `test/test_npc_server.py` (new).
+
+## 2. Technical Specification
+- New messages: `NPC_SPAWN { id, pathId, type, seed, spawnTime }`, `NPC_DESPAWN { id }`, `NPC_SNAPSHOT { npcs: [...], serverTime }` sent on connect/HELLO. Include `serverTime` for clock offset.
+- Each room keeps a pool of N active slots (target 4-6 of a larger path set); picks random unused-ish path, type compatible with path, random 32-bit seed.
+- Lifetime = `lengthPx / speed` from `npc_path_manifest.json` (speeds 35 / 80). On expiry: broadcast `NPC_DESPAWN`, then spawn a replacement after a 1-5 s random gap.
+- Spawner runs only while >= 1 client is connected and stops when the room empties; new connections receive a snapshot immediately.
+- Implemented in both PartyServer (Durable Object alarms/timers) and Python server (asyncio).
+- Protocol validators/builders in `protocol.js` for the new messages.
+
+## 3. Acceptance Criteria
+- AC-027.1 Two clients connected receive identical `NPC_SPAWN` data.
+- AC-027.2 Late joiner receives snapshot containing all active NPCs with original spawnTime.
+- AC-027.3 Every NPC is despawned after its lifetime and replaced; active count stays within 4-6.
+- AC-027.4 Not all path options are active simultaneously.
+- AC-027.5 Spawner idles when room is empty.
+- AC-027.6 Tests added and `python3 test/run_tests.py` passes.
+
+
+```
+
+## FILE: openspec/changes/archive/ticket-028/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-028"
+title: "Client Integration: Network NPC Sync & Game Wiring"
+state: "DRAFT"
+roadmap: "improved-npcs"
+depends_on: ["ticket-026","ticket-027"]
+created_at: "2026-10-15T19:45:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-028/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/improved-npcs.md`
+
+## 1. Problem Statement
+Replace the five hard-coded local NPCs with networked, global NPCs. Scope: `src/main.js`, `src/net/network.js`, `src/net/ws_network.js`.
+
+## 2. Technical Specification
+- Remove local NPC construction (main.js lines ~41-82).
+- `NetworkManager` forwards `NPC_SPAWN`/`NPC_DESPAWN`/`NPC_SNAPSHOT` through callbacks; estimates server clock offset from `serverTime`.
+- Game keeps `Map<id, ParkNPC>`; spawns on message, removes on despawn or when `isFinished`.
+- Offline/solo mode: fall back to a local spawner using the same lifecycle (shares logic via ticket-026 entities and ticket-025 paths).
+- NPCs still feed into dog reactions (`dog.update(..., npcs)`), depth sorting and avoidance lists.
+
+## 3. Acceptance Criteria
+- AC-028.1 Two clients show the same NPCs at same positions (+/- clock error).
+- AC-028.2 Despawned NPCs vanish and replacements appear without client reload.
+- AC-028.3 Solo mode still shows NPCs.
+- AC-028.4 `python3 test/run_tests.py` passes.
+
+
+```
+
+## FILE: openspec/changes/archive/ticket-029/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-029"
+title: "NPC Regression Suite & Spec Reconciliation"
+state: "IN_PROGRESS"
+roadmap: "improved-npcs"
+depends_on: ["ticket-028"]
+created_at: "2026-10-15T19:45:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-029/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/improved-npcs.md`
+
+## 1. Problem Statement
+As the final integration step of the `improved-npcs` roadmap, legacy tests in `test/test_npcs.py` (which assume deprecated speeds of 85/260 px/s, local uncoordinated spawning, bench pausing, and old constructor patterns) must be overhauled and updated to validate the unified global NPC model. All newly created test suites must be registered in `test/run_tests.py`. Furthermore, an end-to-end integration test must verify the full multi-client synchronization lifecycle (server spawn schedule -> multiple simulated clients -> identical deterministic NPC position & state -> despawn/replacement). Finally, the canonical specification at `openspec/specs/overview.md` must be updated to reconcile system documentation with the new obstacle-free, global, deterministic NPC architecture.
+
+## 2. Technical Specification
+- **Update Legacy NPC Tests (`test/test_npcs.py`)**:
+  - Overhaul `test/test_npcs.py` to assert against the new architecture:
+    - Walker speed: `NPC_SPEED.walker` = 35 px/s (down from 85).
+    - Jogger speed: `NPC_SPEED.jogger` = 80 px/s (down from 260).
+    - Polyline path traversal without runtime obstacle collision or bench pausing.
+    - Global lifecycle: spawn, active traversal, despawn upon reaching end of path (`isFinished` / `isDone`), and replacement.
+    - Name tags: styled via `NPC_TAG_STYLE` (italic font, golden borders/text, dark pill background) and formatted as `<Name> the <Walker|Jogger>`.
+    - Seeded deterministic speech timeline and phrase selection (common phrases vs 15% odd phrases).
+    - Canine companion reactions to new NPCs (barkyness, shyness berth avoidance, play-bow/wag).
+    - Depth sorting (`depthY = y + 12`).
+    - Verify `CliftonDownGame` in `src/main.js` correctly stores NPCs in a `Map` (`this.npcs`), sets up network callbacks (`onNpcSpawn`, `onNpcDespawn`, `onNpcSnapshot`), and runs solo spawner in offline mode.
+- **End-to-End Multi-Client Synchronization Test**:
+  - Implement full end-to-end integration test simulating:
+    1. Server spawner initializes and generates NPC spawn schedule with deterministic seed, pathId, type, spawnTime.
+    2. Two independent simulated clients receive identical spawn packets and clock timestamps.
+    3. Both clients simulate NPC position across multiple time deltas, yielding identical coordinates and identical speech states.
+    4. Upon NPC path completion, despawn packet is broadcast and both clients remove the finished NPC; replacement NPC is spawned and tracked by both clients seamlessly.
+- **Test Runner Registration (`test/run_tests.py`)**:
+  - Verify that `test/run_tests.py` runs all test suites without errors, including all new NPC suites:
+    - `test/test_npcs.py`
+    - `test/test_npc_content.py`
+    - `test/test_npc_paths.py`
+    - `test/test_npc_entity.py`
+    - `test/test_npc_server.py`
+    - `test/test_npc_client.py`
+- **Canonical Specification Reconciliation (`openspec/specs/overview.md`)**:
+  - Update Section 3 (Entities, Canine Companion & Ambient Life) to document:
+    - Global server-authoritative NPC lifecycle (PartyServer & dedicated microserver fallback).
+    - Deterministic client simulation driven by shared clock (`spawnTime`) and PRNG (`mulberry32`), eliminating per-frame traffic.
+    - Precomputed obstacle-free paths (`src/world/npc_paths.js`, `src/world/npc_path_manifest.json`) clear of trees, benches, and bins.
+    - Distinctive NPC naming (`<First> the <Walker|Jogger>`) and visual styling (`NPC_TAG_STYLE` with italic font and golden hue).
+    - Significantly reduced authentic walking/jogging speeds (Walker ~35 px/s, Jogger ~80 px/s).
+    - Seeded ambient chat speech bubbles (common park/weather observations with ~15% quirky remarks).
+  - Update Section 7 (Test Suite & CI/CD) to describe the full regression and integration test coverage.
+
+## 3. Acceptance Criteria
+- **AC-029.1**: Full suite passes via `python3 test/run_tests.py` including updated `test/test_npcs.py` and end-to-end multi-client synchronization.
+- **AC-029.2**: Canonical specification `openspec/specs/overview.md` documents global lifecycle, naming, speeds, speech, and deterministic obstacle-free paths.
+
+```
+
+## FILE: openspec/changes/archive/ticket-030/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-030"
+title: "Edge-to-Edge Global NPC Paths, Relaxed Pacing, and Authoritative Sync Hardening"
+state: "PLANNING"
+roadmap: "npc-polish-and-cleanup"
+depends_on: []
+created_at: "2026-10-31T14:37:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-030/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/npc-polish-and-cleanup.md`
+
+## 1. Problem Statement
+The current NPC implementation in production exhibits four player-visible issues:
+1. **Interior Spawning/Despawning**: 6 of the 10 paths in `src/world/npc_paths.js` start and end inside the central meadow (e.g. `(1200, 950)`), popping NPCs into view out of thin air.
+2. **Excessive Movement Speed & Rapid Leg Churn**: Walkers (35 px/s) and joggers (80 px/s) move too fast and leg animation multiplier is frantic.
+3. **Startup Solo-Spawn Race Condition**: `CliftonDownGame` invokes `updateLocalSpawner(0)` before asynchronous WebSocket connection completes, creating 5 local unsynced NPCs before `NPC_SNAPSHOT` arrives.
+4. **Synchronized Wave Spawning**: `ParkServer.initSpawner()` initializes all initial NPCs with `spawnTime = Date.now()`, causing all 5 initial NPCs to begin at distance 0 simultaneously.
+
+## 2. Technical Specification
+1. **Slow Down NPCs**:
+   - Update `NPC_SPEED` in `src/entities/npc_content.js`, `party/server.js`, and `server/server.py` to:
+     - `walker`: 22 px/s
+     - `jogger`: 48 px/s
+   - Update leg swing `walkPhase` in `src/entities/npc.js`:
+     - `walker`: multiplier 6.2
+     - `jogger`: multiplier 9.8
+2. **Strictly Edge-to-Edge Paths**:
+   - Replace closed interior loops in `src/world/npc_paths.js` and `src/world/npc_path_manifest.json` with 10 point-to-point edge-to-edge paths spanning map boundaries (`x <= 20` or `x >= 3180` or `y <= 20` or `y >= 2380`).
+   - Validate obstacle clearances against all trees, benches, and bins in `src/world/field.js`.
+3. **Entry Fade-in & Angular Turning Smoothing**:
+   - Add a 0.5s fade-in at spawn (`elapsed < 0.5`) in `src/entities/npc.js` matching the 0.5s fade-out at route completion.
+   - Smooth `this.angle` transitions across polyline waypoint turns.
+4. **Global Sync Hardening & Pre-Warmed Server Spawner**:
+   - Guard local solo spawner in `src/main.js` so it does not spawn local NPCs while connection is pending/connecting.
+   - Pre-warm `spawnTime` in `party/server.js` and `server/server.py` during `initSpawner()` using negative time offsets based on path length so initial NPCs start distributed mid-path with staggered despawn times.
+5. **Update Test Suites**:
+   - Update `test/test_npc_content.py`, `test/test_npc_paths.py`, `test/test_npc_entity.py`, `test/test_npc_server.py`, `test/test_npc_client.py`, and `test/test_npcs.py` to assert the 22/48 px/s speeds and edge-to-edge path constraints.
+
+## 3. Acceptance Criteria
+- **AC-030.1**: All 10 paths in `src/world/npc_paths.js` and manifest start and end at distinct map perimeter boundaries with zero obstacle intersections.
+- **AC-030.2**: NPC speeds are 22 px/s (walker) and 48 px/s (jogger) across content tables, entities, and server spawners.
+- **AC-030.3**: Initial server spawners pre-warm spawn times so NPCs are distributed across routes with staggered lifetimes.
+- **AC-030.4**: Local fallback spawner does not spawn duplicate NPCs while connecting to network.
+- **AC-030.5**: All tests pass via `python3 test/run_tests.py`.
+
+
+```
+
+## FILE: openspec/changes/archive/ticket-031/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-031"
+title: "Static Ground & Path Offscreen Baking (Render Optimization)"
+state: "COMPLETED"
+roadmap: "npc-polish-and-cleanup"
+depends_on: ["ticket-030"]
+created_at: "2026-10-31T14:37:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-031/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/npc-polish-and-cleanup.md`
+
+## 1. Problem Statement
+Currently, `renderGround()` in `src/world/field.js` computes pseudo-random grass hashes with `Math.sin()`, strokes multi-layered Bezier gravel paths, and renders mowing stripes on every frame at 60fps. This static park geometry consumes unnecessary CPU and GPU time in the render loop.
+
+## 2. Technical Specification
+1. **Offscreen Canvas Initialization**:
+   - In `src/world/field.js` (or via helper), initialize an `OffscreenCanvas` (with fallback to standard `<canvas>` if `OffscreenCanvas` is not supported) sized to world dimensions (3200 x 2400).
+2. **One-Time Bake**:
+   - Render the complete static turf background (base green fill, mowing stripes, textured grass blades/wildflowers, and gravel paths) onto this canvas once at initialization.
+3. **Optimized Render Viewport**:
+   - Update `renderGround(ctx, camera)` to execute a single `ctx.drawImage()` call, blitting the visible camera viewport window from the baked canvas onto the screen.
+4. **Verification & Tests**:
+   - Ensure dynamic entities (dog, owner, balls, waste bins, waste piles, NPCs) continue rendering on top of the baked ground with correct layering.
+   - Add/update tests in `test/test_field.py` or new test verifying offscreen caching and fallback behavior.
+
+## 3. Acceptance Criteria
+- **AC-031.1**: Static ground and gravel paths are baked once into an offscreen canvas.
+- **AC-031.2**: `renderGround()` blits the camera viewport from the baked canvas without per-frame path recalculation.
+- **AC-031.3**: Visual appearance matches the unbaked ground (paths, stripes, grass blades).
+- **AC-031.4**: All tests pass via `python3 test/run_tests.py`.
+
+
+```
+
+## FILE: openspec/changes/archive/ticket-032/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-032"
+title: "Dead Platformer Code Pruning"
+state: "PLANNING"
+roadmap: "npc-polish-and-cleanup"
+depends_on: []
+created_at: "2026-10-31T14:37:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-032/main"
+max_review_cycles: 3
+---
+```
+
+Roadmap: `openspec/roadmaps/npc-polish-and-cleanup.md`
+
+## 1. Problem Statement
+The repository contains 6 unused legacy files left over from an early 2D side-scrolling platformer prototype ("Ziggy's Park Adventure"):
+- `src/engine/physics.js`
+- `src/entities/ziggy.js`
+- `src/entities/collectibles.js`
+- `src/entities/hazards.js`
+- `src/level/park_level.js`
+- `test/test_physics.py`
+
+These files are disconnected from the top-down social sandbox, inflate context windows, and cause confusion during maintenance.
+
+## 2. Technical Specification
+1. **File Deletion**:
+   - Delete `src/engine/physics.js`. Remove empty directory `src/engine` if no other files remain.
+   - Delete `src/entities/ziggy.js`.
+   - Delete `src/entities/collectibles.js`.
+   - Delete `src/entities/hazards.js`.
+   - Delete `src/level/park_level.js`. Remove empty directory `src/level` if no other files remain.
+   - Delete `test/test_physics.py`.
+2. **Prune Imports & Build References**:
+   - Audit `src/main.js`, `index.html`, and all other source modules to ensure no dangling `import` or `<script>` tags reference the deleted files.
+3. **Scaffold & Test Runner Cleanup**:
+   - Update `test/run_tests.py` if `test_physics.py` or platformer assertions exist in the runner or scaffold checks.
+   - Keep `src/entities/tombstone.js` deprecation tests in `test/test_tombstone_cleanup.py` and `test/test_proximity_chat.py` intact as they guard regression on the tombstone removal feature.
+
+## 3. Acceptance Criteria
+- **AC-032.1**: The 6 legacy platformer files are completely deleted.
+- **AC-032.2**: No runtime errors or missing import errors occur when loading the top-down game.
+- **AC-032.3**: `python3 test/run_tests.py` passes 100% cleanly without broken imports.
+
+
+```
+
+## FILE: openspec/changes/archive/ticket-033/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-033"
+title: "Fix Server NPC spawnTime Unit Mismatch (ms vs s), Central Path Coverage, and Ground Shadow Artifacts"
+state: "COMPLETED"
+roadmap: null
+depends_on: []
+created_at: "2026-10-31T15:45:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-033/main"
+max_review_cycles: 3
+target_files:
+  - "src/main.js"
+  - "src/entities/npc.js"
+  - "src/world/npc_paths.js"
+  - "src/world/npc_path_manifest.json"
+  - "party/server.js"
+  - "src/world/field.js"
+  - "test/test_npc_client.py"
+  - "test/test_npc_entity.py"
+  - "test/test_npc_paths.py"
+  - "test/test_npc_server.py"
+---
+```
+
+## 1. Problem Statement
+1. **Server NPCs Are 100% Invisible & Frozen (ms vs s Timestamp Unit Mismatch)**:
+   - `party/server.js` generates and broadcasts `spawnTime` and `serverTime` in milliseconds (`Date.now()`, e.g. `1793461296000`).
+   - `src/main.js` (`getAuthoritativeTime()`) computes authoritative time in seconds (`Date.now() / 1000 + this.serverClockOffset`, e.g. `1793461296.0`), while passing the raw millisecond `npcData.spawnTime` from `NPC_SNAPSHOT` and `NPC_SPAWN` directly into `new ParkNPC(npcData)`.
+   - In `ParkNPC.setClock(now)` (`src/entities/npc.js`), `now - this.spawnTime` subtracts milliseconds (~1.79e12) from seconds (~1.79e9), resulting in `-1.79e12`. `Math.max(0, now - this.spawnTime)` clamps `elapsed` to `0` permanently.
+   - Because `elapsed === 0`, the entry fade check `if (elapsed < 0.5) { this.opacity = elapsed / 0.5; }` permanently sets `this.opacity = 0.0` (100% invisible) and distance = 0 for all server-synced NPCs.
+2. **Sparse Perimeter-Only Path Routing (`src/world/npc_paths.js`)**:
+   - Currently, 7 of the 10 paths hug the extreme outer borders of the 3200x2400 map (`y < 650`, `y > 1680`, `x < 368`), starting/ending outside the boundary stone wall (`x = 10` or `y = 10`).
+   - Players near the Central Meadow (`1350, 1000`) or Water Tower clearing (`2250, 580`) rarely see NPCs traversing the park interior.
+3. **High-Contrast Grid Ovals on Baked Ground (`src/world/field.js`)**:
+   - In `src/world/field.js` (`bakeGround()`), a repeating 160px grid loop draws dark green ellipses (`rgba(36, 74, 30, 0.25)`, `rx = 28`, `ry = 16`). Because their size and color match tree shadows, they appear as dozens of orphaned shadows from missing trees across the terrain.
+
+---
+
+## 2. Technical Specification & Implementation Plan
+
+### 2.1 Timestamp Normalization & Visibility (`src/entities/npc.js` & `src/main.js`)
+1. In `src/entities/npc.js`:
+   - Add a robust timestamp normalizer helper:
+     ```javascript
+     function toSeconds(t) {
+       const n = Number(t) || 0;
+       return n > 1e10 ? n / 1000 : n;
+     }
+     ```
+   - In `ParkNPC.constructor`: normalize `this.spawnTime = toSeconds(spawnTime);` (preserving small test seconds like 0 or 100 while converting millisecond timestamps from server packets).
+   - In `ParkNPC.setClock(now)` and `ParkNPC.isFinished(now)`: normalize incoming clock `const nowSec = toSeconds(now);` prior to subtracting `this.spawnTime`.
+   - In `ParkNPC.setClock(now)`: replace entry fade logic so newly spawned NPCs at `elapsed === 0` are immediately visible:
+     ```javascript
+     if (elapsed > 0 && elapsed < 0.5) {
+       this.opacity = 0.25 + 0.75 * (elapsed / 0.5);
+     } else {
+       this.opacity = 1.0;
+     }
+     ```
+2. In `src/main.js`:
+   - Ensure `handleNpcSnapshot` and `handleNpcSpawn` handle timestamps cleanly.
+   - In `updateLocalSpawner()`: pre-warm initial solo NPCs with staggered fractions (`prewarmFraction = (i + 0.2) / 8`) when `this.npcs.size < 8` on initial fill so solo offline mode also begins with NPCs active mid-route.
+
+### 2.2 Central Edge-to-Edge Paths & Pool Density (`src/world/npc_paths.js`, `src/world/npc_path_manifest.json`, `party/server.js`)
+1. In `src/world/npc_paths.js`:
+   - Keep all 10 paths point-to-point edge-to-edge (`loop: false`).
+   - Start and end inside the stone perimeter wall boundaries (`75 <= x <= 140` or `3060 <= x <= 3125`, `75 <= y <= 140` or `2260 <= y <= 2325`, with `hypot(start - end) >= 1200`).
+   - At least 6 of the 10 paths must traverse through the central park interior (`900 <= x <= 2500`, `450 <= y <= 1450`), routing along the gravel paths, past Central Meadow (`1350, 1000`), and past Water Tower (`2250, 580`).
+   - Zero obstacle collisions: Maintain strict obstacle clearance (`distance >= 14 + obstacleRadius + 6 px`) from all solids (trees, benches, bins, rocks, water tower).
+2. Recompute Euclidean `lengthPx` for all 10 paths:
+   - Update `src/world/npc_path_manifest.json`.
+   - Update `FALLBACK_MANIFEST` in `party/server.js`.
+3. NPC Density:
+   - Synchronize `TARGET_NPC_COUNT` in `party/server.js` and local spawner target in `src/main.js` to 8 (or 5 if tests require, maintaining test synchronization).
+
+### 2.3 Turf Patch Rendering Fix (`src/world/field.js`)
+- In `src/world/field.js` (`bakeGround()`):
+  - Replace the repeating 160px dark grid ellipses (`rgba(36, 74, 30, 0.25)`, `rx = 28`, `ry = 16`) with wide, soft, low-contrast turf texture patches (`rgba(52, 98, 42, 0.06)`, `rx = 70`, `ry = 38`), eliminating orphaned dark shadow artifacts while preserving rich grass texturing.
+
+---
+
+## 3. Acceptance Criteria & Verification Plan
+
+- **AC-033.1 (Server Millisecond Sync)**:
+  - When passing a millisecond `spawnTime` (e.g. `1793461296000`) and calling `npc.setClock(1793461306.0)` (10 seconds later in seconds), the NPC advances to `distance = 10 * speed` and has `opacity === 1.0`.
+  - At `elapsed === 0`, `opacity` is at least `0.25` (never `0.0`).
+- **AC-033.2 (Central Path Coverage & Obstacle Clearance)**:
+  - At least 6 of the 10 paths in `src/world/npc_paths.js` have intermediate waypoints traversing the central play area (`900 <= x <= 2500` and `450 <= y <= 1450`).
+  - All 10 paths are obstacle-free with `>= 20 px` clearance from all solid entities.
+- **AC-033.3 (Ground Turf Visual Cleanup)**:
+  - `src/world/field.js` does not draw dark high-contrast 28x16 shadow ellipses on the ground grid.
+- **AC-033.4 (Test Suite Regression Green)**:
+  - `python3 test/run_tests.py` passes 100% across all test suites, including updated tests in `test/test_npc_client.py`, `test/test_npc_entity.py`, `test/test_npc_paths.py`, and `test/test_npc_server.py`.
+
+
+```
+
+## FILE: openspec/changes/archive/ticket-034/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-034"
+title: "Fix Cloudflare PartyServer NPC Spawner Initialization Guard Condition"
+state: "COMPLETED"
+roadmap: null
+depends_on: []
+created_at: "2026-10-31T16:45:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-034/main"
+max_review_cycles: 3
+target_files:
+  - "party/server.js"
+  - "test/test_partyserver.py"
+---
+```
+
+## 1. Problem Statement & Root Cause
+In `party/server.js`, `ParkServer.onConnect(conn, ctx)` gates NPC spawner initialization behind:
+```javascript
+const isFirstPeer = !this.hasActiveClients();
+this.connections.add(conn.id);
+
+if (this.activeNpcs.size === 0 && isFirstPeer) {
+  this.initSpawner();
+}
+```
+
+### Root Cause
+1. `ParkServer` extends `Server` from Cloudflare `"partyserver"`.
+2. In the `partyserver` framework, the WebSocket connection `conn` is accepted and registered into the base class's `this.getConnections()` iterator **before** `onConnect(conn, ctx)` is invoked.
+3. Consequently, in `hasActiveClients()`:
+   ```javascript
+   if (typeof this.getConnections === "function") {
+     try {
+       const conns = [...this.getConnections()];
+       if (conns.length > 0) return true;
+     } catch (e) {}
+   }
+   ```
+   `this.getConnections()` already contains `conn` (`conns.length === 1`).
+4. Therefore, `this.hasActiveClients()` returns `true`, causing `isFirstPeer` to evaluate to `false`.
+5. As a result, `if (this.activeNpcs.size === 0 && isFirstPeer)` evaluates to `false`, and `this.initSpawner()` is **never called**.
+6. The server subsequently transmits `NPC_SNAPSHOT` with an empty `npcs: []` array to all connecting clients, causing the park to have 0 server NPCs indefinitely.
+
+---
+
+## 2. Technical Specification
+
+1. In `party/server.js` (`onConnect(conn, ctx)`):
+   - Replace the flawed check:
+     ```javascript
+     // BEFORE:
+     if (this.activeNpcs.size === 0 && isFirstPeer) {
+       this.initSpawner();
+     }
+     ```
+     with:
+     ```javascript
+     // AFTER:
+     if (this.activeNpcs.size === 0) {
+       this.initSpawner();
+     }
+     ```
+   - This ensures that whenever a client connects and the room's active NPC pool is empty (whether initial connection, late joiner after inactivity, or surviving Durable Object instance), `initSpawner()` immediately initializes and pre-warms the active NPC pool.
+2. In `test/test_partyserver.py`:
+   - Add a unit test explicitly asserting that `party/server.js` initializes the spawner on connect whenever `this.activeNpcs.size === 0`, without requiring `isFirstPeer`.
+
+---
+
+## 3. Acceptance Criteria
+- **AC-034.1**: When a client connects to `ParkServer` and `activeNpcs.size === 0`, `initSpawner()` executes unconditionally regardless of whether `getConnections()` already holds the connection.
+- **AC-034.2**: The connecting client receives an `NPC_SNAPSHOT` packet populated with active, pre-warmed NPCs (length matches `targetNpcCount`).
+- **AC-034.3**: `python3 test/run_tests.py` passes 100% across all suites.
+
+
+```
+
+## FILE: openspec/changes/archive/ticket-035/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-035"
+title: "Canine Fetching Perimeter Exemption, Ball Disappearance on Return & Single Ball Throw Restriction"
+state: "COMPLETED"
+roadmap: null
+depends_on: []
+created_at: "2026-11-01T09:50:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-035/main"
+max_review_cycles: 3
+target_files:
+  - "src/entities/toy.js"
+  - "src/entities/companion_dog.js"
+  - "src/main.js"
+  - "src/ui/touch_controls.js"
+  - "test/test_fetching_mechanics.py"
+  - "test/test_dog_physics.py"
+---
+```
+
+## 1. Problem Statement & User Requirements
+Players engaging in ball-fetching gameplay encounter three significant friction points:
+1. **Dog Fails to Reach Thrown Ball Due to Perimeter Clamping**:
+   - In `src/entities/companion_dog.js` (lines 498–508), an off-leash perimeter boundary hard-clamps the dog's distance to within `maxRoam = 230` px of the owner whenever `this.owner && !this.owner.isLeashed && this.state !== DogState.LOST`.
+   - Because standard ball throws travel 320 px (or up to 500 px with touch/mouse flick), the dog sprints towards the ball, hits the 230 px invisible perimeter boundary wall, and gets permanently clamped there running in place unable to reach the ball.
+2. **Ball Drops on Ground Instead of Returning to Owner's Possession**:
+   - In `src/entities/companion_dog.js` (lines 1005–1014), when the dog returns to the owner (`dist <= 36`), it calls `this.targetBall.drop(...)` onto the turf. The ball remains rendered on the grass indefinitely at the owner's feet rather than disappearing as if picked up and stowed into the owner's possession.
+3. **Repeated Ball Throws & Multi-Ball Clutter**:
+   - In `src/main.js`, `throwBall()` and `throwBallAt()` can be spammed repeatedly without restriction. Every press of `Space`, `KeyT`, or tap of `btn-touch-throw` launches a throw, even while a previous ball is mid-air or being fetched. The owner should hold exactly one ball; once thrown, another cannot be thrown until the dog retrieves it, brings it back to the owner, and the ball disappears into the owner's possession.
+
+---
+
+## 2. Technical Specification & Implementation Plan
+
+### 2.1 Ball Possession State in `src/entities/toy.js` (`TennisBall`)
+1. **Possession State Flag**:
+   - Add property `this.inOwnerPossession = true;` to `TennisBall` constructor.
+   - When instantiated in `src/main.js`, the ball starts in the owner's possession (`inOwnerPossession = true`, not lying on the ground).
+2. **Throw Transition**:
+   - In `throw(fromX, fromY, dirX, dirY, speed, launchZ)`:
+     - Set `this.inOwnerPossession = false;`.
+     - Set `this.isThrown = true;`.
+3. **Owner Pickup / Retrieval**:
+   - Add method `retrieveByOwner()` (or `pickupByOwner()`):
+     - Sets `this.inOwnerPossession = true;`.
+     - Sets `this.isThrown = false;`.
+     - Sets `this.isCarried = false;`.
+     - Sets `this.carrier = null;`.
+     - Resets velocity and elevation: `this.vx = 0; this.vy = 0; this.vz = 0; this.z = 0;`.
+4. **Render & Physics Suppression**:
+   - In `draw(ctx)`: If `this.inOwnerPossession` is `true`, return early without drawing ball or shadow.
+   - In `update(dt, field)`: If `this.inOwnerPossession` is `true`, return early without simulating ballistic trajectory or boundary checks.
+
+---
+
+### 2.2 Perimeter Clamping Exemption & Return Hand-off in `src/entities/companion_dog.js`
+1. **Perimeter Distance Clamping Exemption (AC-035.1)**:
+   - In `src/entities/companion_dog.js` (line 498):
+     Update the off-leash perimeter check to exempt `DogState.FETCHING`:
+     ```javascript
+     } else if (this.owner && !this.owner.isLeashed && this.state !== DogState.LOST && this.state !== DogState.FETCHING) {
+     ```
+   - Ensure the dog is completely free to break the 230 px `maxRoam` limit when fetching a thrown ball or returning with it.
+   - Ensure obstacle and map boundary collision checks continue to protect the dog from navigating out of bounds.
+2. **Owner Contact Retrieval Hand-off (AC-035.2)**:
+   - In `updateFetching(dt)` (lines 1005–1014):
+     When the dog carrying the ball (`this.hasBall === true`) arrives back within contact distance of the owner (`dist <= 36` or `dist <= 42`):
+     - Call `this.targetBall.retrieveByOwner();` so the ball immediately disappears into the owner's possession.
+     - Reset dog state: `this.hasBall = false; this.targetBall = null; this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;`.
+     - Reward dog: `this.pet();` and show positive emote (`this.emoteBubble = '❤️'; this.emoteTimer = 2.0;`).
+     - Play sound chime / pop if audio is active.
+3. **Direct Owner Pickup Safeguard**:
+   - If the ball is resting on the ground uncarried (`!this.isThrown && !this.isCarried && !this.inOwnerPossession`) and the owner walks over it (`Math.hypot(this.owner.x - this.ball.x, this.owner.y - this.ball.y) < 32`), the owner picks up the ball automatically (`this.ball.retrieveByOwner()`). This prevents edge-case soft-locks if the dog is recalled or distracted.
+
+---
+
+### 2.3 Single Active Ball Enforcement & UI HUD in `src/main.js` & `src/ui/touch_controls.js`
+1. **Can-Throw Validation (`src/main.js`) (AC-035.3)**:
+   - Add helper method `canThrowBall()`:
+     ```javascript
+     canThrowBall() {
+       return Boolean(
+         this.ball &&
+         this.ball.inOwnerPossession &&
+         !this.ball.isThrown &&
+         !this.ball.isCarried &&
+         this.dog.state !== DogState.FETCHING &&
+         !this.dog.hasBall
+       );
+     }
+     ```
+   - In `throwBall()` and `throwBallAt(...)`:
+     - If `!this.canThrowBall()`, abort execution immediately.
+     - If the user presses Space/KeyT while unable to throw, display a subtle feedback toast: `"🎾 Wait for your dog to return the ball!"`.
+2. **Touch & HUD Throw Button Feedback (`src/ui/touch_controls.js`)**:
+   - Add method `setThrowEnabled(enabled)` on `TouchControls`:
+     - Toggles an `.is-disabled` CSS class / disabled attribute on `#btn-touch-throw`.
+     - Visually dims the throw button (`opacity: 0.45; filter: grayscale(80%);`) when the ball is already in play.
+   - In `src/main.js` `update()` loop: update touch throw button state based on `this.canThrowBall()`.
+
+---
+
+## 3. Acceptance Criteria & Verification Matrix
+
+- [x] **AC-035.1 (Perimeter Exemption)**: When a ball is thrown > 230 px away (e.g., 350–500 px), the dog in `FETCHING` state breaks the 230 px owner perimeter clamp without restriction, reaches the ball, and picks it up (`hasBall = true`).
+- [x] **AC-035.2 (Ball Pickup on Owner Contact)**: When the dog returns to the owner with the ball, upon reaching owner contact distance (`dist <= 36–42 px`), the ball transitions to `inOwnerPossession = true`, ceases rendering, and disappears as if picked up by the owner.
+- [x] **AC-035.3 (Single Active Ball Constraint)**: The owner can only throw when `canThrowBall()` is true. Subsequent throw attempts while the ball is thrown, rolling, carried, or being fetched are strictly blocked.
+- [x] **AC-035.4 (Touch HUD Feedback)**: The on-screen throw button reflects throw readiness, disabling/dimming when a ball is currently in flight or being fetched.
+- [x] **AC-035.5 (Harness Validation)**: All unit and integration test suites in `python3 test/run_tests.py` pass 100%, including new fetching mechanics tests in `test/test_fetching_mechanics.py`.
+
+---
+
+## 4. Work Breakdown & Granular Briefs
+
+### Brief 1: Ball Possession & Physics Entity (`src/entities/toy.js`) [L]
+- Add `inOwnerPossession` property, `retrieveByOwner()` method, and render/update bypass logic.
+
+### Brief 2: Companion Dog Fetching & Perimeter Logic (`src/entities/companion_dog.js`) [M]
+- Exempt `DogState.FETCHING` from off-leash 230 px perimeter clamping.
+- Update `updateFetching()` to hand off the ball to the owner (`retrieveByOwner()`) upon contact instead of dropping it on the ground.
+
+### Brief 3: Throw Restriction, Owner Direct Pickup & HUD Sync (`src/main.js`, `src/ui/touch_controls.js`) [M]
+- Implement `canThrowBall()`, block multiple throws, add owner direct pickup safeguard, and bind throw button enabled state.
+
+### Brief 4: Comprehensive Test Suite (`test/test_fetching_mechanics.py`) [L]
+- Author pytest/unittest suite asserting perimeter exemption, owner hand-off disappearance, and single ball throw restriction.
+
+
+```
+
+## FILE: openspec/changes/ticket-035/spec.md
+```markdown
+# OpenSpec SDD: Task Specification
+
+```yaml
+---
+ticket_id: "ticket-035"
+title: "Canine Fetching Perimeter Exemption, Ball Disappearance on Return & Single Ball Throw Restriction"
+state: "COMPLETED"
+roadmap: null
+depends_on: []
+created_at: "2026-11-01T09:50:00Z"
+base_branch: "main"
+ticket_branch: "factory/ticket-035/main"
+max_review_cycles: 3
+target_files:
+  - "src/entities/toy.js"
+  - "src/entities/companion_dog.js"
+  - "src/main.js"
+  - "src/ui/touch_controls.js"
+  - "test/test_fetching_mechanics.py"
+  - "test/test_dog_physics.py"
+---
+```
+
+## 1. Problem Statement & User Requirements
+Players engaging in ball-fetching gameplay encounter three significant friction points:
+1. **Dog Fails to Reach Thrown Ball Due to Perimeter Clamping**:
+   - In `src/entities/companion_dog.js` (lines 498–508), an off-leash perimeter boundary hard-clamps the dog's distance to within `maxRoam = 230` px of the owner whenever `this.owner && !this.owner.isLeashed && this.state !== DogState.LOST`.
+   - Because standard ball throws travel 320 px (or up to 500 px with touch/mouse flick), the dog sprints towards the ball, hits the 230 px invisible perimeter boundary wall, and gets permanently clamped there running in place unable to reach the ball.
+2. **Ball Drops on Ground Instead of Returning to Owner's Possession**:
+   - In `src/entities/companion_dog.js` (lines 1005–1014), when the dog returns to the owner (`dist <= 36`), it calls `this.targetBall.drop(...)` onto the turf. The ball remains rendered on the grass indefinitely at the owner's feet rather than disappearing as if picked up and stowed into the owner's possession.
+3. **Repeated Ball Throws & Multi-Ball Clutter**:
+   - In `src/main.js`, `throwBall()` and `throwBallAt()` can be spammed repeatedly without restriction. Every press of `Space`, `KeyT`, or tap of `btn-touch-throw` launches a throw, even while a previous ball is mid-air or being fetched. The owner should hold exactly one ball; once thrown, another cannot be thrown until the dog retrieves it, brings it back to the owner, and the ball disappears into the owner's possession.
+
+---
+
+## 2. Technical Specification & Implementation Plan
+
+### 2.1 Ball Possession State in `src/entities/toy.js` (`TennisBall`)
+1. **Possession State Flag**:
+   - Add property `this.inOwnerPossession = true;` to `TennisBall` constructor.
+   - When instantiated in `src/main.js`, the ball starts in the owner's possession (`inOwnerPossession = true`, not lying on the ground).
+2. **Throw Transition**:
+   - In `throw(fromX, fromY, dirX, dirY, speed, launchZ)`:
+     - Set `this.inOwnerPossession = false;`.
+     - Set `this.isThrown = true;`.
+3. **Owner Pickup / Retrieval**:
+   - Add method `retrieveByOwner()` (or `pickupByOwner()`):
+     - Sets `this.inOwnerPossession = true;`.
+     - Sets `this.isThrown = false;`.
+     - Sets `this.isCarried = false;`.
+     - Sets `this.carrier = null;`.
+     - Resets velocity and elevation: `this.vx = 0; this.vy = 0; this.vz = 0; this.z = 0;`.
+4. **Render & Physics Suppression**:
+   - In `draw(ctx)`: If `this.inOwnerPossession` is `true`, return early without drawing ball or shadow.
+   - In `update(dt, field)`: If `this.inOwnerPossession` is `true`, return early without simulating ballistic trajectory or boundary checks.
+
+---
+
+### 2.2 Perimeter Clamping Exemption & Return Hand-off in `src/entities/companion_dog.js`
+1. **Perimeter Distance Clamping Exemption (AC-035.1)**:
+   - In `src/entities/companion_dog.js` (line 498):
+     Update the off-leash perimeter check to exempt `DogState.FETCHING`:
+     ```javascript
+     } else if (this.owner && !this.owner.isLeashed && this.state !== DogState.LOST && this.state !== DogState.FETCHING) {
+     ```
+   - Ensure the dog is completely free to break the 230 px `maxRoam` limit when fetching a thrown ball or returning with it.
+   - Ensure obstacle and map boundary collision checks continue to protect the dog from navigating out of bounds.
+2. **Owner Contact Retrieval Hand-off (AC-035.2)**:
+   - In `updateFetching(dt)` (lines 1005–1014):
+     When the dog carrying the ball (`this.hasBall === true`) arrives back within contact distance of the owner (`dist <= 36` or `dist <= 42`):
+     - Call `this.targetBall.retrieveByOwner();` so the ball immediately disappears into the owner's possession.
+     - Reset dog state: `this.hasBall = false; this.targetBall = null; this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;`.
+     - Reward dog: `this.pet();` and show positive emote (`this.emoteBubble = '❤️'; this.emoteTimer = 2.0;`).
+     - Play sound chime / pop if audio is active.
+3. **Direct Owner Pickup Safeguard**:
+   - If the ball is resting on the ground uncarried (`!this.isThrown && !this.isCarried && !this.inOwnerPossession`) and the owner walks over it (`Math.hypot(this.owner.x - this.ball.x, this.owner.y - this.ball.y) < 32`), the owner picks up the ball automatically (`this.ball.retrieveByOwner()`). This prevents edge-case soft-locks if the dog is recalled or distracted.
+
+---
+
+### 2.3 Single Active Ball Enforcement & UI HUD in `src/main.js` & `src/ui/touch_controls.js`
+1. **Can-Throw Validation (`src/main.js`) (AC-035.3)**:
+   - Add helper method `canThrowBall()`:
+     ```javascript
+     canThrowBall() {
+       return Boolean(
+         this.ball &&
+         this.ball.inOwnerPossession &&
+         !this.ball.isThrown &&
+         !this.ball.isCarried &&
+         this.dog.state !== DogState.FETCHING &&
+         !this.dog.hasBall
+       );
+     }
+     ```
+   - In `throwBall()` and `throwBallAt(...)`:
+     - If `!this.canThrowBall()`, abort execution immediately.
+     - If the user presses Space/KeyT while unable to throw, display a subtle feedback toast: `"🎾 Wait for your dog to return the ball!"`.
+2. **Touch & HUD Throw Button Feedback (`src/ui/touch_controls.js`)**:
+   - Add method `setThrowEnabled(enabled)` on `TouchControls`:
+     - Toggles an `.is-disabled` CSS class / disabled attribute on `#btn-touch-throw`.
+     - Visually dims the throw button (`opacity: 0.45; filter: grayscale(80%);`) when the ball is already in play.
+   - In `src/main.js` `update()` loop: update touch throw button state based on `this.canThrowBall()`.
+
+---
+
+## 3. Acceptance Criteria & Verification Matrix
+
+- [x] **AC-035.1 (Perimeter Exemption)**: When a ball is thrown > 230 px away (e.g., 350–500 px), the dog in `FETCHING` state breaks the 230 px owner perimeter clamp without restriction, reaches the ball, and picks it up (`hasBall = true`).
+- [x] **AC-035.2 (Ball Pickup on Owner Contact)**: When the dog returns to the owner with the ball, upon reaching owner contact distance (`dist <= 36–42 px`), the ball transitions to `inOwnerPossession = true`, ceases rendering, and disappears as if picked up by the owner.
+- [x] **AC-035.3 (Single Active Ball Constraint)**: The owner can only throw when `canThrowBall()` is true. Subsequent throw attempts while the ball is thrown, rolling, carried, or being fetched are strictly blocked.
+- [x] **AC-035.4 (Touch HUD Feedback)**: The on-screen throw button reflects throw readiness, disabling/dimming when a ball is currently in flight or being fetched.
+- [x] **AC-035.5 (Harness Validation)**: All unit and integration test suites in `python3 test/run_tests.py` pass 100%, including new fetching mechanics tests in `test/test_fetching_mechanics.py`.
+
+---
+
+## 4. Work Breakdown & Granular Briefs
+
+### Brief 1: Ball Possession & Physics Entity (`src/entities/toy.js`) [L]
+- Add `inOwnerPossession` property, `retrieveByOwner()` method, and render/update bypass logic.
+
+### Brief 2: Companion Dog Fetching & Perimeter Logic (`src/entities/companion_dog.js`) [M]
+- Exempt `DogState.FETCHING` from off-leash 230 px perimeter clamping.
+- Update `updateFetching()` to hand off the ball to the owner (`retrieveByOwner()`) upon contact instead of dropping it on the ground.
+
+### Brief 3: Throw Restriction, Owner Direct Pickup & HUD Sync (`src/main.js`, `src/ui/touch_controls.js`) [M]
+- Implement `canThrowBall()`, block multiple throws, add owner direct pickup safeguard, and bind throw button enabled state.
+
+### Brief 4: Comprehensive Test Suite (`test/test_fetching_mechanics.py`) [L]
+- Author pytest/unittest suite asserting perimeter exemption, owner hand-off disappearance, and single ball throw restriction.
+
+
+```
+
+## FILE: openspec/config.yaml
+```yaml
+schema: "spec-driven"
+version: "1.0.0"
+paths:
+  specs: "openspec/specs"
+  changes: "openspec/changes"
+  archive: "openspec/changes/archive"
+
+```
+
+## FILE: openspec/roadmaps/archive/chat-visual-overhaul.md
+```markdown
+---
+roadmap_id: "chat-visual-overhaul"
+milestone: "chat-visual-overhaul"
+title: "Chat Visual Overhaul & Spatial HUD Streamlining"
+version: "1.0.0"
+created_at: "2026-10-12T20:10:00Z"
+status: "COMPLETED"
+completed_at: "2026-10-13T18:48:41Z"
+---
+
+# Milestone Roadmap: Chat Visual Overhaul & Spatial HUD Streamlining
+
+## 1. Milestone Objective & Scope
+Overhaul the *Virtual Dog Walker* chat and social HUD system to prevent chat from obstructing core gameplay. Relocate conflicting top-bar HUD elements ("Share Park" and "Style" buttons) away from the top-right corner to open up dedicated screen real estate. Lock the chat sidebar to the top-right corner of the screen, expanding downward, with a collapsible toggle button. Implement automatic sidebar unhiding when proximity messages arrive, a 5-minute message retention countdown upon parting proximity, dynamic accessible color assignment for first-time messaging players, clean duality between overhead speech bubbles (out of proximity only) and sidebar text (in proximity only), and complete removal of the legacy tombstone dropping behavior.
+
+## 2. Ticket Dependency Matrix
+
+| Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `ticket-018` | Tombstone Subsystem Removal & Turf Cleanup | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-019` | HUD Top-Bar Reorganization & Button Relocation | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-020` | Top-Right Downward Chat Sidebar, Toggle Button & Auto-Unhide | `MEDIUM` | `["ticket-019"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-021` | Proximity Chat Retention Expiry & Player Color Palette | `MEDIUM` | `["ticket-020"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-022` | Speech Bubble Duality Routing & Comprehensive Test Suite | `HIGH` | `["ticket-018", "ticket-021"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+
+## 3. Blast Radius & Scope Collision Matrix
+
+| Ticket ID | Declared File Scope | Overlap Detection & Blast Radius Rationale |
+| :--- | :--- | :--- |
+| `ticket-018` | `src/entities/tombstone.js`, `src/world/field.js`, `src/net/protocol.js`, `src/main.js` | Removes tombstone rendering, lifecycle ticks, and network packet. Completely disjoint from HUD styling. |
+| `ticket-019` | `src/ui/social_hud.js`, `src/style.css` | Relocates Share Park & Style buttons to top-left dock. Disjoint from tombstone files. |
+| `ticket-020` | `src/ui/proximity_chat.js`, `src/style.css` | Establishes top-right sidebar container, toggle icon button, auto-unhide DOM logic, and downward flow styles. Sequenced after 019 to prevent CSS collisions. |
+| `ticket-021` | `src/ui/proximity_chat.js` | Adds 5-minute countdown per departed peer and accessible color assignment for new proximity speakers. Extends 020 sidebar logic. |
+| `ticket-022` | `src/entities/owner.js`, `src/main.js`, `test/test_proximity_chat.py`, `test/run_tests.py` | Enforces overhead speech bubble vs sidebar exclusivity, routes proximity vs non-proximity chat events, and executes full regression test suite. |
+
+## 4. Execution DAG Diagram
+
+```mermaid
+flowchart TD
+    T018["ticket-018: Tombstone Subsystem Removal [PARALLEL_ELIGIBLE]"]
+    T019["ticket-019: HUD Top-Bar Reorganization [PARALLEL_ELIGIBLE]"]
+    T020["ticket-020: Top-Right Sidebar, Toggle & Auto-Unhide [BLOCKED_ON_019]"]
+    T021["ticket-021: 5-Min Retention Expiry & Color Engine [BLOCKED_ON_020]"]
+    T022["ticket-022: Bubble Duality & Comprehensive Test Suite [BLOCKED_ON_018_021]"]
+
+    T019 --> T020
+    T020 --> T021
+    T018 --> T022
+    T021 --> T022
+```
+
+## 5. Progress & Milestone Completion Criteria
+- [x] Ticket-018 completed and merged to `main`.
+- [x] Ticket-019 completed and merged to `main`.
+- [x] Ticket-020 completed and merged to `main`.
+- [x] Ticket-021 completed and merged to `main`.
+- [x] Ticket-022 completed and merged to `main`.
+- [x] End-to-end integration tests pass across combined deliverables (`python3 test/run_tests.py`).
+- [x] Canonical specifications reconciled in `openspec/specs/`.
+
+```
+
+## FILE: openspec/roadmaps/archive/npc-polish-and-cleanup.md
+```markdown
+---
+roadmap_id: "npc-polish-and-cleanup"
+milestone: "npc-polish-and-cleanup"
+title: "Global NPC Polish, Render Optimization & Platformer Pruning"
+version: "1.0.0"
+created_at: "2026-10-31T14:37:00Z"
+status: "COMPLETED"
+completed_at: "2026-10-31T15:24:00Z"
+---
+
+# Milestone Roadmap: Global NPC Polish, Render Optimization & Platformer Pruning
+
+## 1. Milestone Objective & Scope
+This roadmap addresses three key initiatives originating from gameplay observations, profiling, and codebase maintenance:
+1. **Edge-to-Edge NPC Paths, Realistic Pacing & Authoritative Sync Hardening (`ticket-030`)**:
+   - Replace interior looping paths with 10 point-to-point edge-to-edge paths spanning map boundaries.
+   - Reduce NPC speeds (walker: 22 px/s, jogger: 48 px/s) and adjust leg animation multipliers.
+   - Fix client startup solo-spawn race condition before WebSocket connection.
+   - Pre-warm initial server spawns across routes with staggered lifetimes so NPCs don't start simultaneously at distance zero.
+   - Add entry fade-in and smooth waypoint turning angles.
+2. **Static Ground & Path Offscreen Baking (`ticket-031`)**:
+   - Profile/render optimization: bake 3200x2400 static mowing stripes, grass hashes, and gravel paths to an `OffscreenCanvas` on initialization.
+   - Blit viewport window using `drawImage` during `renderGround()` to eliminate per-frame Math.sin and Bezier path stroking.
+3. **Dead Platformer Code Pruning (`ticket-032`)**:
+   - Remove deprecated side-scrolling platformer files (`src/engine/physics.js`, `src/entities/ziggy.js`, `src/entities/collectibles.js`, `src/entities/hazards.js`, `src/level/park_level.js`, and `test/test_physics.py`).
+   - Clean tombstone legacy references where safe without breaking regression tests.
+
+---
+
+## 2. Ticket Dependency Matrix
+
+| Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `ticket-030` | Edge-to-Edge Global NPC Paths, Relaxed Pacing, and Authoritative Sync Hardening | `HIGH` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-031` | Static Ground & Path Offscreen Baking (Render Optimization) | `LOW` | `["ticket-030"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-032` | Dead Platformer Code Pruning | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+
+---
+
+## 3. Blast Radius & Scope Collision Matrix
+
+| Ticket ID | Declared File Scope | Overlap Detection & Rationale |
+| :--- | :--- | :--- |
+| `ticket-030` | `src/entities/npc_content.js`, `src/entities/npc.js`, `src/world/npc_paths.js`, `src/world/npc_path_manifest.json`, `party/server.js`, `server/server.py`, `src/main.js`, `src/net/network.js`, `test/test_npc_*.py` | Primary focus on NPC subsystem and client networking. Note: Touches `src/main.js` (NPC startup race condition). |
+| `ticket-031` | `src/world/field.js`, `src/main.js` | Touches `src/world/field.js` and `renderGround()` in `src/main.js`. If run concurrently with `ticket-030`, touches different functions in `src/main.js`, but serialized execution or disjoint merge recommended to prevent conflicts. |
+| `ticket-032` | `src/engine/physics.js`, `src/entities/ziggy.js`, `src/entities/collectibles.js`, `src/entities/hazards.js`, `src/level/park_level.js`, `test/test_physics.py` | Completely disjoint file set (deleting obsolete files). Completely safe for parallel execution. |
+
+---
+
+## 4. Execution DAG Diagram
+
+```mermaid
+flowchart TD
+    T030["ticket-030: Edge-to-Edge Global NPC Paths & Hardened Sync [PARALLEL_ELIGIBLE]"]
+    T031["ticket-031: Static Ground & Path Offscreen Baking [BLOCKED_ON_030]"]
+    T032["ticket-032: Dead Platformer Code Pruning [PARALLEL_ELIGIBLE]"]
+
+    T030 --> T031
+```
+
+> [!NOTE]
+> `ticket-030` and `ticket-032` can run immediately in parallel because their file sets are completely disjoint. `ticket-031` is ordered after `ticket-030` because both touch `src/main.js`, eliminating any merge conflict risk.
+
+---
+
+## 5. Progress & Milestone Completion Criteria
+- [x] Ticket-030 completed and merged to `main`.
+- [x] Ticket-031 completed and merged to `main`.
+- [x] Ticket-032 completed and merged to `main`.
+- [x] Full automated test suite passes (`python3 test/run_tests.py`).
+- [ ] Deployment live on Cloudflare Workers (`https://play.zero-chat.workers.dev`).
+
+
+```
+
+## FILE: openspec/roadmaps/archive/the-downs.md
+```markdown
+---
+roadmap_id: "the-downs"
+milestone: "the-downs-expansion"
+title: "The Downs Social Sandbox Expansion"
+version: "1.0.0"
+created_at: "2026-10-11T19:20:00Z"
+completed_at: "2026-10-12T19:47:00Z"
+status: "COMPLETED"
+---
+
+# Milestone Roadmap: The Downs Social Sandbox Expansion
+
+## 1. Milestone Objective & Scope
+Transform *Virtual Dog Walker* into **"The Downs"**, inspired by the authentic geography of **Clifton and Durdham Downs** in Bristol, UK. Incorporate enhanced 2D aesthetics, comprehensive human and canine customization, dog personality dynamics and leash physics, canine stray and poop/bin mechanics, ad-hoc proximity group chat with tombstone lifecycles, autonomous park NPCs (walkers and joggers), and real-time UTC day/night sepia twilight with live Clifton Downs weather.
+
+## 2. Ticket Dependency Matrix
+
+| Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `ticket-011` | The Downs Map Redesign, Bins & Nature Audio | `HIGH` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-012` | Character & Canine Customization & 2D Aesthetics | `MEDIUM` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-013` | Canine Personality System & Leash Dynamics | `HIGH` | `["ticket-012"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-014` | Canine Stray Run-Off & Dog Poop/Bin Mechanics | `MEDIUM` | `["ticket-011", "ticket-013"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-015` | Ad-Hoc Proximity Group Chat & Tombstones | `HIGH` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-016` | Park NPCs: Autonomous Walkers & Joggers | `MEDIUM` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-017` | UTC Day/Night Twilight & Clifton Downs Weather | `MEDIUM` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+
+## 3. Blast Radius & Scope Collision Matrix
+
+| Ticket ID | Declared File Scope | Overlap Detection & Blast Radius Rationale |
+| :--- | :--- | :--- |
+| `ticket-011` | `src/world/field.js`, `src/systems/audio.js`, `index.html`, `test/test_downs_map.py` | Expanded world bounds (3200x2400), geography, bins, and nature soundscape. Completed. |
+| `ticket-012` | `src/entities/owner.js`, `src/entities/companion_dog.js` (draw), `src/ui/social_hud.js`, `src/style.css` | Avatar rendering and customizer UI. Disjoint from world rendering. |
+| `ticket-013` | `src/entities/companion_dog.js` (AI/leash), `src/ui/social_hud.js`, `src/net/protocol.js` | Extends companion dog personality and leash physics. Depends on dog model in 012. |
+| `ticket-014` | `src/entities/companion_dog.js`, `src/entities/waste.js`, `src/ui/navigation_arrow.js`, `src/main.js` | Stray run-off and poop pickup. Integrates bins from 011 and obedience from 013. |
+| `ticket-015` | `src/ui/proximity_chat.js`, `src/entities/tombstone.js`, `party/server.js`, `src/net/protocol.js` | Spatial chat clusters and tombstones. Isolated social subsystem. |
+| `ticket-016` | `src/entities/npc.js`, `src/world/field.js`, `src/main.js` | Ambient pedestrian walkers and joggers along The Downs trails. |
+| `ticket-017` | `src/world/environment.js`, `src/systems/weather.js`, `src/world/field.js`, `src/main.js` | Canvas lighting overlay, particle shaders, and live Open-Meteo weather client. |
+
+## 4. Execution DAG Diagram
+
+```mermaid
+flowchart TD
+    T011["ticket-011 (The Downs Map, Bins & Audio) [COMPLETED]"]
+    T012["ticket-012 (Character & Canine Customization) [COMPLETED]"]
+    T013["ticket-013 (Dog Personality & Leash Dynamics) [COMPLETED]"]
+    T014["ticket-014 (Stray Run-Off & Poop/Bin Mechanics) [COMPLETED]"]
+    T015["ticket-015 (Ad-Hoc Proximity Chat & Tombstones) [COMPLETED]"]
+    T016["ticket-016 (Park NPCs: Walkers & Joggers) [COMPLETED]"]
+    T017["ticket-017 (UTC Day/Night & Clifton Weather) [COMPLETED]"]
+
+    T012 --> T013
+    T011 --> T014
+    T013 --> T014
+    T011 --> T015
+    T011 --> T016
+    T011 --> T017
+```
+
+## 5. Progress & Milestone Completion Criteria
+- [x] Ticket-011 completed and merged to `main`.
+- [x] Ticket-012 completed and merged to `main`.
+- [x] Ticket-013 completed and merged to `main`.
+- [x] Ticket-014 completed and merged to `main`.
+- [x] Ticket-015 completed and merged to `main`.
+- [x] Ticket-016 completed and merged to `main`.
+- [x] Ticket-017 completed and merged to `main`.
+- [x] End-to-end integration tests pass across combined deliverables.
+- [x] Canonical specifications reconciled in `openspec/specs/`.
+
+```
+
+## FILE: openspec/roadmaps/chat-visual-overhaul.md
+```markdown
+---
+roadmap_id: "chat-visual-overhaul"
+milestone: "chat-visual-overhaul"
+title: "Chat Visual Overhaul & Spatial HUD Streamlining"
+version: "1.0.0"
+created_at: "2026-10-12T20:10:00Z"
+status: "COMPLETED"
+completed_at: "2026-10-13T18:48:41Z"
+---
+
+# Milestone Roadmap: Chat Visual Overhaul & Spatial HUD Streamlining
+
+## 1. Milestone Objective & Scope
+Overhaul the *Virtual Dog Walker* chat and social HUD system to prevent chat from obstructing core gameplay. Relocate conflicting top-bar HUD elements ("Share Park" and "Style" buttons) away from the top-right corner to open up dedicated screen real estate. Lock the chat sidebar to the top-right corner of the screen, expanding downward, with a collapsible toggle button. Implement automatic sidebar unhiding when proximity messages arrive, a 5-minute message retention countdown upon parting proximity, dynamic accessible color assignment for first-time messaging players, clean duality between overhead speech bubbles (out of proximity only) and sidebar text (in proximity only), and complete removal of the legacy tombstone dropping behavior.
+
+## 2. Ticket Dependency Matrix
+
+| Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `ticket-018` | Tombstone Subsystem Removal & Turf Cleanup | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-019` | HUD Top-Bar Reorganization & Button Relocation | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-020` | Top-Right Downward Chat Sidebar, Toggle Button & Auto-Unhide | `MEDIUM` | `["ticket-019"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-021` | Proximity Chat Retention Expiry & Player Color Palette | `MEDIUM` | `["ticket-020"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-022` | Speech Bubble Duality Routing & Comprehensive Test Suite | `HIGH` | `["ticket-018", "ticket-021"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+
+## 3. Blast Radius & Scope Collision Matrix
+
+| Ticket ID | Declared File Scope | Overlap Detection & Blast Radius Rationale |
+| :--- | :--- | :--- |
+| `ticket-018` | `src/entities/tombstone.js`, `src/world/field.js`, `src/net/protocol.js`, `src/main.js` | Removes tombstone rendering, lifecycle ticks, and network packet. Completely disjoint from HUD styling. |
+| `ticket-019` | `src/ui/social_hud.js`, `src/style.css` | Relocates Share Park & Style buttons to top-left dock. Disjoint from tombstone files. |
+| `ticket-020` | `src/ui/proximity_chat.js`, `src/style.css` | Establishes top-right sidebar container, toggle icon button, auto-unhide DOM logic, and downward flow styles. Sequenced after 019 to prevent CSS collisions. |
+| `ticket-021` | `src/ui/proximity_chat.js` | Adds 5-minute countdown per departed peer and accessible color assignment for new proximity speakers. Extends 020 sidebar logic. |
+| `ticket-022` | `src/entities/owner.js`, `src/main.js`, `test/test_proximity_chat.py`, `test/run_tests.py` | Enforces overhead speech bubble vs sidebar exclusivity, routes proximity vs non-proximity chat events, and executes full regression test suite. |
+
+## 4. Execution DAG Diagram
+
+```mermaid
+flowchart TD
+    T018["ticket-018: Tombstone Subsystem Removal [PARALLEL_ELIGIBLE]"]
+    T019["ticket-019: HUD Top-Bar Reorganization [PARALLEL_ELIGIBLE]"]
+    T020["ticket-020: Top-Right Sidebar, Toggle & Auto-Unhide [BLOCKED_ON_019]"]
+    T021["ticket-021: 5-Min Retention Expiry & Color Engine [BLOCKED_ON_020]"]
+    T022["ticket-022: Bubble Duality & Comprehensive Test Suite [BLOCKED_ON_018_021]"]
+
+    T019 --> T020
+    T020 --> T021
+    T018 --> T022
+    T021 --> T022
+```
+
+## 5. Progress & Milestone Completion Criteria
+- [x] Ticket-018 completed and merged to `main`.
+- [x] Ticket-019 completed and merged to `main`.
+- [x] Ticket-020 completed and merged to `main`.
+- [x] Ticket-021 completed and merged to `main`.
+- [x] Ticket-022 completed and merged to `main`.
+- [x] End-to-end integration tests pass across combined deliverables (`python3 test/run_tests.py`).
+- [x] Canonical specifications reconciled in `openspec/specs/`.
+
+```
+
+## FILE: openspec/roadmaps/improved-npcs.md
+```markdown
+---
+roadmap_id: "improved-npcs"
+milestone: "improved-npcs"
+title: "Improved NPCs: Global, Obstacle-Aware, Characterful"
+version: "1.0.0"
+created_at: "2026-10-15T19:45:00Z"
+status: "PLANNED"
+---
+
+# Milestone Roadmap: Improved NPCs
+
+## 1. Milestone Objective & Scope
+Overhaul ambient park NPCs (currently 5 per-client, locally spawned, fast, permanent, and prone to getting stuck on trees/benches/bins):
+1. **Obstacle-aware movement** – NPCs follow precomputed paths verified clear of trees, benches and bins.
+2. **Global NPCs** – the server is authoritative for spawns/despawns; all clients see the same NPCs. Clients simulate motion deterministically from a shared clock (no per-frame traffic).
+3. **Lifecycle** – spawn → walk path → despawn → replacement spawned. Many path variants; only a subset of NPC slots is active at once.
+4. **Naming** – "Mary the Walker", "Steve the Jogger". Overhead tag styled distinctly as an NPC (unique colour, italic).
+5. **Speed** – NPC speed significantly reduced (walker ~35 px/s, jogger ~80 px/s, down from 85/260).
+6. **Speech** – random phrases in the chat bubble: mostly commonplace park/weather/nature remarks, occasionally odd/funny ones (~15%).
+
+**Architecture decisions (agreed):** server-authoritative spawn schedule with deterministic client simulation; precomputed obstacle-free paths (validated by tests) rather than runtime A*. The server relays only `{id, pathId, type, seed, spawnTime}`; clients derive name, appearance, and phrases from `seed` through a shared PRNG (`mulberry32`), so the Python server needs no content tables. A path manifest JSON (`id`, `type`, `lengthPx`) is shared by JS and Python so servers can compute lifetime.
+
+## 2. Ticket Dependency Matrix
+
+| Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `ticket-024` | NPC Content Tables (names, phrases, appearance, speeds, PRNG) | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-025` | Obstacle-Free Precomputed NPC Path Library + Manifest | `MEDIUM` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-026` | NPC Entity Rewrite: Deterministic Sim, Lifecycle, Tag & Speech | `HIGH` | `["ticket-024", "ticket-025"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-027` | Global NPC Protocol & Server Spawners (PartyServer + Python) | `HIGH` | `["ticket-025"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-028` | Client Integration: Network NPC Sync & Game Wiring | `MEDIUM` | `["ticket-026", "ticket-027"]` | `PARALLEL_ELIGIBLE` | `IN_PROGRESS` |
+| `ticket-029` | NPC Regression Suite & Spec Reconciliation | `MEDIUM` | `["ticket-028"]` | `BLOCKED_ON_028` | `PLANNED` |
+
+## 3. Blast Radius & Scope Collision Matrix
+
+| Ticket ID | Declared File Scope | Overlap Detection & Rationale |
+| :--- | :--- | :--- |
+| `ticket-024` | `src/entities/npc_content.js` (new), `test/test_npc_content.py` (new) | New files only. Disjoint from all. |
+| `ticket-025` | `src/world/npc_paths.js` (new), `src/world/npc_path_manifest.json` (new), `test/test_npc_paths.py` (new). Read-only use of `src/world/field.js`. | New files only. Disjoint from 024, so runs concurrently. |
+| `ticket-026` | `src/entities/npc.js`, `test/test_npc_entity.py` (new) | Consumes 024 content API and 025 paths. Sole owner of npc.js. |
+| `ticket-027` | `src/net/protocol.js`, `party/server.js`, `server/server.py`, `test/test_npc_server.py` (new) | Disjoint from 026 (no shared files) but needs 025 manifest, so can run concurrently with 026. |
+| `ticket-028` | `src/main.js`, `src/net/network.js`, `src/net/ws_network.js` | Needs 026 NPC API and 027 protocol messages. Sole owner of main.js for this roadmap. |
+| `ticket-029` | `test/test_npcs.py`, `test/run_tests.py`, `openspec/specs/overview.md` | Final integration; serialized last. |
+
+## 4. Execution DAG Diagram
+
+```mermaid
+flowchart TD
+    T024["ticket-024: NPC Content Tables [PARALLEL_ELIGIBLE]"]
+    T025["ticket-025: Obstacle-Free Path Library [PARALLEL_ELIGIBLE]"]
+    T026["ticket-026: NPC Entity Rewrite [BLOCKED_ON_024_025]"]
+    T027["ticket-027: Global NPC Protocol & Servers [BLOCKED_ON_025]"]
+    T028["ticket-028: Client Integration [BLOCKED_ON_026_027]"]
+    T029["ticket-029: Regression Suite & Spec Reconciliation [BLOCKED_ON_028]"]
+
+    T024 --> T026
+    T025 --> T026
+    T025 --> T027
+    T026 --> T028
+    T027 --> T028
+    T028 --> T029
+```
+
+## 5. Progress & Milestone Completion Criteria
+- [x] Ticket-024 completed and merged to `main`.
+- [x] Ticket-025 completed and merged to `main`.
+- [x] Ticket-026 completed and merged to `main`.
+- [x] Ticket-027 completed and merged to `main`.
+- [x] Ticket-028 completed and merged to `main`.
+- [x] Ticket-029 completed and merged to `main`.
+- [x] End-to-end tests pass (`python3 test/run_tests.py`).
+- [x] Canonical specifications reconciled in `openspec/specs/`.
+
+```
+
+## FILE: openspec/roadmaps/npc-polish-and-cleanup.md
+```markdown
+---
+roadmap_id: "npc-polish-and-cleanup"
+milestone: "npc-polish-and-cleanup"
+title: "Global NPC Polish, Render Optimization & Platformer Pruning"
+version: "1.0.0"
+created_at: "2026-10-31T14:37:00Z"
+status: "COMPLETED"
+completed_at: "2026-10-31T15:24:00Z"
+---
+
+# Milestone Roadmap: Global NPC Polish, Render Optimization & Platformer Pruning
+
+## 1. Milestone Objective & Scope
+This roadmap addresses three key initiatives originating from gameplay observations, profiling, and codebase maintenance:
+1. **Edge-to-Edge NPC Paths, Realistic Pacing & Authoritative Sync Hardening (`ticket-030`)**:
+   - Replace interior looping paths with 10 point-to-point edge-to-edge paths spanning map boundaries.
+   - Reduce NPC speeds (walker: 22 px/s, jogger: 48 px/s) and adjust leg animation multipliers.
+   - Fix client startup solo-spawn race condition before WebSocket connection.
+   - Pre-warm initial server spawns across routes with staggered lifetimes so NPCs don't start simultaneously at distance zero.
+   - Add entry fade-in and smooth waypoint turning angles.
+2. **Static Ground & Path Offscreen Baking (`ticket-031`)**:
+   - Profile/render optimization: bake 3200x2400 static mowing stripes, grass hashes, and gravel paths to an `OffscreenCanvas` on initialization.
+   - Blit viewport window using `drawImage` during `renderGround()` to eliminate per-frame Math.sin and Bezier path stroking.
+3. **Dead Platformer Code Pruning (`ticket-032`)**:
+   - Remove deprecated side-scrolling platformer files (`src/engine/physics.js`, `src/entities/ziggy.js`, `src/entities/collectibles.js`, `src/entities/hazards.js`, `src/level/park_level.js`, and `test/test_physics.py`).
+   - Clean tombstone legacy references where safe without breaking regression tests.
+
+---
+
+## 2. Ticket Dependency Matrix
+
+| Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `ticket-030` | Edge-to-Edge Global NPC Paths, Relaxed Pacing, and Authoritative Sync Hardening | `HIGH` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-031` | Static Ground & Path Offscreen Baking (Render Optimization) | `LOW` | `["ticket-030"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-032` | Dead Platformer Code Pruning | `LOW` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+
+---
+
+## 3. Blast Radius & Scope Collision Matrix
+
+| Ticket ID | Declared File Scope | Overlap Detection & Rationale |
+| :--- | :--- | :--- |
+| `ticket-030` | `src/entities/npc_content.js`, `src/entities/npc.js`, `src/world/npc_paths.js`, `src/world/npc_path_manifest.json`, `party/server.js`, `server/server.py`, `src/main.js`, `src/net/network.js`, `test/test_npc_*.py` | Primary focus on NPC subsystem and client networking. Note: Touches `src/main.js` (NPC startup race condition). |
+| `ticket-031` | `src/world/field.js`, `src/main.js` | Touches `src/world/field.js` and `renderGround()` in `src/main.js`. If run concurrently with `ticket-030`, touches different functions in `src/main.js`, but serialized execution or disjoint merge recommended to prevent conflicts. |
+| `ticket-032` | `src/engine/physics.js`, `src/entities/ziggy.js`, `src/entities/collectibles.js`, `src/entities/hazards.js`, `src/level/park_level.js`, `test/test_physics.py` | Completely disjoint file set (deleting obsolete files). Completely safe for parallel execution. |
+
+---
+
+## 4. Execution DAG Diagram
+
+```mermaid
+flowchart TD
+    T030["ticket-030: Edge-to-Edge Global NPC Paths & Hardened Sync [PARALLEL_ELIGIBLE]"]
+    T031["ticket-031: Static Ground & Path Offscreen Baking [BLOCKED_ON_030]"]
+    T032["ticket-032: Dead Platformer Code Pruning [PARALLEL_ELIGIBLE]"]
+
+    T030 --> T031
+```
+
+> [!NOTE]
+> `ticket-030` and `ticket-032` can run immediately in parallel because their file sets are completely disjoint. `ticket-031` is ordered after `ticket-030` because both touch `src/main.js`, eliminating any merge conflict risk.
+
+---
+
+## 5. Progress & Milestone Completion Criteria
+- [x] Ticket-030 completed and merged to `main`.
+- [x] Ticket-031 completed and merged to `main`.
+- [x] Ticket-032 completed and merged to `main`.
+- [x] Full automated test suite passes (`python3 test/run_tests.py`).
+- [ ] Deployment live on Cloudflare Workers (`https://play.zero-chat.workers.dev`).
+
+
+```
+
+## FILE: openspec/roadmaps/the-downs.md
+```markdown
+---
+roadmap_id: "the-downs"
+milestone: "the-downs-expansion"
+title: "The Downs Social Sandbox Expansion"
+version: "1.0.0"
+created_at: "2026-10-11T19:20:00Z"
+completed_at: "2026-10-12T19:47:00Z"
+status: "COMPLETED"
+---
+
+# Milestone Roadmap: The Downs Social Sandbox Expansion
+
+## 1. Milestone Objective & Scope
+Transform *Virtual Dog Walker* into **"The Downs"**, inspired by the authentic geography of **Clifton and Durdham Downs** in Bristol, UK. Incorporate enhanced 2D aesthetics, comprehensive human and canine customization, dog personality dynamics and leash physics, canine stray and poop/bin mechanics, ad-hoc proximity group chat with tombstone lifecycles, autonomous park NPCs (walkers and joggers), and real-time UTC day/night sepia twilight with live Clifton Downs weather.
+
+## 2. Ticket Dependency Matrix
+
+| Ticket ID | Title | Thinking Level | Depends On | Concurrency Track | State |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| `ticket-011` | The Downs Map Redesign, Bins & Nature Audio | `HIGH` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-012` | Character & Canine Customization & 2D Aesthetics | `MEDIUM` | `[]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-013` | Canine Personality System & Leash Dynamics | `HIGH` | `["ticket-012"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-014` | Canine Stray Run-Off & Dog Poop/Bin Mechanics | `MEDIUM` | `["ticket-011", "ticket-013"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-015` | Ad-Hoc Proximity Group Chat & Tombstones | `HIGH` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-016` | Park NPCs: Autonomous Walkers & Joggers | `MEDIUM` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+| `ticket-017` | UTC Day/Night Twilight & Clifton Downs Weather | `MEDIUM` | `["ticket-011"]` | `PARALLEL_ELIGIBLE` | `COMPLETED` |
+
+## 3. Blast Radius & Scope Collision Matrix
+
+| Ticket ID | Declared File Scope | Overlap Detection & Blast Radius Rationale |
+| :--- | :--- | :--- |
+| `ticket-011` | `src/world/field.js`, `src/systems/audio.js`, `index.html`, `test/test_downs_map.py` | Expanded world bounds (3200x2400), geography, bins, and nature soundscape. Completed. |
+| `ticket-012` | `src/entities/owner.js`, `src/entities/companion_dog.js` (draw), `src/ui/social_hud.js`, `src/style.css` | Avatar rendering and customizer UI. Disjoint from world rendering. |
+| `ticket-013` | `src/entities/companion_dog.js` (AI/leash), `src/ui/social_hud.js`, `src/net/protocol.js` | Extends companion dog personality and leash physics. Depends on dog model in 012. |
+| `ticket-014` | `src/entities/companion_dog.js`, `src/entities/waste.js`, `src/ui/navigation_arrow.js`, `src/main.js` | Stray run-off and poop pickup. Integrates bins from 011 and obedience from 013. |
+| `ticket-015` | `src/ui/proximity_chat.js`, `src/entities/tombstone.js`, `party/server.js`, `src/net/protocol.js` | Spatial chat clusters and tombstones. Isolated social subsystem. |
+| `ticket-016` | `src/entities/npc.js`, `src/world/field.js`, `src/main.js` | Ambient pedestrian walkers and joggers along The Downs trails. |
+| `ticket-017` | `src/world/environment.js`, `src/systems/weather.js`, `src/world/field.js`, `src/main.js` | Canvas lighting overlay, particle shaders, and live Open-Meteo weather client. |
+
+## 4. Execution DAG Diagram
+
+```mermaid
+flowchart TD
+    T011["ticket-011 (The Downs Map, Bins & Audio) [COMPLETED]"]
+    T012["ticket-012 (Character & Canine Customization) [COMPLETED]"]
+    T013["ticket-013 (Dog Personality & Leash Dynamics) [COMPLETED]"]
+    T014["ticket-014 (Stray Run-Off & Poop/Bin Mechanics) [COMPLETED]"]
+    T015["ticket-015 (Ad-Hoc Proximity Chat & Tombstones) [COMPLETED]"]
+    T016["ticket-016 (Park NPCs: Walkers & Joggers) [COMPLETED]"]
+    T017["ticket-017 (UTC Day/Night & Clifton Weather) [COMPLETED]"]
+
+    T012 --> T013
+    T011 --> T014
+    T013 --> T014
+    T011 --> T015
+    T011 --> T016
+    T011 --> T017
+```
+
+## 5. Progress & Milestone Completion Criteria
+- [x] Ticket-011 completed and merged to `main`.
+- [x] Ticket-012 completed and merged to `main`.
+- [x] Ticket-013 completed and merged to `main`.
+- [x] Ticket-014 completed and merged to `main`.
+- [x] Ticket-015 completed and merged to `main`.
+- [x] Ticket-016 completed and merged to `main`.
+- [x] Ticket-017 completed and merged to `main`.
+- [x] End-to-end integration tests pass across combined deliverables.
+- [x] Canonical specifications reconciled in `openspec/specs/`.
+
+```
+
+## FILE: openspec/specs/overview.md
+```markdown
+# Canonical System Specification: The Downs Social Sandbox
+
+## 1. System Overview
+**Virtual Dog Walker (The Downs)** is a relaxing, charming multiplayer sandbox built entirely in the browser using HTML5 Canvas 2D, Vanilla ES6 JavaScript, the Web Audio API, Cloudflare PartyServer with Durable Objects, and dedicated local microserver fallback.
+
+Players inhabit the meadow as an **Owner** and **Dog companion** walking together across an expansive, sunlit open park space inspired by **The Downs** (Clifton & Durdham Downs) in Bristol, UK. Anyone can open the park in their browser and immediately walk alongside other online players in **The Commons** with zero room codes or server setup required.
+
+---
+
+## 2. World & Rendering Architecture
+- **The Downs Parkland (`src/world/field.js`)**:
+  - Expansive 3200 × 2400 px coordinate space featuring authentic Bristol Downs geography:
+    - **Ladies Mile Avenue**: Diagonal Cotswold gravel boulevard with sweet chestnut and lime tree borders.
+    - **Sea Walls & Avon Gorge Viewpoints**: Western cliff rim with limestone outcrops, stone parapet wall with wrought iron railings, and panoramic teak benches.
+    - **Durdham Down Grasslands & Water Tower**: Wide open northern greens with subtle mown lawn striping and Victorian stone Water Tower landmark pavilion (`x: 2400, y: 450`).
+    - **Clifton Down Woodland Copse**: Southern sweet chestnut and oak groves with curving woodland dirt footpaths.
+  - Multi-tone procedural turf palette (`#3e6b2c`, `#335824`, `#4c8237`), grass blade flecks, and wildflower meadows (buttercups, white clover, bluebells).
+  - 8 public park dog-waste bins strategically placed at path intersections and overlooks with collision resolution and depth-sorted rendering.
+  - 12 authentic Victorian cast-iron streetlamps with warm incandescent lighting cores (`#fef08a`, `glowRadius: 120px`).
+  - Active canine waste pile registry (`this.poopPiles`) and nearest-bin spatial queries (`getNearestBin(x, y)`).
+  - Ambient particle system: floating dandelion seeds/pollen and wind streaks.
+  - **Static Ground & Path Offscreen Canvas Baking (Render Optimization)**:
+    - Complete static park background (base turf, Avon cliff gradient, mown stripes, procedural grass blade flecks, gravel pathways, and wildflowers) is pre-rendered once at initialization into a 3200 × 2400 `OffscreenCanvas` (`this.bakedCanvas`, with DOM `<canvas>` fallback).
+    - `renderGround(ctx, camera)` executes a single `ctx.drawImage()` call blitting only the visible camera viewport window from the baked canvas, eliminating per-frame `Math.sin()` noise loops and Bezier path stroking operations at 60 FPS.
+- **Camera Viewport**:
+  - Smooth exponential damping tracking (`Camera.follow`) centered on the player and clamped to 3200 × 2400 boundaries.
+- **Y-Sorted Depth Renderer**:
+  - Collects all scenery objects (trees, benches, bins, streetlamps, rocks, water tower), ambient NPCs, dynamic entities (owners, dogs, tennis balls), and terrain waste piles.
+  - Sorts by base Y coordinate (`depthY`) so entities and scenery overlap with natural 2D depth.
+- **Atmospheric Environment & Diurnal Lighting Pass (`src/world/environment.js`)**:
+  - Full-screen real-time lighting pass based on local Bristol / Europe/London time:
+    - *Dawn* (`05:00–07:00`): Soft lavender-rose ambient wash.
+    - *Day* (`07:00–17:00`): Crisp, bright daylight sunlight wash.
+    - *Golden Hour* (`17:00–19:30`): Rich sepia-tinted amber twilight gradient.
+    - *Dusk* (`19:30–21:30`): Atmospheric indigo shadow.
+    - *Night* (`21:30–05:00`): Deep charcoal/navy shadow mask (`destination-out`) punctured by radial illumination halos around streetlamps, the Water Tower beacon, and walking players.
+  - Weather particle overlay system (angled rain streaks, ground splash ripples, mist specks, undulating horizontal fog sheets, and sun-glint dust motes).
+
+---
+
+## 3. Entities, Canine Companion & Ambient Life
+- **Owner Avatar (`src/entities/owner.js`)**:
+  - 8-directional movement (<kbd>WASD</kbd> / touch joystick) with acceleration and deceleration.
+  - Expressive 2D top-down / soft isometric vector rendering with directional facial cues, natural walking leg oscillation, dual-tone shoes, torso jacket with collar lapels, and arm swing.
+  - Customizable hairstyles (`SHORT`, `WAVY`, `PONYTAIL`, `BEANIE`) with layered rear plumes and forehead bangs.
+  - Diverse palette tokens for skin tones, hair colors, jacket colors, pants colors, and player names.
+  - Clean baseline player naming: default name is `"Walker"` with local avatar nametag dynamically displaying `"${this.name} (You)"` in yellow (`#fde047`), while remote avatars display `"${this.name}"` in white (`#f8fafc`).
+  - Glassmorphic tabbed customizer modal (👤 Walker, 🐕 Dog Companion) with `localStorage` profile persistence and full multiplayer handshake synchronization.
+  - Waste collection state (`hasPoopBag`): displays bag icon and routes player to nearest dog-waste bin.
+  - Speech bubble and emote rendering above avatar heads.
+- **Companion Dog (`src/entities/companion_dog.js`)**:
+  - 5 distinct canine breed coat presets:
+    - Cocker Spaniel (Ziggy - Chocolate & Tan `#2E1A14`, `#D89B54` with honey eyebrow pips and white bib)
+    - Golden Retriever (`#D4A373` honey gold with warm buff shading)
+    - Black Lab (`#1E2022` sleek charcoal black with pale bib)
+    - Jack Russell Terrier (`#F8FAFC` crisp white base with chestnut eye patches and ear markings)
+    - Irish Red Setter (`#7C2D12` deep mahogany red with silky ear feathering)
+  - Customizable collar colors (`teal`, `red`, `blue`, `gold`, `purple`) with a reflective metallic gold charm tag.
+  - Canine Personality Engine (attributes 1–5):
+    - *Playfulness*: Scales trot/sprint speeds, tail wag frequencies, and play-bow inclinations.
+    - *Shyness*: Governs approach berthes and avoidance distances when passing other dogs or park pedestrians.
+    - *Barkyness*: Controls vocalization frequencies, greeting barks, and reactions to joggers.
+    - *Obedience*: Scales leash responsiveness, heel arrival deadband, and idle stray run-off probability.
+  - Overhauled Leash Dynamics:
+    - When leashed, dog strictly respects max 105px lead length and never breaks into ball fetching; looks towards thrown balls with eager pull and renders lead taut under tension.
+  - Multi-state steering AI (`FOLLOWING`, `ROAMING`, `SOCIAL_GREET`, `PLAY_BOW`, `IDLE_SNIFF`, `SITTING`, `FETCHING`, `BARKING`, `RECALLED`, `LOST`, `POOPING`):
+    - *Idle Stray Run-Off Engine*: Standing still without whistling for >35s triggers a stray roll inversely weighted by obedience (50% down to 1%). When triggered, dog sprints to a secluded park spot, enters `DogState.LOST`, and activates the HUD compass arrow. Approaching within 55px or whistling recalls the dog.
+    - *Poop Lifecycle*: Periodic event while walking (~150–240s); dog pauses in squatted posture (`DogState.POOPING`) and spawns a depth-sorted `PoopPile` entity on the turf.
+    - *Canine Social Greetings*: Detects other dogs within 110px, initiating mutual sniffing greetings, circular orbits, rapid tail wagging, and play-bows.
+    - *Whistle Recall & Timed Heel*: Whistle command triggers immediate sprint recall back to the owner (`290 px/s`), locking into close heel following for 10 seconds.
+- **Park Dog Waste & Bins (`src/entities/waste.js`, `src/world/field.js`)**:
+  - `PoopPile` entities render with organic layered coils and a proximity interaction pulse.
+  - Contextual interaction (<kbd>E</kbd> / touch tap): walking near waste (<38px) collects it in a poop bag and points the compass arrow to the nearest park bin.
+  - Walking to a dog bin (<42px) with a waste bag prompts disposal, clears the bag, plays a chime, and removes the navigation arrow.
+- **Directional Navigation Compass Arrow (`src/ui/navigation_arrow.js`)**:
+  - Reusable glassmorphic HUD indicator clamped to viewport margin perimeter.
+  - Smooth outward chevron rotation along bearing angle, pulse animation, dynamic emojis (`🐕` for lost dog, `🗑️` for nearest bin), and distance badge in meters (`dist / 20`).
+- **Park NPCs: Autonomous Walkers & Joggers (`src/entities/npc.js`, `src/entities/npc_content.js`, `src/world/npc_paths.js`, `src/world/npc_path_manifest.json`)**:
+  - **Global Server-Authoritative Spawning**:
+    - Server authority (PartyServer Durable Objects & dedicated microserver fallback) orchestrates NPC spawn schedules, emitting `NPC_SPAWN`, `NPC_DESPAWN`, and `NPC_SNAPSHOT` packets.
+    - Server maintains an active subset of 5 concurrent NPCs across available precomputed paths.
+    - `ParkServer.onConnect()` triggers `initSpawner()` whenever `activeNpcs.size === 0`, ensuring resilient pre-warmed pool creation regardless of underlying connection registration ordering in the server runtime.
+    - Late-joining clients receive `NPC_SNAPSHOT` with original `spawnTime` and immediately simulate current mid-path placement.
+    - Solo / offline fallback: when uncoordinated or offline, client autonomously runs a local spawner maintaining 5 active NPCs.
+  - **Deterministic Client Simulation**:
+    - Zero per-frame network traffic; clients simulate movement deterministically from `spawnTime`, path speed, and PRNG (`mulberry32`).
+    - Finite lifecycle: spawn -> deterministic path traversal -> 0.5s fade out -> despawn -> automatic replacement spawn.
+  - **Obstacle-Free Edge-to-Edge Precomputed Path Library**:
+    - 10 point-to-point routes verified completely clear of trees, benches, dog-waste bins, streetlamps, limestone rock outcrops, and the Water Tower landmark across The Downs (`distance >= 14 + obstacleRadius + 6 px`).
+    - All paths strictly originate inside the stone perimeter wall boundaries (`75 <= x <= 140` or `3060 <= x <= 3125`, `75 <= y <= 140` or `2260 <= y <= 2325`, `hypot(start - end) >= 1200 px`) and terminate at opposing perimeter map boundaries, eliminating mid-meadow popping.
+    - Central Meadow & Landmark Routing: At least 7 of 10 paths traverse intermediate waypoints through the central park interior (`900 <= x <= 2500` and `450 <= y <= 1450`), routing along gravel avenues past Central Meadow (`1350, 1000`) and the Durdham Down Water Tower clearing (`2250, 580`).
+    - Symmetrical 0.5s entry fade-in and 0.5s exit fade-out with smooth tangent heading angle interpolation on waypoint turns. Newly spawned NPCs start with `opacity >= 0.25` (1.0 at distance 0) preventing invisible frozen states.
+    - Robust timestamp normalization: `toSeconds(t)` normalizes millisecond server timestamps (`> 1e10`) to seconds without double conversion.
+  - **Distinctive Naming & Nametag Styling**:
+    - Naming convention: `<First> the <Walker|Jogger>` (e.g. "Mary the Walker", "Steve the Jogger") derived deterministically from `seed`.
+    - Distinctive visual styling (`NPC_TAG_STYLE`): italic font (`italic 11px 'Outfit', sans-serif`), translucent dark pill backdrop, and warm golden border and text (`#fef08a`), clearly distinguishing NPCs from player avatars.
+  - **Relaxed Walking & Jogging Speeds**:
+    - Grounded, relaxed movement velocities and natural leg-stride stepping multipliers:
+      - `Walker`: 22 px/s (`walkPhase` multiplier 6.2).
+      - `Jogger`: 48 px/s (`walkPhase` multiplier 9.8) with athletic stride bobbing.
+  - **Pre-Warmed Staggered Spawning**:
+    - Server spawners pre-warm initial NPCs with staggered negative offsets (15% to 85% of path length) so initial NPCs spawn distributed mid-path across distinct routes rather than emerging simultaneously at distance 0.
+    - Local fallback spawner is guarded against connection race conditions during initial socket negotiation.
+  - **Ambient Seeded Speech Bubbles**:
+    - Seeded deterministic speech timeline firing every 6–14 seconds.
+    - Overhead speech bubbles render for ~4.0 seconds.
+    - Phrase palette: 85% common park/weather remarks and 15% whimsical/quirky observations.
+  - **Canine Companion Reactions & Depth Sorting**:
+    - Dogs react according to personality traits: high barkyness (>= 3) barks at passing joggers, high shyness (>= 3) steers to maintain avoidance berth, high playfulness (>= 4) elicits tail wags and play-bows.
+    - Continuous Y-sorted depth rendering (`depthY = y + 12`) seamlessly interleaves NPCs with scenery, owners, dogs, and tennis balls.
+- **Tennis Ball Toy (`src/entities/toy.js`)**:
+  - 2.5D ballistic trajectory with gravity (720 px/s²), ground shadow scaling, bounce restitution (0.62), and rolling friction.
+  - Off-leash dogs detect thrown balls, sprint at 290 px/s, attach ball to mouth, and return it to the owner's feet.
+
+---
+
+## 4. Universal Networking & Social Architecture
+- **Ad-Hoc Proximity Group Chat & Spatial HUD (`src/ui/proximity_chat.js`, `src/ui/social_hud.js`, `src/style.css`)**:
+  - Clusters form dynamically when 2+ players walk within 200px of each other.
+  - **Top-Left Header Purity**: "Share Park" button has been completely excised from the UI. The header strictly displays `🌳 The Downs`, and the status badge displays `Online` on connect (removing legacy "Clifton Commons" references).
+  - **Top-Right Action Dock**: Fixed glassmorphic dock containing the circular group chat toggle button (`#chat-toggle-btn` with 💬 icon) and the adjacent Style customizer cog button (`#btn-customize` with ⚙️ icon, 8px gutter).
+  - **Bottom Toolbar Removal**: The legacy `#controls-hint` keybinding toolbar has been removed from the bottom of the game viewport.
+  - **Hotkeys**: Pressing <kbd>C</kbd> toggles the proximity group chat sidebar open and closed (safely guarded so typing in chat inputs never triggers the hotkey).
+  - **Streamlined Chat Inputs**:
+    - Speech bubble chat input (`#chat-container`) displays exclusively `#chat-input` with quick emoji buttons removed.
+    - Proximity group chat window (`#proximity-chat-panel`) displays exclusively a full-width `#proximity-chat-input` text box with emoji buttons and the send button removed (Enter key submits messages).
+  - **Auto-Unhide Trigger**: Any chat message sent or received while in proximity automatically expands and unhides the sidebar.
+  - **5-Minute Message Retention Engine**: When players leave proximity, a 300-second retention timer counts down per departed peer. Parted messages are cleanly purged from the sidebar history and DOM upon expiry; timers are automatically canceled if the player returns to proximity.
+  - **Accessible Speaker Palette**: Dynamic, high-contrast, accessible color tokens assigned to each player on their first message, persisting throughout the session for both sender name and message text.
+  - **Spatial Speech Bubble Duality**: When players are in proximity, messages route exclusively to the sidebar with overhead avatar speech bubbles suppressed. When outside proximity, chat appears as an overhead speech bubble above the avatar and is not routed to the sidebar. Turf tombstones and parting drops have been completely eliminated to keep park turf pristine.
+  - **Autonomous Canine Barking**: Manual barking controls (<kbd>B</kbd> key and touch bark button) have been retired. Dogs vocalize exclusively of their own accord based on personality barkyness attributes, passerby proximity, and peer dog interactions.
+- **Multi-Transport Network Engine (`src/net/network.js`, `src/net/protocol.js`, `src/net/ws_network.js`)**:
+  - Transparent multi-mode polymorphic architecture:
+    1. **Cloudflare PartyServer Edge Mode**: Native Cloudflare Workers + Durable Objects (`party/server.js`), connecting canonically via `/parties/parkserver/${roomId}`.
+    2. **Dedicated WebSocket Microserver Mode**: Connects via native WebSockets (`ws://` or `wss://`) when launched via local server or `?server=...`.
+    3. **WebRTC P2P Fallback Mode**: Gracefully falls back to browser-to-browser PeerJS DataChannels if run without a server.
+  - Packet protocol: `HELLO`, `WELCOME`, `SYNC_STATE` (synchronizing position, leash state, and canine personality), `BALL_THROWN`, `BALL_SYNC`, `BARK`, `PET`, `CHAT_MESSAGE`, `EMOTE`, `PEER_LEFT`, `WHISTLE`.
+  - Edge relay server enforces authoritative `conn.id` stamping on all broadcasts.
+  - State broadcasts at 16Hz; `EntityInterpolator` provides smooth exponential damping (lerp) at 60fps while propagating discrete states instantly.
+
+---
+
+## 5. Live Clifton Weather & Sensory Soundscape
+- **Live Clifton Downs Weather Client (`src/systems/weather.js`)**:
+  - Queries Open-Meteo API for real-time Clifton coordinates (`51.464, -2.628`).
+  - Translates WMO weather codes into domain states (`CLEAR`, `OVERCAST`, `DRIZZLE`, `RAIN`, `FOG`).
+  - Resilient offline fallback using pseudo-seeded diurnal heuristics when network is unavailable.
+- **Procedural Nature Soundscape (`src/systems/audio.js`)**:
+  - Dual-filter low-pass pink noise with 0.1 Hz LFO for canopy wind.
+  - Multi-species authentic British birdsong synthesizer (Blackbird piping, European Robin trills, Woodpigeon cooing), diurnally modulated and suppressed during heavy rain or night.
+  - Procedural rain synthesis: dual-filter pink noise graph modulated dynamically by precipitation type (`DRIZZLE`, `RAIN`).
+  - Squall effects: low-frequency procedural thunder rumbles and modulated wind gusts.
+  - Formant-filtered canine barks, footsteps, and acoustic training whistle chirp.
+
+---
+
+## 5. Fetch Mechanics & Toy Lifecycle
+- **Tennis Ball Possession Lifecycle (`src/entities/toy.js`)**:
+  - `TennisBall` encapsulates an `inOwnerPossession` state flag and `retrieveByOwner()` lifecycle handler.
+  - While in owner possession (`inOwnerPossession === true`), physics integration, collision detection, and canvas draw calls return immediately with zero per-frame rendering overhead.
+- **Canine Fetching & Perimeter Dynamics (`src/entities/companion_dog.js`)**:
+  - Dogs in `DogState.FETCHING` are explicitly exempt from the off-leash 230px `maxRoam` perimeter clamp, allowing unrestricted pursuit of thrown balls across the entire park landscape up to obstacle and world boundaries.
+  - Returning to the owner with the ball triggers `retrieveByOwner()` on contact (`dist <= 36`), seamlessly stowing the ball, rewarding the dog with happiness and visual heart emotes, and returning canine state to following/roaming.
+- **Single Active Ball Restriction & HUD Feedback (`src/main.js`, `src/ui/touch_controls.js`)**:
+  - `canThrowBall()` strictly blocks throws unless the ball is stowed in owner possession and not currently in flight, rolling, carried, or being fetched.
+  - Attempting to throw while a ball is in play triggers non-intrusive HUD toast feedback (`"Wait for your dog to return the ball!"`).
+  - Direct owner pickup safeguard stows uncarried resting balls when walked over within 32px.
+  - Virtual touch controls (`TouchControls.setThrowEnabled`) dynamically dim and disable the `#btn-touch-throw` touch button during active throws.
+
+---
+
+## 7. Mobile Ergonomics & Responsive Touch Architecture
+- **Virtual Touch Controller (`src/ui/touch_controls.js`)**:
+  - Virtual analog joystick with dynamic thumb tracking, 10% deadzone threshold, 50px maximum deflection clamp, and normalized `(vx, vy)` vector output.
+  - Multi-touch isolation using explicit touch identifiers (`joystickTouchId`).
+  - Glassmorphic touch action pad (Throw 🎾, Pet ❤️, Leash 🦮/🐕, Whistle 📯, Chat 💬, Pick up waste 🟤).
+  - Direct canvas tap interactions: tap-to-throw tennis ball, tap-to-pet dog, tap-to-pickup poop pile, tap-to-dispose bin.
+- **Mobile Viewport Constraints (`index.html`, `src/style.css`)**:
+  - Viewport configured with `viewport-fit=cover, maximum-scale=1.0, user-scalable=no`, `touch-action: none`, and dynamic safe-area insets (`env(safe-area-inset-top)` / `bottom`).
+
+---
+
+## 8. Test Suite & CI/CD
+- `python3 test/run_tests.py`: Comprehensive test runner executing 27 test suites covering:
+  - Physics ballistics, arrival steering, leash clamping and off-lead rendering.
+  - Ball possession lifecycle, canine fetch perimeter exemption, and single active ball limits (`test_fetching_mechanics.py`).
+  - Real-time leash synchronization, entity interpolator discrete propagation, network packet schemas.
+  - Dog personality scaling, obedience-weighted stray probability, leash pulling physics.
+  - Directional navigation arrow bearing math, viewport ray-box clamping, target lifecycle.
+  - Waste pile lifecycle, spatial bin querying, pickup/disposal interactions.
+  - Ambient NPC deterministic polyline simulation, finite lifecycle fading, speech timelines, and nametag styling (`test_npc_entity.py`).
+  - Obstacle-free path verification, manifest integrity, and coordinate bounds (`test_npc_paths.py`).
+  - NPC content tables, name generation, speeds, mulberry32 PRNG, and speech phrases (`test_npc_content.py`).
+  - Global server spawner, snapshot broadcasts, pool maintenance, and room cleanup (`test_npc_server.py`, `test_partyserver.py`).
+  - Multi-client synchronization, late joiner placement, solo fallback spawner, and network event wiring (`test_npc_client.py`).
+  - Full NPC regression suite and end-to-end multi-client synchronization (`test_npcs.py`).
+  - Diurnal lighting calculation, Open-Meteo weather response decoding, particle overlays.
+  - Microserver room routing, PartyServer contracts, viewport meta attributes, safe-area CSS rules.
+  - Top-bar HUD reorganization, top-right downward chat sidebar, toggle and auto-unhide triggers.
+  - 5-Minute departure retention countdown, message purging, speaker color persistence.
+  - Avatar overhead speech bubble vs proximity sidebar exclusivity.
+- `.github/workflows/ci.yml`: Automated GitHub Actions pipeline running test suites on every push/PR with a 3-minute safety timeout, followed by auto-deploy to Cloudflare Workers on `main`.
 
 ```
 
@@ -1331,8 +6587,14 @@ fi
 
 let wasmSimInstance = null;
 let initPromise = null;
+let simWorldWidth = 3200.0;
+let simWorldHeight = 2400.0;
+// True once the exact field obstacle set has been uploaded to the Wasm sim (see syncWorldObstacles).
+let worldObstaclesReady = false;
 
 export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0) {
+  simWorldWidth = worldWidth;
+  simWorldHeight = worldHeight;
   if (wasmSimInstance) return wasmSimInstance;
   if (initPromise) return initPromise;
 
@@ -1559,13 +6821,214 @@ export function sampleNpcState(waypoints, speed, spawnTime, now) {
 }
 
 
+// ---------------------------------------------------------------------------------------------
+// Authoritative simulation helpers (dog_walker_core). Every helper has a behaviourally
+// identical JS fallback used when Wasm is unavailable (headless tests, load failure) or when
+// the world data has not been uploaded yet.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * Uploads the exact field obstacle set to the Wasm sim so `resolveFieldCollision` can delegate.
+ * Safe to call repeatedly (e.g. after the field is rebuilt). Returns true when Wasm is active.
+ */
+export function syncWorldObstacles(field) {
+  worldObstaclesReady = false;
+  if (!wasmSimInstance || !field || typeof wasmSimInstance.set_world_obstacles !== 'function') return false;
+  if (typeof field.getWorldObstacles !== 'function') return false;
+  if (field.width !== simWorldWidth || field.height !== simWorldHeight) return false;
+  try {
+    worldObstaclesReady = wasmSimInstance.set_world_obstacles(JSON.stringify(field.getWorldObstacles())) === true;
+  } catch (e) {
+    worldObstaclesReady = false;
+  }
+  return worldObstaclesReady;
+}
+
+export function isWorldObstaclesReady() {
+  return worldObstaclesReady;
+}
+
+/** Resolves a circle entity against the field (Wasm authority, `field.resolveCircleCollision` fallback). */
+export function resolveFieldCollision(entity, radius, field) {
+  if (wasmSimInstance && worldObstaclesReady && typeof wasmSimInstance.resolve_field_collision === 'function') {
+    const res = wasmSimInstance.resolve_field_collision(entity.x, entity.y, radius);
+    entity.x = res[0];
+    entity.y = res[1];
+    return;
+  }
+  if (field) {
+    const resolved = field.resolveCircleCollision(entity.x, entity.y, radius);
+    entity.x = resolved.x;
+    entity.y = resolved.y;
+  }
+}
+
+/** Integrates both ear springs towards JS-computed targets (Wasm authority, exact JS fallback). */
+export function stepEarSpringsToTargets(leftEar, rightEar, targetLeft, targetRight, springK, springDamp, dt) {
+  if (wasmSimInstance && typeof wasmSimInstance.step_ear_targets === 'function') {
+    const res = wasmSimInstance.step_ear_targets(
+      leftEar.angle, leftEar.vel,
+      rightEar.angle, rightEar.vel,
+      targetLeft, targetRight,
+      springK, springDamp, dt
+    );
+    leftEar.angle = res[0];
+    leftEar.vel = res[1];
+    rightEar.angle = res[2];
+    rightEar.vel = res[3];
+    return;
+  }
+  const leftForce = -springK * (leftEar.angle - targetLeft) - springDamp * leftEar.vel;
+  leftEar.vel += leftForce * dt;
+  leftEar.angle += leftEar.vel * dt;
+
+  const rightForce = -springK * (rightEar.angle - targetRight) - springDamp * rightEar.vel;
+  rightEar.vel += rightForce * dt;
+  rightEar.angle += rightEar.vel * dt;
+}
+
+/**
+ * One 2.5D tennis-ball ballistic step (gravity, bounce, rolling friction, world-edge bounce).
+ * `ball` needs x,y,z,vx,vy,vz,gravity,restitution,friction. Wasm authority only when the ball
+ * uses the default TennisBall tuning (so custom-tuned balls keep exact JS behaviour).
+ */
+export function stepToyBall(ball, dt, field) {
+  const usesDefaults = ball.gravity === 720 && ball.restitution === 0.62 && ball.friction === 0.94;
+  if (wasmSimInstance && field && usesDefaults && typeof wasmSimInstance.step_toy_ball === 'function') {
+    const res = wasmSimInstance.step_toy_ball(
+      ball.x, ball.y, ball.z, ball.vx, ball.vy, ball.vz, dt, field.width, field.height
+    );
+    ball.x = res[0];
+    ball.y = res[1];
+    ball.z = res[2];
+    ball.vx = res[3];
+    ball.vy = res[4];
+    ball.vz = res[5];
+    return;
+  }
+
+  // JS Fallback (exact original TennisBall.update ballistics)
+  ball.x += ball.vx * dt;
+  ball.y += ball.vy * dt;
+  ball.vz -= ball.gravity * dt;
+  ball.z += ball.vz * dt;
+
+  if (ball.z <= 0) {
+    ball.z = 0;
+    if (Math.abs(ball.vz) > 40) {
+      ball.vz = -ball.vz * ball.restitution;
+      ball.vx *= 0.82;
+      ball.vy *= 0.82;
+    } else {
+      ball.vz = 0;
+      ball.vx *= Math.pow(ball.friction, dt * 60);
+      ball.vy *= Math.pow(ball.friction, dt * 60);
+    }
+  }
+
+  if (field) {
+    const minX = 70;
+    const maxX = field.width - 70;
+    const minY = 70;
+    const maxY = field.height - 70;
+    if (ball.x < minX) { ball.x = minX; ball.vx = -ball.vx * 0.7; }
+    if (ball.x > maxX) { ball.x = maxX; ball.vx = -ball.vx * 0.7; }
+    if (ball.y < minY) { ball.y = minY; ball.vy = -ball.vy * 0.7; }
+    if (ball.y > maxY) { ball.y = maxY; ball.vy = -ball.vy * 0.7; }
+  }
+}
+
+/**
+ * Samples the in-progress part of an NPC polyline path (exact port of the interpolating branch
+ * of ParkNPC.setClock). `flat` = Float64Array/array [x0,y0,x1,y1,...]. Returns
+ * {x,y,vx,vy,angle,hasAngle}. Wasm authority with exact JS fallback.
+ */
+export function sampleNpcPath(flat, speed, distance) {
+  if (wasmSimInstance && typeof wasmSimInstance.sample_npc_path === 'function') {
+    const res = wasmSimInstance.sample_npc_path(flat, speed, distance);
+    return { x: res[0], y: res[1], vx: res[2], vy: res[3], angle: res[4], hasAngle: res[5] > 0.5 };
+  }
+
+  const n = Math.floor(flat.length / 2);
+  const segLens = [];
+  for (let i = 0; i < n - 1; i++) {
+    segLens.push(Math.hypot(flat[2 * i + 2] - flat[2 * i], flat[2 * i + 3] - flat[2 * i + 1]));
+  }
+  let accumulated = 0;
+  let interpolated = false;
+  let x = flat[0];
+  let y = flat[1];
+  let dx = 0;
+  let dy = 0;
+  let segLen = 0;
+  let activeIndex = -1;
+  let activeRemaining = 0;
+
+  for (let i = 0; i < segLens.length; i++) {
+    segLen = segLens[i];
+    if (accumulated + segLen >= distance) {
+      const remaining = distance - accumulated;
+      const segT = segLen > 0.000001 ? (remaining / segLen) : 0;
+      dx = flat[2 * i + 2] - flat[2 * i];
+      dy = flat[2 * i + 3] - flat[2 * i + 1];
+      x = flat[2 * i] + dx * segT;
+      y = flat[2 * i + 1] + dy * segT;
+      interpolated = true;
+      activeIndex = i;
+      activeRemaining = remaining;
+      break;
+    }
+    accumulated += segLen;
+  }
+
+  if (!interpolated && n >= 2) {
+    const lastIdx = n - 2;
+    dx = flat[2 * lastIdx + 2] - flat[2 * lastIdx];
+    dy = flat[2 * lastIdx + 3] - flat[2 * lastIdx + 1];
+    segLen = segLens[lastIdx] || 0;
+    x = flat[2 * lastIdx + 2];
+    y = flat[2 * lastIdx + 3];
+    activeIndex = lastIdx;
+    activeRemaining = segLen;
+  }
+
+  let angle = 0;
+  let hasAngle = false;
+  if (Math.hypot(dx, dy) > 0.000001) {
+    const segAngle = Math.atan2(dy, dx);
+    const distToNext = segLen - activeRemaining;
+    if (activeIndex >= 0 && activeIndex + 1 < segLens.length && distToNext < 25.0) {
+      const nextAngle = Math.atan2(
+        flat[2 * activeIndex + 5] - flat[2 * activeIndex + 3],
+        flat[2 * activeIndex + 4] - flat[2 * activeIndex + 2]
+      );
+      let angleDiff = nextAngle - segAngle;
+      while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
+      while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
+      const blendFactor = Math.max(0, Math.min(0.5, (1.0 - distToNext / 25.0) * 0.5));
+      angle = segAngle + angleDiff * blendFactor;
+    } else {
+      angle = segAngle;
+    }
+    hasAngle = true;
+  }
+  return {
+    x,
+    y,
+    vx: segLen > 0.000001 ? (dx / segLen) * speed : 0,
+    vy: segLen > 0.000001 ? (dy / segLen) * speed : 0,
+    angle,
+    hasAngle
+  };
+}
+
 ```
 
 ## FILE: src/entities/companion_dog.js
 ```javascript
 // Companion Dog Entity - Canine Steering AI, Floppy Ear Springs, Leash Mechanics & Ball Fetching
 import { PoopPile } from './waste.js';
-import { stepLeashConstraint } from '../engine/wasm_sim_bridge.js';
+import { stepLeashConstraint, resolveFieldCollision, stepEarSpringsToTargets } from '../engine/wasm_sim_bridge.js';
 
 export const DogState = {
   FOLLOWING: 'FOLLOWING',
@@ -2078,9 +7541,7 @@ export class CompanionDog {
 
     // Obstacle and world boundary collisions
     if (field) {
-      const resolved = field.resolveCircleCollision(this.x, this.y, this.radius);
-      this.x = resolved.x;
-      this.y = resolved.y;
+      resolveFieldCollision(this, this.radius, field);
     }
 
     this.depthY = this.y + 6;
@@ -2093,15 +7554,8 @@ export class CompanionDog {
     const targetLeftEar = speedLag - trotBob + lateralLag;
     const targetRightEar = speedLag + trotBob - lateralLag;
 
-    // Left ear spring
-    const leftForce = -this.springK * (this.leftEar.angle - targetLeftEar) - this.springDamp * this.leftEar.vel;
-    this.leftEar.vel += leftForce * dt;
-    this.leftEar.angle += this.leftEar.vel * dt;
-
-    // Right ear spring
-    const rightForce = -this.springK * (this.rightEar.angle - targetRightEar) - this.springDamp * this.rightEar.vel;
-    this.rightEar.vel += rightForce * dt;
-    this.rightEar.angle += this.rightEar.vel * dt;
+    // Ear springs integrated by dog_walker_core (exact JS fallback in the bridge)
+    stepEarSpringsToTargets(this.leftEar, this.rightEar, targetLeftEar, targetRightEar, this.springK, this.springDamp, dt);
 
     // 5. Tail Wagging - scales wag frequency proportional to playfulness
     const movingWag = Math.hypot(this.vx, this.vy) > 10 ? 1.5 : 1.0;
@@ -2954,7 +8408,7 @@ import {
   ODD_PHRASES
 } from './npc_content.js';
 import { getNpcPath, NPC_PATHS } from '../world/npc_paths.js';
-import { sampleNpcState } from '../engine/wasm_sim_bridge.js';
+import { sampleNpcPath } from '../engine/wasm_sim_bridge.js';
 
 export const NPCState = {
   WALKING: 'WALKING',
@@ -3032,6 +8486,13 @@ export class ParkNPC {
         this.segmentLengths.push(segLen);
         this.totalLength += segLen;
       }
+    }
+
+    // Flat [x0,y0,x1,y1,...] copy for the dog_walker_core path sampler
+    this.flatWaypoints = new Float64Array(this.waypoints.length * 2);
+    for (let i = 0; i < this.waypoints.length; i++) {
+      this.flatWaypoints[2 * i] = this.waypoints[i].x;
+      this.flatWaypoints[2 * i + 1] = this.waypoints[i].y;
     }
 
     // Precompute finish time
@@ -3120,65 +8581,17 @@ export class ParkNPC {
         this.done = false;
       }
     } else {
-      let accumulated = 0;
-      let interpolated = false;
-      let dx = 0;
-      let dy = 0;
-      let segLen = 0;
-      let activeIndex = -1;
-      let activeRemaining = 0;
-
-      for (let i = 0; i < this.segmentLengths.length; i++) {
-        segLen = this.segmentLengths[i];
-        if (accumulated + segLen >= distance) {
-          const remaining = distance - accumulated;
-          const segT = segLen > 0.000001 ? (remaining / segLen) : 0;
-          const p1 = this.waypoints[i];
-          const p2 = this.waypoints[i + 1];
-          dx = p2.x - p1.x;
-          dy = p2.y - p1.y;
-          this.x = p1.x + dx * segT;
-          this.y = p1.y + dy * segT;
-          interpolated = true;
-          activeIndex = i;
-          activeRemaining = remaining;
-          break;
-        }
-        accumulated += segLen;
-      }
-
-      if (!interpolated && this.waypoints.length >= 2) {
-        const lastIdx = this.waypoints.length - 2;
-        const p1 = this.waypoints[lastIdx];
-        const p2 = this.waypoints[lastIdx + 1];
-        dx = p2.x - p1.x;
-        dy = p2.y - p1.y;
-        segLen = this.segmentLengths[lastIdx] || 0;
-        this.x = p2.x;
-        this.y = p2.y;
-        activeIndex = lastIdx;
-        activeRemaining = segLen;
-      }
-
+      // In-progress polyline sampling: dog_walker_core Wasm is the authority
+      // (exact JS fallback lives in the bridge).
+      const sample = sampleNpcPath(this.flatWaypoints, this.speed, distance);
+      this.x = sample.x;
+      this.y = sample.y;
       this.depthY = this.y + 12;
-      if (Math.hypot(dx, dy) > 0.000001) {
-        const segAngle = Math.atan2(dy, dx);
-        const distToNext = segLen - activeRemaining;
-        if (activeIndex >= 0 && activeIndex + 1 < this.segmentLengths.length && distToNext < 25.0) {
-          const nextP1 = this.waypoints[activeIndex + 1];
-          const nextP2 = this.waypoints[activeIndex + 2];
-          const nextAngle = Math.atan2(nextP2.y - nextP1.y, nextP2.x - nextP1.x);
-          let angleDiff = nextAngle - segAngle;
-          while (angleDiff < -Math.PI) angleDiff += Math.PI * 2;
-          while (angleDiff > Math.PI) angleDiff -= Math.PI * 2;
-          const blendFactor = Math.max(0, Math.min(0.5, (1.0 - distToNext / 25.0) * 0.5));
-          this.angle = segAngle + angleDiff * blendFactor;
-        } else {
-          this.angle = segAngle;
-        }
+      if (sample.hasAngle) {
+        this.angle = sample.angle;
       }
-      this.vx = segLen > 0.000001 ? (dx / segLen) * this.speed : 0;
-      this.vy = segLen > 0.000001 ? (dy / segLen) * this.speed : 0;
+      this.vx = sample.vx;
+      this.vy = sample.vy;
       if (elapsed > 0 && elapsed < 0.5) {
         this.opacity = 0.25 + 0.75 * (elapsed / 0.5);
       } else {
@@ -3885,6 +9298,7 @@ export function nextSpeechDelay(rng) {
 ## FILE: src/entities/owner.js
 ```javascript
 // Human Owner Player Avatar - 8-Way Movement, Customization & Interaction Controller
+import { resolveFieldCollision } from '../engine/wasm_sim_bridge.js';
 
 export class Owner {
   constructor(x = 1200, y = 900, name = 'Walker', isLocal = true) {
@@ -3971,9 +9385,7 @@ export class Owner {
 
     // Resolve world obstacle & boundary collisions
     if (field) {
-      const resolved = field.resolveCircleCollision(this.x, this.y, this.radius);
-      this.x = resolved.x;
-      this.y = resolved.y;
+      resolveFieldCollision(this, this.radius, field);
     }
 
     this.depthY = this.y + 12;
@@ -4417,7 +9829,7 @@ export class ChatTombstone {
 ## FILE: src/entities/toy.js
 ```javascript
 // Tennis Ball Toy - Ballistic 2.5D Trajectory, Bouncing & Canine Fetching Mechanics
-import { getWasmSim } from '../engine/wasm_sim_bridge.js';
+import { stepToyBall } from '../engine/wasm_sim_bridge.js';
 
 export class TennisBall {
   constructor(x = 0, y = 0) {
@@ -4511,38 +9923,9 @@ export class TennisBall {
       return;
     }
 
-    // 2.5D Ballistic motion
-    this.x += this.vx * dt;
-    this.y += this.vy * dt;
-    this.vz -= this.gravity * dt;
-    this.z += this.vz * dt;
-
-    // Ground bounce
-    if (this.z <= 0) {
-      this.z = 0;
-      if (Math.abs(this.vz) > 40) {
-        this.vz = -this.vz * this.restitution;
-        this.vx *= 0.82;
-        this.vy *= 0.82;
-      } else {
-        this.vz = 0;
-        this.vx *= Math.pow(this.friction, dt * 60);
-        this.vy *= Math.pow(this.friction, dt * 60);
-      }
-    }
-
-    // World boundary bounce
-    if (field) {
-      const minX = 70;
-      const maxX = field.width - 70;
-      const minY = 70;
-      const maxY = field.height - 70;
-
-      if (this.x < minX) { this.x = minX; this.vx = -this.vx * 0.7; }
-      if (this.x > maxX) { this.x = maxX; this.vx = -this.vx * 0.7; }
-      if (this.y < minY) { this.y = minY; this.vy = -this.vy * 0.7; }
-      if (this.y > maxY) { this.y = maxY; this.vy = -this.vy * 0.7; }
-    }
+    // 2.5D Ballistic motion (gravity, bounce, rolling friction, world-edge bounce):
+    // dog_walker_core Wasm is the simulation authority; exact JS fallback lives in the bridge.
+    stepToyBall(this, dt, field);
 
     // Depth sorting base Y is the ground position
     this.depthY = this.y;
@@ -4692,7 +10075,7 @@ import { NPC_PATHS, getNpcPath } from './world/npc_paths.js';
 import { NavigationArrow } from './ui/navigation_arrow.js';
 import { weatherClient, WeatherType } from './systems/weather.js';
 import { environmentSystem, TimeOfDay } from './world/environment.js';
-import { initWasmSim } from './engine/wasm_sim_bridge.js';
+import { initWasmSim, syncWorldObstacles } from './engine/wasm_sim_bridge.js';
 
 export class CliftonDownGame {
   constructor() {
@@ -4879,6 +10262,7 @@ export class CliftonDownGame {
             ? this.field.getColliders()
             : [];
           this.wasmSim.set_colliders(JSON.stringify(colliders));
+          syncWorldObstacles(this.field);
         }
       })
       .catch(() => {});
@@ -4915,6 +10299,7 @@ export class CliftonDownGame {
         ? this.field.getColliders()
         : [];
       this.wasmSim.set_colliders(JSON.stringify(colliders));
+      syncWorldObstacles(this.field);
     }
 
     // Set initial local profile metadata for networking
@@ -8557,6 +13942,37 @@ body {
   opacity: 0.85;
 }
 
+.chat-toggle-badge {
+  position: absolute;
+  top: -4px;
+  right: -4px;
+  background: #ef4444;
+  color: #ffffff;
+  font-size: 0.68rem;
+  font-weight: 700;
+  line-height: 1;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 4px;
+  border-radius: 999px;
+  border: 2px solid #0f172a;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+  animation: pulseBadge 1.8s infinite ease-in-out;
+}
+
+@keyframes pulseBadge {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.12);
+  }
+}
+
 #proximity-chat-panel {
   position: fixed;
   top: 64px;
@@ -8697,146 +14113,21 @@ body {
   border-radius: 4px;
 }
 
-.proximity-message {
-  max-width: 85%;
-  padding: 8px 12px;
-  border-radius: 12px;
-  font-size: 0.86rem;
-  line-height: 1.35;
-  word-break: break-word;
-  background: rgba(30, 41, 59, 0.8);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  color: #f1f5f9;
-  align-self: flex-start;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
-  animation: proximityMessageIn 0.15s ease-out;
-}
-
-@keyframes proximityMessageIn {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
-.proximity-message.local {
-  align-self: flex-end;
-  background: linear-gradient(135deg, rgba(30, 58, 138, 0.85), rgba(15, 23, 42, 0.9));
-  border: 1px solid rgba(56, 189, 248, 0.35);
-  color: #ffffff;
-}
-
-/* Pruning & Expiration Visual Transitions */
-.proximity-message.expiring,
-.proximity-message.pruning {
-  opacity: 0;
-  transform: scale(0.95);
-  transition: opacity 0.25s ease, transform 0.25s ease;
-  pointer-events: none;
-}
-
-.proximity-message.system {
-  align-self: center;
-  max-width: 100%;
-  background: transparent;
-  border: none;
-  box-shadow: none;
-  padding: 2px 6px;
-  font-size: 0.74rem;
-  color: #94a3b8;
-  font-style: italic;
-  text-align: center;
-}
-
-.proximity-message-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 2px;
-}
-
+/* Legacy compatibility selectors retained for test suite integrity */
 .proximity-message-sender {
   font-weight: 700;
   font-size: 0.76rem;
   color: var(--player-color-cyan);
-  transition: color 0.15s ease;
-}
-
-.proximity-message.local .proximity-message-sender {
-  /* Inherits or allows custom assigned player color inline styles cleanly */
-  color: inherit;
-}
-
-.proximity-message-time {
-  font-size: 0.68rem;
-  color: #64748b;
-  margin-left: auto;
-}
-
-.proximity-message.local .proximity-message-time {
-  color: #94a3b8;
-  opacity: 0.8;
 }
 
 .proximity-message-text {
   font-size: 0.86rem;
   line-height: 1.35;
-  user-select: text;
-  word-break: break-word;
-  transition: color 0.15s ease;
 }
 
-.proximity-message.local .proximity-message-text {
-  /* Inherits or allows custom assigned player color inline styles cleanly */
-  color: inherit;
-}
-
-.proximity-system-text {
-  font-size: 0.74rem;
-  color: #94a3b8;
-}
-
-/* Prominent Input Container & Buttons */
 #proximity-chat-input-container {
-  padding: 10px 14px 12px;
-  background: rgba(15, 23, 42, 0.75);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.proximity-emoji-bar {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-}
-
-.proximity-emoji-btn {
-  background: rgba(255, 255, 255, 0.08);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  border-radius: 8px;
-  padding: 4px 9px;
-  font-size: 1.1rem;
-  line-height: 1;
-  cursor: pointer;
-  color: #fff;
-  transition: transform 0.12s ease, background 0.15s ease;
-  user-select: none;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.proximity-emoji-btn:hover {
-  background: rgba(255, 255, 255, 0.18);
-  transform: scale(1.14);
-}
-
-.proximity-emoji-btn:active {
-  transform: scale(0.95);
 }
 
 #proximity-chat-input-bar {
@@ -10608,6 +15899,8 @@ export class ProximityChat {
 
     this.isManuallyHidden = false;
     this.toggleBtn = null;
+    this.unreadBadgeEl = null;
+    this.unreadCount = 0;
     this._boundOnToggleClick = null;
 
     this._boundOnKeyDown = null;
@@ -10682,6 +15975,9 @@ export class ProximityChat {
         if (typeof this.onBurnSession === 'function') {
           this.onBurnSession();
         }
+      },
+      onUnreadCountChange: (count) => {
+        this.setUnreadBadge(count);
       }
     });
 
@@ -10709,13 +16005,17 @@ export class ProximityChat {
     toggleBtn.setAttribute('type', 'button');
     toggleBtn.setAttribute('aria-label', 'Toggle Chat');
     toggleBtn.setAttribute('title', 'Toggle Chat');
-    toggleBtn.innerHTML = '<span class="chat-toggle-icon">💬</span>';
+    toggleBtn.innerHTML = `
+      <span class="chat-toggle-icon">💬</span>
+      <span class="chat-toggle-badge" id="chat-toggle-badge" style="display: none;">0</span>
+    `;
 
     const parentElem = this.container || document.body;
     if (parentElem) {
       parentElem.appendChild(toggleBtn);
     }
     this.toggleBtn = toggleBtn;
+    this.unreadBadgeEl = toggleBtn.querySelector('#chat-toggle-badge');
 
     // Toggle button click handler
     this._boundOnToggleClick = (e) => {
@@ -10818,6 +16118,15 @@ export class ProximityChat {
 
     this.messages.push(msgObj);
     this.lastMessage = msgObj;
+
+    // Increment unread count if panel is collapsed/hidden
+    if (!this.isVisible()) {
+      if (this.widget && typeof this.widget.incrementUnread === 'function') {
+        this.widget.incrementUnread();
+      } else {
+        this.setUnreadBadge(this.unreadCount + 1);
+      }
+    }
 
     // Auto-unhide logic: If in an active cluster, automatically unhide panel when message is added
     if (this.isClusterActive() || this.activeCluster) {
@@ -10984,6 +16293,22 @@ export class ProximityChat {
   }
 
   /**
+   * Updates unread badge on #chat-toggle-btn.
+   * @param {number} count
+   */
+  setUnreadBadge(count) {
+    this.unreadCount = Math.max(0, count || 0);
+    if (!this.unreadBadgeEl) return;
+    if (this.unreadCount > 0) {
+      this.unreadBadgeEl.textContent = this.unreadCount > 99 ? '99+' : String(this.unreadCount);
+      this.unreadBadgeEl.style.display = 'inline-flex';
+    } else {
+      this.unreadBadgeEl.textContent = '0';
+      this.unreadBadgeEl.style.display = 'none';
+    }
+  }
+
+  /**
    * Slides in HUD panel.
    */
   showHUD() {
@@ -10994,6 +16319,11 @@ export class ProximityChat {
     if (this.toggleBtn) {
       this.toggleBtn.classList.add('active');
       this.toggleBtn.classList.remove('collapsed');
+    }
+    if (this.widget && typeof this.widget.clearUnread === 'function') {
+      this.widget.clearUnread();
+    } else {
+      this.setUnreadBadge(0);
     }
   }
 
@@ -11025,7 +16355,22 @@ export class ProximityChat {
   updateParticipantsBadge() {
     if (this.widget && typeof this.widget.setPeers === 'function') {
       const activePeers = this.getActivePeers();
-      this.widget.setPeers(activePeers, activePeers.length);
+      const peerMeta = {};
+      if (this.participants && Array.isArray(this.participants)) {
+        for (const p of this.participants) {
+          if (!p.isLocal) {
+            peerMeta[p.id] = {
+              name: p.name,
+              color: this.playerColors.get(p.id) || null
+            };
+          }
+        }
+      }
+      if (peerMeta && Object.keys(peerMeta).length > 0) {
+        this.widget.setPeers(this.activeCluster, this.activeCluster.length, peerMeta);
+      } else {
+        this.widget.setPeers(this.activeCluster, this.activeCluster.length);
+      }
     }
     if (!this.pillsContainer || typeof document === 'undefined') return;
     if (this.pillsContainer.id === 'proximity-pills-list') {
@@ -11233,9 +16578,6 @@ export class ProximityChat {
         this.activeCluster = currentPeerIds;
         this.participants = newParticipants;
         this.updateParticipantsBadge();
-        if (this.widget && typeof this.widget.setPeers === 'function') {
-          this.widget.setPeers(this.activeCluster, this.activeCluster.length);
-        }
         if (!this.isManuallyHidden) {
           this.showHUD();
         }
@@ -11274,9 +16616,6 @@ export class ProximityChat {
           this.activeCluster = currentPeerIds;
           this.participants = newParticipants;
           this.updateParticipantsBadge();
-          if (this.widget && typeof this.widget.setPeers === 'function') {
-            this.widget.setPeers(this.activeCluster, this.activeCluster.length);
-          }
           if (typeof this.onClusterChanged === 'function') {
             this.onClusterChanged(this.getActivePeers());
           }
@@ -12495,6 +17834,47 @@ export class TouchControls {
 .zero-chat-widget .peer-count {
   font-size: 0.75rem;
   color: #38bdf8;
+  white-space: nowrap;
+}
+
+/* Scoped Peer Strip: colored dots & participant pills */
+.zero-chat-widget .peer-strip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 4px;
+}
+
+.zero-chat-widget .peer-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+  padding: 1px 6px;
+  font-size: 0.68rem;
+  color: #e2e8f0;
+  max-width: 80px;
+}
+
+.zero-chat-widget .peer-chip-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.zero-chat-widget .peer-chip-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.zero-chat-widget .peer-chip-overflow {
+  font-weight: 700;
+  color: #38bdf8;
+  padding: 1px 4px;
 }
 
 /* Scoped Burn Header Button */
@@ -12823,6 +18203,7 @@ export class ZeroChatWidget {
       onSendMessage = null,
       onBurnMessage = null,
       onBurnSession = null,
+      onUnreadCountChange = null,
       agingMs = 70000,
       dissolveMs = 90000
     } = options;
@@ -12831,13 +18212,16 @@ export class ZeroChatWidget {
     this.onSendMessage = onSendMessage;
     this.onBurnMessage = onBurnMessage;
     this.onBurnSession = onBurnSession;
+    this.onUnreadCountChange = onUnreadCountChange;
     this.agingMs = typeof agingMs === 'number' ? agingMs : 70000;
     this.dissolveMs = typeof dissolveMs === 'number' ? dissolveMs : 90000;
 
     this.peerColorMap = new Map();
+    this.peerMetaMap = new Map(); // peerId -> { name, color }
     this.messagesMap = new Map(); // messageUuid -> record
     this.currentPeers = [];
     this.currentPeerCount = 0;
+    this.unreadCount = 0;
 
     this.container = typeof container === 'string' && typeof document !== 'undefined'
       ? document.querySelector(container)
@@ -12847,6 +18231,7 @@ export class ZeroChatWidget {
     this.header = null;
     this.statusEl = null;
     this.peerCountEl = null;
+    this.peerStripEl = null;
     this.burnHeaderBtn = null;
     this.messagesContainer = null;
     this.form = null;
@@ -12867,6 +18252,7 @@ export class ZeroChatWidget {
         <div class="peer-pill" id="proximity-chat-status">
           <span class="peer-lock-icon">🔒</span>
           <span class="peer-count" id="peer-count">0 nearby</span>
+          <span class="peer-strip" id="peer-strip"></span>
         </div>
         <button type="button" class="btn-header-burn" title="Burn all messages" aria-label="Burn all messages">🔥</button>
       </div>
@@ -12881,6 +18267,7 @@ export class ZeroChatWidget {
     this.header = widgetEl.querySelector('.zero-chat-header');
     this.statusEl = widgetEl.querySelector('#proximity-chat-status');
     this.peerCountEl = widgetEl.querySelector('#peer-count');
+    this.peerStripEl = widgetEl.querySelector('#peer-strip');
     this.burnHeaderBtn = widgetEl.querySelector('.btn-header-burn');
     this.messagesContainer = widgetEl.querySelector('#proximity-chat-messages');
     this.form = widgetEl.querySelector('#proximity-chat-form');
@@ -13166,11 +18553,38 @@ export class ZeroChatWidget {
   }
 
   /**
-   * Updates peer membership and updates the padlock badge and nearby peer counter.
+   * Sets the unread count and notifies listeners.
+   * @param {number} count
+   */
+  setUnreadCount(count) {
+    this.unreadCount = Math.max(0, count || 0);
+    if (typeof this.onUnreadCountChange === 'function') {
+      this.onUnreadCountChange(this.unreadCount);
+    }
+  }
+
+  /**
+   * Increments unread count by 1 and notifies listeners.
+   */
+  incrementUnread() {
+    this.setUnreadCount(this.unreadCount + 1);
+  }
+
+  /**
+   * Clears unread count to 0 and notifies listeners.
+   */
+  clearUnread() {
+    this.setUnreadCount(0);
+  }
+
+  /**
+   * Updates peer membership and updates the padlock badge, nearby peer counter,
+   * and renders participant name pills/peer dots when 2+ peers are present.
    * @param {Array<string>|Set<string>} peerIds
    * @param {number} [peerCount]
+   * @param {Map|Object} [peerMeta] Map or object mapping peerId -> { name, color }
    */
-  setPeers(peerIds, peerCount) {
+  setPeers(peerIds, peerCount, peerMeta) {
     let count = 0;
     if (typeof peerCount === 'number') {
       count = peerCount;
@@ -13183,6 +18597,18 @@ export class ZeroChatWidget {
     this.currentPeerCount = count;
     this.currentPeers = Array.isArray(peerIds) ? peerIds : (peerIds ? Array.from(peerIds) : []);
 
+    if (peerMeta) {
+      if (peerMeta instanceof Map) {
+        for (const [id, meta] of peerMeta.entries()) {
+          this.peerMetaMap.set(id, meta);
+        }
+      } else if (typeof peerMeta === 'object') {
+        for (const [id, meta] of Object.entries(peerMeta)) {
+          this.peerMetaMap.set(id, meta);
+        }
+      }
+    }
+
     if (this.peerCountEl) {
       this.peerCountEl.textContent = `${count} nearby`;
     }
@@ -13193,6 +18619,57 @@ export class ZeroChatWidget {
       } else {
         this.statusEl.classList.remove('active');
       }
+    }
+
+    this._renderPeerStrip();
+  }
+
+  /**
+   * Renders colored dots and truncated name tags for nearby participants.
+   * @private
+   */
+  _renderPeerStrip() {
+    if (!this.peerStripEl) return;
+
+    if (typeof document === 'undefined') return;
+
+    this.peerStripEl.innerHTML = '';
+
+    if (this.currentPeerCount <= 0 || !this.currentPeers || this.currentPeers.length === 0) {
+      return;
+    }
+
+    const maxPills = 4;
+    const peersToRender = this.currentPeers.slice(0, maxPills);
+    const overflowCount = this.currentPeers.length - maxPills;
+
+    for (const peerId of peersToRender) {
+      const meta = this.peerMetaMap.get(peerId) || {};
+      const name = meta.name || peerId;
+      const color = meta.color || this.getPeerColor(peerId);
+
+      const pill = document.createElement('span');
+      pill.className = 'peer-chip';
+      pill.setAttribute('data-peer-id', peerId);
+
+      const dot = document.createElement('span');
+      dot.className = 'peer-chip-dot';
+      dot.style.backgroundColor = color;
+
+      const label = document.createElement('span');
+      label.className = 'peer-chip-label';
+      label.textContent = name.length > 8 ? name.slice(0, 7) + '…' : name;
+
+      pill.appendChild(dot);
+      pill.appendChild(label);
+      this.peerStripEl.appendChild(pill);
+    }
+
+    if (overflowCount > 0) {
+      const overflowPill = document.createElement('span');
+      overflowPill.className = 'peer-chip peer-chip-overflow';
+      overflowPill.textContent = `+${overflowCount}`;
+      this.peerStripEl.appendChild(overflowPill);
     }
   }
 
@@ -13235,6 +18712,7 @@ export class ZeroChatWidget {
     this.sendBtn = null;
     this.statusEl = null;
     this.peerCountEl = null;
+    this.peerStripEl = null;
     this.burnHeaderBtn = null;
   }
 }
@@ -13244,7 +18722,7 @@ export default ZeroChatWidget;
 ```
 
 ## FILE: src/wasm/zero_mesh.d.ts
-```typescript
+```
 /* tslint:disable */
 /* eslint-disable */
 
@@ -14694,7 +20172,7 @@ export { initSync, __wbg_init as default };
 ```
 
 ## FILE: src/wasm/zero_mesh_bg.wasm.d.ts
-```typescript
+```
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
@@ -14756,7 +20234,7 @@ export const __wbindgen_start: () => void;
 ```
 
 ## FILE: src/wasm_core/dog_walker_core.d.ts
-```typescript
+```
 /* tslint:disable */
 /* eslint-disable */
 
@@ -14765,11 +20243,35 @@ export class WasmWorldSim {
     [Symbol.dispose](): void;
     constructor(world_width: number, world_height: number);
     resolve_collision(x: number, y: number, radius: number): Float64Array;
+    /**
+     * Exact port of `Field.resolveCircleCollision` (56px perimeter, trees/benches/bins/tower/rocks).
+     */
+    resolve_field_collision(x: number, y: number, radius: number): Float64Array;
     sample_npc(waypoints_flat: Float64Array | number[], speed: number, spawn_time: number, now: number): Float64Array;
+    /**
+     * Exact in-progress NPC path sample (see `npc_sim::sample_path_exact`).
+     * Returns [x, y, vx, vy, angle, hasAngle(0/1)].
+     */
+    sample_npc_path(waypoints_flat: Float64Array | number[], speed: number, distance: number): Float64Array;
     set_colliders(colliders_json: string): void;
+    /**
+     * Replace the exact field obstacle set (JSON array of
+     * `{"kind":"circle","x","y","r"}` / `{"kind":"rect","x","y","hw","hh"}`), in the same order as
+     * `Field.resolveCircleCollision` applies them.
+     */
+    set_world_obstacles(obstacles_json: string): boolean;
     step_ball(dt: number): Float64Array;
+    /**
+     * Ear spring integration towards JS-computed targets. Returns [lAngle, lVel, rAngle, rVel].
+     */
+    step_ear_targets(left_angle: number, left_v: number, right_angle: number, right_v: number, target_left: number, target_right: number, spring_k: number, spring_damp: number, dt: number): Float64Array;
     step_ears(left_angle: number, left_v: number, right_angle: number, right_v: number, dog_vx: number, dog_vy: number, dog_angle: number, dt: number): Float64Array;
     step_leash(dog_x: number, dog_y: number, dog_vx: number, dog_vy: number, owner_x: number, owner_y: number, max_length: number, stiffness: number, damping: number, dt: number): Float64Array;
+    /**
+     * Stateless TennisBall step (matches `toy.js`). `state` = [x, y, z, vx, vy, vz].
+     * Returns [x, y, z, vx, vy, vz]. Independent of the single internal `ball`.
+     */
+    step_toy_ball(x: number, y: number, z: number, vx: number, vy: number, vz: number, dt: number, world_w: number, world_h: number): Float64Array;
     throw_ball(start_x: number, start_y: number, target_x: number, target_y: number, power: number): void;
 }
 
@@ -14780,11 +20282,16 @@ export interface InitOutput {
     readonly __wbg_wasmworldsim_free: (a: number, b: number) => void;
     readonly wasmworldsim_new: (a: number, b: number) => number;
     readonly wasmworldsim_resolve_collision: (a: number, b: number, c: number, d: number, e: number) => void;
+    readonly wasmworldsim_resolve_field_collision: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly wasmworldsim_sample_npc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+    readonly wasmworldsim_sample_npc_path: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly wasmworldsim_set_colliders: (a: number, b: number, c: number) => void;
+    readonly wasmworldsim_set_world_obstacles: (a: number, b: number, c: number) => number;
     readonly wasmworldsim_step_ball: (a: number, b: number, c: number) => void;
+    readonly wasmworldsim_step_ear_targets: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
     readonly wasmworldsim_step_ears: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly wasmworldsim_step_leash: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
+    readonly wasmworldsim_step_toy_ball: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
     readonly wasmworldsim_throw_ball: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
@@ -14863,6 +20370,26 @@ export class WasmWorldSim {
         }
     }
     /**
+     * Exact port of `Field.resolveCircleCollision` (56px perimeter, trees/benches/bins/tower/rocks).
+     * @param {number} x
+     * @param {number} y
+     * @param {number} radius
+     * @returns {Float64Array}
+     */
+    resolve_field_collision(x, y, radius) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+            wasm.wasmworldsim_resolve_field_collision(retptr, this.__wbg_ptr, x, y, radius);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var v1 = getArrayF64FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export(r0, r1 * 8, 8);
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
      * @param {Float64Array | number[]} waypoints_flat
      * @param {number} speed
      * @param {number} spawn_time
@@ -14888,12 +20415,50 @@ export class WasmWorldSim {
         }
     }
     /**
+     * Exact in-progress NPC path sample (see `npc_sim::sample_path_exact`).
+     * Returns [x, y, vx, vy, angle, hasAngle(0/1)].
+     * @param {Float64Array | number[]} waypoints_flat
+     * @param {number} speed
+     * @param {number} distance
+     * @returns {Float64Array}
+     */
+    sample_npc_path(waypoints_flat, speed, distance) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+            const val2 = +speed;
+            const val3 = +distance;
+            const ptr0 = passArrayF64ToWasm0(waypoints_flat, wasm.__wbindgen_export2);
+            const len0 = WASM_VECTOR_LEN;
+            wasm.wasmworldsim_sample_npc_path(retptr, this.__wbg_ptr, ptr0, len0, val2, val3);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var v4 = getArrayF64FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export(r0, r1 * 8, 8);
+            return v4;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
      * @param {string} colliders_json
      */
     set_colliders(colliders_json) {
         const ptr0 = passStringToWasm0(colliders_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
         const len0 = WASM_VECTOR_LEN;
         wasm.wasmworldsim_set_colliders(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * Replace the exact field obstacle set (JSON array of
+     * `{"kind":"circle","x","y","r"}` / `{"kind":"rect","x","y","hw","hh"}`), in the same order as
+     * `Field.resolveCircleCollision` applies them.
+     * @param {string} obstacles_json
+     * @returns {boolean}
+     */
+    set_world_obstacles(obstacles_json) {
+        const ptr0 = passStringToWasm0(obstacles_json, wasm.__wbindgen_export2, wasm.__wbindgen_export3);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmworldsim_set_world_obstacles(this.__wbg_ptr, ptr0, len0);
+        return ret !== 0;
     }
     /**
      * @param {number} dt
@@ -14903,6 +20468,32 @@ export class WasmWorldSim {
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.wasmworldsim_step_ball(retptr, this.__wbg_ptr, dt);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var v1 = getArrayF64FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export(r0, r1 * 8, 8);
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Ear spring integration towards JS-computed targets. Returns [lAngle, lVel, rAngle, rVel].
+     * @param {number} left_angle
+     * @param {number} left_v
+     * @param {number} right_angle
+     * @param {number} right_v
+     * @param {number} target_left
+     * @param {number} target_right
+     * @param {number} spring_k
+     * @param {number} spring_damp
+     * @param {number} dt
+     * @returns {Float64Array}
+     */
+    step_ear_targets(left_angle, left_v, right_angle, right_v, target_left, target_right, spring_k, spring_damp, dt) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+            wasm.wasmworldsim_step_ear_targets(retptr, this.__wbg_ptr, left_angle, left_v, right_angle, right_v, target_left, target_right, spring_k, spring_damp, dt);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             var v1 = getArrayF64FromWasm0(r0, r1).slice();
@@ -14953,6 +20544,33 @@ export class WasmWorldSim {
         try {
             const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
             wasm.wasmworldsim_step_leash(retptr, this.__wbg_ptr, dog_x, dog_y, dog_vx, dog_vy, owner_x, owner_y, max_length, stiffness, damping, dt);
+            var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
+            var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
+            var v1 = getArrayF64FromWasm0(r0, r1).slice();
+            wasm.__wbindgen_export(r0, r1 * 8, 8);
+            return v1;
+        } finally {
+            wasm.__wbindgen_add_to_stack_pointer(16);
+        }
+    }
+    /**
+     * Stateless TennisBall step (matches `toy.js`). `state` = [x, y, z, vx, vy, vz].
+     * Returns [x, y, z, vx, vy, vz]. Independent of the single internal `ball`.
+     * @param {number} x
+     * @param {number} y
+     * @param {number} z
+     * @param {number} vx
+     * @param {number} vy
+     * @param {number} vz
+     * @param {number} dt
+     * @param {number} world_w
+     * @param {number} world_h
+     * @returns {Float64Array}
+     */
+    step_toy_ball(x, y, z, vx, vy, vz, dt, world_w, world_h) {
+        try {
+            const retptr = wasm.__wbindgen_add_to_stack_pointer(-16) >>> 0;
+            wasm.wasmworldsim_step_toy_ball(retptr, this.__wbg_ptr, x, y, z, vx, vy, vz, dt, world_w, world_h);
             var r0 = getDataViewMemory0().getInt32(retptr + 4 * 0, true);
             var r1 = getDataViewMemory0().getInt32(retptr + 4 * 1, true);
             var v1 = getArrayF64FromWasm0(r0, r1).slice();
@@ -15216,18 +20834,23 @@ export { initSync, __wbg_init as default };
 ```
 
 ## FILE: src/wasm_core/dog_walker_core_bg.wasm.d.ts
-```typescript
+```
 /* tslint:disable */
 /* eslint-disable */
 export const memory: WebAssembly.Memory;
 export const __wbg_wasmworldsim_free: (a: number, b: number) => void;
 export const wasmworldsim_new: (a: number, b: number) => number;
 export const wasmworldsim_resolve_collision: (a: number, b: number, c: number, d: number, e: number) => void;
+export const wasmworldsim_resolve_field_collision: (a: number, b: number, c: number, d: number, e: number) => void;
 export const wasmworldsim_sample_npc: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => void;
+export const wasmworldsim_sample_npc_path: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const wasmworldsim_set_colliders: (a: number, b: number, c: number) => void;
+export const wasmworldsim_set_world_obstacles: (a: number, b: number, c: number) => number;
 export const wasmworldsim_step_ball: (a: number, b: number, c: number) => void;
+export const wasmworldsim_step_ear_targets: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
 export const wasmworldsim_step_ears: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
 export const wasmworldsim_step_leash: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;
+export const wasmworldsim_step_toy_ball: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
 export const wasmworldsim_throw_ball: (a: number, b: number, c: number, d: number, e: number, f: number) => void;
 export const __wbindgen_externrefs: WebAssembly.Table;
 export const __wbindgen_add_to_stack_pointer: (a: number) => number;
@@ -16110,6 +21733,35 @@ export class Field {
       return canvas;
     }
     return null;
+  }
+
+  /**
+   * Exact obstacle list mirroring `resolveCircleCollision` (same order and geometry) for the
+   * Rust/Wasm `set_world_obstacles` API. Entries with non-finite geometry are skipped, exactly
+   * like the JS comparisons (`dist < NaN` is false).
+   */
+  getWorldObstacles() {
+    const out = [];
+    const fin = (...v) => v.every((n) => typeof n === 'number' && Number.isFinite(n));
+    for (const t of (this.trees || [])) {
+      if (fin(t.x, t.depthY, t.trunkRadius)) out.push({ kind: 'circle', x: t.x, y: t.depthY, r: t.trunkRadius });
+    }
+    for (const b of (this.benches || [])) {
+      const isVertical = b.angle && Math.abs(Math.sin(b.angle)) > 0.7;
+      const hw = (isVertical ? b.h : b.w) / 2;
+      const hh = (isVertical ? b.w : b.h) / 2;
+      if (fin(b.x, b.y, hw, hh)) out.push({ kind: 'rect', x: b.x, y: b.y, hw, hh });
+    }
+    for (const b of (this.bins || [])) {
+      if (fin(b.x, b.y, b.radius)) out.push({ kind: 'circle', x: b.x, y: b.y, r: b.radius });
+    }
+    if (this.waterTower && fin(this.waterTower.x, this.waterTower.y, this.waterTower.radius)) {
+      out.push({ kind: 'circle', x: this.waterTower.x, y: this.waterTower.y, r: this.waterTower.radius });
+    }
+    for (const r of (this.rockOutcrops || [])) {
+      if (fin(r.x, r.depthY)) out.push({ kind: 'circle', x: r.x, y: r.depthY - 8, r: r.r || 24 });
+    }
+    return out;
   }
 
   getColliders() {
@@ -27095,8 +32747,12 @@ class TestWasmCoreSim(unittest.TestCase):
             text=True
         )
         self.assertEqual(res.returncode, 0, f"cargo test failed:\n{res.stdout}\n{res.stderr}")
-        self.assertTrue("passed" in res.stdout and ("15 passed" in res.stdout or "16 passed" in res.stdout))
-        print("✅ dog_walker_core native Rust tests passed (>= 15)")
+        self.assertIn("test result: ok.", res.stdout)
+        import re
+        match = re.search(r"(\d+) passed", res.stdout)
+        self.assertIsNotNone(match)
+        self.assertGreaterEqual(int(match.group(1)), 15)
+        print(f"✅ dog_walker_core native Rust tests passed ({match.group(1)} >= 15)")
 
     def test_dual_wasm_build_artifacts_exist(self):
         """Verify scripts/build_wasm.sh generated wasm and js files for both zero_mesh and dog_walker_core."""
@@ -27165,13 +32821,33 @@ class TestWasmCoreSim(unittest.TestCase):
                 src = f.read()
                 self.assertIn("wasm_sim_bridge", src, f"Expected wasm_sim_bridge import in {rel_file}")
 
-        # Verify CompanionDog invokes stepLeashConstraint
+        # Verify CompanionDog invokes stepLeashConstraint, resolveFieldCollision and stepEarSpringsToTargets
         dog_path = os.path.join(PROJECT_ROOT, "src", "entities", "companion_dog.js")
         with open(dog_path) as f:
             dog_src = f.read()
             self.assertIn("stepLeashConstraint(this, this.owner, 65, 4.0, 5.0, dt)", dog_src)
+            self.assertIn("resolveFieldCollision", dog_src)
+            self.assertIn("stepEarSpringsToTargets", dog_src)
 
-        print("✅ wasm_sim_bridge.js cleanly integrated into entity simulation loop")
+        # Verify Owner invokes resolveFieldCollision
+        owner_path = os.path.join(PROJECT_ROOT, "src", "entities", "owner.js")
+        with open(owner_path) as f:
+            owner_src = f.read()
+            self.assertIn("resolveFieldCollision", owner_src)
+
+        # Verify TennisBall invokes stepToyBall
+        toy_path = os.path.join(PROJECT_ROOT, "src", "entities", "toy.js")
+        with open(toy_path) as f:
+            toy_src = f.read()
+            self.assertIn("stepToyBall", toy_src)
+
+        # Verify ParkNPC invokes sampleNpcPath
+        npc_path = os.path.join(PROJECT_ROOT, "src", "entities", "npc.js")
+        with open(npc_path) as f:
+            npc_src = f.read()
+            self.assertIn("sampleNpcPath", npc_src)
+
+        print("✅ wasm_sim_bridge.js cleanly integrated into entity simulation loop (5/5 call sites verified)")
 
 if __name__ == "__main__":
     unittest.main()
@@ -28246,7 +33922,7 @@ if __name__ == "__main__":
 ```
 
 ## FILE: wrangler.jsonc
-```jsonc
+```
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "virtual-dog-walker",

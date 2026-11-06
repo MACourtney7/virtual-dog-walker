@@ -60,20 +60,21 @@ class TestMobileStyles(unittest.TestCase):
 
 class MockCamera:
     """Mock of Camera class logic from src/world/field.js."""
-    def __init__(self, x=500, y=300, viewport_w=800, viewport_h=600, world_w=2600, world_h=1900):
+    def __init__(self, x=500, y=300, viewport_w=800, viewport_h=600, world_w=2600, world_h=1900, zoom=1.0):
         self.x = x
         self.y = y
         self.viewport_w = viewport_w
         self.viewport_h = viewport_h
         self.world_w = world_w
         self.world_h = world_h
+        self.zoom = float(zoom) if zoom and zoom > 0 else 1.0
 
     def world_to_screen(self, wx, wy):
-        return {"x": wx - self.x, "y": wy - self.y}
+        return {"x": (wx - self.x) * self.zoom, "y": (wy - self.y) * self.zoom}
 
     def screen_to_world(self, sx, sy):
-        raw_x = sx + self.x
-        raw_y = sy + self.y
+        raw_x = sx / self.zoom + self.x
+        raw_y = sy / self.zoom + self.y
         return {
             "x": max(0.0, min(float(self.world_w), float(raw_x))),
             "y": max(0.0, min(float(self.world_h), float(raw_y)))
@@ -107,6 +108,43 @@ class TestCameraProjection(unittest.TestCase):
         res_world = self.camera.screen_to_world(screen_pt["x"], screen_pt["y"])
         self.assertEqual(res_world["x"], orig_world_x)
         self.assertEqual(res_world["y"], orig_world_y)
+
+    def test_camera_zoom_projection_and_roundtrip(self):
+        """Verify worldToScreen and screenToWorld with zoom factors (0.75x, 0.85x)."""
+        for zoom in [0.75, 0.85, 1.0]:
+            cam = MockCamera(x=400, y=200, world_w=3200, world_h=2400, zoom=zoom)
+            world_x, world_y = 800, 600
+
+            screen_pt = cam.world_to_screen(world_x, world_y)
+            expected_screen_x = (world_x - 400) * zoom
+            expected_screen_y = (world_y - 200) * zoom
+            self.assertAlmostEqual(screen_pt["x"], expected_screen_x)
+            self.assertAlmostEqual(screen_pt["y"], expected_screen_y)
+
+            unprojected = cam.screen_to_world(screen_pt["x"], screen_pt["y"])
+            self.assertAlmostEqual(unprojected["x"], world_x)
+            self.assertAlmostEqual(unprojected["y"], world_y)
+
+    def test_camera_zoom_source_code_contract(self):
+        """Verify src/world/field.js Camera class includes zoom, apply scale, and projections."""
+        with open("src/world/field.js", "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("this.zoom = typeof zoom === 'number' && zoom > 0 ? zoom : 1.0", code)
+        self.assertIn("ctx.scale(this.zoom, this.zoom);", code)
+        self.assertIn("x: (worldX - this.x) * this.zoom", code)
+        self.assertIn("const rawX = screenX / this.zoom + this.x;", code)
+
+    def test_main_dpr_canvas_scaling_contract(self):
+        """Verify src/main.js includes DPR backing buffer and responsive camera zoom."""
+        with open("src/main.js", "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("window.devicePixelRatio", code)
+        self.assertIn("this.canvas.width = Math.round(width * dpr);", code)
+        self.assertIn("this.canvas.style.width = `${width}px`;", code)
+        self.assertIn("this.camera.resize(width, height, zoom);", code)
+        self.assertIn("this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);", code)
 
 
 class MockJoystick:

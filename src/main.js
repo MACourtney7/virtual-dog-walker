@@ -162,6 +162,8 @@ export class CliftonDownGame {
       onLeash: () => this.toggleLeash(),
       onWhistle: () => this.whistleDog(),
       onPet: () => this.petDog(),
+      onPickup: () => this.pickUpPoop(),
+      onDispose: () => this.disposePoopBag(),
       onChat: () => {
         if (this.proximityChat && this.proximityChat.isClusterActive()) {
           const proxInput = document.getElementById('proximity-chat-input');
@@ -219,17 +221,36 @@ export class CliftonDownGame {
 
   initCanvas() {
     const resize = () => {
-      const width = window.visualViewport ? window.visualViewport.width : window.innerWidth;
-      const height = window.visualViewport ? window.visualViewport.height : window.innerHeight;
-      this.canvas.width = width;
-      this.canvas.height = height;
-      this.camera.resize(this.canvas.width, this.canvas.height);
+      const width = window.visualViewport ? window.visualViewport.width : (typeof window !== 'undefined' ? window.innerWidth : 1280);
+      const height = window.visualViewport ? window.visualViewport.height : (typeof window !== 'undefined' ? window.innerHeight : 720);
+      const dpr = Math.min(typeof window !== 'undefined' && window.devicePixelRatio ? window.devicePixelRatio : 1, 3.0);
+      this.dpr = dpr;
+
+      if (this.canvas) {
+        this.canvas.width = Math.round(width * dpr);
+        this.canvas.height = Math.round(height * dpr);
+        this.canvas.style.width = `${width}px`;
+        this.canvas.style.height = `${height}px`;
+      }
+
+      let zoom = 1.0;
+      if (width < 600) {
+        zoom = Math.max(0.75, Math.min(0.85, 0.75 + (width / 600) * 0.10));
+      } else if (width < 900) {
+        zoom = 0.88;
+      } else {
+        zoom = 1.0;
+      }
+
+      this.camera.resize(width, height, zoom);
     };
 
-    window.addEventListener('resize', resize);
-    window.addEventListener('orientationchange', () => setTimeout(resize, 100));
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', resize);
+    if (typeof window !== 'undefined') {
+      window.addEventListener('resize', resize);
+      window.addEventListener('orientationchange', () => setTimeout(resize, 100));
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', resize);
+      }
     }
     resize();
   }
@@ -1102,14 +1123,31 @@ export class CliftonDownGame {
     }
     this.activeBinNearPlayer = foundBin;
 
+    // Dynamic Contextual Touch Sanitation Action
+    if (this.touchControls) {
+      if (this.activePoopPileNearPlayer) {
+        this.touchControls.setContextualAction('pickup');
+      } else if (this.activeBinNearPlayer && this.hasPoopBag) {
+        this.touchControls.setContextualAction('dispose');
+      } else {
+        this.touchControls.setContextualAction(null);
+      }
+    }
+
     // 8. Update Camera
     this.camera.update(dt);
   }
 
   render() {
-    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    if (!this.ctx) return;
 
-    // Apply Camera translation
+    this.ctx.save();
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    const dpr = this.dpr || 1;
+    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+    // Apply Camera translation and zoom
     this.camera.apply(this.ctx);
 
     // Gather all dynamic entities to depth-sort
@@ -1133,19 +1171,20 @@ export class CliftonDownGame {
     this.field.render(this.ctx, this.camera, dynamicEntities);
 
     // In-World Contextual Interaction Badges
+    const isTouch = typeof TouchControls !== 'undefined' && TouchControls.isTouchDevice && TouchControls.isTouchDevice();
     if (this.activePoopPileNearPlayer) {
       this.drawInteractionPrompt(
         this.ctx,
         this.activePoopPileNearPlayer.x,
         this.activePoopPileNearPlayer.y - 18,
-        '[E] Pick up waste'
+        isTouch ? 'Tap 💩 or [E] to pick up' : '[E] Pick up waste'
       );
     } else if (this.activeBinNearPlayer && this.hasPoopBag) {
       this.drawInteractionPrompt(
         this.ctx,
         this.activeBinNearPlayer.x,
         this.activeBinNearPlayer.y - 28,
-        '[E] Dispose in bin'
+        isTouch ? 'Tap 🗑️ or [E] to dispose' : '[E] Dispose in bin'
       );
     }
 
@@ -1161,13 +1200,15 @@ export class CliftonDownGame {
       for (const npc of this.npcs.values()) {
         players.push(npc);
       }
-      this.environment.render(this.ctx, this.camera, this.field, this.canvas.width, this.canvas.height, players);
+      this.environment.render(this.ctx, this.camera, this.field, this.camera.viewportWidth, this.camera.viewportHeight, players);
     }
 
     // Screen-Space HUD: Directional Navigation Arrow
     if (this.navArrow && this.ctx && this.camera && this.owner) {
       this.navArrow.draw(this.ctx, this.camera, this.owner.x, this.owner.y);
     }
+
+    this.ctx.restore();
   }
 
   drawInteractionPrompt(ctx, worldX, worldY, text) {

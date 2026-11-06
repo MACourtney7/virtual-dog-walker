@@ -1,7 +1,7 @@
 // The Downs (Clifton & Durdham Downs, Bristol) - Top-Down Environment, Camera & Depth-Sorted Rendering Engine
 
 export class Camera {
-  constructor(viewportWidth = 1280, viewportHeight = 720, worldWidth = 3200, worldHeight = 2400) {
+  constructor(viewportWidth = 1280, viewportHeight = 720, worldWidth = 3200, worldHeight = 2400, zoom = 1.0) {
     if (worldWidth === 2600 && worldHeight === 1900) {
       worldWidth = 3200;
       worldHeight = 2400;
@@ -10,15 +10,21 @@ export class Camera {
     this.viewportHeight = viewportHeight;
     this.worldWidth = worldWidth;
     this.worldHeight = worldHeight;
-    this.x = (worldWidth - viewportWidth) / 2;
-    this.y = (worldHeight - viewportHeight) / 2;
+    this.zoom = typeof zoom === 'number' && zoom > 0 ? zoom : 1.0;
+    const viewWorldW = this.viewportWidth / this.zoom;
+    const viewWorldH = this.viewportHeight / this.zoom;
+    this.x = (this.worldWidth - viewWorldW) / 2;
+    this.y = (this.worldHeight - viewWorldH) / 2;
     this.target = null;
     this.lerpSpeed = 0.08;
   }
 
-  resize(width, height) {
+  resize(width, height, zoom = null) {
     this.viewportWidth = width;
     this.viewportHeight = height;
+    if (typeof zoom === 'number' && zoom > 0) {
+      this.zoom = zoom;
+    }
   }
 
   follow(target) {
@@ -28,21 +34,26 @@ export class Camera {
   update(dt) {
     if (!this.target) return;
 
-    const targetCenterX = this.target.x - this.viewportWidth / 2;
-    const targetCenterY = this.target.y - this.viewportHeight / 2;
+    const viewWorldW = this.viewportWidth / this.zoom;
+    const viewWorldH = this.viewportHeight / this.zoom;
+    const targetCenterX = this.target.x - viewWorldW / 2;
+    const targetCenterY = this.target.y - viewWorldH / 2;
 
     this.x += (targetCenterX - this.x) * (1 - Math.exp(-this.lerpSpeed * 60 * dt));
     this.y += (targetCenterY - this.y) * (1 - Math.exp(-this.lerpSpeed * 60 * dt));
 
     // Clamp camera within world bounds
-    const maxX = Math.max(0, this.worldWidth - this.viewportWidth);
-    const maxY = Math.max(0, this.worldHeight - this.viewportHeight);
+    // Accounts for zoom (base clamping: Math.max(0, this.worldWidth - this.viewportWidth))
+    const maxX = Math.max(0, this.worldWidth - viewWorldW); // Math.max(0, this.worldWidth - this.viewportWidth)
+    // Accounts for zoom (base clamping: Math.max(0, this.worldHeight - this.viewportHeight))
+    const maxY = Math.max(0, this.worldHeight - viewWorldH); // Math.max(0, this.worldHeight - this.viewportHeight)
     this.x = Math.max(0, Math.min(maxX, this.x));
     this.y = Math.max(0, Math.min(maxY, this.y));
   }
 
   apply(ctx) {
     ctx.save();
+    ctx.scale(this.zoom, this.zoom);
     ctx.translate(-Math.round(this.x), -Math.round(this.y));
   }
 
@@ -51,12 +62,15 @@ export class Camera {
   }
 
   worldToScreen(worldX, worldY) {
-    return { x: worldX - this.x, y: worldY - this.y };
+    return {
+      x: (worldX - this.x) * this.zoom,
+      y: (worldY - this.y) * this.zoom
+    };
   }
 
   screenToWorld(screenX, screenY) {
-    const rawX = screenX + this.x;
-    const rawY = screenY + this.y;
+    const rawX = screenX / this.zoom + this.x;
+    const rawY = screenY / this.zoom + this.y;
     return {
       x: Math.max(0, Math.min(this.worldWidth, rawX)),
       y: Math.max(0, Math.min(this.worldHeight, rawY))
@@ -1059,10 +1073,11 @@ export class Field {
   }
 
   render(ctx, camera, dynamicEntities = []) {
+    const zoom = (camera && typeof camera.zoom === 'number' && camera.zoom > 0) ? camera.zoom : 1.0;
     const viewLeft = camera.x;
     const viewTop = camera.y;
-    const viewRight = camera.x + camera.viewportWidth;
-    const viewBottom = camera.y + camera.viewportHeight;
+    const viewRight = camera.x + camera.viewportWidth / zoom;
+    const viewBottom = camera.y + camera.viewportHeight / zoom;
 
     // 1. Procedural/Baked Background Turf & Pathways
     this.renderGround(ctx, camera);
@@ -1094,8 +1109,9 @@ export class Field {
     if (cameraOrLeft && typeof cameraOrLeft === 'object') {
       left = cameraOrLeft.x !== undefined ? cameraOrLeft.x : 0;
       topPos = cameraOrLeft.y !== undefined ? cameraOrLeft.y : 0;
-      const w = cameraOrLeft.viewportWidth !== undefined ? cameraOrLeft.viewportWidth : (cameraOrLeft.width || 0);
-      const h = cameraOrLeft.viewportHeight !== undefined ? cameraOrLeft.viewportHeight : (cameraOrLeft.height || 0);
+      const zoom = (typeof cameraOrLeft.zoom === 'number' && cameraOrLeft.zoom > 0) ? cameraOrLeft.zoom : 1.0;
+      const w = (cameraOrLeft.viewportWidth !== undefined ? cameraOrLeft.viewportWidth : (cameraOrLeft.width || 0)) / zoom;
+      const h = (cameraOrLeft.viewportHeight !== undefined ? cameraOrLeft.viewportHeight : (cameraOrLeft.height || 0)) / zoom;
       rightPos = left + w;
       bottomPos = topPos + h;
     } else {

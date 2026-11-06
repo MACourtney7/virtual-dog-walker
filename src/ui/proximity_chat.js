@@ -56,6 +56,8 @@ export class ProximityChat {
     this.unreadBadgeEl = null;
     this.unreadCount = 0;
     this._boundOnToggleClick = null;
+    this._boundViewportHandler = null;
+    this._boundInputFocus = null;
 
     this._boundOnKeyDown = null;
     this._boundOnSendClick = null;
@@ -178,6 +180,48 @@ export class ProximityChat {
       this.toggleVisibility();
     };
     this.toggleBtn.addEventListener('click', this._boundOnToggleClick);
+
+    this.initViewportHandling();
+  }
+
+  /**
+   * Binds visualViewport event listeners to adapt proximity chat layout for mobile virtual keyboards.
+   */
+  initViewportHandling() {
+    if (typeof window === 'undefined' || !window.visualViewport) return;
+
+    this.updateViewport = () => {
+      if (typeof window === 'undefined' || !window.visualViewport) return;
+      const vh = window.visualViewport.height;
+      const vt = window.visualViewport.offsetTop;
+      if (typeof document !== 'undefined' && document.documentElement) {
+        document.documentElement.style.setProperty('--vdw-viewport-height', `${vh}px`);
+        document.documentElement.style.setProperty('--vdw-viewport-top', `${vt}px`);
+      }
+      if (this.panel && this.panel.classList.contains('active')) {
+        this.panel.style.maxHeight = `${Math.min(vh - 24, 520)}px`;
+      }
+    };
+
+    this._boundViewportHandler = this.updateViewport;
+    window.visualViewport.addEventListener('resize', this._boundViewportHandler);
+    window.visualViewport.addEventListener('scroll', this._boundViewportHandler);
+
+    if (this.input) {
+      this._boundInputFocus = () => {
+        setTimeout(() => {
+          if (typeof this.updateViewport === 'function') {
+            this.updateViewport();
+          }
+          if (this.input && typeof this.input.scrollIntoView === 'function') {
+            this.input.scrollIntoView({ block: 'nearest' });
+          }
+        }, 150);
+      };
+      this.input.addEventListener('focus', this._boundInputFocus);
+    }
+
+    this.updateViewport();
   }
 
   _handleInputSubmit() {
@@ -268,7 +312,7 @@ export class ProximityChat {
       this.playerColors.set(msgObj.senderId, color);
     }
     msgObj.color = this.playerColors.get(msgObj.senderId);
-    msgObj.toString = function() { return this.text; };
+    msgObj.toString = function () { return this.text; };
 
     this.messages.push(msgObj);
     this.lastMessage = msgObj;
@@ -435,14 +479,19 @@ export class ProximityChat {
 
   /**
    * Public API: Toggles visibility between shown and hidden.
+   * @param {boolean} [force] - Optional force state
    */
-  toggleVisibility() {
-    if (this.isVisible()) {
+  toggleVisibility(force) {
+    const shouldShow = typeof force === 'boolean' ? force : !this.isVisible();
+    if (!shouldShow) {
       this.hideHUD();
       this.isManuallyHidden = true;
     } else {
       this.showHUD();
       this.isManuallyHidden = false;
+      if (typeof this.updateViewport === 'function') {
+        this.updateViewport();
+      }
     }
   }
 
@@ -474,11 +523,18 @@ export class ProximityChat {
       this.toggleBtn.classList.add('active');
       this.toggleBtn.classList.remove('collapsed');
     }
+    if (typeof this.updateViewport === 'function') {
+      this.updateViewport();
+    }
     if (this.widget && typeof this.widget.clearUnread === 'function') {
       this.widget.clearUnread();
     } else {
       this.setUnreadBadge(0);
     }
+  }
+
+  show() {
+    this.showHUD();
   }
 
   openHUD() {
@@ -848,6 +904,17 @@ export class ProximityChat {
     if (this.input && this._boundOnKeyDown) {
       this.input.removeEventListener('keydown', this._boundOnKeyDown);
     }
+    if (this.input && this._boundInputFocus) {
+      this.input.removeEventListener('focus', this._boundInputFocus);
+    }
+    this._boundInputFocus = null;
+
+    if (typeof window !== 'undefined' && window.visualViewport && this._boundViewportHandler) {
+      window.visualViewport.removeEventListener('resize', this._boundViewportHandler);
+      window.visualViewport.removeEventListener('scroll', this._boundViewportHandler);
+    }
+    this._boundViewportHandler = null;
+    this.updateViewport = null;
     if (this.sendBtn && this._boundOnSendClick) {
       this.sendBtn.removeEventListener('click', this._boundOnSendClick);
     }

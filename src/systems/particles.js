@@ -195,6 +195,9 @@ export class ParticleSystem {
 
   // Generic particle emitter. Safely handles malformed input.
   emit(config) {
+    if (!Array.isArray(this.particles)) {
+      this.particles = [];
+    }
     if (!config || typeof config !== 'object') {
       return null;
     }
@@ -238,6 +241,10 @@ export class ParticleSystem {
 
   // Water splash droplets (e.g. puddle / pond impacts)
   emitWaterSplash(x, y, count = 6) {
+    if (!Array.isArray(this.particles)) {
+      this.particles = [];
+    }
+
     const safeNumber = (value) => {
       const t = typeof value;
       if (t !== 'number' && t !== 'string' && t !== 'boolean') {
@@ -261,6 +268,9 @@ export class ParticleSystem {
       n = 6;
     }
     n = Math.max(0, Math.min(100, n));
+    if (!Number.isFinite(n)) {
+      n = 6;
+    }
 
     const colors = [
       'rgba(240, 253, 250, 0.8)',
@@ -286,7 +296,7 @@ export class ParticleSystem {
         color,
         size: radius,
         life,
-        gravity: 260
+        gravity: 120
       });
       if (particle) {
         emitted++;

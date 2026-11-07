@@ -16184,32 +16184,66 @@ const ZOOMIES_RATE = 12;
 const ZOOMIES_MAX = 100;
 
 function isShallow(entity) {
-  return Boolean(entity) && Number.isFinite(entity.y) && entity.y > SHALLOW_WATER_Y;
+  return Boolean(entity) && Number.isFinite(entity?.y) && entity.y > SHALLOW_WATER_Y;
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 /**
  * Apply coastal shallow-water splash + zoomies effects.
  *
- * @param {Object} [options]
- * @param {Object} [options.particleSystem]
- * @param {Object} [options.owner]
- * @param {Object} [options.dog]
- * @param {number} [options.dt]
- * @param {number} [options.randomValue]
+ * Supports both an options object and positional arguments:
+ *   applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt, randomValue })
+ *   applyCoastalShallowWaterInteraction(owner, dog, particleSystem, dt, randomValue)
+ *
+ * @param {Object|Object} [optionsOrOwner]
+ * @param {Object} [dogArg]
+ * @param {Object} [particleSystemArg]
+ * @param {number} [dtArg]
+ * @param {number} [randomValueArg]
  * @returns {{ emitted: boolean, usedFallback: boolean, zoomiesIncremented: boolean }}
  */
-export function applyCoastalShallowWaterInteraction({
-  particleSystem,
-  owner,
-  dog,
-  dt,
-  randomValue = Math.random(),
-} = {}) {
+export function applyCoastalShallowWaterInteraction(
+  optionsOrOwner,
+  dogArg,
+  particleSystemArg,
+  dtArg,
+  randomValueArg,
+) {
   const result = {
     emitted: false,
     usedFallback: false,
     zoomiesIncremented: false,
   };
+
+  // Resolve arguments: options object vs positional.
+  let particleSystem;
+  let owner;
+  let dog;
+  let dt;
+  let randomValue;
+
+  if (isPlainObject(optionsOrOwner) && (
+    'owner' in optionsOrOwner ||
+    'dog' in optionsOrOwner ||
+    'particleSystem' in optionsOrOwner ||
+    'dt' in optionsOrOwner ||
+    'randomValue' in optionsOrOwner
+  )) {
+    ({ particleSystem, owner, dog, dt, randomValue } = optionsOrOwner);
+  } else {
+    owner = optionsOrOwner;
+    dog = dogArg;
+    particleSystem = particleSystemArg;
+    dt = dtArg;
+    randomValue = randomValueArg;
+  }
+
+  if (randomValue === undefined) {
+    randomValue = Math.random();
+  }
 
   const ownerShallow = isShallow(owner);
   const dogShallow = isShallow(dog);
@@ -16252,7 +16286,7 @@ export function applyCoastalShallowWaterInteraction({
   }
 
   // Independently update zoomies when dog is shallow.
-  if (dogShallow && typeof dog.zoomiesLevel === 'number' && Number.isFinite(dog.zoomiesLevel)) {
+  if (dogShallow && typeof dog?.zoomiesLevel === 'number' && Number.isFinite(dog.zoomiesLevel)) {
     const safeDt = Number.isFinite(dt) ? Math.max(0, dt) : 0;
     dog.zoomiesLevel = Math.min(ZOOMIES_MAX, dog.zoomiesLevel + ZOOMIES_RATE * safeDt);
     result.zoomiesIncremented = true;
@@ -16376,7 +16410,9 @@ export class SniffParticle extends Particle {
 
 export class ParticleSystem {
   constructor() {
-    this.particles = [];
+    if (!Array.isArray(this.particles)) {
+      this.particles = [];
+    }
   }
 
   // Dirt & grass specks when running or jumping
@@ -16466,8 +16502,16 @@ export class ParticleSystem {
     }
 
     const num = (value, fallback) => {
-      const n = Number(value);
-      return Number.isFinite(n) ? n : fallback;
+      const t = typeof value;
+      if (t !== 'number' && t !== 'string' && t !== 'boolean') {
+        return fallback;
+      }
+      try {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : fallback;
+      } catch (_err) {
+        return fallback;
+      }
     };
 
     const x = num(config.x, 0);
@@ -16496,13 +16540,25 @@ export class ParticleSystem {
 
   // Water splash droplets (e.g. puddle / pond impacts)
   emitWaterSplash(x, y, count = 6) {
-    const px = Number(x);
-    const py = Number(y);
+    const safeNumber = (value) => {
+      const t = typeof value;
+      if (t !== 'number' && t !== 'string' && t !== 'boolean') {
+        return NaN;
+      }
+      try {
+        return Number(value);
+      } catch (_err) {
+        return NaN;
+      }
+    };
+
+    const px = safeNumber(x);
+    const py = safeNumber(y);
     if (!Number.isFinite(px) || !Number.isFinite(py)) {
       return 0;
     }
 
-    let n = Math.floor(Number(count));
+    let n = Math.floor(safeNumber(count));
     if (!Number.isFinite(n)) {
       n = 6;
     }
@@ -27473,7 +27529,7 @@ const particleSystem = {
 };
 const owner = { x: 300, y: 1900 };
 const dog = { x: 0, y: 0, zoomiesLevel: 0 };
-applyCoastalShallowWaterInteraction(owner, dog, particleSystem, 0.016, 0);
+applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 0.016, randomValue: 0 });
 console.log(JSON.stringify({ calls, zoomies: dog.zoomiesLevel }));
 """)
         self.assertEqual(out["calls"], [[300, 1900]])
@@ -27487,7 +27543,7 @@ const particleSystem = {
 };
 const owner = { x: 0, y: 0 };
 const dog = { x: 500, y: 1900, zoomiesLevel: 0 };
-applyCoastalShallowWaterInteraction(owner, dog, particleSystem, 1.0, 0);
+applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 1.0, randomValue: 0 });
 console.log(JSON.stringify({ calls, zoomies: dog.zoomiesLevel }));
 """)
         self.assertEqual(out["calls"], [[500, 1900]])
@@ -27501,7 +27557,7 @@ const particleSystem = {
 };
 const owner = { x: 100, y: 1900 };
 const dog = { x: 0, y: 0, zoomiesLevel: 0 };
-applyCoastalShallowWaterInteraction(owner, dog, particleSystem, 0.016, 0);
+applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 0.016, randomValue: 0 });
 console.log(JSON.stringify({ calls }));
 """)
         self.assertGreaterEqual(len(out["calls"]), 1)
@@ -27518,7 +27574,7 @@ const owner = { x: 0, y: 0 };
 const dog = { x: 500, y: 1900, zoomiesLevel: 0 };
 let threw = false;
 try {
-  applyCoastalShallowWaterInteraction(owner, dog, particleSystem, 1.0, 0);
+  applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 1.0, randomValue: 0 });
 } catch (e) {
   threw = true;
 }
@@ -27536,7 +27592,7 @@ const particleSystem = {
 };
 const owner = { x: 100, y: 1000 };
 const dog = { x: 500, y: 1000, zoomiesLevel: 0 };
-applyCoastalShallowWaterInteraction(owner, dog, particleSystem, 1.0, 0);
+applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 1.0, randomValue: 0 });
 console.log(JSON.stringify({ calls, zoomies: dog.zoomiesLevel }));
 """)
         self.assertEqual(out["calls"], [])
@@ -27551,11 +27607,56 @@ const particleSystem = {
 };
 const owner = { x: 0, y: 0 };
 const dog = { x: 500, y: 1900, zoomiesLevel: 0 };
-applyCoastalShallowWaterInteraction(owner, dog, particleSystem, 1.0, 0.9);
+applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 1.0, randomValue: 0.9 });
 console.log(JSON.stringify({ calls, zoomies: dog.zoomiesLevel }));
 """)
         self.assertEqual(out["calls"], [])
         self.assertEqual(out["zoomies"], 12)
+
+    def test_positional_arguments_supported(self):
+        out = self._run("""
+const calls = [];
+const particleSystem = {
+  emitWaterSplash(x, y) { calls.push([x, y]); }
+};
+const owner = { x: 0, y: 0 };
+const dog = { x: 500, y: 1900, zoomiesLevel: 0 };
+applyCoastalShallowWaterInteraction(owner, dog, particleSystem, 1.0, 0);
+console.log(JSON.stringify({ calls, zoomies: dog.zoomiesLevel }));
+""")
+        self.assertEqual(out["calls"], [[500, 1900]])
+        self.assertEqual(out["zoomies"], 12)
+
+    def test_null_and_undefined_inputs_do_not_throw(self):
+        out = self._run("""
+const results = [];
+try {
+  const r = applyCoastalShallowWaterInteraction(null);
+  results.push({ input: 'null', r });
+} catch (e) {
+  results.push({ input: 'null', threw: e.message });
+}
+try {
+  const r = applyCoastalShallowWaterInteraction(undefined);
+  results.push({ input: 'undefined', r });
+} catch (e) {
+  results.push({ input: 'undefined', threw: e.message });
+}
+try {
+  const r = applyCoastalShallowWaterInteraction(42);
+  results.push({ input: 'number', r });
+} catch (e) {
+  results.push({ input: 'number', threw: e.message });
+}
+console.log(JSON.stringify({ results }));
+""")
+        for entry in out["results"]:
+            self.assertNotIn("threw", entry, f"threw for input {entry.get('input')}")
+            self.assertEqual(entry["r"], {
+                "emitted": False,
+                "usedFallback": False,
+                "zoomiesIncremented": False,
+            })
 
 
 class TestCoastalWaterStaticContract(unittest.TestCase):

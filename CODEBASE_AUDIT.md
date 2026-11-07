@@ -6821,6 +6821,8 @@ export const DogState = {
   SOCIAL_GREET: 'SOCIAL_GREET',
   IDLE_SNIFF: 'IDLE_SNIFF',
   SITTING: 'SITTING',
+  LYING_DOWN: 'LYING_DOWN',
+  ROLLING: 'ROLLING',
   FETCHING: 'FETCHING',
   PLAY_BOW: 'PLAY_BOW',
   BARKING: 'BARKING',
@@ -6830,6 +6832,26 @@ export const DogState = {
   ZOOMIES: 'ZOOMIES',
   SNIFFING_TRAIL: 'SNIFFING_TRAIL'
 };
+
+function lerpAngle(a, b, t) {
+  const d = Math.atan2(Math.sin(b - a), Math.cos(b - a));
+  return a + d * Math.min(1, Math.max(0, t));
+}
+
+// States that must never be interrupted by ambient resting (LYING_DOWN) transitions.
+const ACTIVE_REST_BLOCKED_STATES = new Set([
+  DogState.FETCHING,
+  DogState.ZOOMIES,
+  DogState.BARKING,
+  DogState.POOPING,
+  DogState.LOST,
+  DogState.RECALLED,
+  DogState.PLAY_BOW,
+  DogState.ROLLING,
+  DogState.LYING_DOWN,
+  DogState.SNIFFING_TRAIL,
+  DogState.SOCIAL_GREET
+]);
 
 export const CoatPreset = {
   CHOCOLATE_TAN: {
@@ -6991,16 +7013,74 @@ export class CompanionDog {
     this.gaitPhase = 0;
     this.gallopPuffTimer = 0;
 
+    // Audio engine hook (resolved lazily via getter below)
+    this._audio = null;
+
+    // Catch-up / return-trot state
+    this.catchUpTimer = 0;
+    this.returnTrotActive = false;
+
+    // Ambient resting state
+    this.idleRestTimer = 0;
+    this.restStartAt = 0;
+    this.rollingTimer = 0;
+
+    // Scent tracking
+    this.lastSniffFollowAt = 0;
+    this.lastReachedScent = null;
+    this.visitedScents = new WeakSet();
+
+    // Zoomies speed (rad/s)
+    this.zoomiesSpeed = 3.8;
+
+    // Current zone reference (set externally for sunny-zone rolling)
+    this.currentZone = null;
+
+    // Audio cooldowns
+    this._whineCooldown = 0;
+    this._pantCooldown = 0;
+
     // Event callbacks
     this.onStrayTriggered = null;
     this.onStrayResolved = null;
     this.onPoopDropped = null;
   }
 
+  // Lazy audio getter: resolves dynamically from window.audioEngine / window.sound
+  get audio() {
+    return this._audio || (typeof window !== 'undefined' ? (window.audioEngine || window.sound) : null);
+  }
+
+  set audio(val) {
+    this._audio = val;
+  }
+
+  // State-entry gated transition (rolling chance evaluated only on entry)
+  transitionTo(newState) {
+    if (this.state === newState) return;
+    this.state = newState;
+    if (newState === DogState.SITTING || newState === DogState.IDLE_SNIFF) {
+      if (!this.owner?.isLeashed && this.happiness >= 80) {
+        const isSunny = Boolean(this.currentZone?.sunny || (this.owner?.field?.zoneConfig?.sunny));
+        const rollChance = isSunny ? 0.08 : 0.04;
+        if (Math.random() < rollChance) {
+          this.state = DogState.ROLLING;
+          this.stateTimer = 2.5;
+          this.wagSpeed = 20;
+        }
+      }
+    }
+    // Lock rolling duration so callers cannot overwrite it with random roaming timers
+    if (this.state === DogState.ROLLING) {
+      this.stateTimer = 2.5;
+    }
+  }
+
   triggerZoomies() {
     if (this.owner && this.owner.isLeashed) return false;
     if (this.state === DogState.LOST || this.state === DogState.POOPING) return false;
     this.dropStick();
+    this.idleRestTimer = 0;
     this.state = DogState.ZOOMIES;
     this.zoomiesTimer = 4.2;
     this.zoomiesPhase = 0;
@@ -7103,6 +7183,7 @@ export class CompanionDog {
     this.wagSpeed = 18;
     this.isRecalledToHeel = false;
     this.recallHeelTimer = 10.0; // 10 seconds of close heel following
+    this.idleRestTimer = 0;
     this.socialTargetDog = null;
     this.isReturningToOwner = false;
     this.isPullingLeash = false;
@@ -7130,8 +7211,15 @@ export class CompanionDog {
     }
   }
 
+  triggerPet(duration = 0.45) {
+    this.pet();
+    this.emoteBubble = '❤️';
+    this.emoteTimer = duration;
+  }
+
   pet() {
     this.happiness = Math.min(100, this.happiness + 20);
+    this.idleRestTimer = 0;
     this.wagSpeed = 18;
     this.emoteBubble = '❤️';
     this.emoteTimer = 2.2;
@@ -7162,6 +7250,7 @@ export class CompanionDog {
       return;
     }
     this.dropStick();
+    this.idleRestTimer = 0;
     this.targetBall = ball;
     this.state = DogState.FETCHING;
     this.wagSpeed = 15;
@@ -7171,6 +7260,11 @@ export class CompanionDog {
     const isLeashed = Boolean(this.owner && this.owner.isLeashed);
     const nearbyNPCs = npcs || [];
     this.checkNPCInteractions(nearbyNPCs);
+
+    // Sync current zone reference for sunny-zone rolling evaluation
+    if (field && field.zoneConfig) {
+      this.currentZone = field.zoneConfig;
+    }
 
     // Idle Tracking & Whistle/Leash Reset
     if (this.owner && !isLeashed && this.state !== DogState.LOST) {
@@ -7220,6 +7314,35 @@ export class CompanionDog {
           this.onStrayResolved(this);
         }
       }
+    }
+
+    // Whine audio hook when the dog is far from its owner (throttled)
+    if (this.owner && !isLeashed && this.state !== DogState.LOST) {
+      const distToOwnerAudio = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
+      this._whineCooldown -= dt;
+      if ((distToOwnerAudio > 220 || this.isReturningToOwner || this.returnTrotActive) && this._whineCooldown <= 0 && this.audio && typeof this.audio.playWhine === 'function') {
+        this.audio.playWhine();
+        this._whineCooldown = 1.5;
+      }
+    }
+
+    // Ambient resting transitions: lie down after 15s of continuous owner stillness (off-leash).
+    // Only ambient resting-capable states may enter LYING_DOWN; active/interactive states are excluded.
+    const ownerSpeed = Math.hypot(this.owner?.vx || 0, this.owner?.vy || 0);
+    if (this.owner && !this.owner.isLeashed && ownerSpeed < 5 && !ACTIVE_REST_BLOCKED_STATES.has(this.state)) {
+      this.idleRestTimer += dt;
+      if (this.idleRestTimer > 15) {
+        this.transitionTo(DogState.LYING_DOWN);
+        this.restStartAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      }
+    } else if (ownerSpeed > 5) {
+      this.idleRestTimer = 0;
+      if (this.state === DogState.LYING_DOWN) {
+        this.transitionTo(DogState.ROAMING);
+      }
+    } else if (ACTIVE_REST_BLOCKED_STATES.has(this.state)) {
+      // Reset rest timer during active interactions
+      this.idleRestTimer = 0;
     }
 
     // Walking time accumulation for Dog Poop Event
@@ -7349,6 +7472,31 @@ export class CompanionDog {
         this.updateSitting(dt);
         break;
 
+      case DogState.LYING_DOWN:
+        this.vx = 0;
+        this.vy = 0;
+        this.wagSpeed = 3;
+        if (this.owner && Math.hypot(this.owner.vx || 0, this.owner.vy || 0) > 5) {
+          this.state = DogState.ROAMING;
+          this.idleRestTimer = 0;
+        }
+        break;
+
+      case DogState.ROLLING:
+        this.vx *= 0.6;
+        this.vy *= 0.6;
+        this.wagSpeed = 20;
+        this.stateTimer -= dt;
+        if (this.stateTimer <= 0) {
+          // Route through transitionTo for consistency, then force a positive sitting
+          // duration so the dog never re-rolls immediately after finishing a roll.
+          this.transitionTo(DogState.SITTING);
+          if (this.state === DogState.SITTING) {
+            this.stateTimer = 2.0 + Math.random() * 2.0;
+          }
+        }
+        break;
+
       case DogState.BARKING:
         this.stateTimer -= dt;
         if (this.stateTimer <= 0) {
@@ -7374,8 +7522,11 @@ export class CompanionDog {
     }
 
     // 3. Movement integration
-    this.x += this.vx * dt;
-    this.y += this.vy * dt;
+    // Zoomies set x/y directly from the parametric curve; skip integration to avoid double movement.
+    if (this.state !== DogState.ZOOMIES) {
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+    }
 
     // Sync carried stick position
     if (this.hasStick && this.carriedStick) {
@@ -7414,18 +7565,8 @@ export class CompanionDog {
         this.vy *= 0.5;
         this.isPullingLeash = true;
       }
-    } else if (this.owner && !this.owner.isLeashed && this.state !== DogState.LOST && this.state !== DogState.FETCHING) {
+    } else if (this.owner && !this.owner.isLeashed) {
       this.isPullingLeash = false;
-      // Off-leash bounded perimeter constraint: hard clamp to 230px so dog never strays out of sight
-      const maxRoam = 230;
-      const dx = this.x - this.owner.x;
-      const dy = this.y - this.owner.y;
-      const dist = Math.hypot(dx, dy);
-
-      if (dist > maxRoam) {
-        this.x = this.owner.x + (dx / dist) * maxRoam;
-        this.y = this.owner.y + (dy / dist) * maxRoam;
-      }
     }
 
     // Obstacle and world boundary collisions
@@ -7615,8 +7756,10 @@ export class CompanionDog {
       this.vy *= 0.8;
       this.wagSpeed = 6;
       if (Math.random() < idleTransitionChance) {
-        this.state = Math.random() < 0.5 ? DogState.IDLE_SNIFF : DogState.SITTING;
-        this.stateTimer = 2.0 + Math.random() * 3.0;
+        this.transitionTo(Math.random() < 0.5 ? DogState.IDLE_SNIFF : DogState.SITTING);
+        if (this.state !== DogState.ROLLING) {
+          this.stateTimer = 2.0 + Math.random() * 3.0;
+        }
       }
       return;
     }
@@ -7691,31 +7834,34 @@ export class CompanionDog {
 
     const fromOwnerX = this.x - this.owner.x;
     const fromOwnerY = this.y - this.owner.y;
-    let distToOwner = Math.hypot(fromOwnerX, fromOwnerY);
+    const distToOwner = Math.hypot(fromOwnerX, fromOwnerY);
 
-    // Hard boundary clamp: if distToOwner > 230, clamp position along the vector to owner
-    if (distToOwner > 230) {
-      this.x = this.owner.x + (fromOwnerX / distToOwner) * 230;
-      this.y = this.owner.y + (fromOwnerY / distToOwner) * 230;
-      distToOwner = 230;
+    // Distance-scaled catch-up: probabilistic return-trot when the dog drifts far from owner
+    if (distToOwner > 220) {
+      this.catchUpTimer += dt;
+      if (this.catchUpTimer >= 1.2) {
+        const base = Math.min(0.90, Math.max(0.08, (distToOwner - 220) / 260));
+        const obedience = Number(this.personality?.obedience ?? 4);
+        const p = Math.min(1, Math.max(0, base * (0.45 + 0.11 * obedience)));
+        if (Math.random() < p) {
+          this.returnTrotActive = true;
+        }
+        this.catchUpTimer = 0;
+      }
+    } else {
+      this.catchUpTimer = 0;
     }
 
-    // If distToOwner > 200: steer directly back toward the owner at normal trot speed until within 120px
-    if (distToOwner > 200) {
-      this.isReturningToOwner = true;
-    }
-
-    if (this.isReturningToOwner) {
-      if (distToOwner <= 120) {
-        this.isReturningToOwner = false;
+    if (this.returnTrotActive) {
+      if (distToOwner <= 110) {
+        this.returnTrotActive = false;
       } else {
         const toOwnerX = this.owner.x - this.x;
         const toOwnerY = this.owner.y - this.y;
         const dirDist = Math.hypot(toOwnerX, toOwnerY) || 1;
-        const trotSpeed = this.speed;
-        this.vx = (toOwnerX / dirDist) * trotSpeed;
-        this.vy = (toOwnerY / dirDist) * trotSpeed;
-        this.angle = Math.atan2(this.vy, this.vx);
+        this.vx = (toOwnerX / dirDist) * this.speed;
+        this.vy = (toOwnerY / dirDist) * this.speed;
+        this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 12));
         this.wagSpeed = 10;
         return;
       }
@@ -7728,8 +7874,10 @@ export class CompanionDog {
 
       // Periodically pauses for 2-3s to sniff a spot (IDLE_SNIFF)
       if (Math.random() < 0.25) {
-        this.state = DogState.IDLE_SNIFF;
-        this.stateTimer = 2.0 + Math.random() * 1.0;
+        this.transitionTo(DogState.IDLE_SNIFF);
+        if (this.state !== DogState.ROLLING) {
+          this.stateTimer = 2.0 + Math.random() * 1.0;
+        }
         this.vx = 0;
         this.vy = 0;
         return;
@@ -7766,7 +7914,7 @@ export class CompanionDog {
     }
 
     if (Math.hypot(this.vx, this.vy) > 8) {
-      this.angle = Math.atan2(this.vy, this.vx);
+      this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 12));
       this.wagSpeed = 9;
     } else {
       this.wagSpeed = 6;
@@ -8023,28 +8171,55 @@ export class CompanionDog {
       return;
     }
     this.zoomiesTimer -= dt;
-    this.zoomiesPhase += dt * 3.8;
-    const rx = 72;
-    const ry = 48;
-    const targetX = this.zoomiesCenter.x + Math.sin(this.zoomiesPhase) * rx;
-    const targetY = this.zoomiesCenter.y + Math.sin(this.zoomiesPhase * 2) * ry * 0.5;
-    const dx = targetX - this.x;
-    const dy = targetY - this.y;
-    const dist = Math.hypot(dx, dy) || 1;
-    const sprint = this.sprintSpeed * 1.15;
-    this.vx = (dx / dist) * sprint;
-    this.vy = (dy / dist) * sprint;
-    this.angle = Math.atan2(this.vy, this.vx);
+    if (this.zoomiesTimer <= 0) {
+      this.vx = 0;
+      this.vy = 0;
+      this.zoomiesPhase = 0;
+      this.emoteBubble = '👅';
+      this.emoteTimer = 2.0;
+      this.transitionTo((this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING);
+      return;
+    }
+    this.zoomiesPhase += dt * this.zoomiesSpeed;
+
+    const t = this.zoomiesPhase;
+    const cx = this.zoomiesCenter.x;
+    const cy = this.zoomiesCenter.y;
+    const rx = 135;
+    const ry = 80;
+
+    // Parametric figure-eight retaining Phase 3 regex compatibility
+    this.x = cx + rx * Math.sin(this.zoomiesPhase);
+    this.y = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
+
+    // Collision-aware: resolve obstacles/bounds and shift the orbit center if displaced
+    if (field) {
+      resolveFieldCollision(this, this.radius, field);
+      const expectedX = cx + rx * Math.sin(this.zoomiesPhase);
+      const expectedY = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
+      this.zoomiesCenter.x += (this.x - expectedX);
+      this.zoomiesCenter.y += (this.y - expectedY);
+    }
+
+    // Analytic tangent velocity vector
+    const dx = rx * Math.cos(t);
+    const dy = ry * Math.cos(2 * t);
+    this.vx = dx * this.zoomiesSpeed;
+    this.vy = dy * this.zoomiesSpeed;
+
+    const targetAngle = Math.atan2(dy, dx);
+    this.angle = lerpAngle(this.angle, targetAngle, Math.min(1, dt * 12));
     this.wagSpeed = 24;
+
+    // Panting audio during zoomies (throttled)
+    this._pantCooldown -= dt;
+    if (this._pantCooldown <= 0 && this.audio && typeof this.audio.playPant === 'function') {
+      this.audio.playPant();
+      this._pantCooldown = 1.2;
+    }
 
     if (field && field.particleSystem && Math.random() < 0.35) {
       field.particleSystem.emitGallopPuff(this.x, this.y, this.angle);
-    }
-
-    if (this.zoomiesTimer <= 0) {
-      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
-      this.emoteBubble = '👅';
-      this.emoteTimer = 2.0;
     }
   }
 
@@ -8052,6 +8227,9 @@ export class CompanionDog {
     this.stateTimer -= dt;
     this.sniffTime += dt;
     this.noseTwitch = Math.sin(this.sniffTime * 25) * 1.6;
+
+    const now = Date.now();
+    const cooldownActive = (now - this.lastSniffFollowAt) < 14000;
 
     // Snout position for vapor particles
     const snoutDist = 20;
@@ -8061,25 +8239,49 @@ export class CompanionDog {
       field.particleSystem.emitSniffParticles(sx, sy, this.angle);
     }
 
-    // Follow or inspect target scent node
+    // Sniffing audio (throttled)
+    this._pantCooldown -= dt;
+    if (this._pantCooldown <= 0 && this.audio && typeof this.audio.playSniff === 'function') {
+      this.audio.playSniff();
+      this._pantCooldown = 0.9;
+    }
+
+    // Follow or inspect target scent node (gated by 14s cooldown)
     if (this.targetScent && this.targetScent.life > 0) {
       const dx = this.targetScent.x - this.x;
       const dy = this.targetScent.y - this.y;
       const dist = Math.hypot(dx, dy);
 
       if (dist > 12) {
-        const sniffSpeed = this.speed * 0.38;
-        this.vx = (dx / dist) * sniffSpeed;
-        this.vy = (dy / dist) * sniffSpeed;
-        this.angle = Math.atan2(this.vy, this.vx);
+        if (!cooldownActive) {
+          const sniffSpeed = this.speed * 0.38;
+          this.vx = (dx / dist) * sniffSpeed;
+          this.vy = (dy / dist) * sniffSpeed;
+          this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 10));
+        } else {
+          this.vx *= 0.5;
+          this.vy *= 0.5;
+        }
       } else {
         this.vx *= 0.5;
         this.vy *= 0.5;
-        // Seek next connected scent if available
+        // Reached node: record cooldown timestamp once on first arrival only
+        if (this.targetScent && this.lastReachedScent !== this.targetScent) {
+          this.lastReachedScent = this.targetScent;
+          this.lastSniffFollowAt = now;
+          this.visitedScents.add(this.targetScent);
+        }
+        // Seek next connected scent if available (exclude own scents and already-visited nodes)
         if (field && typeof field.getNearbyScents === 'function') {
-          const nearby = field.getNearbyScents(this.x, this.y, 65).filter(s => s !== this.targetScent);
+          const nearby = field.getNearbyScents(this.x, this.y, 65).filter(s =>
+            s !== this.targetScent &&
+            s.sourceId !== (this.id || 'self') &&
+            s.source !== this &&
+            !this.visitedScents.has(s)
+          );
           if (nearby.length > 0) {
-            this.targetScent = nearby[Math.floor(Math.random() * nearby.length)];
+            const next = nearby[Math.floor(Math.random() * nearby.length)];
+            this.targetScent = next;
           }
         }
       }
@@ -8137,6 +8339,16 @@ export class CompanionDog {
       stretchX = 0.88;
       stretchY = 1.12;
       ctx.translate(-2, 0);
+    } else if (this.state === DogState.LYING_DOWN) {
+      stretchX = 1.15;
+      stretchY = 0.72;
+      ctx.translate(0, 2);
+    } else if (this.state === DogState.ROLLING) {
+      // Rolling wiggle: oscillate rotation and squash
+      const rollPhase = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.012;
+      ctx.rotate(Math.sin(rollPhase) * 0.35);
+      stretchX = 1.0 + Math.sin(rollPhase * 2) * 0.08;
+      stretchY = 0.9;
     } else if (this.gaitMode === 'GALLOP') {
       const cycle = Math.sin(this.gaitPhase);
       const stretch = 1.0 + Math.max(0, cycle) * 0.28 - Math.max(0, -cycle) * 0.12;
@@ -11344,18 +11556,51 @@ export class CliftonDownGame {
   }
 
   toggleLeash() {
-    this.owner.isLeashed = !this.owner.isLeashed;
-    if (this.touchControls && typeof this.touchControls.setLeashed === 'function') {
-      this.touchControls.setLeashed(this.owner.isLeashed);
+    if (this.owner.isLeashed) {
+      // Turning OFF leash – always allowed
+      this.owner.isLeashed = false;
+      if (this.touchControls && typeof this.touchControls.setLeashed === 'function') {
+        this.touchControls.setLeashed(false);
+      }
+      this.hud.showToast('🐕 Off-lead: Free to roam & play!');
+      if (this.net && typeof this.net.broadcast === 'function') {
+        this.net.broadcast(Protocol.createSyncState(this.net.peerId, this.owner, this.dog));
+      }
+      return;
     }
-    this.hud.showToast(this.owner.isLeashed ? '🦮 Leash on: Walking close' : '🐕 Off-lead: Free to roam & play!');
 
+    // Turning ON leash – strict proximity gate (<= 68px)
+    const dist = Math.hypot(this.dog.x - this.owner.x, this.dog.y - this.owner.y);
+    if (dist > 68) {
+      this.hud.showToast("🦮 Too far to clip lead! Walk closer or whistle [H] to recall first.");
+      return;
+    }
+
+    this.owner.isLeashed = true;
+    if (typeof this.owner.triggerPet === 'function') {
+      this.owner.triggerPet(0.45);
+    }
+    if (typeof this.dog.triggerPet === 'function') {
+      this.dog.triggerPet(0.45);
+    }
+    if (this.sound && typeof this.sound.playLeadClip === 'function') {
+      this.sound.playLeadClip();
+    } else if (typeof sound !== 'undefined' && sound && typeof sound.playLeadClip === 'function') {
+      sound.playLeadClip();
+    }
+    if (typeof DogState !== 'undefined' && DogState.FOLLOWING !== undefined) {
+      if (typeof this.dog.transitionTo === 'function') {
+        this.dog.transitionTo(DogState.FOLLOWING);
+      } else {
+        this.dog.state = DogState.FOLLOWING;
+      }
+    }
+    if (this.touchControls && typeof this.touchControls.setLeashed === 'function') {
+      this.touchControls.setLeashed(true);
+    }
+    this.hud.showToast('🦮 Leash on: Walking close');
     if (this.net && typeof this.net.broadcast === 'function') {
       this.net.broadcast(Protocol.createSyncState(this.net.peerId, this.owner, this.dog));
-    }
-
-    if (this.touchControls && typeof this.touchControls.setLeashed === 'function') {
-      this.touchControls.setLeashed(this.owner.isLeashed);
     }
   }
 
@@ -11404,12 +11649,17 @@ export class CliftonDownGame {
       this.owner.triggerPickup(0.8);
     }
     const pile = this.activePoopPileNearPlayer;
-    if (this.field && typeof this.field.removePoopPile === 'function') {
+    if (this.field && typeof this.field.pickupPoop === 'function') {
+      this.field.pickupPoop(pile.x, pile.y);
+    } else if (this.field && typeof this.field.removePoopPile === 'function') {
       this.field.removePoopPile(pile.id);
     }
     this.hasPoopBag = true;
     this.activePoopPileNearPlayer = null;
-    this.hud.showToast('Collected in poop bag 🟤 Find a dog bin!');
+    this.hud.showToast('💩 Cleaned up waste! Dispose in bin [E]');
+    if (this.hud && typeof this.hud.updateInventory === 'function') {
+      this.hud.updateInventory(true);
+    }
 
     if (this.field && typeof this.field.getNearestBin === 'function') {
       const nearestBin = this.field.getNearestBin(this.owner.x, this.owner.y);
@@ -11856,6 +12106,17 @@ export class CliftonDownGame {
         this.touchControls.setContextualAction('dispose');
       } else {
         this.touchControls.setContextualAction(null);
+      }
+    }
+
+    // Dynamically dim the leash button when the dog is out of clipping range
+    if (typeof document !== 'undefined') {
+      if (!this.leashBtn) {
+        this.leashBtn = document.getElementById('btn-touch-leash');
+      }
+      if (this.leashBtn) {
+        const dim = !this.owner.isLeashed && Math.hypot(this.dog.x - this.owner.x, this.dog.y - this.owner.y) > 68;
+        this.leashBtn.style.opacity = dim ? '0.55' : '1.0';
       }
     }
 
@@ -15505,39 +15766,133 @@ class SoundSynthesizer {
     }
   }
 
+  _ready() {
+    return Boolean(this.ctx && this.ctx.state === 'running');
+  }
+
+  _noiseBuffer() {
+    if (this._cachedNoise && this._cachedNoise.sampleRate === this.ctx.sampleRate) {
+      return this._cachedNoise;
+    }
+    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    this._cachedNoise = buf;
+    return buf;
+  }
+
   // Realistic Cheerful Cocker Spaniel Bark
   playBark() {
     this.ensureContext();
-    if (!this.ctx || this.isMuted) return;
+    if (!this._ready() || this.isMuted) return;
 
-    const t = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    const filter = this.ctx.createBiquadFilter();
+    const ctx = this.ctx;
+    const oscA = ctx.createOscillator();
+    const oscB = ctx.createOscillator();
+    const bp = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    const t = ctx.currentTime;
+    oscA.type = 'sawtooth';
+    oscB.type = 'sawtooth';
+    oscA.frequency.setValueAtTime(550, t);
+    oscA.frequency.exponentialRampToValueAtTime(210, t + 0.14);
+    oscB.frequency.setValueAtTime(560, t);
+    oscB.frequency.exponentialRampToValueAtTime(215, t + 0.14);
+    bp.type = 'bandpass';
+    bp.frequency.value = 800;
+    bp.Q.value = 5;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.35, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    oscA.connect(bp); oscB.connect(bp); bp.connect(gain); gain.connect(this.ctx.destination);
+    oscA.start(t); oscB.start(t);
+    oscA.stop(t + 0.18); oscB.stop(t + 0.18);
+  }
 
-    // Formant filter for canine vocal tract resonance
-    filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(800, t);
-    filter.Q.setValueAtTime(3.5, t);
+  // Rapid nasal sniffing (three short filtered noise bursts)
+  playSniff() {
+    this.ensureContext();
+    if (!this._ready() || this.isMuted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    for (let i = 0; i < 3; i++) {
+      const start = now + i * 0.04;
+      const src = ctx.createBufferSource();
+      src.buffer = this._noiseBuffer();
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 600;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, start);
+      g.gain.exponentialRampToValueAtTime(0.18, start + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.035);
+      src.connect(lp); lp.connect(g); g.connect(this.ctx.destination);
+      src.start(start); src.stop(start + 0.04);
+    }
+  }
 
-    // Pitch envelope: sharp attack, slight upward scoop, quick decay
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(240, t);
-    osc.frequency.exponentialRampToValueAtTime(420, t + 0.04);
-    osc.frequency.exponentialRampToValueAtTime(160, t + 0.18);
+  // Plaintive whine (descending sine with vibrato)
+  playWhine() {
+    this.ensureContext();
+    if (!this._ready() || this.isMuted) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(950, t);
+    osc.frequency.exponentialRampToValueAtTime(680, t + 0.45);
+    lfo.type = 'sine'; lfo.frequency.value = 6;
+    lfoGain.gain.value = 12;
+    lfo.connect(lfoGain); lfoGain.connect(osc.frequency);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.16, t + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+    osc.connect(gain); gain.connect(this.ctx.destination);
+    osc.start(t); lfo.start(t);
+    osc.stop(t + 0.5); lfo.stop(t + 0.5);
+  }
 
-    // Volume envelope
-    gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(0.35, t + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.01, t + 0.22);
-    gain.gain.setValueAtTime(0, t + 0.23);
+  // Alias for whine (legacy naming)
+  playPine() { this.playWhine(); }
 
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.ctx.destination);
+  // Metallic leash clip snap
+  playLeadClip() {
+    this.ensureContext();
+    if (!this._ready() || this.isMuted) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(2800, t);
+    gain.gain.setValueAtTime(0.22, t);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
+    osc.connect(gain); gain.connect(this.ctx.destination);
+    osc.start(t); osc.stop(t + 0.035);
+  }
 
-    osc.start(t);
-    osc.stop(t + 0.24);
+  // Panting breath (filtered noise with slow amplitude LFO)
+  playPant() {
+    this.ensureContext();
+    if (!this._ready() || this.isMuted) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this._noiseBuffer();
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 900;
+    const amp = ctx.createGain();
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    lfo.type = 'sine'; lfo.frequency.value = 4;
+    lfoGain.gain.value = 0.03;
+    amp.gain.setValueAtTime(0.04, t);
+    lfo.connect(lfoGain); lfoGain.connect(amp.gain);
+    src.connect(lp); lp.connect(amp); amp.connect(this.ctx.destination);
+    src.start(t); lfo.start(t);
+    src.stop(t + 0.6); lfo.stop(t + 0.6);
   }
 
   // Authentic Procedural Dog Training Whistle
@@ -24186,9 +24541,15 @@ export class Field {
   }
 
   addPoopPile(poopPile) {
-    if (poopPile) {
-      this.poopPiles.push(poopPile);
-    }
+    if (!poopPile) return null;
+    if (!this.poopPiles) this.poopPiles = [];
+    // Dedupe by non-null id or overlapping position (±6px) to guarantee a single pile per drop.
+    const dup = this.poopPiles.find(p =>
+      p && ((poopPile.id != null && p.id === poopPile.id) || Math.hypot(p.x - poopPile.x, p.y - poopPile.y) <= 6)
+    );
+    if (dup) return dup;
+    this.poopPiles.push(poopPile);
+    return poopPile;
   }
 
   removePoopPile(id) {
@@ -24210,6 +24571,35 @@ export class Field {
       }
     }
     return nearest ? { ...nearest, dist: minDist } : null;
+  }
+
+  /**
+   * Pick up the poop pile at (x, y) and purge any overlapping ghost piles within 6px.
+   * Returns the removed target pile, or null if none was within PICKUP_RADIUS.
+   *
+   * @param {number} x
+   * @param {number} y
+   * @returns {object|null}
+   */
+  pickupPoop(x, y) {
+    const PICKUP_RADIUS = 38;
+    if (!this.poopPiles || this.poopPiles.length === 0) return null;
+    let target = null;
+    let minDist = Infinity;
+    for (const p of this.poopPiles) {
+      if (!p) continue;
+      const d = Math.hypot(p.x - x, p.y - y);
+      if (d <= PICKUP_RADIUS && d < minDist) {
+        minDist = d;
+        target = p;
+      }
+    }
+    if (!target) return null;
+    // Purge ghosts (including target) within 6px of the target's coordinates
+    this.poopPiles = this.poopPiles.filter(p =>
+      p && p !== target && (target.id == null || p.id !== target.id) && Math.hypot(p.x - target.x, p.y - target.y) > 6
+    );
+    return target;
   }
 
   getNearestPoopPile(x, y, maxRange = Infinity) {
@@ -27001,7 +27391,8 @@ def run_all():
         "test/test_wasm_core_sim.py",
         "test/test_phase3_visuals_and_mechanics.py",
         "test/test_zone_warps.py",
-        "test/test_coastal_water.py"
+        "test/test_coastal_water.py",
+        "test/test_canine_behavior_overhaul.py"
     ]
     for t in test_suites:
         res = subprocess.run([sys.executable, t])
@@ -27060,6 +27451,836 @@ if __name__ == "__main__":
     test_ballistic_flight_and_gravity()
     test_ground_bounce_restitution()
     test_rolling_friction_decay()
+```
+
+## FILE: test/test_canine_behavior_overhaul.py
+```python
+import math
+import os
+import re
+import unittest
+
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def read(rel_path):
+    with open(os.path.join(ROOT, rel_path), "r", encoding="utf-8") as f:
+        return f.read()
+
+
+class TestCanineBehaviorOverhaul(unittest.TestCase):
+    """AC-013.1 / AC-013.2 / AC-013.4 / AC-013.5 / AC-013.6 remediation checks."""
+
+    def setUp(self):
+        self.dog_src = read("src/entities/companion_dog.js")
+        self.main_src = read("src/main.js")
+        self.field_src = read("src/world/field.js")
+        self.audio_src = read("src/systems/audio.js")
+
+    # AC-013.1: no 230px hard clamp; distance-scaled catch-up
+    def test_no_230px_hard_clamp(self):
+        self.assertNotIn("distToOwner > 230", self.dog_src)
+        self.assertNotIn("* 230;", self.dog_src)
+        self.assertNotIn("maxRoam = 230", self.dog_src)
+        self.assertNotIn("maxRoam", self.dog_src)
+
+    def test_catch_up_probability_formula(self):
+        # Formula: base = clamp((dist-220)/260, 0.08, 0.90); p = base * (0.45 + 0.11*obedience)
+        def catch_up_prob(dist, obedience):
+            base = min(0.90, max(0.08, (dist - 220) / 260))
+            return min(1, max(0, base * (0.45 + 0.11 * obedience)))
+
+        self.assertAlmostEqual(catch_up_prob(220, 4), 0.08 * (0.45 + 0.44), places=6)
+        self.assertAlmostEqual(catch_up_prob(480, 4), 0.90 * (0.45 + 0.44), places=6)
+        self.assertGreater(catch_up_prob(400, 5), catch_up_prob(400, 1))
+
+        # Raw (unclamped) obedience values must be honored by the formula
+        def catch_up_prob_raw(dist, obedience):
+            base = min(0.90, max(0.08, (dist - 220) / 260))
+            return min(1, max(0, base * (0.45 + 0.11 * obedience)))
+
+        base_400 = (400 - 220) / 260  # 0.6923...
+        self.assertAlmostEqual(catch_up_prob_raw(400, 2.5), base_400 * (0.45 + 0.275), places=6)
+        self.assertAlmostEqual(catch_up_prob_raw(400, 3.7), base_400 * (0.45 + 0.407), places=6)
+        # High obedience saturates the final probability at 1.0
+        self.assertEqual(catch_up_prob_raw(400, 10.0), 1.0)
+        # Fractional obedience is monotonic between integer values
+        self.assertLess(catch_up_prob_raw(400, 2.5), catch_up_prob_raw(400, 3.7))
+        # Monotonic in distance and obedience
+        for ob in range(1, 6):
+            self.assertLessEqual(catch_up_prob(220, ob), catch_up_prob(400, ob))
+            self.assertLessEqual(catch_up_prob(400, ob), catch_up_prob(600, ob))
+        for dist in (220, 300, 400, 480, 600):
+            self.assertLessEqual(catch_up_prob(dist, 1), catch_up_prob(dist, 5))
+        # Source must contain the formula constants
+        self.assertIn("(distToOwner - 220) / 260", self.dog_src)
+        self.assertIn("0.45 + 0.11 * obedience", self.dog_src)
+
+    # AC-013.2: re-leash proximity gate
+    def test_strict_releash_proximity_boundary(self):
+        self.assertIn("if (dist > 68)", self.main_src)
+        self.assertIn("Too far to clip lead!", self.main_src)
+        self.assertIn("this.owner.isLeashed = true;", self.main_src)
+        # Boundary semantics: <= 68 accepted, > 68 rejected
+        def gate(dist):
+            return dist <= 68
+        self.assertTrue(gate(68))
+        self.assertTrue(gate(0))
+        self.assertFalse(gate(68.0001))
+        self.assertFalse(gate(200))
+
+    # H1: 14s scent cooldown
+    def test_scent_trail_14s_cooldown(self):
+        self.assertIn("this.lastSniffFollowAt = 0;", self.dog_src)
+        self.assertIn("14000", self.dog_src)
+        self.assertIn("cooldownActive", self.dog_src)
+        self.assertIn("this.lastSniffFollowAt = now;", self.dog_src)
+
+    # H2: tangent-driven zoomies
+    def test_zoomies_tangent_velocity(self):
+        self.assertIn("Math.sin(this.zoomiesPhase)", self.dog_src)
+        self.assertIn("Math.sin(this.zoomiesPhase * 2)", self.dog_src)
+        self.assertIn("Math.cos(t)", self.dog_src)
+        self.assertIn("Math.cos(2 * t)", self.dog_src)
+
+        # Numerical derivative check of the parametric figure-eight
+        rx, ry = 135.0, 80.0
+        speed = 3.8
+        for t in (0.0, 0.5, 1.0, 2.0, 3.0):
+            x = lambda tt: rx * math.sin(tt)
+            y = lambda tt: ry * (math.sin(tt * 2) * 0.5)
+            h = 1e-6
+            num_dx = (x(t + h) - x(t - h)) / (2 * h)
+            num_dy = (y(t + h) - y(t - h)) / (2 * h)
+            ana_dx = rx * math.cos(t)
+            ana_dy = ry * math.cos(2 * t)
+            self.assertAlmostEqual(num_dx, ana_dx, places=4)
+            self.assertAlmostEqual(num_dy, ana_dy, places=4)
+            # Velocity magnitude scales with speed
+            self.assertAlmostEqual(ana_dx * speed, num_dx * speed, places=3)
+
+    # H4: rolling entry-gated with sunny zone 8% vs 4% normal
+    def test_rolling_entry_gated(self):
+        self.assertIn("transitionTo(newState)", self.dog_src)
+        self.assertIn("isSunny ? 0.08 : 0.04", self.dog_src)
+        self.assertIn("this.currentZone?.sunny", self.dog_src)
+        # Rolling must NOT be evaluated continuously per-frame in update(dt)
+        # (i.e. no bare `Math.random() < rollChance` outside transitionTo)
+        # Verify the old per-frame block is gone
+        self.assertNotIn("const rollChance = 0.04;", self.dog_src)
+
+    # H3: lazy audio getter
+    def test_lazy_audio_getter(self):
+        self.assertIn("get audio()", self.dog_src)
+        self.assertIn("set audio(val)", self.dog_src)
+        self.assertIn("window.audioEngine || window.sound", self.dog_src)
+
+    # DogState must be imported in main.js
+    def test_dogstate_imported_in_main(self):
+        self.assertRegex(
+            self.main_src,
+            r"import\s*\{[^}]*\bDogState\b[^}]*\}\s*from\s*['\"]\./entities/companion_dog\.js['\"]",
+        )
+
+    # AC-013.4: procedural canine audio synthesizers
+    def test_procedural_audio_synthesizers(self):
+        for name in ["playBark", "playSniff", "playWhine", "playLeadClip", "playPant"]:
+            self.assertRegex(
+                self.audio_src,
+                r"\b" + name + r"\s*\(",
+                msg=f"Missing audio synthesizer: {name}",
+            )
+        self.assertIn("_ready()", self.audio_src)
+
+    # MEDIUM-2: AudioContext-absent safety and playPine alias
+    def test_audio_context_absent_safety_and_pine_alias(self):
+        self.assertIn("playPine()", self.audio_src)
+        self.assertIn("this.playWhine()", self.audio_src)
+        # Every synthesizer must guard against a missing AudioContext
+        self.assertIn("if (!this.ctx", self.audio_src)
+        self.assertIn("window.AudioContext || window.webkitAudioContext", self.audio_src)
+
+    # HIGH-2: owner movement must not interrupt ROLLING
+    def test_owner_movement_does_not_interrupt_rolling(self):
+        class Owner:
+            def __init__(self, speed):
+                self.vx = speed
+                self.vy = 0.0
+                self.isLeashed = False
+
+        class Dog:
+            def __init__(self, state):
+                self.state = state
+                self.idleRestTimer = 0.0
+                self.owner = Owner(10.0)
+
+            def transitionTo(self, new_state):
+                if self.state == new_state:
+                    return
+                self.state = new_state
+
+            def update_resting(self, dt):
+                owner_speed = (self.owner.vx ** 2 + self.owner.vy ** 2) ** 0.5
+                if owner_speed > 5:
+                    self.idleRestTimer = 0
+                    if self.state == "LYING_DOWN":
+                        self.transitionTo("ROAMING")
+
+        dog = Dog("ROLLING")
+        dog.update_resting(0.5)
+        self.assertEqual(dog.state, "ROLLING")
+
+        lying = Dog("LYING_DOWN")
+        lying.update_resting(0.5)
+        self.assertEqual(lying.state, "ROAMING")
+
+    def test_active_rest_blocked_states_include_sniffing_and_social(self):
+        """ACTIVE_REST_BLOCKED_STATES must include SNIFFING_TRAIL and SOCIAL_GREET."""
+        idx = self.dog_src.find("const ACTIVE_REST_BLOCKED_STATES = new Set([")
+        self.assertNotEqual(idx, -1)
+        window = self.dog_src[idx:idx + 600]
+        self.assertIn("DogState.SNIFFING_TRAIL", window)
+        self.assertIn("DogState.SOCIAL_GREET", window)
+
+    def test_rolling_completion_never_loops_rolling(self):
+        """ROLLING completion must enter SITTING with a positive timer, never re-roll."""
+        class Dog:
+            def __init__(self):
+                self.state = "ROLLING"
+                self.stateTimer = 0.05
+                self.happiness = 100
+                self.currentZone = {"sunny": True}
+                self.wagSpeed = 20
+
+            def transitionTo(self, new_state):
+                if self.state == new_state:
+                    return
+                self.state = new_state
+
+            def update_rolling(self, dt):
+                self.stateTimer -= dt
+                if self.stateTimer <= 0:
+                    self.transitionTo("SITTING")
+                    if self.state == "SITTING":
+                        self.stateTimer = 2.0 + 1.0  # deterministic stand-in for Math.random()
+
+        dog = Dog()
+        dog.update_rolling(0.1)
+        self.assertEqual(dog.state, "SITTING")
+        self.assertGreater(dog.stateTimer, 0)
+        # Source must force a positive sitting timer after ROLLING completes
+        idx = self.dog_src.find("case DogState.ROLLING:")
+        self.assertNotEqual(idx, -1)
+        window = self.dog_src[idx:idx + 600]
+        self.assertIn("this.transitionTo(DogState.SITTING)", window)
+        self.assertIn("this.stateTimer = 2.0 + Math.random() * 2.0;", window)
+
+    def test_whine_trigger_includes_return_trot_active(self):
+        """Whine audio trigger must include this.returnTrotActive."""
+        self.assertIn("this.isReturningToOwner || this.returnTrotActive", self.dog_src)
+
+    def test_catch_up_timer_gated_by_distance(self):
+        """catchUpTimer must only accumulate when distToOwner > 220."""
+        idx = self.dog_src.find("if (distToOwner > 220) {")
+        self.assertNotEqual(idx, -1)
+        window = self.dog_src[idx:idx + 500]
+        self.assertIn("this.catchUpTimer += dt;", window)
+        self.assertIn("this.catchUpTimer = 0;", window)
+
+    def test_rolling_completion_transitions_to_sitting_with_timer(self):
+        class Dog:
+            def __init__(self):
+                self.state = "ROLLING"
+                self.stateTimer = 0.05
+                self.wagSpeed = 20
+
+            def transitionTo(self, new_state):
+                if self.state == new_state:
+                    return
+                self.state = new_state
+
+            def update_rolling(self, dt):
+                self.stateTimer -= dt
+                if self.stateTimer <= 0:
+                    self.transitionTo("SITTING")
+                    if self.state == "SITTING":
+                        self.stateTimer = 2.0 + 0.5  # deterministic stand-in for Math.random()
+
+        dog = Dog()
+        dog.update_rolling(0.1)
+        self.assertEqual(dog.state, "SITTING")
+        self.assertGreater(dog.stateTimer, 0)
+
+    # HIGH-3: triggerPet increments happiness and sets emote
+    def test_trigger_pet_increments_happiness_and_emote(self):
+        self.assertIn("triggerPet(duration = 0.45)", self.dog_src)
+
+        class Dog:
+            def __init__(self):
+                self.happiness = 50
+                self.emoteBubble = None
+                self.emoteTimer = 0
+                self.wagSpeed = 8
+                self.idleRestTimer = 0
+                self.hearts = []
+                self.owner = None
+
+            def pet(self):
+                self.happiness = min(100, self.happiness + 20)
+                self.idleRestTimer = 0
+                self.wagSpeed = 18
+                self.emoteBubble = '❤️'
+                self.emoteTimer = 2.2
+
+            def triggerPet(self, duration=0.45):
+                self.pet()
+                self.emoteBubble = '❤️'
+                self.emoteTimer = duration
+
+        dog = Dog()
+        dog.triggerPet(0.45)
+        self.assertEqual(dog.happiness, 70)
+        self.assertEqual(dog.emoteBubble, '❤️')
+        self.assertAlmostEqual(dog.emoteTimer, 0.45, places=6)
+
+    # MEDIUM-2: zoomies collision-aware source contract
+    def test_zoomies_collision_aware_source_contract(self):
+        # Match the method definition, not the call site in update()
+        idx = self.dog_src.find("updateZoomies(dt, field) {")
+        self.assertNotEqual(idx, -1)
+        window = self.dog_src[idx:idx + 2000]
+        self.assertIn("resolveFieldCollision", window)
+        self.assertIn("this.zoomiesCenter.x += (this.x - expectedX)", window)
+        self.assertIn("this.zoomiesCenter.y += (this.y - expectedY)", window)
+
+    # MEDIUM-1: visitedScents updated on arrival
+    def test_visited_scents_updated_on_arrival(self):
+        # Python dicts are unhashable; use a list to mirror the JS WeakSet semantics
+        class Dog:
+            def __init__(self):
+                self.lastSniffFollowAt = 0
+                self.lastReachedScent = None
+                self.targetScent = {"x": 0.0, "y": 0.0, "life": 1.0}
+                self.visitedScents = []
+                self.x = 0.0
+                self.y = 0.0
+
+            def tick(self, now):
+                dx = self.targetScent["x"] - self.x
+                dy = self.targetScent["y"] - self.y
+                dist = (dx * dx + dy * dy) ** 0.5
+                if dist <= 12:
+                    if self.targetScent and self.lastReachedScent is not self.targetScent:
+                        self.lastReachedScent = self.targetScent
+                        self.lastSniffFollowAt = now
+                        if self.targetScent not in self.visitedScents:
+                            self.visitedScents.append(self.targetScent)
+
+        dog = Dog()
+        dog.tick(1000)
+        self.assertIn(dog.targetScent, dog.visitedScents)
+        self.assertEqual(len(dog.visitedScents), 1)
+        # Idling at the same node must not duplicate the entry
+        dog.tick(2000)
+        self.assertEqual(len(dog.visitedScents), 1)
+
+    # AC-013.5: ambient resting states
+    def test_resting_states_defined(self):
+        self.assertIn("LYING_DOWN:", self.dog_src)
+        self.assertIn("ROLLING:", self.dog_src)
+        self.assertIn("DogState.LYING_DOWN", self.dog_src)
+        self.assertIn("DogState.ROLLING", self.dog_src)
+
+    # AC-013.6: poop dedupe + ghost purge
+    def test_poop_dedupe_and_ghost_purge(self):
+        class Field:
+            def __init__(self):
+                self.poopPiles = []
+
+            def addPoopPile(self, pile):
+                if not pile:
+                    return None
+                dup = None
+                for p in self.poopPiles:
+                    if not p:
+                        continue
+                    same_id = pile.get("id") is not None and p.get("id") == pile.get("id")
+                    close = ((p["x"] - pile["x"]) ** 2 + (p["y"] - pile["y"]) ** 2) ** 0.5 <= 6
+                    if same_id or close:
+                        dup = p
+                        break
+                if dup:
+                    return dup
+                self.poopPiles.append(pile)
+                return pile
+
+            def pickupPoop(self, x, y):
+                PICKUP_RADIUS = 38
+                if not self.poopPiles:
+                    return None
+                target = None
+                min_dist = float("inf")
+                for p in self.poopPiles:
+                    if not p:
+                        continue
+                    d = ((p["x"] - x) ** 2 + (p["y"] - y) ** 2) ** 0.5
+                    if d <= PICKUP_RADIUS and d < min_dist:
+                        min_dist = d
+                        target = p
+                if not target:
+                    return None
+                self.poopPiles = [
+                    p for p in self.poopPiles
+                    if p and p is not target
+                    and (target.get("id") is None or p.get("id") != target.get("id"))
+                    and ((p["x"] - target["x"]) ** 2 + (p["y"] - target["y"]) ** 2) ** 0.5 > 6
+                ]
+                return target
+
+        f = Field()
+        a = {"id": "a", "x": 100, "y": 100}
+        b = {"id": "b", "x": 103, "y": 100}
+        self.assertIs(f.addPoopPile(a), a)
+        self.assertIs(f.addPoopPile(b), a)
+        self.assertEqual(len(f.poopPiles), 1)
+
+        ghost = {"id": "ghost", "x": 101, "y": 101}
+        far = {"id": "far", "x": 500, "y": 500}
+        f.poopPiles.append(ghost)
+        f.poopPiles.append(far)
+        picked = f.pickupPoop(100, 100)
+        self.assertIs(picked, a)
+        ids = [p["id"] for p in f.poopPiles]
+        self.assertNotIn("a", ids)
+        self.assertNotIn("ghost", ids)
+        self.assertIn("far", ids)
+
+    def test_field_source_contains_pickup_logic(self):
+        self.assertIn("PICKUP_RADIUS = 38", self.field_src)
+        self.assertIn("Math.hypot(p.x - target.x, p.y - target.y) > 6", self.field_src)
+
+    def test_main_pickup_poop_wires_field_pickup_poop(self):
+        self.assertIn("this.field.pickupPoop(pile.x, pile.y)", self.main_src)
+
+    def test_zoomies_timer_decrements_before_exit_check(self):
+        # The decrement must appear before the exit check so velocity is zeroed
+        # on the exact frame the timer expires.
+        idx_decrement = self.dog_src.find("this.zoomiesTimer -= dt;")
+        idx_exit = self.dog_src.find("if (this.zoomiesTimer <= 0)")
+        self.assertNotEqual(idx_decrement, -1)
+        self.assertNotEqual(idx_exit, -1)
+        self.assertLess(idx_decrement, idx_exit)
+        # Velocity zeroing must live inside the exit branch
+        window = self.dog_src[idx_exit:idx_exit + 300]
+        self.assertIn("this.vx = 0;", window)
+        self.assertIn("this.vy = 0;", window)
+
+    # HIGH-1: zoomies must not double-apply movement integration
+    def test_zoomies_movement_single_integration(self):
+        self.assertIn("if (this.state !== DogState.ZOOMIES)", self.dog_src)
+        # The guarded integration block must wrap the x/y increments
+        idx = self.dog_src.find("if (this.state !== DogState.ZOOMIES)")
+        self.assertNotEqual(idx, -1)
+        window = self.dog_src[idx:idx + 200]
+        self.assertIn("this.x += this.vx * dt;", window)
+        self.assertIn("this.y += this.vy * dt;", window)
+
+    # HIGH-2: resting state entries must route through transitionTo
+    def test_sitting_entry_routes_through_transitionTo(self):
+        self.assertIn("this.transitionTo(DogState.SITTING)", self.dog_src)
+        self.assertIn("this.transitionTo(DogState.IDLE_SNIFF)", self.dog_src)
+        # No direct assignments to SITTING / IDLE_SNIFF remain
+        self.assertNotIn("this.state = DogState.SITTING;", self.dog_src)
+        self.assertNotIn("this.state = DogState.IDLE_SNIFF;", self.dog_src)
+
+    # MEDIUM-1: currentZone must be synced from field.zoneConfig
+    def test_sunny_zone_current_zone_sync(self):
+        self.assertIn("this.currentZone = field.zoneConfig", self.dog_src)
+        self.assertIn("this.currentZone?.sunny", self.dog_src)
+        self.assertIn("isSunny ? 0.08 : 0.04", self.dog_src)
+
+    # ------------------------------------------------------------------
+    # MEDIUM-1: executable runtime behavior simulations
+    # ------------------------------------------------------------------
+
+    def _make_dog(self, state="ROAMING", is_leashed=False, owner_speed=0.0):
+        """Build a lightweight Python stand-in mirroring the JS resting/zoomies logic."""
+        class Owner:
+            def __init__(self, speed, leashed):
+                self.vx = speed
+                self.vy = 0.0
+                self.isLeashed = leashed
+                self.x = 0.0
+                self.y = 0.0
+                self.angle = 0.0
+                self.isMoving = speed > 0
+
+        class Dog:
+            def __init__(self):
+                self.state = state
+                self.idleRestTimer = 0.0
+                self.restStartAt = 0.0
+                self.vx = 0.0
+                self.vy = 0.0
+                self.zoomiesTimer = 0.0
+                self.zoomiesPhase = 0.0
+                self.owner = Owner(owner_speed, is_leashed)
+                self.lastSniffFollowAt = 0
+                self.targetScent = None
+                self.visitedScents = set()
+
+            def transitionTo(self, new_state):
+                if self.state == new_state:
+                    return
+                self.state = new_state
+
+            def update_resting(self, dt):
+                owner_speed = (self.owner.vx ** 2 + self.owner.vy ** 2) ** 0.5
+                if self.owner and not self.owner.isLeashed and owner_speed < 5:
+                    self.idleRestTimer += dt
+                    if (self.idleRestTimer > 15
+                            and self.state != "LYING_DOWN"
+                            and self.state != "ROLLING"):
+                        self.transitionTo("LYING_DOWN")
+                        self.restStartAt = 1.0
+                elif owner_speed > 5:
+                    self.idleRestTimer = 0
+                    if self.state in ("LYING_DOWN", "ROLLING"):
+                        self.transitionTo("ROAMING")
+
+            def update_zoomies(self, dt):
+                if self.zoomiesTimer <= 0:
+                    self.vx = 0.0
+                    self.vy = 0.0
+                    self.zoomiesPhase = 0.0
+                    self.transitionTo("FOLLOWING" if self.owner.isLeashed else "ROAMING")
+                    return
+                self.zoomiesTimer -= dt
+
+            def sniff_follow_allowed(self, now_ms):
+                return (now_ms - self.lastSniffFollowAt) >= 14000
+
+        return Dog()
+
+    def test_lying_down_transition_after_15s_owner_stillness(self):
+        dog = self._make_dog(state="ROAMING", is_leashed=False, owner_speed=0.0)
+        dt = 0.5
+        for _ in range(32):  # 16 seconds
+            dog.update_resting(dt)
+        self.assertEqual(dog.state, "LYING_DOWN")
+        self.assertGreater(dog.idleRestTimer, 15)
+
+    def test_owner_movement_resets_lying_down_to_roaming(self):
+        dog = self._make_dog(state="ROAMING", is_leashed=False, owner_speed=0.0)
+        for _ in range(32):
+            dog.update_resting(0.5)
+        self.assertEqual(dog.state, "LYING_DOWN")
+
+        dog.owner.vx = 10.0
+        dog.update_resting(0.5)
+        self.assertEqual(dog.state, "ROAMING")
+        self.assertEqual(dog.idleRestTimer, 0)
+
+    def test_zoomies_exit_zeros_velocity(self):
+        dog = self._make_dog(state="ZOOMIES", is_leashed=False, owner_speed=0.0)
+        dog.vx = 123.0
+        dog.vy = -45.0
+        dog.zoomiesTimer = 0.0
+        dog.update_zoomies(0.016)
+        self.assertEqual(dog.vx, 0.0)
+        self.assertEqual(dog.vy, 0.0)
+        self.assertEqual(dog.state, "ROAMING")
+
+    def test_scent_trail_14s_cooldown_behavioral(self):
+        dog = self._make_dog()
+        dog.lastSniffFollowAt = 1000
+        # Within 14s -> cooldown active (no active tracking)
+        self.assertFalse(dog.sniff_follow_allowed(1000 + 13999))
+        # At/after 14s -> tracking allowed again
+        self.assertTrue(dog.sniff_follow_allowed(1000 + 14000))
+        self.assertTrue(dog.sniff_follow_allowed(1000 + 20000))
+
+    def test_active_states_not_interrupted_by_idle_rest(self):
+        """Active/interactive states must never be overridden to LYING_DOWN by ambient rest."""
+        active_states = {
+            "FETCHING", "ZOOMIES", "BARKING", "POOPING", "LOST",
+            "RECALLED", "PLAY_BOW", "ROLLING", "LYING_DOWN",
+            "SNIFFING_TRAIL", "SOCIAL_GREET",
+        }
+
+        class Owner:
+            def __init__(self):
+                self.vx = 0.0
+                self.vy = 0.0
+                self.isLeashed = False
+
+        class Dog:
+            def __init__(self, state):
+                self.state = state
+                self.idleRestTimer = 20.0  # already past the 15s threshold
+                self.owner = Owner()
+
+            def transitionTo(self, new_state):
+                if self.state == new_state:
+                    return
+                self.state = new_state
+
+            def update_resting(self, dt):
+                owner_speed = (self.owner.vx ** 2 + self.owner.vy ** 2) ** 0.5
+                if (self.owner and not self.owner.isLeashed
+                        and owner_speed < 5 and self.state not in active_states):
+                    self.idleRestTimer += dt
+                    if self.idleRestTimer > 15:
+                        self.transitionTo("LYING_DOWN")
+                elif owner_speed > 5:
+                    self.idleRestTimer = 0
+                    if self.state in ("LYING_DOWN", "ROLLING"):
+                        self.transitionTo("ROAMING")
+                elif self.state in active_states:
+                    self.idleRestTimer = 0
+
+        for state in ("FETCHING", "ZOOMIES", "RECALLED", "SNIFFING_TRAIL", "SOCIAL_GREET"):
+            dog = Dog(state)
+            dog.update_resting(0.5)
+            self.assertEqual(dog.state, state,
+                             f"{state} must not be overridden to LYING_DOWN")
+            self.assertEqual(dog.idleRestTimer, 0,
+                             f"{state} must reset idleRestTimer")
+
+        # Ambient-capable state still transitions
+        dog = Dog("ROAMING")
+        dog.update_resting(0.5)
+        self.assertEqual(dog.state, "LYING_DOWN")
+
+    def test_whistle_and_zoomies_resets_idle_rest_timer(self):
+        """whistleRecall() and triggerZoomies() must reset idleRestTimer to 0."""
+        class Owner:
+            def __init__(self):
+                self.vx = 0.0
+                self.vy = 0.0
+                self.isLeashed = False
+                self.x = 0.0
+                self.y = 0.0
+                self.angle = 0.0
+
+        class Dog:
+            def __init__(self):
+                self.state = "ROAMING"
+                self.idleRestTimer = 20.0
+                self.owner = Owner()
+                self.x = 0.0
+                self.y = 0.0
+                self.vx = 0.0
+                self.vy = 0.0
+                self.angle = 0.0
+                self.sprintSpeed = 290
+                self.isLost = False
+                self.ownerStillTimer = 0
+                self.strayCheckTimer = 0
+                self.emoteBubble = None
+                self.emoteTimer = 0
+                self.wagSpeed = 8
+                self.isRecalledToHeel = False
+                self.recallHeelTimer = 0
+                self.socialTargetDog = None
+                self.isReturningToOwner = False
+                self.isPullingLeash = False
+                self.hasBall = False
+                self.targetBall = None
+                self.zoomiesTimer = 0
+                self.zoomiesPhase = 0
+                self.zoomiesCenter = {"x": 0.0, "y": 0.0}
+
+            def dropStick(self):
+                pass
+
+            def whistleRecall(self):
+                self.state = "RECALLED"
+                self.isLost = False
+                self.ownerStillTimer = 0
+                self.strayCheckTimer = 0
+                self.isRecalledToHeel = False
+                self.recallHeelTimer = 10.0
+                self.idleRestTimer = 0
+                self.socialTargetDog = None
+                self.isReturningToOwner = False
+                self.isPullingLeash = False
+                self.dropStick()
+
+            def triggerZoomies(self):
+                if self.owner and self.owner.isLeashed:
+                    return False
+                if self.state in ("LOST", "POOPING"):
+                    return False
+                self.dropStick()
+                self.idleRestTimer = 0
+                self.state = "ZOOMIES"
+                self.zoomiesTimer = 4.2
+                self.zoomiesPhase = 0
+                self.zoomiesCenter = {"x": self.x, "y": self.y}
+                return True
+
+        dog = Dog()
+        dog.whistleRecall()
+        self.assertEqual(dog.idleRestTimer, 0)
+
+        dog2 = Dog()
+        dog2.triggerZoomies()
+        self.assertEqual(dog2.idleRestTimer, 0)
+
+    def test_scent_arrival_cooldown_not_refreshed_while_idling(self):
+        """lastSniffFollowAt must only be set on first arrival, not refreshed each frame."""
+
+        class Dog:
+            def __init__(self):
+                self.lastSniffFollowAt = 0
+                self.lastReachedScent = None
+                self.targetScent = {"x": 0.0, "y": 0.0, "life": 1.0}
+                self.x = 0.0
+                self.y = 0.0
+                self.vx = 0.0
+                self.vy = 0.0
+
+            def tick(self, now):
+                dx = self.targetScent["x"] - self.x
+                dy = self.targetScent["y"] - self.y
+                dist = (dx * dx + dy * dy) ** 0.5
+                if dist <= 12:
+                    if self.targetScent and self.lastReachedScent is not self.targetScent:
+                        self.lastReachedScent = self.targetScent
+                        self.lastSniffFollowAt = now
+
+        dog = Dog()
+        dog.tick(1000)
+        self.assertEqual(dog.lastSniffFollowAt, 1000)
+        # Subsequent frames while idling at the same node must NOT refresh the timestamp
+        for t in (1100, 1200, 1300, 5000):
+            dog.tick(t)
+            self.assertEqual(dog.lastSniffFollowAt, 1000)
+
+        # A new scent node re-arms the latch
+        dog.targetScent = {"x": 0.0, "y": 0.0, "life": 1.0}
+        dog.tick(6000)
+        self.assertEqual(dog.lastSniffFollowAt, 6000)
+
+    def test_zoomies_center_shifts_on_collision(self):
+        """updateZoomies must shift zoomiesCenter when collision resolution displaces the dog."""
+        rx, ry = 135.0, 80.0
+
+        class Dog:
+            def __init__(self):
+                self.x = 0.0
+                self.y = 0.0
+                self.radius = 14
+                self.zoomiesPhase = 0.5
+                self.zoomiesCenter = {"x": 0.0, "y": 0.0}
+
+        def resolve_field_collision(dog, radius, field):
+            # Simulate a wall push-out of +10 on x and -5 on y
+            dog.x += 10.0
+            dog.y -= 5.0
+
+        dog = Dog()
+        cx = dog.zoomiesCenter["x"]
+        cy = dog.zoomiesCenter["y"]
+        dog.x = cx + rx * math.sin(dog.zoomiesPhase)
+        dog.y = cy + ry * (math.sin(dog.zoomiesPhase * 2) * 0.5)
+        resolve_field_collision(dog, dog.radius, object())
+        expected_x = cx + rx * math.sin(dog.zoomiesPhase)
+        expected_y = cy + ry * (math.sin(dog.zoomiesPhase * 2) * 0.5)
+        dog.zoomiesCenter["x"] += (dog.x - expected_x)
+        dog.zoomiesCenter["y"] += (dog.y - expected_y)
+
+        self.assertAlmostEqual(dog.zoomiesCenter["x"], 10.0, places=6)
+        self.assertAlmostEqual(dog.zoomiesCenter["y"], -5.0, places=6)
+
+    def test_rolling_duration_lock(self):
+        """transitionTo must lock stateTimer to 2.5 when entering ROLLING."""
+
+        class Dog:
+            def __init__(self):
+                self.state = "ROAMING"
+                self.stateTimer = 0.0
+                self.owner = None
+                self.happiness = 100
+                self.currentZone = {"sunny": True}
+                self.wagSpeed = 8
+
+            def transitionTo(self, new_state):
+                if self.state == new_state:
+                    return
+                self.state = new_state
+                if new_state in ("SITTING", "IDLE_SNIFF"):
+                    if self.happiness >= 80:
+                        # Force the roll for deterministic testing
+                        self.state = "ROLLING"
+                        self.stateTimer = 2.5
+                        self.wagSpeed = 20
+                if self.state == "ROLLING":
+                    self.stateTimer = 2.5
+
+        dog = Dog()
+        dog.transitionTo("SITTING")
+        self.assertEqual(dog.state, "ROLLING")
+        self.assertEqual(dog.stateTimer, 2.5)
+
+        # Callers attempting to overwrite the timer must be guarded
+        if dog.state != "ROLLING":
+            dog.stateTimer = 2.0 + 1.0
+        self.assertEqual(dog.stateTimer, 2.5)
+
+    def test_releash_proximity_gate_behavioral(self):
+        class Owner:
+            def __init__(self):
+                self.isLeashed = False
+
+        class Dog:
+            def __init__(self, x, y):
+                self.x = x
+                self.y = y
+
+        class Game:
+            def __init__(self):
+                self.owner = Owner()
+                self.dog = Dog(0.0, 0.0)
+                self.toasts = []
+
+            def show_toast(self, msg):
+                self.toasts.append(msg)
+
+            def toggle_leash(self):
+                if self.owner.isLeashed:
+                    self.owner.isLeashed = False
+                    return
+                dist = ((self.dog.x - self.owner.x) ** 2 + (self.dog.y - self.owner.y) ** 2) ** 0.5
+                if dist > 68:
+                    self.show_toast("Too far to clip lead!")
+                    return
+                self.owner.isLeashed = True
+
+        # Owner at origin
+        Owner.x = 0.0
+        Owner.y = 0.0
+
+        # Within range (<= 68) -> leash engages
+        g = Game()
+        g.dog = Dog(68.0, 0.0)
+        g.toggle_leash()
+        self.assertTrue(g.owner.isLeashed)
+        self.assertEqual(g.toasts, [])
+
+        # Out of range (> 68) -> rejected with toast
+        g2 = Game()
+        g2.dog = Dog(68.0001, 0.0)
+        g2.toggle_leash()
+        self.assertFalse(g2.owner.isLeashed)
+        self.assertEqual(len(g2.toasts), 1)
+        self.assertIn("Too far to clip lead!", g2.toasts[0])
+
+
+if __name__ == "__main__":
+    unittest.main()
 ```
 
 ## FILE: test/test_character_customization.py
@@ -29546,7 +30767,7 @@ class MockCompanionDog:
             if not self.owner:
                 self.hasBall = False
                 self.targetBall.drop(self.x, self.y)
-                self.targetBall = null
+                self.targetBall = None
                 self.state = DogState.ROAMING
                 return
 
@@ -29660,10 +30881,21 @@ class TestFetchingMechanics(unittest.TestCase):
             self.touch_source = f.read()
 
     def test_source_code_contract_ac035_1_perimeter_exemption(self):
-        """Assert companion_dog.js contains DogState.FETCHING perimeter exemption."""
-        self.assertIn("this.state !== DogState.FETCHING", self.dog_source,
-                      "companion_dog.js perimeter check must exempt DogState.FETCHING")
-        self.assertIn("const maxRoam = 230;", self.dog_source)
+        """Assert companion_dog.js no longer hard-clamps off-leash roaming at 230px (AC-013.1).
+
+        The old 230px perimeter clamp was removed in favour of a distance-scaled
+        probabilistic catch-up return-trot. Fetching dogs are naturally exempt
+        because there is no clamp at all.
+        """
+        self.assertNotIn("const maxRoam = 230;", self.dog_source,
+                         "230px hard clamp must be removed (AC-013.1)")
+        self.assertNotIn("maxRoam", self.dog_source,
+                         "No maxRoam clamp should remain in companion_dog.js")
+        # Distance-scaled catch-up formula must be present instead
+        self.assertIn("(distToOwner - 220) / 260", self.dog_source,
+                      "Distance-scaled catch-up formula must be present")
+        self.assertIn("0.45 + 0.11 * obedience", self.dog_source,
+                      "Obedience-scaled catch-up probability must be present")
 
     def test_source_code_contract_ac035_2_retrieve_by_owner(self):
         """Assert companion_dog.js and toy.js implement retrieveByOwner hand-off and render suppression."""

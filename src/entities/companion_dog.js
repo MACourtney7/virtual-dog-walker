@@ -203,6 +203,7 @@ export class CompanionDog {
 
     // Scent tracking
     this.lastSniffFollowAt = 0;
+    this.lastReachedScent = null;
     this.visitedScents = new WeakSet();
 
     // Zoomies speed (rad/s)
@@ -246,7 +247,7 @@ export class CompanionDog {
       }
     }
     // Lock rolling duration so callers cannot overwrite it with random roaming timers
-    if (newState === DogState.ROLLING) {
+    if (this.state === DogState.ROLLING) {
       this.stateTimer = 2.5;
     }
   }
@@ -932,7 +933,9 @@ export class CompanionDog {
       this.wagSpeed = 6;
       if (Math.random() < idleTransitionChance) {
         this.transitionTo(Math.random() < 0.5 ? DogState.IDLE_SNIFF : DogState.SITTING);
-        this.stateTimer = 2.0 + Math.random() * 3.0;
+        if (this.state !== DogState.ROLLING) {
+          this.stateTimer = 2.0 + Math.random() * 3.0;
+        }
       }
       return;
     }
@@ -1044,7 +1047,9 @@ export class CompanionDog {
       // Periodically pauses for 2-3s to sniff a spot (IDLE_SNIFF)
       if (Math.random() < 0.25) {
         this.transitionTo(DogState.IDLE_SNIFF);
-        this.stateTimer = 2.0 + Math.random() * 1.0;
+        if (this.state !== DogState.ROLLING) {
+          this.stateTimer = 2.0 + Math.random() * 1.0;
+        }
         this.vx = 0;
         this.vy = 0;
         return;
@@ -1359,6 +1364,15 @@ export class CompanionDog {
     this.x = cx + rx * Math.sin(this.zoomiesPhase);
     this.y = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
 
+    // Collision-aware: resolve obstacles/bounds and shift the orbit center if displaced
+    if (field) {
+      resolveFieldCollision(this, this.radius, field);
+      const expectedX = cx + rx * Math.sin(this.zoomiesPhase);
+      const expectedY = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
+      this.zoomiesCenter.x += (this.x - expectedX);
+      this.zoomiesCenter.y += (this.y - expectedY);
+    }
+
     // Analytic tangent velocity vector
     const dx = rx * Math.cos(t);
     const dy = ry * Math.cos(2 * t);
@@ -1423,8 +1437,9 @@ export class CompanionDog {
       } else {
         this.vx *= 0.5;
         this.vy *= 0.5;
-        // Reached node: record cooldown timestamp once on arrival
-        if (this.targetScent) {
+        // Reached node: record cooldown timestamp once on first arrival only
+        if (this.targetScent && this.lastReachedScent !== this.targetScent) {
+          this.lastReachedScent = this.targetScent;
           this.lastSniffFollowAt = now;
         }
         // Seek next connected scent if available (exclude own scents and already-visited nodes)

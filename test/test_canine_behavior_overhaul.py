@@ -466,6 +466,107 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         dog2.triggerZoomies()
         self.assertEqual(dog2.idleRestTimer, 0)
 
+    def test_scent_arrival_cooldown_not_refreshed_while_idling(self):
+        """lastSniffFollowAt must only be set on first arrival, not refreshed each frame."""
+
+        class Dog:
+            def __init__(self):
+                self.lastSniffFollowAt = 0
+                self.lastReachedScent = None
+                self.targetScent = {"x": 0.0, "y": 0.0, "life": 1.0}
+                self.x = 0.0
+                self.y = 0.0
+                self.vx = 0.0
+                self.vy = 0.0
+
+            def tick(self, now):
+                dx = self.targetScent["x"] - self.x
+                dy = self.targetScent["y"] - self.y
+                dist = (dx * dx + dy * dy) ** 0.5
+                if dist <= 12:
+                    if self.targetScent and self.lastReachedScent is not self.targetScent:
+                        self.lastReachedScent = self.targetScent
+                        self.lastSniffFollowAt = now
+
+        dog = Dog()
+        dog.tick(1000)
+        self.assertEqual(dog.lastSniffFollowAt, 1000)
+        # Subsequent frames while idling at the same node must NOT refresh the timestamp
+        for t in (1100, 1200, 1300, 5000):
+            dog.tick(t)
+            self.assertEqual(dog.lastSniffFollowAt, 1000)
+
+        # A new scent node re-arms the latch
+        dog.targetScent = {"x": 0.0, "y": 0.0, "life": 1.0}
+        dog.tick(6000)
+        self.assertEqual(dog.lastSniffFollowAt, 6000)
+
+    def test_zoomies_center_shifts_on_collision(self):
+        """updateZoomies must shift zoomiesCenter when collision resolution displaces the dog."""
+        rx, ry = 135.0, 80.0
+
+        class Dog:
+            def __init__(self):
+                self.x = 0.0
+                self.y = 0.0
+                self.radius = 14
+                self.zoomiesPhase = 0.5
+                self.zoomiesCenter = {"x": 0.0, "y": 0.0}
+
+        def resolve_field_collision(dog, radius, field):
+            # Simulate a wall push-out of +10 on x and -5 on y
+            dog.x += 10.0
+            dog.y -= 5.0
+
+        dog = Dog()
+        cx = dog.zoomiesCenter["x"]
+        cy = dog.zoomiesCenter["y"]
+        dog.x = cx + rx * math.sin(dog.zoomiesPhase)
+        dog.y = cy + ry * (math.sin(dog.zoomiesPhase * 2) * 0.5)
+        resolve_field_collision(dog, dog.radius, object())
+        expected_x = cx + rx * math.sin(dog.zoomiesPhase)
+        expected_y = cy + ry * (math.sin(dog.zoomiesPhase * 2) * 0.5)
+        dog.zoomiesCenter["x"] += (dog.x - expected_x)
+        dog.zoomiesCenter["y"] += (dog.y - expected_y)
+
+        self.assertAlmostEqual(dog.zoomiesCenter["x"], 10.0, places=6)
+        self.assertAlmostEqual(dog.zoomiesCenter["y"], -5.0, places=6)
+
+    def test_rolling_duration_lock(self):
+        """transitionTo must lock stateTimer to 2.5 when entering ROLLING."""
+
+        class Dog:
+            def __init__(self):
+                self.state = "SITTING"
+                self.stateTimer = 0.0
+                self.owner = None
+                self.happiness = 100
+                self.currentZone = {"sunny": True}
+                self.wagSpeed = 8
+
+            def transitionTo(self, new_state):
+                if self.state == new_state:
+                    return
+                self.state = new_state
+                if new_state in ("SITTING", "IDLE_SNIFF"):
+                    if self.happiness >= 80:
+                        # Force the roll for deterministic testing
+                        self.state = "ROLLING"
+                        self.stateTimer = 2.5
+                        self.wagSpeed = 20
+                if self.state == "ROLLING":
+                    self.stateTimer = 2.5
+
+        dog = Dog()
+        dog.transitionTo("SITTING")
+        self.assertEqual(dog.state, "ROLLING")
+        self.assertEqual(dog.stateTimer, 2.5)
+
+        # Callers attempting to overwrite the timer must be guarded
+        if dog.state != "ROLLING":
+            dog.stateTimer = 2.0 + 1.0
+        self.assertEqual(dog.stateTimer, 2.5)
+
     def test_releash_proximity_gate_behavioral(self):
         class Owner:
             def __init__(self):

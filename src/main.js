@@ -703,18 +703,48 @@ export class CliftonDownGame {
   }
 
   toggleLeash() {
-    this.owner.isLeashed = !this.owner.isLeashed;
-    if (this.touchControls && typeof this.touchControls.setLeashed === 'function') {
-      this.touchControls.setLeashed(this.owner.isLeashed);
+    if (this.owner.isLeashed) {
+      // Turning OFF leash – always allowed
+      this.owner.isLeashed = false;
+      if (this.touchControls && typeof this.touchControls.setLeashed === 'function') {
+        this.touchControls.setLeashed(false);
+      }
+      this.hud.showToast('🐕 Off-lead: Free to roam & play!');
+      if (this.net && typeof this.net.broadcast === 'function') {
+        this.net.broadcast(Protocol.createSyncState(this.net.peerId, this.owner, this.dog));
+      }
+      return;
     }
-    this.hud.showToast(this.owner.isLeashed ? '🦮 Leash on: Walking close' : '🐕 Off-lead: Free to roam & play!');
 
+    // Turning ON leash – strict proximity gate (<= 68px)
+    const dist = Math.hypot(this.dog.x - this.owner.x, this.dog.y - this.owner.y);
+    if (dist > 68) {
+      this.hud.showToast("🦮 Too far to clip lead! Walk closer or whistle [H] to recall first.");
+      return;
+    }
+
+    this.owner.isLeashed = true;
+    if (typeof this.owner.triggerPet === 'function') {
+      this.owner.triggerPet(0.45);
+    }
+    if (this.sound && typeof this.sound.playLeadClip === 'function') {
+      this.sound.playLeadClip();
+    } else if (typeof sound !== 'undefined' && sound && typeof sound.playLeadClip === 'function') {
+      sound.playLeadClip();
+    }
+    if (typeof DogState !== 'undefined' && DogState.FOLLOWING !== undefined) {
+      if (typeof this.dog.transitionTo === 'function') {
+        this.dog.transitionTo(DogState.FOLLOWING);
+      } else {
+        this.dog.state = DogState.FOLLOWING;
+      }
+    }
+    if (this.touchControls && typeof this.touchControls.setLeashed === 'function') {
+      this.touchControls.setLeashed(true);
+    }
+    this.hud.showToast('🦮 Leash on: Walking close');
     if (this.net && typeof this.net.broadcast === 'function') {
       this.net.broadcast(Protocol.createSyncState(this.net.peerId, this.owner, this.dog));
-    }
-
-    if (this.touchControls && typeof this.touchControls.setLeashed === 'function') {
-      this.touchControls.setLeashed(this.owner.isLeashed);
     }
   }
 
@@ -1215,6 +1245,16 @@ export class CliftonDownGame {
         this.touchControls.setContextualAction('dispose');
       } else {
         this.touchControls.setContextualAction(null);
+      }
+    }
+
+    // Dynamically dim the leash button when the dog is out of clipping range
+    if (typeof document !== 'undefined') {
+      const leashDist = Math.hypot(this.dog.x - this.owner.x, this.dog.y - this.owner.y);
+      const leashBtn = document.getElementById('btn-touch-leash');
+      if (leashBtn) {
+        const dim = !this.owner.isLeashed && leashDist > 68;
+        leashBtn.style.opacity = dim ? '0.55' : '1.0';
       }
     }
 

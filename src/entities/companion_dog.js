@@ -8,6 +8,8 @@ export const DogState = {
   SOCIAL_GREET: 'SOCIAL_GREET',
   IDLE_SNIFF: 'IDLE_SNIFF',
   SITTING: 'SITTING',
+  LYING_DOWN: 'LYING_DOWN',
+  ROLLING: 'ROLLING',
   FETCHING: 'FETCHING',
   PLAY_BOW: 'PLAY_BOW',
   BARKING: 'BARKING',
@@ -15,8 +17,17 @@ export const DogState = {
   LOST: 'LOST',
   POOPING: 'POOPING',
   ZOOMIES: 'ZOOMIES',
-  SNIFFING_TRAIL: 'SNIFFING_TRAIL'
+  SNIFFING: 'SNIFFING',
+  SNIFFING_TRAIL: 'SNIFFING_TRAIL',
+  GREETING: 'GREETING',
+  CHASING: 'CHASING',
+  STRAY: 'STRAY'
 };
+
+function lerpAngle(a, b, t) {
+  const d = Math.atan2(Math.sin(b - a), Math.cos(b - a));
+  return a + d * Math.min(1, Math.max(0, t));
+}
 
 export const CoatPreset = {
   CHOCOLATE_TAN: {
@@ -177,6 +188,26 @@ export class CompanionDog {
     this.gaitMode = 'IDLE'; // 'IDLE' | 'WALK' | 'TROT' | 'GALLOP'
     this.gaitPhase = 0;
     this.gallopPuffTimer = 0;
+
+    // Audio engine hook (resolved lazily from window.audioEngine)
+    this.audio = (typeof window !== 'undefined' && window.audioEngine) ? window.audioEngine : null;
+
+    // Catch-up / return-trot state
+    this.catchUpTimer = 0;
+    this.returnTrotActive = false;
+
+    // Ambient resting state
+    this.idleRestTimer = 0;
+    this.restStartAt = 0;
+    this.rollingTimer = 0;
+
+    // Scent tracking
+    this.lastSniffFollowAt = 0;
+    this.visitedScents = new WeakSet();
+
+    // Audio cooldowns
+    this._whineCooldown = 0;
+    this._pantCooldown = 0;
 
     // Event callbacks
     this.onStrayTriggered = null;
@@ -409,6 +440,42 @@ export class CompanionDog {
       }
     }
 
+    // Whine audio hook when the dog is far from its owner (throttled)
+    if (this.owner && !isLeashed && this.state !== DogState.LOST) {
+      const distToOwnerAudio = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
+      this._whineCooldown -= dt;
+      if (distToOwnerAudio > 220 && this._whineCooldown <= 0 && this.audio && typeof this.audio.playWhine === 'function') {
+        this.audio.playWhine();
+        this._whineCooldown = 1.5;
+      }
+    }
+
+    // Ambient resting transitions: sit/sniff -> lie down after 15s of owner stillness
+    if (this.owner) {
+      const ownerSpeed = Math.hypot(this.owner.vx || 0, this.owner.vy || 0);
+      if (!this.owner.isLeashed && ownerSpeed < 5 && (this.state === DogState.SITTING || this.state === DogState.IDLE_SNIFF)) {
+        this.idleRestTimer += dt;
+        if (this.idleRestTimer > 15 && this.state !== DogState.LYING_DOWN) {
+          this.state = DogState.LYING_DOWN;
+          this.restStartAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        }
+      } else if (ownerSpeed > 5 && (this.state === DogState.LYING_DOWN || this.state === DogState.ROLLING)) {
+        this.state = DogState.ROAMING;
+        this.idleRestTimer = 0;
+      }
+    }
+
+    // Occasional happy roll while resting (happiness >= 80)
+    if ((this.state === DogState.SITTING || this.state === DogState.IDLE_SNIFF) && this.happiness >= 80) {
+      const rollChance = 0.04;
+      if (Math.random() < rollChance) {
+        this.state = DogState.ROLLING;
+        this.rollingTimer = 2.5;
+        this.emoteBubble = '😊';
+        this.emoteTimer = 2.0;
+      }
+    }
+
     // Walking time accumulation for Dog Poop Event
     const curSpeed = Math.hypot(this.vx, this.vy);
     if ((this.state === DogState.FOLLOWING || this.state === DogState.ROAMING) && curSpeed > 10) {
@@ -534,6 +601,26 @@ export class CompanionDog {
 
       case DogState.SITTING:
         this.updateSitting(dt);
+        break;
+
+      case DogState.LYING_DOWN:
+        this.vx = 0;
+        this.vy = 0;
+        this.wagSpeed = 3;
+        if (this.owner && Math.hypot(this.owner.vx || 0, this.owner.vy || 0) > 5) {
+          this.state = DogState.ROAMING;
+          this.idleRestTimer = 0;
+        }
+        break;
+
+      case DogState.ROLLING:
+        this.vx *= 0.6;
+        this.vy *= 0.6;
+        this.wagSpeed = 20;
+        this.rollingTimer -= dt;
+        if (this.rollingTimer <= 0) {
+          this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
+        }
         break;
 
       case DogState.BARKING:
@@ -878,31 +965,30 @@ export class CompanionDog {
 
     const fromOwnerX = this.x - this.owner.x;
     const fromOwnerY = this.y - this.owner.y;
-    let distToOwner = Math.hypot(fromOwnerX, fromOwnerY);
+    const distToOwner = Math.hypot(fromOwnerX, fromOwnerY);
 
-    // Hard boundary clamp: if distToOwner > 230, clamp position along the vector to owner
-    if (distToOwner > 230) {
-      this.x = this.owner.x + (fromOwnerX / distToOwner) * 230;
-      this.y = this.owner.y + (fromOwnerY / distToOwner) * 230;
-      distToOwner = 230;
+    // Distance-scaled catch-up: probabilistic return-trot when the dog drifts far from owner
+    this.catchUpTimer += dt;
+    if (this.catchUpTimer >= 1.2 && distToOwner > 220) {
+      const base = Math.min(0.90, Math.max(0.08, (distToOwner - 220) / 260));
+      const obedience = Math.max(1, Math.min(5, Math.round(this.personality.obedience || 4)));
+      const p = Math.min(1, Math.max(0, base * (0.45 + 0.11 * obedience)));
+      if (Math.random() < p) {
+        this.returnTrotActive = true;
+      }
+      this.catchUpTimer = 0;
     }
 
-    // If distToOwner > 200: steer directly back toward the owner at normal trot speed until within 120px
-    if (distToOwner > 200) {
-      this.isReturningToOwner = true;
-    }
-
-    if (this.isReturningToOwner) {
-      if (distToOwner <= 120) {
-        this.isReturningToOwner = false;
+    if (this.returnTrotActive) {
+      if (distToOwner <= 110) {
+        this.returnTrotActive = false;
       } else {
         const toOwnerX = this.owner.x - this.x;
         const toOwnerY = this.owner.y - this.y;
         const dirDist = Math.hypot(toOwnerX, toOwnerY) || 1;
-        const trotSpeed = this.speed;
-        this.vx = (toOwnerX / dirDist) * trotSpeed;
-        this.vy = (toOwnerY / dirDist) * trotSpeed;
-        this.angle = Math.atan2(this.vy, this.vx);
+        this.vx = (toOwnerX / dirDist) * this.speed;
+        this.vy = (toOwnerY / dirDist) * this.speed;
+        this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 12));
         this.wagSpeed = 10;
         return;
       }
@@ -953,7 +1039,7 @@ export class CompanionDog {
     }
 
     if (Math.hypot(this.vx, this.vy) > 8) {
-      this.angle = Math.atan2(this.vy, this.vx);
+      this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 12));
       this.wagSpeed = 9;
     } else {
       this.wagSpeed = 6;
@@ -1211,6 +1297,8 @@ export class CompanionDog {
     }
     this.zoomiesTimer -= dt;
     this.zoomiesPhase += dt * 3.8;
+
+    // Figure-eight path: x = sin(t), y = sin(2t) — tangent derived analytically
     const rx = 72;
     const ry = 48;
     const targetX = this.zoomiesCenter.x + Math.sin(this.zoomiesPhase) * rx;
@@ -1221,8 +1309,15 @@ export class CompanionDog {
     const sprint = this.sprintSpeed * 1.15;
     this.vx = (dx / dist) * sprint;
     this.vy = (dy / dist) * sprint;
-    this.angle = Math.atan2(this.vy, this.vx);
+    this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 14));
     this.wagSpeed = 24;
+
+    // Panting audio during zoomies (throttled)
+    this._pantCooldown -= dt;
+    if (this._pantCooldown <= 0 && this.audio && typeof this.audio.playPant === 'function') {
+      this.audio.playPant();
+      this._pantCooldown = 1.2;
+    }
 
     if (field && field.particleSystem && Math.random() < 0.35) {
       field.particleSystem.emitGallopPuff(this.x, this.y, this.angle);
@@ -1248,6 +1343,13 @@ export class CompanionDog {
       field.particleSystem.emitSniffParticles(sx, sy, this.angle);
     }
 
+    // Sniffing audio (throttled)
+    this._pantCooldown -= dt;
+    if (this._pantCooldown <= 0 && this.audio && typeof this.audio.playSniff === 'function') {
+      this.audio.playSniff();
+      this._pantCooldown = 0.9;
+    }
+
     // Follow or inspect target scent node
     if (this.targetScent && this.targetScent.life > 0) {
       const dx = this.targetScent.x - this.x;
@@ -1258,15 +1360,22 @@ export class CompanionDog {
         const sniffSpeed = this.speed * 0.38;
         this.vx = (dx / dist) * sniffSpeed;
         this.vy = (dy / dist) * sniffSpeed;
-        this.angle = Math.atan2(this.vy, this.vx);
+        this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 10));
       } else {
         this.vx *= 0.5;
         this.vy *= 0.5;
-        // Seek next connected scent if available
+        // Seek next connected scent if available (exclude own scents and already-visited nodes)
         if (field && typeof field.getNearbyScents === 'function') {
-          const nearby = field.getNearbyScents(this.x, this.y, 65).filter(s => s !== this.targetScent);
+          const nearby = field.getNearbyScents(this.x, this.y, 65).filter(s =>
+            s !== this.targetScent &&
+            s.sourceId !== (this.id || 'self') &&
+            s.source !== this &&
+            !this.visitedScents.has(s)
+          );
           if (nearby.length > 0) {
-            this.targetScent = nearby[Math.floor(Math.random() * nearby.length)];
+            const next = nearby[Math.floor(Math.random() * nearby.length)];
+            this.visitedScents.add(next);
+            this.targetScent = next;
           }
         }
       }
@@ -1324,6 +1433,16 @@ export class CompanionDog {
       stretchX = 0.88;
       stretchY = 1.12;
       ctx.translate(-2, 0);
+    } else if (this.state === DogState.LYING_DOWN) {
+      stretchX = 1.15;
+      stretchY = 0.72;
+      ctx.translate(0, 2);
+    } else if (this.state === DogState.ROLLING) {
+      // Rolling wiggle: oscillate rotation and squash
+      const rollPhase = (typeof performance !== 'undefined' ? performance.now() : Date.now()) * 0.012;
+      ctx.rotate(Math.sin(rollPhase) * 0.35);
+      stretchX = 1.0 + Math.sin(rollPhase * 2) * 0.08;
+      stretchY = 0.9;
     } else if (this.gaitMode === 'GALLOP') {
       const cycle = Math.sin(this.gaitPhase);
       const stretch = 1.0 + Math.max(0, cycle) * 0.28 - Math.max(0, -cycle) * 0.12;

@@ -41,39 +41,133 @@ class SoundSynthesizer {
     }
   }
 
+  _ready() {
+    return Boolean(this.ctx && this.ctx.state === 'running');
+  }
+
+  _noiseBuffer() {
+    if (this._cachedNoise && this._cachedNoise.sampleRate === this.ctx.sampleRate) {
+      return this._cachedNoise;
+    }
+    const buf = this.ctx.createBuffer(1, this.ctx.sampleRate, this.ctx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    this._cachedNoise = buf;
+    return buf;
+  }
+
   // Realistic Cheerful Cocker Spaniel Bark
   playBark() {
     this.ensureContext();
-    if (!this.ctx || this.isMuted) return;
+    if (!this._ready() || this.isMuted) return;
 
-    const t = this.ctx.currentTime;
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    const filter = this.ctx.createBiquadFilter();
+    const ctx = this.ctx;
+    const oscA = ctx.createOscillator();
+    const oscB = ctx.createOscillator();
+    const bp = ctx.createBiquadFilter();
+    const gain = ctx.createGain();
+    const t = ctx.currentTime;
+    oscA.type = 'sawtooth';
+    oscB.type = 'sawtooth';
+    oscA.frequency.setValueAtTime(550, t);
+    oscA.frequency.exponentialRampToValueAtTime(210, t + 0.14);
+    oscB.frequency.setValueAtTime(560, t);
+    oscB.frequency.exponentialRampToValueAtTime(215, t + 0.14);
+    bp.type = 'bandpass';
+    bp.frequency.value = 800;
+    bp.Q.value = 5;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.35, t + 0.02);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    oscA.connect(bp); oscB.connect(bp); bp.connect(gain); gain.connect(this.ctx.destination);
+    oscA.start(t); oscB.start(t);
+    oscA.stop(t + 0.18); oscB.stop(t + 0.18);
+  }
 
-    // Formant filter for canine vocal tract resonance
-    filter.type = 'bandpass';
-    filter.frequency.setValueAtTime(800, t);
-    filter.Q.setValueAtTime(3.5, t);
+  // Rapid nasal sniffing (three short filtered noise bursts)
+  playSniff() {
+    this.ensureContext();
+    if (!this._ready() || this.isMuted) return;
+    const ctx = this.ctx;
+    const now = ctx.currentTime;
+    for (let i = 0; i < 3; i++) {
+      const start = now + i * 0.04;
+      const src = ctx.createBufferSource();
+      src.buffer = this._noiseBuffer();
+      const lp = ctx.createBiquadFilter();
+      lp.type = 'lowpass'; lp.frequency.value = 600;
+      const g = ctx.createGain();
+      g.gain.setValueAtTime(0.0001, start);
+      g.gain.exponentialRampToValueAtTime(0.18, start + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, start + 0.035);
+      src.connect(lp); lp.connect(g); g.connect(this.ctx.destination);
+      src.start(start); src.stop(start + 0.04);
+    }
+  }
 
-    // Pitch envelope: sharp attack, slight upward scoop, quick decay
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(240, t);
-    osc.frequency.exponentialRampToValueAtTime(420, t + 0.04);
-    osc.frequency.exponentialRampToValueAtTime(160, t + 0.18);
+  // Plaintive whine (descending sine with vibrato)
+  playWhine() {
+    this.ensureContext();
+    if (!this._ready() || this.isMuted) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    const gain = ctx.createGain();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(950, t);
+    osc.frequency.exponentialRampToValueAtTime(680, t + 0.45);
+    lfo.type = 'sine'; lfo.frequency.value = 6;
+    lfoGain.gain.value = 12;
+    lfo.connect(lfoGain); lfoGain.connect(osc.frequency);
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(0.16, t + 0.03);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.5);
+    osc.connect(gain); gain.connect(this.ctx.destination);
+    osc.start(t); lfo.start(t);
+    osc.stop(t + 0.5); lfo.stop(t + 0.5);
+  }
 
-    // Volume envelope
-    gain.gain.setValueAtTime(0, t);
-    gain.gain.linearRampToValueAtTime(0.35, t + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.01, t + 0.22);
-    gain.gain.setValueAtTime(0, t + 0.23);
+  // Alias for whine (legacy naming)
+  playPine() { this.playWhine(); }
 
-    osc.connect(filter);
-    filter.connect(gain);
-    gain.connect(this.ctx.destination);
+  // Metallic leash clip snap
+  playLeadClip() {
+    this.ensureContext();
+    if (!this._ready() || this.isMuted) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.setValueAtTime(2800, t);
+    gain.gain.setValueAtTime(0.22, t);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.03);
+    osc.connect(gain); gain.connect(this.ctx.destination);
+    osc.start(t); osc.stop(t + 0.035);
+  }
 
-    osc.start(t);
-    osc.stop(t + 0.24);
+  // Panting breath (filtered noise with slow amplitude LFO)
+  playPant() {
+    this.ensureContext();
+    if (!this._ready() || this.isMuted) return;
+    const ctx = this.ctx;
+    const t = ctx.currentTime;
+    const src = ctx.createBufferSource();
+    src.buffer = this._noiseBuffer();
+    const lp = ctx.createBiquadFilter();
+    lp.type = 'lowpass'; lp.frequency.value = 900;
+    const amp = ctx.createGain();
+    const lfo = ctx.createOscillator();
+    const lfoGain = ctx.createGain();
+    lfo.type = 'sine'; lfo.frequency.value = 4;
+    lfoGain.gain.value = 0.03;
+    amp.gain.value = 0.02;
+    lfo.connect(lfoGain); lfoGain.connect(amp.gain);
+    src.connect(lp); lp.connect(amp); amp.connect(this.ctx.destination);
+    src.start(t); lfo.start(t);
+    src.stop(t + 0.6); lfo.stop(t + 0.6);
   }
 
   // Authentic Procedural Dog Training Whistle

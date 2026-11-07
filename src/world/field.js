@@ -797,9 +797,10 @@ export class Field {
 
   addPoopPile(poopPile) {
     if (!poopPile) return null;
-    // Dedupe by id or overlapping position (±6px) to guarantee a single pile per drop.
+    if (!this.poopPiles) this.poopPiles = [];
+    // Dedupe by non-null id or overlapping position (±6px) to guarantee a single pile per drop.
     const dup = this.poopPiles.find(p =>
-      p && (p.id === poopPile.id || Math.hypot(p.x - poopPile.x, p.y - poopPile.y) <= 6)
+      p && ((poopPile.id != null && p.id === poopPile.id) || Math.hypot(p.x - poopPile.x, p.y - poopPile.y) <= 6)
     );
     if (dup) return dup;
     this.poopPiles.push(poopPile);
@@ -837,11 +838,21 @@ export class Field {
    */
   pickupPoop(x, y) {
     const PICKUP_RADIUS = 38;
-    const target = this.poopPiles.find(p => Math.hypot(p.x - x, p.y - y) <= PICKUP_RADIUS);
+    if (!this.poopPiles || this.poopPiles.length === 0) return null;
+    let target = null;
+    let minDist = Infinity;
+    for (const p of this.poopPiles) {
+      if (!p) continue;
+      const d = Math.hypot(p.x - x, p.y - y);
+      if (d <= PICKUP_RADIUS && d < minDist) {
+        minDist = d;
+        target = p;
+      }
+    }
     if (!target) return null;
-    // Purge ghosts (including target) within 6px of (x, y)
+    // Purge ghosts (including target) within 6px of the target's coordinates
     this.poopPiles = this.poopPiles.filter(p =>
-      Math.hypot(p.x - x, p.y - y) > 6
+      p && p !== target && (target.id == null || p.id !== target.id) && Math.hypot(p.x - target.x, p.y - target.y) > 6
     );
     return target;
   }

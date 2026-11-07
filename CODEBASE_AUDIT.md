@@ -6363,6 +6363,14 @@ fi
 # Convenience wrapper around the project's Python test runner.
 set -e
 cd "$(dirname "$0")/.."
+ROOT_DIR="$(pwd)"
+
+# Self-heal missing submodule checkouts (e.g. in freshly created git worktrees).
+if [ ! -f "$ROOT_DIR/zero_protocol/Cargo.toml" ]; then
+  echo "Submodules not populated; running git submodule update --init --recursive..."
+  (cd "$ROOT_DIR" && git submodule update --init --recursive)
+fi
+
 exec python3 test/run_tests.py
 ```
 
@@ -13344,6 +13352,190 @@ export class ZeroMeshNetworkManager {
 
     // In-memory simulation fallback channels (for testing)
     this._simulationHub = options.simulationHub || null;
+
+    // Two-phase lifecycle state (negotiate -> construct)
+    this._phase = 'idle';
+    this._matchRetries = 0;
+    this._role = null;
+    this._roomSecret = null;
+    this._debug = Boolean(options.debug || (typeof window !== 'undefined' && window.__ZERO_MESH_DEBUG));
+    this._lifecycleTimers = new Set();
+    this._isAborted = false;
+    this._demoting = false;
+
+    // Cancellation + host lease heartbeat
+    this._lifecycleAbortController = null;
+    this._hostHeartbeatInterval = null;
+    this._hostHeartbeatMs = 3000;
+  }
+
+  _logPhase(phase, extra) {
+    this._phase = phase;
+    if (this._debug) {
+      try {
+        console.debug(`[ZeroMesh] phase=${phase}`, extra || '');
+      } catch (_) {}
+    }
+    if (typeof window !== 'undefined') {
+      window.__zeroMeshDebug = {
+        phase,
+        retries: this._matchRetries,
+        role: this._role,
+        roomSecret: this._roomSecret ? '<set>' : null,
+        peerId: this.peerId
+      };
+    }
+  }
+
+  _doId() {
+    return this.roomId;
+  }
+
+  _sleep(ms, signal) {
+    return new Promise((resolve, reject) => {
+      const entry = { timer: null, resolve, reject, cancelled: false };
+      const cleanup = () => {
+        this._lifecycleTimers.delete(entry);
+        if (signal && typeof signal.removeEventListener === 'function') {
+          try { signal.removeEventListener('abort', onAbort); } catch (_) {}
+        }
+      };
+      const onAbort = () => {
+        if (entry.cancelled) return;
+        entry.cancelled = true;
+        if (entry.timer !== null && entry.timer !== undefined) {
+          clearTimeout(entry.timer);
+        }
+        cleanup();
+        const err = new Error('Aborted');
+        err.name = 'AbortError';
+        reject(err);
+      };
+      if (signal && signal.aborted) {
+        onAbort();
+        return;
+      }
+      if (signal && typeof signal.addEventListener === 'function') {
+        try { signal.addEventListener('abort', onAbort); } catch (_) {}
+      }
+      entry.timer = setTimeout(() => {
+        if (entry.cancelled) return;
+        entry.cancelled = true;
+        cleanup();
+        resolve();
+      }, ms);
+      this._lifecycleTimers.add(entry);
+    });
+  }
+
+  _clearLifecycleTimers() {
+    for (const entry of this._lifecycleTimers) {
+      try {
+        if (entry && entry.timer !== null && entry.timer !== undefined) {
+          clearTimeout(entry.timer);
+        }
+        if (entry && typeof entry.resolve === 'function') {
+          entry.cancelled = true;
+          entry.resolve();
+        }
+      } catch (_) {}
+    }
+    this._lifecycleTimers.clear();
+  }
+
+  _abortLifecycle() {
+    this._isAborted = true;
+    if (this._lifecycleAbortController) {
+      try { this._lifecycleAbortController.abort(); } catch (_) {}
+      this._lifecycleAbortController = null;
+    }
+    this._clearLifecycleTimers();
+  }
+
+  _startHostHeartbeat() {
+    this._stopHostHeartbeat();
+    if (typeof setInterval !== 'function') return;
+    this._hostHeartbeatInterval = setInterval(() => {
+      this._sendHostHeartbeat();
+    }, this._hostHeartbeatMs);
+  }
+
+  _stopHostHeartbeat() {
+    if (this._hostHeartbeatInterval !== null && this._hostHeartbeatInterval !== undefined) {
+      try { clearInterval(this._hostHeartbeatInterval); } catch (_) {}
+      this._hostHeartbeatInterval = null;
+    }
+  }
+
+  async _sendHostHeartbeat() {
+    if (!this.isHost || !this.peerId) return;
+    const doId = this._doId();
+    const signal = this._lifecycleAbortController ? this._lifecycleAbortController.signal : null;
+    try {
+      const fetchOpts = { headers: { 'X-Peer-Id': this.peerId } };
+      if (signal) fetchOpts.signal = signal;
+      const resp = await fetch(`${this.workerOrigin}/match/${encodeURIComponent(doId)}`, fetchOpts);
+      if (resp && resp.ok) {
+        try {
+          const body = await resp.json();
+          if (body && body.room_secret && !this.hostSecret) {
+            this.hostSecret = this._normalizeSecretHex(body.room_secret) || this.hostSecret;
+          }
+          // Host lease lost or superseded: demote immediately.
+          if (body && body.status && body.status !== 'host') {
+            console.warn('[ZeroMesh] Host lease lost or superseded. Demoting to joiner.');
+            this.isHost = false;
+            this._stopHostHeartbeat();
+            if (this.hostWs) {
+              try { this.hostWs.close(); } catch (_) {}
+              this.hostWs = null;
+            }
+            this._demoteToJoiner();
+          }
+        } catch (_) {}
+      }
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+      if (this._debug) console.warn('[ZeroMesh] Host heartbeat error:', err);
+    }
+  }
+
+  async _demoteToJoiner() {
+    if (this._demoting) return;
+    this._demoting = true;
+    try {
+      // Cancel any in-flight sleeps / fetches from the previous lifecycle,
+      // then reset the abort flag so the new lifecycle can proceed cleanly.
+      this._abortLifecycle();
+      this._isAborted = false;
+      this._lifecycleAbortController = (typeof AbortController !== 'undefined')
+        ? new AbortController()
+        : null;
+      const negotiation = await this._negotiateIdentity();
+      const hostSecretHex = this.hostSecret;
+      if (negotiation.role === 'joiner' || negotiation.role === 'waiting') {
+        let invite = negotiation.invite;
+        if (!invite) {
+          invite = await this._fetchInviteForJoiner();
+        }
+        if (invite) {
+          await this._joinWithInvite(invite, hostSecretHex);
+        } else {
+          this._pollForInvite(hostSecretHex);
+        }
+      }
+    } catch (err) {
+      if (err && err.name === 'AbortError') {
+        // Expected when a newer lifecycle superseded this demotion attempt.
+        return;
+      }
+      console.warn('[ZeroMesh] Demotion re-negotiation failed:', err);
+    } finally {
+      this._demoting = false;
+      // Ensure any lingering timers from this attempt are cleared so they
+      // cannot fire against a subsequent lifecycle.
+      this._clearLifecycleTimers();
+    }
   }
 
   setLocalMeta(meta) {
@@ -13434,8 +13626,46 @@ export class ZeroMeshNetworkManager {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
   }
 
+  /**
+   * Normalize a secret (hex string or byte array) to a lowercase hex string.
+   * Returns null when the input is empty/invalid.
+   */
+  _normalizeSecretHex(secret) {
+    if (secret === null || secret === undefined) return null;
+    if (typeof secret === 'string') {
+      const trimmed = secret.trim();
+      if (!trimmed) return null;
+      // Already hex? Validate and normalize casing.
+      if (/^[0-9a-fA-F]+$/.test(trimmed) && trimmed.length % 2 === 0) {
+        return trimmed.toLowerCase();
+      }
+      // Non-hex string: encode its UTF-8 bytes as hex.
+      try {
+        const enc = new TextEncoder().encode(trimmed);
+        return this.bytesToHex(enc);
+      } catch (_) {
+        return null;
+      }
+    }
+    if (secret instanceof Uint8Array) {
+      return this.bytesToHex(secret);
+    }
+    if (Array.isArray(secret)) {
+      return this.bytesToHex(Uint8Array.from(secret));
+    }
+    if (typeof secret === 'object' && typeof secret.length === 'number') {
+      try {
+        return this.bytesToHex(Uint8Array.from(secret));
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  }
+
   async connect(roomId) {
     if (roomId) this.roomId = roomId;
+    this._isAborted = false;
     this.setStatus(NetStatus.CONNECTING);
     if (!this.peerId) {
       this.peerId = this.generatePeerId();
@@ -13451,19 +13681,163 @@ export class ZeroMeshNetworkManager {
     }
   }
 
+  async _negotiateIdentity() {
+    const doId = this._doId();
+    const backoff = [100, 200, 400, 800, 1600, 2500];
+    const outerDeadline = Date.now() + 10000;
+    this._matchRetries = 0;
+    this._logPhase('negotiate', { doId });
+
+    if (!this._lifecycleAbortController) {
+      this._lifecycleAbortController = (typeof AbortController !== 'undefined')
+        ? new AbortController()
+        : null;
+    }
+    const signal = this._lifecycleAbortController ? this._lifecycleAbortController.signal : null;
+
+    let sawWaiting = false;
+    let lastWaitingSecret = null;
+
+    for (let i = 0; i <= backoff.length; i++) {
+      if (signal && signal.aborted) {
+        const err = new Error('Aborted');
+        err.name = 'AbortError';
+        throw err;
+      }
+
+      let body = null;
+      try {
+        const fetchOpts = { headers: { 'X-Peer-Id': this.peerId } };
+        if (signal) fetchOpts.signal = signal;
+        const resp = await fetch(`${this.workerOrigin}/match/${encodeURIComponent(doId)}`, fetchOpts);
+        if (!resp.ok) throw new Error(`match ${resp.status}`);
+        body = await resp.json();
+      } catch (err) {
+        if (err && err.name === 'AbortError') throw err;
+        if (this._debug) console.warn('[ZeroMesh] /match error:', err);
+        body = null;
+      }
+
+      if (body) {
+        // Retain room_secret from ANY response status.
+        if (body.room_secret) {
+          const normalized = this._normalizeSecretHex(body.room_secret);
+          if (normalized) {
+            this.hostSecret = normalized;
+            this._roomSecret = normalized;
+          }
+        }
+
+        if (body.status === 'joiner' || body.status === 'host') {
+          this._role = body.status;
+          this._logPhase('negotiate', { role: body.status, retries: this._matchRetries });
+          return {
+            role: body.status,
+            assignedPeerId: body.assigned_peer_id ?? this.peerId,
+            roomSecret: body.room_secret ?? this._roomSecret ?? null,
+            invite: body.invite || null
+          };
+        }
+        if (body.status === 'waiting') {
+          sawWaiting = true;
+          if (body.room_secret) lastWaitingSecret = body.room_secret;
+          this._logPhase('waiting', { retries: this._matchRetries });
+        }
+      }
+
+      if (Date.now() >= outerDeadline) break;
+      if (i < backoff.length) {
+        this._matchRetries++;
+        try {
+          await this._sleep(backoff[i], signal);
+        } catch (err) {
+          if (err && err.name === 'AbortError') throw err;
+          throw err;
+        }
+      }
+    }
+
+    // If the DO ever reported an active host (waiting), do NOT self-promote.
+    if (sawWaiting) {
+      this._role = 'waiting';
+      this._logPhase('negotiate', { role: 'waiting', retries: this._matchRetries });
+      return {
+        role: 'waiting',
+        assignedPeerId: this.peerId,
+        roomSecret: lastWaitingSecret ?? this._roomSecret ?? null,
+        invite: null
+      };
+    }
+
+    this._role = 'empty';
+    this._logPhase('negotiate', { role: 'empty', retries: this._matchRetries });
+    return { role: 'empty', assignedPeerId: this.peerId, roomSecret: this._roomSecret ?? null, invite: null };
+  }
+
+  _constructMesh(assignedPeerId, roomSecret) {
+    this.peerId = assignedPeerId;
+    // Normalize hostSecret to a lowercase hex string so downstream consumers
+    // (WebSocket query params, HMAC, Authorization headers) never double-encode.
+    const normalizedRoomSecret = this._normalizeSecretHex(roomSecret);
+    if (normalizedRoomSecret) {
+      this.hostSecret = normalizedRoomSecret;
+    } else if (!this.hostSecret) {
+      this.hostSecret = this.bytesToHex(this.generateSecret());
+    } else {
+      // Ensure any pre-existing hostSecret is also normalized.
+      const existing = this._normalizeSecretHex(this.hostSecret);
+      if (existing) this.hostSecret = existing;
+    }
+
+    const privKey = this.generateSecret();
+    // Fail-fast: never silently fall back to a fresh session, which would
+    // produce a scalar mismatch between the crypto session and the mesh.
+    if (typeof this.wasmMod.WasmCryptoSession.from_private_key !== 'function') {
+      throw new Error('[ZeroMesh] WasmCryptoSession.from_private_key is unavailable; cannot construct crypto session.');
+    }
+    try {
+      this.cryptoSession = this.wasmMod.WasmCryptoSession.from_private_key(privKey);
+    } catch (err) {
+      throw new Error(`[ZeroMesh] Failed to construct crypto session from private key: ${err && err.message ? err.message : err}`);
+    }
+    if (!this.cryptoSession) {
+      throw new Error('[ZeroMesh] Crypto session construction returned null/undefined.');
+    }
+    this.gameMesh = new this.wasmMod.WasmMeshTopology(assignedPeerId, privKey);
+    this.proximityMesh = new this.wasmMod.WasmMeshTopology(`prox-${assignedPeerId}`, this.generateSecret());
+
+    // Pre-handshake invariant: mesh identity must agree with this.peerId.
+    if (typeof this.gameMesh.local_peer_id === 'function') {
+      const meshId = this.gameMesh.local_peer_id();
+      if (meshId !== this.peerId) {
+        throw new Error(`[ZeroMesh] Identity invariant violated: gameMesh.local_peer_id()=${meshId} !== peerId=${this.peerId}`);
+      }
+    }
+
+    this._logPhase('construct', { peerId: this.peerId, hasRoomSecret: Boolean(roomSecret) });
+  }
+
   async _connectLiveMesh() {
     try {
-      this.hostSecret = this.generateSecret();
-      const hostSecretHex = this.bytesToHex(this.hostSecret);
+      // Phase 1: negotiate identity via /match with retry/backoff.
+      const negotiation = await this._negotiateIdentity();
+      const role = negotiation.role;
+      const roomSecret = negotiation.roomSecret;
 
-      const matchUrl = `${this.workerOrigin}/match/${encodeURIComponent(this.roomId)}`;
-      const matchResp = await fetch(matchUrl);
-      const matchData = matchResp.ok ? await matchResp.json() : { status: 'empty' };
-
-      const privKey = this.generateSecret();
-      this.cryptoSession = new this.wasmMod.WasmCryptoSession();
-      this.gameMesh = new this.wasmMod.WasmMeshTopology(this.peerId, privKey);
-      this.proximityMesh = new this.wasmMod.WasmMeshTopology(`prox-${this.peerId}`, this.generateSecret());
+      // Phase 2: construct mesh with final peerId + room_secret.
+      // Fatal crypto/topology errors must fail fast and loud — never fall back
+      // to the simulated mesh, which would silently mask key/scalar mismatches.
+      try {
+        this._constructMesh(negotiation.assignedPeerId, roomSecret);
+      } catch (cryptoErr) {
+        console.error('[ZeroMesh] Fatal cryptographic initialization error:', cryptoErr);
+        this._state = 'error';
+        this._logPhase('error', { error: String(cryptoErr && cryptoErr.message || cryptoErr) });
+        this.setStatus(NetStatus.OFFLINE);
+        throw cryptoErr;
+      }
+      // hostSecret is normalized to a hex string inside _constructMesh.
+      const hostSecretHex = this.hostSecret;
 
       this.proximityMesh.set_on_message((senderPeerId, plaintext) => {
         const cleanSenderId = String(senderPeerId).replace(/^prox-/, '');
@@ -13498,69 +13872,209 @@ export class ZeroMeshNetworkManager {
 
       this._wireMeshCallbacks(this.gameMesh);
 
-      if (matchData.status === 'matched' && matchData.invite) {
-        // Joiner flow: Accept offer, generate SDP answer, seal drop payload, and POST /drop
-        const invite = matchData.invite;
-        if (invite.assigned_peer_id) {
-          this.peerId = invite.assigned_peer_id;
+      if (role === 'joiner') {
+        // Joiner flow: Accept offer, generate SDP answer, seal drop payload, and POST /drop.
+        // If /match did not return an inline invite, fetch one from the invite endpoint.
+        let invite = negotiation.invite;
+        if (!invite) {
+          invite = await this._fetchInviteForJoiner();
         }
-
-        const offerSdpStr = typeof invite.sdp_offer === 'object' && invite.sdp_offer !== null
-          ? invite.sdp_offer.sdp
-          : invite.sdp_offer;
-
-        const engine = new this.wasmMod.WasmWebRtcEngine();
-        const bridge = this._attachBrowserWebRtc(engine, false, this.iceServers);
-        const answerSdp = await bridge.acceptOfferAndCreateAnswerSdp(offerSdpStr);
-
-        const hostPubX = new Uint8Array(invite.host_public_key);
-        const hostPubEd = invite.host_signing_key ? new Uint8Array(invite.host_signing_key) : null;
-        const sealedSdpJson = this.cryptoSession.seal_drop_sdp(
-          invite.host_peer_id || 'host',
-          hostPubX,
-          hostPubEd,
-          answerSdp
-        );
-
-        const dropPayload = {
-          invite_uuid: invite.invite_uuid,
-          token: invite.token,
-          sdp_answer: { sdp: 'SEALED' },
-          joiner_public_key: Array.from(this.cryptoSession.x25519_public_key_bytes()),
-          joiner_peer_id: this.peerId,
-          joiner_signing_key: Array.from(this.cryptoSession.ed25519_public_key_bytes()),
-          sealed_sdp_answer: JSON.parse(sealedSdpJson),
-          signature: null
-        };
-
-        const dropUrl = `${this.workerOrigin}/drop/${encodeURIComponent(this.roomId)}/${encodeURIComponent(invite.invite_uuid)}`;
-        await fetch(dropUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + (invite.token || invite.hmac_token)
-          },
-          body: JSON.stringify(dropPayload)
-        });
-
-        this.gameMesh.register_peer(invite.host_peer_id || 'host', hostPubX, engine);
-        if (this.activeBridges) {
-          this.activeBridges.set(invite.host_peer_id || 'host', bridge);
+        if (!invite) {
+          throw new Error('[ZeroMesh] Joiner role but no invite available');
         }
-        this.setStatus(NetStatus.CONNECTED_PEER);
-        this.isHost = false;
-        this._setupHostSocket(hostSecretHex);
-      } else {
-        // Seed host flow
+        await this._joinWithInvite(invite, hostSecretHex);
+      } else if (role === 'host' || role === 'empty') {
+        // Seed host flow (role === 'host' or 'empty' after retry budget exhausted)
+        this._logPhase('host', { peerId: this.peerId });
         this.setStatus(NetStatus.HOSTING);
         this.isHost = true;
         this._setupHostSocket(hostSecretHex);
+        this._startHostHeartbeat();
         this.initNpcSpawner();
+      } else if (role === 'waiting') {
+        // A valid host exists in the DO; remain a joiner and poll for an invite.
+        this._logPhase('waiting', { peerId: this.peerId });
+        this.setStatus(NetStatus.CONNECTING);
+        this.isHost = false;
+        const invite = await this._fetchInviteForJoiner();
+        if (invite && invite.__takeover) {
+          await this._takeOverAsHost(invite.roomSecret, hostSecretHex);
+        } else if (invite) {
+          // Re-enter joiner flow with the fetched invite.
+          await this._joinWithInvite(invite, hostSecretHex);
+        } else {
+          // No invite yet; keep polling in the background without self-promoting.
+          this._pollForInvite(hostSecretHex);
+        }
+      } else {
+        throw new Error(`[ZeroMesh] Unhandled negotiation role: ${role}`);
       }
     } catch (err) {
+      const aborted = err && (
+        err.name === 'AbortError' ||
+        this._isAborted ||
+        (this._lifecycleAbortController && this._lifecycleAbortController.signal && this._lifecycleAbortController.signal.aborted)
+      );
+      if (aborted) {
+        console.log('[ZeroMesh] Lifecycle aborted. Skipping simulation fallback.');
+        this._logPhase('aborted', { error: String(err && err.message || err) });
+        return;
+      }
+      // Fatal crypto/topology errors must never be masked by simulation fallback.
+      if (this._state === 'error') {
+        console.error('[ZeroMesh] Fatal initialization error; refusing simulation fallback:', err);
+        this._logPhase('error', { error: String(err && err.message || err) });
+        throw err;
+      }
       console.error('[ZeroMesh] Live connection failed, falling back to simulated mesh:', err);
+      this._logPhase('fallback', { error: String(err && err.message || err) });
       await this._connectSimulatedMesh();
     }
+  }
+
+  async _fetchInviteForJoiner() {
+    const doId = this._doId();
+    const backoff = [100, 200, 400, 800, 1600];
+    const deadline = Date.now() + 8000;
+    const signal = this._lifecycleAbortController ? this._lifecycleAbortController.signal : null;
+    for (let i = 0; i <= backoff.length; i++) {
+      if (signal && signal.aborted) return null;
+      try {
+        const headers = { 'X-Peer-Id': this.peerId };
+        if (this.hostSecret) {
+          headers['X-Host-Secret'] = this.hostSecret;
+        }
+        const fetchOpts = { headers };
+        if (signal) fetchOpts.signal = signal;
+        const resp = await fetch(`${this.workerOrigin}/invite/${encodeURIComponent(doId)}`, fetchOpts);
+        if (resp.ok) {
+          const body = await resp.json();
+          if (body && body.status === 'host') {
+            // Previous host lease expired and this client was elected as host.
+            // Signal takeover to the caller via a sentinel object.
+            return { __takeover: true, roomSecret: body.room_secret || null };
+          }
+          if (body && body.invite) return body.invite;
+          if (body && body.invite_uuid) return body;
+        }
+      } catch (err) {
+        if (err && err.name === 'AbortError') return null;
+        if (this._debug) console.warn('[ZeroMesh] /invite error:', err);
+      }
+      if (Date.now() >= deadline) break;
+      if (i < backoff.length) {
+        this._matchRetries++;
+        try {
+          await this._sleep(backoff[i], signal);
+        } catch (err) {
+          if (err && err.name === 'AbortError') return null;
+          throw err;
+        }
+      }
+    }
+    return null;
+  }
+
+  async _pollForInvite(hostSecretHex) {
+    const signal = this._lifecycleAbortController ? this._lifecycleAbortController.signal : null;
+    while (!(signal && signal.aborted) && !this.isHost) {
+      try {
+        await this._sleep(2000, signal);
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+        return;
+      }
+      if (signal && signal.aborted) return;
+      const invite = await this._fetchInviteForJoiner();
+      if (invite && invite.__takeover) {
+        await this._takeOverAsHost(invite.roomSecret, hostSecretHex);
+        return;
+      }
+      if (invite) {
+        try {
+          await this._joinWithInvite(invite, hostSecretHex);
+        } catch (e) {
+          console.warn('[ZeroMesh] Join with polled invite failed:', e);
+        }
+        return;
+      }
+    }
+  }
+
+  async _takeOverAsHost(roomSecret, hostSecretHex) {
+    console.log('[ZeroMesh] Previous host expired. Taking over as Host.');
+    const normalized = this._normalizeSecretHex(roomSecret) || this._normalizeSecretHex(hostSecretHex);
+    if (normalized) {
+      this.hostSecret = normalized;
+      this._roomSecret = normalized;
+    }
+    this.isHost = true;
+    this._role = 'host';
+    this._logPhase('host', { peerId: this.peerId, takeover: true });
+    this.setStatus(NetStatus.HOSTING);
+    this._setupHostSocket(this.hostSecret);
+    this._startHostHeartbeat();
+    this.initNpcSpawner();
+  }
+
+  async _joinWithInvite(invite, hostSecretHex) {
+    if (!invite) throw new Error('[ZeroMesh] Missing invite');
+    if (invite.assigned_peer_id && invite.assigned_peer_id !== this.peerId) {
+      if (typeof this.gameMesh.set_local_peer_id === 'function') {
+        this.gameMesh.set_local_peer_id(invite.assigned_peer_id);
+      }
+      if (this.proximityMesh && typeof this.proximityMesh.set_local_peer_id === 'function') {
+        try { this.proximityMesh.set_local_peer_id(`prox-${invite.assigned_peer_id}`); } catch (_) {}
+      }
+      this.peerId = invite.assigned_peer_id;
+    }
+    this._logPhase('joiner', { peerId: this.peerId });
+
+    const offerSdpStr = typeof invite.sdp_offer === 'object' && invite.sdp_offer !== null
+      ? invite.sdp_offer.sdp
+      : invite.sdp_offer;
+
+    const engine = new this.wasmMod.WasmWebRtcEngine();
+    const bridge = this._attachBrowserWebRtc(engine, false, this.iceServers);
+    const answerSdp = await bridge.acceptOfferAndCreateAnswerSdp(offerSdpStr);
+
+    const hostPubX = new Uint8Array(invite.host_public_key);
+    const hostPubEd = invite.host_signing_key ? new Uint8Array(invite.host_signing_key) : null;
+    const sealedSdpJson = this.cryptoSession.seal_drop_sdp(
+      invite.host_peer_id || 'host',
+      hostPubX,
+      hostPubEd,
+      answerSdp
+    );
+
+    const dropPayload = {
+      invite_uuid: invite.invite_uuid,
+      token: invite.token,
+      sdp_answer: { sdp: 'SEALED' },
+      joiner_public_key: Array.from(this.cryptoSession.x25519_public_key_bytes()),
+      joiner_peer_id: this.peerId,
+      joiner_signing_key: Array.from(this.cryptoSession.ed25519_public_key_bytes()),
+      sealed_sdp_answer: JSON.parse(sealedSdpJson),
+      signature: null
+    };
+
+    const dropUrl = `${this.workerOrigin}/drop/${encodeURIComponent(this.roomId)}/${encodeURIComponent(invite.invite_uuid)}`;
+    await fetch(dropUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + (invite.token || invite.hmac_token)
+      },
+      body: JSON.stringify(dropPayload)
+    });
+
+    this.gameMesh.register_peer(invite.host_peer_id || 'host', hostPubX, engine);
+    if (this.activeBridges) {
+      this.activeBridges.set(invite.host_peer_id || 'host', bridge);
+    }
+    this.setStatus(NetStatus.CONNECTED_PEER);
+    this.isHost = false;
+    this._setupHostSocket(hostSecretHex);
   }
 
   _attachBrowserWebRtc(wasmEngine, isOfferer, iceServers) {
@@ -13735,7 +14249,12 @@ export class ZeroMeshNetworkManager {
   _setupHostSocket(secretHex) {
     if (typeof WebSocket === 'undefined') return;
     try {
-      const wsUrl = this.workerOrigin.replace(/^http/, 'ws') + `/host/${encodeURIComponent(this.roomId)}?secret=${encodeURIComponent(secretHex)}`;
+      // Browser WebSockets cannot send custom HTTP headers (e.g. X-Peer-Id),
+      // so pass peer_id via the query string for host authentication.
+      const wsUrl = this.workerOrigin.replace(/^http/, 'ws')
+        + `/host/${encodeURIComponent(this.roomId)}`
+        + `?secret=${encodeURIComponent(secretHex)}`
+        + `&peer_id=${encodeURIComponent(this.peerId)}`;
       this.hostWs = new WebSocket(wsUrl);
 
       this.hostWs.onopen = async () => {
@@ -14051,6 +14570,9 @@ export class ZeroMeshNetworkManager {
 
   stop() {
     if (this.syncInterval) clearInterval(this.syncInterval);
+    this.isHost = false;
+    this._abortLifecycle();
+    this._stopHostHeartbeat();
     this.stopNpcSpawner();
     if (this.hostWs) {
       try { this.hostWs.close(); } catch (e) {}
@@ -14076,6 +14598,14 @@ export class ZeroMeshNetworkManager {
     }
     this.remotePeers.clear();
     this.meshPeerIds.clear();
+    this.cryptoSession = null;
+    this.gameMesh = null;
+    this.proximityMesh = null;
+    this.hostSecret = null;
+    this._role = null;
+    this._roomSecret = null;
+    this._matchRetries = 0;
+    this._logPhase('idle');
     this.setStatus(NetStatus.OFFLINE);
   }
 
@@ -14579,6 +15109,8 @@ export class ZeroMeshNetworkManager {
       clearInterval(this.syncInterval);
       this.syncInterval = null;
     }
+    this._abortLifecycle();
+    this._stopHostHeartbeat();
     this.stopNpcSpawner();
 
     if (this.hostWs) {
@@ -14610,6 +15142,13 @@ export class ZeroMeshNetworkManager {
     this.activeNpcs.clear();
     this.activeClusterPeerIds.clear();
     this.isHost = false;
+    this.cryptoSession = null;
+    this.gameMesh = null;
+    this.proximityMesh = null;
+    this.hostSecret = null;
+    this._role = null;
+    this._roomSecret = null;
+    this._matchRetries = 0;
 
     // 4. Update roomId and connect to new room
     this.roomId = newRoomId;

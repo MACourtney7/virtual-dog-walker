@@ -21,6 +21,8 @@ def test_scaffold():
     assert os.path.exists("src/systems/audio.js"), "src/systems/audio.js missing"
     assert os.path.exists("src/systems/weather.js"), "src/systems/weather.js missing"
     assert os.path.exists("src/world/environment.js"), "src/world/environment.js missing"
+    assert os.path.exists("src/world/zones.js"), "src/world/zones.js missing"
+    assert os.path.exists("src/world/zone_biomes.js"), "src/world/zone_biomes.js missing"
     
     with open("index.html") as f:
         html = f.read()
@@ -61,7 +63,8 @@ def run_all():
         "test/test_fetching_mechanics.py",
         "test/test_zero_mesh_integration.py",
         "test/test_wasm_core_sim.py",
-        "test/test_phase3_visuals_and_mechanics.py"
+        "test/test_phase3_visuals_and_mechanics.py",
+        "test/test_zone_warps.py"
     ]
     for t in test_suites:
         res = subprocess.run([sys.executable, t])

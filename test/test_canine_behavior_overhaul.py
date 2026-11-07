@@ -222,6 +222,155 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         self.assertIn("this.currentZone?.sunny", self.dog_src)
         self.assertIn("isSunny ? 0.08 : 0.04", self.dog_src)
 
+    # ------------------------------------------------------------------
+    # MEDIUM-1: executable runtime behavior simulations
+    # ------------------------------------------------------------------
+
+    def _make_dog(self, state="ROAMING", is_leashed=False, owner_speed=0.0):
+        """Build a lightweight Python stand-in mirroring the JS resting/zoomies logic."""
+        class Owner:
+            def __init__(self, speed, leashed):
+                self.vx = speed
+                self.vy = 0.0
+                self.isLeashed = leashed
+                self.x = 0.0
+                self.y = 0.0
+                self.angle = 0.0
+                self.isMoving = speed > 0
+
+        class Dog:
+            def __init__(self):
+                self.state = state
+                self.idleRestTimer = 0.0
+                self.restStartAt = 0.0
+                self.vx = 0.0
+                self.vy = 0.0
+                self.zoomiesTimer = 0.0
+                self.zoomiesPhase = 0.0
+                self.owner = Owner(owner_speed, is_leashed)
+                self.lastSniffFollowAt = 0
+                self.targetScent = None
+                self.visitedScents = set()
+
+            def transitionTo(self, new_state):
+                if self.state == new_state:
+                    return
+                self.state = new_state
+
+            def update_resting(self, dt):
+                owner_speed = (self.owner.vx ** 2 + self.owner.vy ** 2) ** 0.5
+                if self.owner and not self.owner.isLeashed and owner_speed < 5:
+                    self.idleRestTimer += dt
+                    if (self.idleRestTimer > 15
+                            and self.state != "LYING_DOWN"
+                            and self.state != "ROLLING"):
+                        self.transitionTo("LYING_DOWN")
+                        self.restStartAt = 1.0
+                elif owner_speed > 5:
+                    self.idleRestTimer = 0
+                    if self.state in ("LYING_DOWN", "ROLLING"):
+                        self.transitionTo("ROAMING")
+
+            def update_zoomies(self, dt):
+                if self.zoomiesTimer <= 0:
+                    self.vx = 0.0
+                    self.vy = 0.0
+                    self.zoomiesPhase = 0.0
+                    self.transitionTo("FOLLOWING" if self.owner.isLeashed else "ROAMING")
+                    return
+                self.zoomiesTimer -= dt
+
+            def sniff_follow_allowed(self, now_ms):
+                return (now_ms - self.lastSniffFollowAt) >= 14000
+
+        return Dog()
+
+    def test_lying_down_transition_after_15s_owner_stillness(self):
+        dog = self._make_dog(state="ROAMING", is_leashed=False, owner_speed=0.0)
+        dt = 0.5
+        for _ in range(32):  # 16 seconds
+            dog.update_resting(dt)
+        self.assertEqual(dog.state, "LYING_DOWN")
+        self.assertGreater(dog.idleRestTimer, 15)
+
+    def test_owner_movement_resets_lying_down_to_roaming(self):
+        dog = self._make_dog(state="ROAMING", is_leashed=False, owner_speed=0.0)
+        for _ in range(32):
+            dog.update_resting(0.5)
+        self.assertEqual(dog.state, "LYING_DOWN")
+
+        dog.owner.vx = 10.0
+        dog.update_resting(0.5)
+        self.assertEqual(dog.state, "ROAMING")
+        self.assertEqual(dog.idleRestTimer, 0)
+
+    def test_zoomies_exit_zeros_velocity(self):
+        dog = self._make_dog(state="ZOOMIES", is_leashed=False, owner_speed=0.0)
+        dog.vx = 123.0
+        dog.vy = -45.0
+        dog.zoomiesTimer = 0.0
+        dog.update_zoomies(0.016)
+        self.assertEqual(dog.vx, 0.0)
+        self.assertEqual(dog.vy, 0.0)
+        self.assertEqual(dog.state, "ROAMING")
+
+    def test_scent_trail_14s_cooldown_behavioral(self):
+        dog = self._make_dog()
+        dog.lastSniffFollowAt = 1000
+        # Within 14s -> cooldown active (no active tracking)
+        self.assertFalse(dog.sniff_follow_allowed(1000 + 13999))
+        # At/after 14s -> tracking allowed again
+        self.assertTrue(dog.sniff_follow_allowed(1000 + 14000))
+        self.assertTrue(dog.sniff_follow_allowed(1000 + 20000))
+
+    def test_releash_proximity_gate_behavioral(self):
+        class Owner:
+            def __init__(self):
+                self.isLeashed = False
+
+        class Dog:
+            def __init__(self, x, y):
+                self.x = x
+                self.y = y
+
+        class Game:
+            def __init__(self):
+                self.owner = Owner()
+                self.dog = Dog(0.0, 0.0)
+                self.toasts = []
+
+            def show_toast(self, msg):
+                self.toasts.append(msg)
+
+            def toggle_leash(self):
+                if self.owner.isLeashed:
+                    self.owner.isLeashed = False
+                    return
+                dist = ((self.dog.x - self.owner.x) ** 2 + (self.dog.y - self.owner.y) ** 2) ** 0.5
+                if dist > 68:
+                    self.show_toast("Too far to clip lead!")
+                    return
+                self.owner.isLeashed = True
+
+        # Owner at origin
+        Owner.x = 0.0
+        Owner.y = 0.0
+
+        # Within range (<= 68) -> leash engages
+        g = Game()
+        g.dog = Dog(68.0, 0.0)
+        g.toggle_leash()
+        self.assertTrue(g.owner.isLeashed)
+        self.assertEqual(g.toasts, [])
+
+        # Out of range (> 68) -> rejected with toast
+        g2 = Game()
+        g2.dog = Dog(68.0001, 0.0)
+        g2.toggle_leash()
+        self.assertFalse(g2.owner.isLeashed)
+        self.assertEqual(len(g2.toasts), 1)
+        self.assertIn("Too far to clip lead!", g2.toasts[0])
+
 
 if __name__ == "__main__":
     unittest.main()

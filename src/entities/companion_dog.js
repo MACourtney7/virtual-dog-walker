@@ -234,7 +234,6 @@ export class CompanionDog {
   transitionTo(newState) {
     if (this.state === newState) return;
     this.state = newState;
-    this.idleRestTimer = 0;
     if (newState === DogState.SITTING || newState === DogState.IDLE_SNIFF) {
       if (!this.owner?.isLeashed && this.happiness >= 80) {
         const isSunny = Boolean(this.currentZone?.sunny || (this.owner?.field?.zoneConfig?.sunny));
@@ -488,11 +487,12 @@ export class CompanionDog {
       }
     }
 
-    // Ambient resting transitions: sit/sniff -> lie down after 15s of owner stillness
+    // Ambient resting transitions: lie down after 15s of continuous owner stillness (off-leash).
+    // Tracked continuously regardless of transient roaming/sitting/sniffing state.
     const ownerSpeed = Math.hypot(this.owner?.vx || 0, this.owner?.vy || 0);
-    if (this.owner && !this.owner.isLeashed && ownerSpeed < 5 && (this.state === DogState.SITTING || this.state === DogState.IDLE_SNIFF)) {
+    if (this.owner && !this.owner.isLeashed && ownerSpeed < 5) {
       this.idleRestTimer += dt;
-      if (this.idleRestTimer > 15 && this.state !== DogState.LYING_DOWN) {
+      if (this.idleRestTimer > 15 && this.state !== DogState.LYING_DOWN && this.state !== DogState.ROLLING) {
         this.transitionTo(DogState.LYING_DOWN);
         this.restStartAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       }
@@ -501,8 +501,6 @@ export class CompanionDog {
       if (this.state === DogState.LYING_DOWN || this.state === DogState.ROLLING) {
         this.transitionTo(DogState.ROAMING);
       }
-    } else {
-      this.idleRestTimer = 0;
     }
 
     // Walking time accumulation for Dog Poop Event
@@ -1318,10 +1316,12 @@ export class CompanionDog {
       return;
     }
     if (this.zoomiesTimer <= 0) {
-      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
+      this.vx = 0;
+      this.vy = 0;
       this.zoomiesPhase = 0;
       this.emoteBubble = '👅';
       this.emoteTimer = 2.0;
+      this.transitionTo((this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING);
       return;
     }
     this.zoomiesTimer -= dt;

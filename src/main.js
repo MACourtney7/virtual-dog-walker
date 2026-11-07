@@ -727,6 +727,9 @@ export class CliftonDownGame {
     if (typeof this.owner.triggerPet === 'function') {
       this.owner.triggerPet(0.45);
     }
+    if (typeof this.dog.triggerPet === 'function') {
+      this.dog.triggerPet(0.45);
+    }
     if (this.sound && typeof this.sound.playLeadClip === 'function') {
       this.sound.playLeadClip();
     } else if (typeof sound !== 'undefined' && sound && typeof sound.playLeadClip === 'function') {
@@ -1250,8 +1253,8 @@ export class CliftonDownGame {
 
     // Dynamically dim the leash button when the dog is out of clipping range
     if (typeof document !== 'undefined') {
-      if (this.leashBtn === undefined) {
-        this.leashBtn = document.getElementById('btn-touch-leash') || null;
+      if (!this.leashBtn) {
+        this.leashBtn = document.getElementById('btn-touch-leash');
       }
       if (this.leashBtn) {
         const dim = !this.owner.isLeashed && Math.hypot(this.dog.x - this.owner.x, this.dog.y - this.owner.y) > 68;

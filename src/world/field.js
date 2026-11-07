@@ -6,7 +6,9 @@ import {
   bakeBiomeGround,
   renderCoastalSurf,
   renderWarpSignpost,
-  renderLandmark
+  renderLandmark,
+  DOWNS_KEEPOUT,
+  isClearOfKeepouts
 } from './zone_biomes.js';
 
 export class Camera {
@@ -505,7 +507,7 @@ export class Field {
       { id: 'rock-3', x: 175, y: 1260, w: 58, h: 36, depthY: 1276, r: 26 },
       { id: 'rock-4', x: 210, y: 1400, w: 66, h: 42, depthY: 1418, r: 30 },
       { id: 'rock-5', x: 185, y: 1560, w: 50, h: 32, depthY: 1574, r: 24 }
-    ];
+    ].filter(r => isClearOfKeepouts(r.x, r.y, DOWNS_KEEPOUT, 80));
 
     // 4. Public Dog-Waste Bins (Network of 8 bins at authentic Downs locations)
     const binDefinitions = [
@@ -519,14 +521,16 @@ export class Field {
       { id: 'bin-8', x: 1080, y: 1750 }
     ];
 
-    this.bins = binDefinitions.map(b => ({
-      id: b.id,
-      x: b.x,
-      y: b.y,
-      radius: 12,
-      depthY: b.y + 8,
-      isBin: true
-    }));
+    this.bins = binDefinitions
+      .filter(b => isClearOfKeepouts(b.x, b.y, DOWNS_KEEPOUT, 80))
+      .map(b => ({
+        id: b.id,
+        x: b.x,
+        y: b.y,
+        radius: 12,
+        depthY: b.y + 8,
+        isBin: true
+      }));
 
     // 5. Wooden Park Benches (including 3 panoramic teak benches along Sea Walls)
     const benchPositions = [
@@ -550,15 +554,17 @@ export class Field {
       { id: 'bench-nm-1', x: 1950, y: 420, angle: 0 }
     ];
 
-    this.benches = benchPositions.map((b, idx) => ({
-      id: b.id || `bench-${idx}`,
-      x: b.x,
-      y: b.y,
-      w: 64,
-      h: 26,
-      angle: b.angle || 0,
-      depthY: b.y + 13
-    }));
+    this.benches = benchPositions
+      .filter(b => isClearOfKeepouts(b.x, b.y, DOWNS_KEEPOUT, 80))
+      .map((b, idx) => ({
+        id: b.id || `bench-${idx}`,
+        x: b.x,
+        y: b.y,
+        w: 64,
+        h: 26,
+        angle: b.angle || 0,
+        depthY: b.y + 13
+      }));
 
     // 6. Mature Tree Arboretum & Scenery Zones
     // A. Ladies Mile Avenue: SW (400, 1900) to NE (2700, 500) lined with sweet chestnut and lime trees
@@ -648,15 +654,17 @@ export class Field {
       { x: 1850, y: 2150, r: 72, type: 'oak' }
     ];
 
-    this.trees = treePositions.map((t, idx) => ({
-      id: `tree-${idx}`,
-      x: t.x,
-      y: t.y,
-      radius: t.r,
-      type: t.type,
-      trunkRadius: Math.round(t.r * 0.28),
-      depthY: t.y + 10
-    }));
+    this.trees = treePositions
+      .filter(t => isClearOfKeepouts(t.x, t.y, DOWNS_KEEPOUT, 80))
+      .map((t, idx) => ({
+        id: `tree-${idx}`,
+        x: t.x,
+        y: t.y,
+        radius: t.r,
+        type: t.type,
+        trunkRadius: Math.round(t.r * 0.28),
+        depthY: t.y + 10
+      }));
 
     // 7. Wildflower Patches across Meadows & Woodland Margins
     const flowerTypes = ['buttercup', 'clover', 'bluebell', 'rock_cress'];

@@ -23,7 +23,7 @@ const COASTAL_KEEPOUT = [
   { x: 220, y: 1200 },
 ];
 
-const DOWNS_KEEPOUT = [
+export const DOWNS_KEEPOUT = [
   { x: 110, y: 1200 },
   { x: 1600, y: 2290 },
   { x: 220, y: 1200 },
@@ -53,7 +53,7 @@ function dist2(ax, ay, bx, by) {
   return dx * dx + dy * dy;
 }
 
-function isClearOfKeepouts(x, y, keepouts, radius = KEEPOUT_RADIUS) {
+export function isClearOfKeepouts(x, y, keepouts, radius = KEEPOUT_RADIUS) {
   for (const k of keepouts) {
     if (dist2(x, y, k.x, k.y) < radius * radius) return false;
   }

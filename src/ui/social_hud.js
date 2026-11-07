@@ -3,7 +3,7 @@ import { Protocol } from '../net/protocol.js';
 import { TouchControls } from './touch_controls.js';
 import { WSStatus } from '../net/network.js';
 import { NetStatus } from '../net/network.js';
-import { PUBLIC_ZONE_IDS, getZoneConfig } from '../world/zones.js';
+import { PUBLIC_ZONE_IDS, isPublicZoneId } from '../world/zones.js';
 
 export class SocialHUD {
   constructor(networkManager, localOwner, localDog, coatPresets) {
@@ -694,7 +694,7 @@ export class SocialHUD {
         this.net.roomId === 'the-beach' ||
         this.net.roomId === 'clifton-field' ||
         (Array.isArray(PUBLIC_ZONE_IDS) && PUBLIC_ZONE_IDS.includes(this.net.roomId)) ||
-        Boolean(getZoneConfig(this.net.roomId));
+        isPublicZoneId(this.net.roomId);
       if (badge) {
         if (isCommons) {
           badge.textContent = 'Online';

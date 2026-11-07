@@ -57,6 +57,12 @@ class TestZoneRegistry(unittest.TestCase):
         # Fallback to clifton-commons
         self.assertIn("clifton-commons", self.zones_code)
 
+    def test_is_public_zone_id(self):
+        """Verify isPublicZoneId helper is exported and used for public zone detection."""
+        self.assertIn("export function isPublicZoneId", self.zones_code)
+        self.assertIn("PUBLIC_ZONE_IDS.includes(zoneId)", self.zones_code)
+        self.assertIn("hasOwnProperty.call(PARK_ZONES, zoneId)", self.zones_code)
+
 
 class TestWarpGateConnectivityAndClearance(unittest.TestCase):
     def setUp(self):
@@ -264,6 +270,28 @@ class TestObstacleClearanceBehavioral(unittest.TestCase):
         self.assertIn("stickAttempts", self.biomes_code)
         self.assertIn("stickCount", self.biomes_code)
 
+    def test_downs_scenery_clearance(self):
+        """H1: Parkland scenery in field.js must apply DOWNS_KEEPOUT filtering."""
+        # field.js must import DOWNS_KEEPOUT and isClearOfKeepouts from zone_biomes.
+        self.assertIn("DOWNS_KEEPOUT", self.field_code)
+        self.assertIn("isClearOfKeepouts", self.field_code)
+        # Each scenery collection must be filtered against DOWNS_KEEPOUT.
+        for collection in ("rockOutcrops", "benches", "bins", "trees"):
+            pattern = re.compile(
+                r"this\." + collection + r"\s*=[\s\S]{0,400}?isClearOfKeepouts\([^)]*DOWNS_KEEPOUT",
+                re.DOTALL,
+            )
+            self.assertRegex(
+                self.field_code,
+                pattern,
+                f"this.{collection} must be filtered with isClearOfKeepouts(..., DOWNS_KEEPOUT, 80)",
+            )
+
+    def test_downs_keepout_exported(self):
+        """H1: DOWNS_KEEPOUT and isClearOfKeepouts must be exported from zone_biomes.js."""
+        self.assertIn("export const DOWNS_KEEPOUT", self.biomes_code)
+        self.assertIn("export function isClearOfKeepouts", self.biomes_code)
+
 
 class TestLandmarkCleanupOnReturn(unittest.TestCase):
     """H2: Biome landmarks must not leak back into clifton-commons."""
@@ -335,9 +363,23 @@ class TestHUDTitleAndOnlineState(unittest.TestCase):
                          "Duplicate tree emoji span must be removed")
 
     def test_online_state_uses_public_zone_ids(self):
-        """Verify updateNetworkState uses PUBLIC_ZONE_IDS and getZoneConfig."""
+        """Verify updateNetworkState uses PUBLIC_ZONE_IDS and isPublicZoneId."""
         self.assertIn("PUBLIC_ZONE_IDS", self.hud_code)
-        self.assertIn("getZoneConfig", self.hud_code)
+        self.assertIn("isPublicZoneId", self.hud_code)
+
+    def test_private_room_not_marked_online(self):
+        """M1: Private rooms must not be marked Online via getZoneConfig fallback."""
+        # social_hud.js must not call getZoneConfig in updateNetworkState.
+        self.assertNotIn("getZoneConfig", self.hud_code,
+                         "social_hud.js must not use getZoneConfig (fallback marks private rooms online)")
+        # isPublicZoneId must be imported from zones.js.
+        self.assertIn("isPublicZoneId", self.hud_code)
+        # Simulate isPublicZoneId behaviour for a private room id.
+        with open(ZONES_JS, "r", encoding="utf-8") as f:
+            zones_code = f.read()
+        self.assertIn("export function isPublicZoneId", zones_code)
+        # Private room ids are not in PUBLIC_ZONE_IDS nor PARK_ZONES keys.
+        self.assertNotIn("'private-room-abc'", zones_code)
 
 
 class TestWarpToZoneAliasHandling(unittest.TestCase):

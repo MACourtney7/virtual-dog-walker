@@ -178,6 +178,18 @@ export const PUBLIC_ZONE_IDS = [
   'the-beach',
 ];
 
+/**
+ * Returns true when the given id refers to a public zone (either a registered
+ * zone id or a known public alias). Private room ids return false.
+ *
+ * @param {string} zoneId
+ * @returns {boolean}
+ */
+export function isPublicZoneId(zoneId) {
+  if (!zoneId || typeof zoneId !== 'string') return false;
+  return PUBLIC_ZONE_IDS.includes(zoneId) || Object.prototype.hasOwnProperty.call(PARK_ZONES, zoneId);
+}
+
 const DEFAULT_ZONE_ID = 'clifton-commons';
 
 /**

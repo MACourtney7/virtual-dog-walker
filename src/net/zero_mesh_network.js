@@ -155,6 +155,11 @@ export class ZeroMeshNetworkManager {
     this._roomSecret = null;
     this._debug = Boolean(options.debug || (typeof window !== 'undefined' && window.__ZERO_MESH_DEBUG));
     this._lifecycleTimers = new Set();
+
+    // Cancellation + host lease heartbeat
+    this._lifecycleAbortController = null;
+    this._hostHeartbeatInterval = null;
+    this._hostHeartbeatMs = 3000;
   }
 
   _logPhase(phase, extra) {
@@ -179,12 +184,38 @@ export class ZeroMeshNetworkManager {
     return this.roomId;
   }
 
-  _sleep(ms) {
+  _sleep(ms, signal) {
     return new Promise((resolve, reject) => {
       const entry = { timer: null, resolve, reject, cancelled: false };
-      entry.timer = setTimeout(() => {
+      const cleanup = () => {
         this._lifecycleTimers.delete(entry);
-        if (!entry.cancelled) resolve();
+        if (signal && typeof signal.removeEventListener === 'function') {
+          try { signal.removeEventListener('abort', onAbort); } catch (_) {}
+        }
+      };
+      const onAbort = () => {
+        if (entry.cancelled) return;
+        entry.cancelled = true;
+        if (entry.timer !== null && entry.timer !== undefined) {
+          clearTimeout(entry.timer);
+        }
+        cleanup();
+        const err = new Error('Aborted');
+        err.name = 'AbortError';
+        reject(err);
+      };
+      if (signal && signal.aborted) {
+        onAbort();
+        return;
+      }
+      if (signal && typeof signal.addEventListener === 'function') {
+        try { signal.addEventListener('abort', onAbort); } catch (_) {}
+      }
+      entry.timer = setTimeout(() => {
+        if (entry.cancelled) return;
+        entry.cancelled = true;
+        cleanup();
+        resolve();
       }, ms);
       this._lifecycleTimers.add(entry);
     });
@@ -203,6 +234,49 @@ export class ZeroMeshNetworkManager {
       } catch (_) {}
     }
     this._lifecycleTimers.clear();
+  }
+
+  _abortLifecycle() {
+    if (this._lifecycleAbortController) {
+      try { this._lifecycleAbortController.abort(); } catch (_) {}
+      this._lifecycleAbortController = null;
+    }
+    this._clearLifecycleTimers();
+  }
+
+  _startHostHeartbeat() {
+    this._stopHostHeartbeat();
+    if (typeof setInterval !== 'function') return;
+    this._hostHeartbeatInterval = setInterval(() => {
+      this._sendHostHeartbeat();
+    }, this._hostHeartbeatMs);
+  }
+
+  _stopHostHeartbeat() {
+    if (this._hostHeartbeatInterval !== null && this._hostHeartbeatInterval !== undefined) {
+      try { clearInterval(this._hostHeartbeatInterval); } catch (_) {}
+      this._hostHeartbeatInterval = null;
+    }
+  }
+
+  async _sendHostHeartbeat() {
+    if (!this.isHost || !this.peerId) return;
+    const doId = this._doId();
+    try {
+      const resp = await fetch(`${this.workerOrigin}/match/${encodeURIComponent(doId)}`, {
+        headers: { 'X-Peer-Id': this.peerId }
+      });
+      if (resp && resp.ok) {
+        try {
+          const body = await resp.json();
+          if (body && body.room_secret && !this.hostSecret) {
+            this.hostSecret = this._normalizeSecretHex(body.room_secret) || this.hostSecret;
+          }
+        } catch (_) {}
+      }
+    } catch (err) {
+      if (this._debug) console.warn('[ZeroMesh] Host heartbeat error:', err);
+    }
   }
 
   setLocalMeta(meta) {
@@ -354,34 +428,59 @@ export class ZeroMeshNetworkManager {
     this._matchRetries = 0;
     this._logPhase('negotiate', { doId });
 
+    if (!this._lifecycleAbortController) {
+      this._lifecycleAbortController = (typeof AbortController !== 'undefined')
+        ? new AbortController()
+        : null;
+    }
+    const signal = this._lifecycleAbortController ? this._lifecycleAbortController.signal : null;
+
+    let sawWaiting = false;
+    let lastWaitingSecret = null;
+
     for (let i = 0; i <= backoff.length; i++) {
+      if (signal && signal.aborted) {
+        const err = new Error('Aborted');
+        err.name = 'AbortError';
+        throw err;
+      }
+
       let body = null;
       try {
-        const resp = await fetch(`${this.workerOrigin}/match/${encodeURIComponent(doId)}`, {
-          headers: {
-            'X-Peer-Id': this.peerId
-          }
-        });
+        const fetchOpts = { headers: { 'X-Peer-Id': this.peerId } };
+        if (signal) fetchOpts.signal = signal;
+        const resp = await fetch(`${this.workerOrigin}/match/${encodeURIComponent(doId)}`, fetchOpts);
         if (!resp.ok) throw new Error(`match ${resp.status}`);
         body = await resp.json();
       } catch (err) {
+        if (err && err.name === 'AbortError') throw err;
         if (this._debug) console.warn('[ZeroMesh] /match error:', err);
         body = null;
       }
 
       if (body) {
+        // Retain room_secret from ANY response status.
+        if (body.room_secret) {
+          const normalized = this._normalizeSecretHex(body.room_secret);
+          if (normalized) {
+            this.hostSecret = normalized;
+            this._roomSecret = normalized;
+          }
+        }
+
         if (body.status === 'joiner' || body.status === 'host') {
           this._role = body.status;
-          this._roomSecret = body.room_secret ?? null;
           this._logPhase('negotiate', { role: body.status, retries: this._matchRetries });
           return {
             role: body.status,
             assignedPeerId: body.assigned_peer_id ?? this.peerId,
-            roomSecret: body.room_secret ?? null,
+            roomSecret: body.room_secret ?? this._roomSecret ?? null,
             invite: body.invite || null
           };
         }
         if (body.status === 'waiting') {
+          sawWaiting = true;
+          if (body.room_secret) lastWaitingSecret = body.room_secret;
           this._logPhase('waiting', { retries: this._matchRetries });
         }
       }
@@ -389,13 +488,30 @@ export class ZeroMeshNetworkManager {
       if (Date.now() >= outerDeadline) break;
       if (i < backoff.length) {
         this._matchRetries++;
-        await this._sleep(backoff[i]);
+        try {
+          await this._sleep(backoff[i], signal);
+        } catch (err) {
+          if (err && err.name === 'AbortError') throw err;
+          throw err;
+        }
       }
+    }
+
+    // If the DO ever reported an active host (waiting), do NOT self-promote.
+    if (sawWaiting) {
+      this._role = 'waiting';
+      this._logPhase('negotiate', { role: 'waiting', retries: this._matchRetries });
+      return {
+        role: 'waiting',
+        assignedPeerId: this.peerId,
+        roomSecret: lastWaitingSecret ?? this._roomSecret ?? null,
+        invite: null
+      };
     }
 
     this._role = 'empty';
     this._logPhase('negotiate', { role: 'empty', retries: this._matchRetries });
-    return { role: 'empty', assignedPeerId: this.peerId, roomSecret: null, invite: null };
+    return { role: 'empty', assignedPeerId: this.peerId, roomSecret: this._roomSecret ?? null, invite: null };
   }
 
   _constructMesh(assignedPeerId, roomSecret) {
@@ -486,70 +602,28 @@ export class ZeroMeshNetworkManager {
         if (!invite) {
           throw new Error('[ZeroMesh] Joiner role but no invite available');
         }
-        if (invite.assigned_peer_id && invite.assigned_peer_id !== this.peerId) {
-          // Post-construction identity change: keep both meshes and this.peerId in lockstep.
-          if (typeof this.gameMesh.set_local_peer_id === 'function') {
-            this.gameMesh.set_local_peer_id(invite.assigned_peer_id);
-          }
-          if (this.proximityMesh && typeof this.proximityMesh.set_local_peer_id === 'function') {
-            try { this.proximityMesh.set_local_peer_id(`prox-${invite.assigned_peer_id}`); } catch (_) {}
-          }
-          this.peerId = invite.assigned_peer_id;
-        }
-        this._logPhase('joiner', { peerId: this.peerId });
-
-        const offerSdpStr = typeof invite.sdp_offer === 'object' && invite.sdp_offer !== null
-          ? invite.sdp_offer.sdp
-          : invite.sdp_offer;
-
-        const engine = new this.wasmMod.WasmWebRtcEngine();
-        const bridge = this._attachBrowserWebRtc(engine, false, this.iceServers);
-        const answerSdp = await bridge.acceptOfferAndCreateAnswerSdp(offerSdpStr);
-
-        const hostPubX = new Uint8Array(invite.host_public_key);
-        const hostPubEd = invite.host_signing_key ? new Uint8Array(invite.host_signing_key) : null;
-        const sealedSdpJson = this.cryptoSession.seal_drop_sdp(
-          invite.host_peer_id || 'host',
-          hostPubX,
-          hostPubEd,
-          answerSdp
-        );
-
-        const dropPayload = {
-          invite_uuid: invite.invite_uuid,
-          token: invite.token,
-          sdp_answer: { sdp: 'SEALED' },
-          joiner_public_key: Array.from(this.cryptoSession.x25519_public_key_bytes()),
-          joiner_peer_id: this.peerId,
-          joiner_signing_key: Array.from(this.cryptoSession.ed25519_public_key_bytes()),
-          sealed_sdp_answer: JSON.parse(sealedSdpJson),
-          signature: null
-        };
-
-        const dropUrl = `${this.workerOrigin}/drop/${encodeURIComponent(this.roomId)}/${encodeURIComponent(invite.invite_uuid)}`;
-        await fetch(dropUrl, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + (invite.token || invite.hmac_token)
-          },
-          body: JSON.stringify(dropPayload)
-        });
-
-        this.gameMesh.register_peer(invite.host_peer_id || 'host', hostPubX, engine);
-        if (this.activeBridges) {
-          this.activeBridges.set(invite.host_peer_id || 'host', bridge);
-        }
-        this.setStatus(NetStatus.CONNECTED_PEER);
-        this.isHost = false;
-        this._setupHostSocket(hostSecretHex);
+        await this._joinWithInvite(invite, hostSecretHex);
       } else if (role === 'host' || role === 'empty') {
         // Seed host flow (role === 'host' or 'empty' after retry budget exhausted)
         this._logPhase('host', { peerId: this.peerId });
         this.setStatus(NetStatus.HOSTING);
         this.isHost = true;
         this._setupHostSocket(hostSecretHex);
+        this._startHostHeartbeat();
         this.initNpcSpawner();
+      } else if (role === 'waiting') {
+        // A valid host exists in the DO; remain a joiner and poll for an invite.
+        this._logPhase('waiting', { peerId: this.peerId });
+        this.setStatus(NetStatus.CONNECTING);
+        this.isHost = false;
+        const invite = await this._fetchInviteForJoiner();
+        if (invite) {
+          // Re-enter joiner flow with the fetched invite.
+          await this._joinWithInvite(invite, hostSecretHex);
+        } else {
+          // No invite yet; keep polling in the background without self-promoting.
+          this._pollForInvite(hostSecretHex);
+        }
       } else {
         throw new Error(`[ZeroMesh] Unhandled negotiation role: ${role}`);
       }
@@ -564,26 +638,120 @@ export class ZeroMeshNetworkManager {
     const doId = this._doId();
     const backoff = [100, 200, 400, 800, 1600];
     const deadline = Date.now() + 8000;
+    const signal = this._lifecycleAbortController ? this._lifecycleAbortController.signal : null;
     for (let i = 0; i <= backoff.length; i++) {
+      if (signal && signal.aborted) return null;
       try {
-        const resp = await fetch(`${this.workerOrigin}/invite/${encodeURIComponent(doId)}`, {
-          headers: { 'X-Peer-Id': this.peerId }
-        });
+        const headers = { 'X-Peer-Id': this.peerId };
+        if (this.hostSecret) {
+          headers['X-Host-Secret'] = this.hostSecret;
+        }
+        const fetchOpts = { headers };
+        if (signal) fetchOpts.signal = signal;
+        const resp = await fetch(`${this.workerOrigin}/invite/${encodeURIComponent(doId)}`, fetchOpts);
         if (resp.ok) {
           const body = await resp.json();
           if (body && body.invite) return body.invite;
           if (body && body.invite_uuid) return body;
         }
       } catch (err) {
+        if (err && err.name === 'AbortError') return null;
         if (this._debug) console.warn('[ZeroMesh] /invite error:', err);
       }
       if (Date.now() >= deadline) break;
       if (i < backoff.length) {
         this._matchRetries++;
-        await this._sleep(backoff[i]);
+        try {
+          await this._sleep(backoff[i], signal);
+        } catch (err) {
+          if (err && err.name === 'AbortError') return null;
+          throw err;
+        }
       }
     }
     return null;
+  }
+
+  async _pollForInvite(hostSecretHex) {
+    const signal = this._lifecycleAbortController ? this._lifecycleAbortController.signal : null;
+    while (!(signal && signal.aborted) && !this.isHost) {
+      try {
+        await this._sleep(2000, signal);
+      } catch (err) {
+        if (err && err.name === 'AbortError') return;
+        return;
+      }
+      if (signal && signal.aborted) return;
+      const invite = await this._fetchInviteForJoiner();
+      if (invite) {
+        try {
+          await this._joinWithInvite(invite, hostSecretHex);
+        } catch (e) {
+          console.warn('[ZeroMesh] Join with polled invite failed:', e);
+        }
+        return;
+      }
+    }
+  }
+
+  async _joinWithInvite(invite, hostSecretHex) {
+    if (!invite) throw new Error('[ZeroMesh] Missing invite');
+    if (invite.assigned_peer_id && invite.assigned_peer_id !== this.peerId) {
+      if (typeof this.gameMesh.set_local_peer_id === 'function') {
+        this.gameMesh.set_local_peer_id(invite.assigned_peer_id);
+      }
+      if (this.proximityMesh && typeof this.proximityMesh.set_local_peer_id === 'function') {
+        try { this.proximityMesh.set_local_peer_id(`prox-${invite.assigned_peer_id}`); } catch (_) {}
+      }
+      this.peerId = invite.assigned_peer_id;
+    }
+    this._logPhase('joiner', { peerId: this.peerId });
+
+    const offerSdpStr = typeof invite.sdp_offer === 'object' && invite.sdp_offer !== null
+      ? invite.sdp_offer.sdp
+      : invite.sdp_offer;
+
+    const engine = new this.wasmMod.WasmWebRtcEngine();
+    const bridge = this._attachBrowserWebRtc(engine, false, this.iceServers);
+    const answerSdp = await bridge.acceptOfferAndCreateAnswerSdp(offerSdpStr);
+
+    const hostPubX = new Uint8Array(invite.host_public_key);
+    const hostPubEd = invite.host_signing_key ? new Uint8Array(invite.host_signing_key) : null;
+    const sealedSdpJson = this.cryptoSession.seal_drop_sdp(
+      invite.host_peer_id || 'host',
+      hostPubX,
+      hostPubEd,
+      answerSdp
+    );
+
+    const dropPayload = {
+      invite_uuid: invite.invite_uuid,
+      token: invite.token,
+      sdp_answer: { sdp: 'SEALED' },
+      joiner_public_key: Array.from(this.cryptoSession.x25519_public_key_bytes()),
+      joiner_peer_id: this.peerId,
+      joiner_signing_key: Array.from(this.cryptoSession.ed25519_public_key_bytes()),
+      sealed_sdp_answer: JSON.parse(sealedSdpJson),
+      signature: null
+    };
+
+    const dropUrl = `${this.workerOrigin}/drop/${encodeURIComponent(this.roomId)}/${encodeURIComponent(invite.invite_uuid)}`;
+    await fetch(dropUrl, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + (invite.token || invite.hmac_token)
+      },
+      body: JSON.stringify(dropPayload)
+    });
+
+    this.gameMesh.register_peer(invite.host_peer_id || 'host', hostPubX, engine);
+    if (this.activeBridges) {
+      this.activeBridges.set(invite.host_peer_id || 'host', bridge);
+    }
+    this.setStatus(NetStatus.CONNECTED_PEER);
+    this.isHost = false;
+    this._setupHostSocket(hostSecretHex);
   }
 
   _attachBrowserWebRtc(wasmEngine, isOfferer, iceServers) {
@@ -1074,7 +1242,8 @@ export class ZeroMeshNetworkManager {
 
   stop() {
     if (this.syncInterval) clearInterval(this.syncInterval);
-    this._clearLifecycleTimers();
+    this._abortLifecycle();
+    this._stopHostHeartbeat();
     this.stopNpcSpawner();
     if (this.hostWs) {
       try { this.hostWs.close(); } catch (e) {}
@@ -1611,7 +1780,8 @@ export class ZeroMeshNetworkManager {
       clearInterval(this.syncInterval);
       this.syncInterval = null;
     }
-    this._clearLifecycleTimers();
+    this._abortLifecycle();
+    this._stopHostHeartbeat();
     this.stopNpcSpawner();
 
     if (this.hostWs) {

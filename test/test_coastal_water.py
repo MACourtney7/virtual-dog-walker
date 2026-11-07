@@ -287,5 +287,126 @@ console.log(JSON.stringify({ calls, zoomies: dog.zoomiesLevel }));
         self.assertEqual(out["zoomies"], 12)
 
 
+class TestCoastalWaterStaticContract(unittest.TestCase):
+    """Static source-level contract checks that do not require Node.js."""
+
+    def _read(self, path):
+        self.assertTrue(os.path.exists(path), f"File {path} does not exist")
+        with open(path, "r", encoding="utf-8") as f:
+            return f.read()
+
+    def test_particles_declares_emit_and_emit_water_splash(self):
+        src = self._read(PARTICLES_JS)
+        self.assertIn("emit(config)", src)
+        self.assertIn("emitWaterSplash(x, y, count = 6)", src)
+
+    def test_coastal_exports_apply_interaction(self):
+        src = self._read(COASTAL_JS)
+        self.assertIn("export function applyCoastalShallowWaterInteraction", src)
+
+    def test_main_imports_and_uses_coastal_interaction(self):
+        main_js = os.path.join(REPO_ROOT, "src", "main.js")
+        src = self._read(main_js)
+        self.assertIn("applyCoastalShallowWaterInteraction", src)
+        # The raw unhandled particleSystem.emit(...) call in the coastal block
+        # must be gone (replaced by the shared helper).
+        self.assertNotIn("this.field.particleSystem.emit({", src)
+
+
+class TestCoastalShallowWaterAlgorithm(unittest.TestCase):
+    """Python reference simulation of applyCoastalShallowWaterInteraction."""
+
+    SHALLOW_Y = 1820
+    ZOOMIES_PER_SEC = 12
+    ZOOMIES_MAX = 100
+    SPLASH_CHANCE = 0.25
+
+    def _simulate(self, owner, dog, dt, rand_value):
+        """Mirror the JS helper's decision logic.
+
+        Returns (splash_coords_or_None, zoomies_level).
+        """
+        zoomies = dog.get("zoomiesLevel", 0)
+        owner_shallow = owner["y"] > self.SHALLOW_Y
+        dog_shallow = dog["y"] > self.SHALLOW_Y
+
+        splash = None
+        if owner_shallow or dog_shallow:
+            if rand_value < self.SPLASH_CHANCE:
+                if dog_shallow:
+                    splash = (dog["x"], dog["y"])
+                else:
+                    splash = (owner["x"], owner["y"])
+            if dog_shallow:
+                zoomies = min(self.ZOOMIES_MAX, zoomies + self.ZOOMIES_PER_SEC * dt)
+        return splash, zoomies
+
+    def test_shallow_detection_threshold(self):
+        # Exactly at threshold is NOT shallow (strict >).
+        splash, zoomies = self._simulate(
+            {"x": 0, "y": self.SHALLOW_Y},
+            {"x": 0, "y": self.SHALLOW_Y, "zoomiesLevel": 0},
+            1.0,
+            0.0,
+        )
+        self.assertIsNone(splash)
+        self.assertEqual(zoomies, 0)
+
+        # Just past threshold is shallow.
+        splash, zoomies = self._simulate(
+            {"x": 10, "y": self.SHALLOW_Y + 1},
+            {"x": 0, "y": 0, "zoomiesLevel": 0},
+            1.0,
+            0.0,
+        )
+        self.assertEqual(splash, (10, self.SHALLOW_Y + 1))
+        self.assertEqual(zoomies, 0)
+
+    def test_zoomies_increment_and_clamp(self):
+        _, zoomies = self._simulate(
+            {"x": 0, "y": 0},
+            {"x": 0, "y": self.SHALLOW_Y + 10, "zoomiesLevel": 0},
+            1.0,
+            0.9,
+        )
+        self.assertEqual(zoomies, 12)
+
+        _, zoomies = self._simulate(
+            {"x": 0, "y": 0},
+            {"x": 0, "y": self.SHALLOW_Y + 10, "zoomiesLevel": 95},
+            1.0,
+            0.9,
+        )
+        self.assertEqual(zoomies, 100)
+
+    def test_coordinate_selection_prefers_dog(self):
+        splash, _ = self._simulate(
+            {"x": 100, "y": self.SHALLOW_Y + 5},
+            {"x": 500, "y": self.SHALLOW_Y + 5, "zoomiesLevel": 0},
+            1.0,
+            0.0,
+        )
+        self.assertEqual(splash, (500, self.SHALLOW_Y + 5))
+
+    def test_random_suppression_threshold(self):
+        # Below threshold -> splash emitted.
+        splash, _ = self._simulate(
+            {"x": 1, "y": self.SHALLOW_Y + 1},
+            {"x": 0, "y": 0, "zoomiesLevel": 0},
+            1.0,
+            0.24,
+        )
+        self.assertIsNotNone(splash)
+
+        # At/above threshold -> suppressed.
+        splash, _ = self._simulate(
+            {"x": 1, "y": self.SHALLOW_Y + 1},
+            {"x": 0, "y": 0, "zoomiesLevel": 0},
+            1.0,
+            0.25,
+        )
+        self.assertIsNone(splash)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

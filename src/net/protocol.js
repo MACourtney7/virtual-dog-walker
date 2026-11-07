@@ -31,6 +31,7 @@ export class Protocol {
       hairStyle: extraMeta.hairStyle,
       hairColor: extraMeta.hairColor,
       pantsColor: extraMeta.pantsColor,
+      accessory: extraMeta.accessory || 'NONE',
       skinTone: extraMeta.skinTone,
       collarColor: extraMeta.collarColor,
       personality: extraMeta.personality || null,

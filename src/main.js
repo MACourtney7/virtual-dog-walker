@@ -273,6 +273,7 @@ export class CliftonDownGame {
       hairStyle: this.owner.hairStyle,
       hairColor: this.owner.hairColor,
       pantsColor: this.owner.pantsColor,
+      accessory: this.owner.accessory || 'NONE',
       skinTone: this.owner.skinTone,
       collarColor: this.dog.collarColor,
       personality: this.dog.personality || null
@@ -318,6 +319,7 @@ export class CliftonDownGame {
         if (meta.hairStyle) existing.owner.hairStyle = meta.hairStyle;
         if (meta.hairColor) existing.owner.hairColor = meta.hairColor;
         if (meta.pantsColor) existing.owner.pantsColor = meta.pantsColor;
+        if (meta.accessory !== undefined) existing.owner.accessory = meta.accessory || 'NONE';
         if (meta.skinTone) existing.owner.skinTone = meta.skinTone;
         if (meta.collarColor) existing.dog.collarColor = meta.collarColor;
         if (meta.personality) {
@@ -336,6 +338,7 @@ export class CliftonDownGame {
       if (meta?.hairStyle) remoteOwner.hairStyle = meta.hairStyle;
       if (meta?.hairColor) remoteOwner.hairColor = meta.hairColor;
       if (meta?.pantsColor) remoteOwner.pantsColor = meta.pantsColor;
+      remoteOwner.accessory = meta?.accessory || 'NONE';
       if (meta?.skinTone) remoteOwner.skinTone = meta.skinTone;
 
       const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);

@@ -425,6 +425,18 @@ export class WasmMeshTopology {
         }
     }
     /**
+     * Disconnects a peer from the mesh topology and closes its channel.
+     * @param {string} peer_id
+     */
+    disconnect_peer(peer_id) {
+        const ptr0 = passStringToWasm0(peer_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmeshtopology_disconnect_peer(this.__wbg_ptr, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
      * Returns whether a peer exists in the mesh.
      * @param {string} peer_id
      * @returns {boolean}
@@ -514,6 +526,18 @@ export class WasmMeshTopology {
             throw e;
         }
         const ret = wasm.wasmmeshtopology_register_peer(this.__wbg_ptr, ptr0, len0, ptr1, len1, engine.__wbg_ptr);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Removes a peer from the mesh topology and closes its channel.
+     * @param {string} peer_id
+     */
+    remove_peer(peer_id) {
+        const ptr0 = passStringToWasm0(peer_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmeshtopology_remove_peer(this.__wbg_ptr, ptr0, len0);
         if (ret[1]) {
             throw takeFromExternrefTable0(ret[0]);
         }
@@ -643,6 +667,33 @@ export class WasmWebRtcEngine {
         return ret;
     }
     /**
+     * Injects an incoming text message into this peer's receive pipeline.
+     * @param {string} text
+     */
+    inject_incoming_text(text) {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.wasmwebrtcengine_inject_incoming_text(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * Transitions the peer state to `Closed` directly.
+     */
+    mark_closed() {
+        const ret = wasm.wasmwebrtcengine_mark_closed(this.__wbg_ptr);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Transitions the peer state to `Open` directly for deterministic bridging/testing.
+     */
+    mark_open() {
+        const ret = wasm.wasmwebrtcengine_mark_open(this.__wbg_ptr);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
      * Creates a new `WasmWebRtcEngine` instance.
      */
     constructor() {
@@ -695,6 +746,13 @@ export class WasmWebRtcEngine {
      */
     set_on_state_change(callback) {
         wasm.wasmwebrtcengine_set_on_state_change(this.__wbg_ptr, callback);
+    }
+    /**
+     * Sets an outbound transmission callback `(text: string) => void` invoked when text is sent.
+     * @param {Function} callback
+     */
+    set_outbound_tx(callback) {
+        wasm.wasmwebrtcengine_set_outbound_tx(this.__wbg_ptr, callback);
     }
     /**
      * Returns the current lifecycle state string (`"connecting"`, `"open"`, `"closing"`, `"closed"`).

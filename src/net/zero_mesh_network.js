@@ -108,6 +108,7 @@ export class ZeroMeshNetworkManager {
     this.hostWs = null;
     this.hostSecret = null;
     this.pendingEngine = null;
+    this.pendingBridge = null;
 
     // Event hooks
     this.onPeerJoin = null;
@@ -306,8 +307,13 @@ export class ZeroMeshNetworkManager {
           this.peerId = invite.assigned_peer_id;
         }
 
+        const offerSdpStr = typeof invite.sdp_offer === 'object' && invite.sdp_offer !== null
+          ? invite.sdp_offer.sdp
+          : invite.sdp_offer;
+
         const engine = new this.wasmMod.WasmWebRtcEngine();
-        const answerSdp = await engine.accept_offer_and_create_answer(invite.sdp_offer);
+        const bridge = this._attachBrowserWebRtc(engine, false, this.iceServers);
+        const answerSdp = await bridge.acceptOfferAndCreateAnswerSdp(offerSdpStr);
 
         const hostPubX = new Uint8Array(invite.host_public_key);
         const hostPubEd = invite.host_signing_key ? new Uint8Array(invite.host_signing_key) : null;
@@ -320,10 +326,13 @@ export class ZeroMeshNetworkManager {
 
         const dropPayload = {
           invite_uuid: invite.invite_uuid,
-          joiner_peer_id: this.peerId,
+          token: invite.token,
+          sdp_answer: { sdp: 'SEALED' },
           joiner_public_key: Array.from(this.cryptoSession.x25519_public_key_bytes()),
+          joiner_peer_id: this.peerId,
           joiner_signing_key: Array.from(this.cryptoSession.ed25519_public_key_bytes()),
-          sealed_sdp_answer: JSON.parse(sealedSdpJson)
+          sealed_sdp_answer: JSON.parse(sealedSdpJson),
+          signature: null
         };
 
         const dropUrl = `${this.workerOrigin}/drop/${encodeURIComponent(this.roomId)}/${encodeURIComponent(invite.invite_uuid)}`;
@@ -331,7 +340,7 @@ export class ZeroMeshNetworkManager {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${invite.hmac_token || invite.token}`
+            'Authorization': 'Bearer ' + (invite.token || invite.hmac_token)
           },
           body: JSON.stringify(dropPayload)
         });
@@ -353,23 +362,121 @@ export class ZeroMeshNetworkManager {
     }
   }
 
+  _attachBrowserWebRtc(wasmEngine, isOfferer, iceServers) {
+    const hasBrowserRtc = typeof window !== 'undefined' && typeof window.RTCPeerConnection === 'function';
+
+    if (!hasBrowserRtc) {
+      // Headless / test fallback: delegate directly to the Wasm engine.
+      return {
+        async createOfferSdp() {
+          return wasmEngine.create_offer();
+        },
+        async acceptOfferAndCreateAnswerSdp(offerSdp) {
+          return wasmEngine.accept_offer_and_create_answer(offerSdp);
+        },
+        async applyAnswerSdp(answerSdp) {
+          return wasmEngine.apply_answer(answerSdp);
+        }
+      };
+    }
+
+    const pc = new window.RTCPeerConnection({
+      iceServers: iceServers || this.iceServers || [{ urls: 'stun:stun.cloudflare.com:3478' }]
+    });
+
+    let dc = null;
+
+    const wireDataChannel = (channel) => {
+      dc = channel;
+      dc.onopen = () => {
+        try { wasmEngine.mark_open(); } catch (_) {}
+      };
+      dc.onclose = () => {
+        try { wasmEngine.mark_closed(); } catch (_) {}
+      };
+      dc.onmessage = (ev) => {
+        if (typeof ev.data === 'string') {
+          try { wasmEngine.inject_incoming_text(ev.data); } catch (_) {}
+        }
+      };
+      try {
+        wasmEngine.set_outbound_tx((text) => {
+          if (dc && dc.readyState === 'open') {
+            dc.send(text);
+          }
+        });
+      } catch (_) {}
+    };
+
+    if (isOfferer === true) {
+      const channel = pc.createDataChannel('zero-mesh', { ordered: true });
+      wireDataChannel(channel);
+    } else {
+      pc.ondatachannel = (ev) => {
+        wireDataChannel(ev.channel);
+      };
+    }
+
+    const waitForIceGathering = () => new Promise((resolve) => {
+      if (pc.iceGatheringState === 'complete') {
+        resolve();
+        return;
+      }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        try { pc.removeEventListener('icegatheringstatechange', onChange); } catch (_) {}
+        resolve();
+      };
+      const onChange = () => {
+        if (pc.iceGatheringState === 'complete') finish();
+      };
+      try { pc.addEventListener('icegatheringstatechange', onChange); } catch (_) {}
+      setTimeout(finish, 1500);
+    });
+
+    return {
+      async createOfferSdp() {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await waitForIceGathering();
+        return pc.localDescription ? pc.localDescription.sdp : offer.sdp;
+      },
+      async acceptOfferAndCreateAnswerSdp(offerSdp) {
+        await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await waitForIceGathering();
+        return pc.localDescription ? pc.localDescription.sdp : answer.sdp;
+      },
+      async applyAnswerSdp(answerSdp) {
+        await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+        try { await wasmEngine.apply_answer(answerSdp); } catch (_) {}
+      }
+    };
+  }
+
   async _stageNewInvite(secretHex) {
     if (!this.wasmMod || !this.hostSecret) return;
     try {
       this.pendingEngine = new this.wasmMod.WasmWebRtcEngine();
-      const sdpOffer = await this.pendingEngine.create_offer();
+      const bridge = this._attachBrowserWebRtc(this.pendingEngine, true, this.iceServers);
+      this.pendingBridge = bridge;
+      const sdpOffer = await bridge.createOfferSdp();
       const inviteUuid = `inv-${this.peerId}-${Date.now().toString(36)}`;
-      const assignedPeerId = `walker-${Math.random().toString(36).substring(2, 8)}`;
 
       const token = this.wasmMod.WasmCryptoSession.compute_hmac_hex(this.hostSecret, inviteUuid);
       const invite = {
+        do_id: this.roomId,
         invite_uuid: inviteUuid,
-        assigned_peer_id: assignedPeerId,
-        host_peer_id: this.peerId,
+        token: token,
+        sdp_offer: { sdp: sdpOffer },
         host_public_key: Array.from(this.cryptoSession.x25519_public_key_bytes()),
-        host_signing_key: Array.from(this.cryptoSession.ed25519_public_key_bytes()),
-        sdp_offer: sdpOffer,
-        hmac_token: token
+        guest_private_key: null,
+        host_peer_id: this.peerId,
+        assigned_peer_id: 'peer-' + Math.random().toString(36).substring(2, 8),
+        host_signing_key: Array.from(this.cryptoSession.ed25519_public_key_bytes())
       };
 
       if (this.hostWs && this.hostWs.readyState === WebSocket.OPEN) {
@@ -412,9 +519,14 @@ export class ZeroMeshNetworkManager {
               joinerPubEd,
               JSON.stringify(drop.sealed_sdp_answer)
             );
-            await this.pendingEngine.apply_answer(answerSdp);
+            if (this.pendingBridge) {
+              await this.pendingBridge.applyAnswerSdp(answerSdp);
+            } else {
+              await this.pendingEngine.apply_answer(answerSdp);
+            }
             this.gameMesh.register_peer(drop.joiner_peer_id, joinerPubX, this.pendingEngine);
             this.pendingEngine = null;
+            this.pendingBridge = null;
 
             // Replenish slot in dead drop pool for the next joiner
             await this._stageNewInvite(secretHex);
@@ -962,10 +1074,11 @@ export class ZeroMeshNetworkManager {
         if (this.wasmMod && this.proximityMesh && typeof window !== 'undefined' && window.RTCPeerConnection) {
           try {
             const engine = new this.wasmMod.WasmWebRtcEngine();
+            const bridge = this._attachBrowserWebRtc(engine, true, this.iceServers);
             if (this.pendingProximityEngines) {
-              this.pendingProximityEngines.set(remoteId, engine);
+              this.pendingProximityEngines.set(remoteId, { engine, bridge });
             }
-            const sdpOffer = await engine.create_offer();
+            const sdpOffer = await bridge.createOfferSdp();
             const inviteBytes = new TextEncoder().encode(JSON.stringify({
               initiator: this.peerId,
               sdpOffer,
@@ -1013,7 +1126,8 @@ export class ZeroMeshNetworkManager {
     if (payload.sdpOffer && this.wasmMod && this.proximityMesh) {
       try {
         const engine = new this.wasmMod.WasmWebRtcEngine();
-        const answerSdp = await engine.accept_offer_and_create_answer(payload.sdpOffer);
+        const bridge = this._attachBrowserWebRtc(engine, false, this.iceServers);
+        const answerSdp = await bridge.acceptOfferAndCreateAnswerSdp(payload.sdpOffer);
         const pubKeyBytes = payload.pubKey ? new Uint8Array(payload.pubKey) : new Uint8Array(32);
         this.proximityMesh.register_peer(originPeerId, pubKeyBytes, engine);
         const dropBytes = new TextEncoder().encode(JSON.stringify({
@@ -1051,8 +1165,14 @@ export class ZeroMeshNetworkManager {
 
     if (payload.sdpAnswer && this.pendingProximityEngines && this.pendingProximityEngines.has(originPeerId)) {
       try {
-        const engine = this.pendingProximityEngines.get(originPeerId);
-        await engine.apply_answer(payload.sdpAnswer);
+        const pending = this.pendingProximityEngines.get(originPeerId);
+        const engine = pending && pending.engine ? pending.engine : pending;
+        const bridge = pending && pending.bridge ? pending.bridge : null;
+        if (bridge) {
+          await bridge.applyAnswerSdp(payload.sdpAnswer);
+        } else {
+          await engine.apply_answer(payload.sdpAnswer);
+        }
         if (this.proximityMesh) {
           const pubKeyBytes = payload.pubKey ? new Uint8Array(payload.pubKey) : new Uint8Array(32);
           this.proximityMesh.register_peer(originPeerId, pubKeyBytes, engine);

@@ -94,6 +94,10 @@ export class WasmMeshTopology {
      */
     broadcast_state(topic: string, payload: Uint8Array | number[], ttl: number): string;
     /**
+     * Disconnects a peer from the mesh topology and closes its channel.
+     */
+    disconnect_peer(peer_id: string): void;
+    /**
      * Returns whether a peer exists in the mesh.
      */
     has_peer(peer_id: string): boolean;
@@ -117,6 +121,10 @@ export class WasmMeshTopology {
      * Registers a peer with its public key and `WasmWebRtcEngine` instance.
      */
     register_peer(peer_id: string, public_key: Uint8Array | number[], engine: WasmWebRtcEngine): void;
+    /**
+     * Removes a peer from the mesh topology and closes its channel.
+     */
+    remove_peer(peer_id: string): void;
     /**
      * Transmits application state or binary event payload directly to a target peer.
      */
@@ -163,6 +171,18 @@ export class WasmWebRtcEngine {
      */
     create_offer(): Promise<string>;
     /**
+     * Injects an incoming text message into this peer's receive pipeline.
+     */
+    inject_incoming_text(text: string): void;
+    /**
+     * Transitions the peer state to `Closed` directly.
+     */
+    mark_closed(): void;
+    /**
+     * Transitions the peer state to `Open` directly for deterministic bridging/testing.
+     */
+    mark_open(): void;
+    /**
      * Creates a new `WasmWebRtcEngine` instance.
      */
     constructor();
@@ -186,6 +206,10 @@ export class WasmWebRtcEngine {
      * Registers a JS callback `(state: string) => void` for lifecycle state transitions.
      */
     set_on_state_change(callback: Function): void;
+    /**
+     * Sets an outbound transmission callback `(text: string) => void` invoked when text is sent.
+     */
+    set_outbound_tx(callback: Function): void;
     /**
      * Returns the current lifecycle state string (`"connecting"`, `"open"`, `"closing"`, `"closed"`).
      */
@@ -217,12 +241,14 @@ export interface InitOutput {
     readonly wasmmeshtopology_broadcast_global_burn: (a: number) => [number, number];
     readonly wasmmeshtopology_broadcast_leave_and_burn: (a: number) => [number, number];
     readonly wasmmeshtopology_broadcast_state: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly wasmmeshtopology_disconnect_peer: (a: number, b: number, c: number) => [number, number];
     readonly wasmmeshtopology_has_peer: (a: number, b: number, c: number) => number;
     readonly wasmmeshtopology_local_peer_id: (a: number) => [number, number];
     readonly wasmmeshtopology_local_public_key: (a: number) => [number, number];
     readonly wasmmeshtopology_new: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly wasmmeshtopology_peer_count: (a: number) => number;
     readonly wasmmeshtopology_register_peer: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly wasmmeshtopology_remove_peer: (a: number, b: number, c: number) => [number, number];
     readonly wasmmeshtopology_send_direct_state: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly wasmmeshtopology_set_on_message: (a: number, b: any) => void;
     readonly wasmmeshtopology_set_on_peer_joined: (a: number, b: any) => void;
@@ -232,12 +258,16 @@ export interface InitOutput {
     readonly wasmwebrtcengine_apply_answer: (a: number, b: number, c: number) => any;
     readonly wasmwebrtcengine_close: (a: number) => [number, number];
     readonly wasmwebrtcengine_create_offer: (a: number) => any;
+    readonly wasmwebrtcengine_inject_incoming_text: (a: number, b: number, c: number) => void;
+    readonly wasmwebrtcengine_mark_closed: (a: number) => [number, number];
+    readonly wasmwebrtcengine_mark_open: (a: number) => [number, number];
     readonly wasmwebrtcengine_new: () => number;
     readonly wasmwebrtcengine_send_binary: (a: number, b: number, c: number) => [number, number];
     readonly wasmwebrtcengine_send_text: (a: number, b: number, c: number) => [number, number];
     readonly wasmwebrtcengine_set_on_binary_message: (a: number, b: any) => void;
     readonly wasmwebrtcengine_set_on_message: (a: number, b: any) => void;
     readonly wasmwebrtcengine_set_on_state_change: (a: number, b: any) => void;
+    readonly wasmwebrtcengine_set_outbound_tx: (a: number, b: any) => void;
     readonly wasmwebrtcengine_state: (a: number) => [number, number];
     readonly wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___wasm_bindgen_70557cdeb3a4b157___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_70557cdeb3a4b157___JsError___true_: (a: number, b: number, c: any) => [number, number];

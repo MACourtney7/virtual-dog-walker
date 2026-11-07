@@ -352,7 +352,12 @@ class TestZeroMeshIntegration(unittest.TestCase):
         # Check real WasmWebRtcEngine / WasmCryptoSession calls
         self.assertIn("this.cryptoSession.seal_drop_sdp", content)
         self.assertIn("this.cryptoSession.open_drop_sdp", content)
-        self.assertIn("engine.accept_offer_and_create_answer", content)
+        self.assertTrue(
+            "engine.accept_offer_and_create_answer" in content or
+            "wasmEngine.accept_offer_and_create_answer" in content or
+            "acceptOfferAndCreateAnswerSdp" in content,
+            "Must invoke accept_offer_and_create_answer directly or via WebRtc bridge"
+        )
 
     def test_no_bare_json_imports_in_browser_src(self):
         """Regression test (unification-006): Verify no browser .js files contain bare import ... from '*.json'."""
@@ -570,11 +575,20 @@ class TestZeroMeshIntegration(unittest.TestCase):
         self.assertIn("this.pendingProximityEngines = new Map();", net_code)
         self.assertIn("this.proximityCrypto = new this.wasmMod.WasmCryptoSession();", net_code)
         self.assertIn("const engine = new this.wasmMod.WasmWebRtcEngine();", net_code)
-        self.assertIn("const sdpOffer = await engine.create_offer();", net_code)
+        self.assertTrue(
+            "const sdpOffer = await engine.create_offer();" in net_code or
+            "const sdpOffer = await bridge.createOfferSdp();" in net_code
+        )
         self.assertIn("this.gameMesh.send_direct_state(remoteId, 'proximity_invite',", net_code)
-        self.assertIn("const answerSdp = await engine.accept_offer_and_create_answer(payload.sdpOffer);", net_code)
+        self.assertTrue(
+            "const answerSdp = await engine.accept_offer_and_create_answer(payload.sdpOffer);" in net_code or
+            "const answerSdp = await bridge.acceptOfferAndCreateAnswerSdp(payload.sdpOffer);" in net_code
+        )
         self.assertIn("this.gameMesh.send_direct_state(originPeerId, 'proximity_drop',", net_code)
-        self.assertIn("await engine.apply_answer(payload.sdpAnswer);", net_code)
+        self.assertTrue(
+            "await engine.apply_answer(payload.sdpAnswer);" in net_code or
+            "await bridge.applyAnswerSdp(payload.sdpAnswer);" in net_code
+        )
         self.assertIn("this.proximityMesh.broadcast_chat(text);", net_code)
         self.assertIn("Protocol.createProximityChat(this.peerId, this.localMeta.name, text, 0, 0, peers)", net_code)
         self.assertIn("case PacketType.PROXIMITY_CHAT:", net_code)
@@ -687,10 +701,8 @@ class TestZeroMeshIntegration(unittest.TestCase):
         self.assertIn("this.widget.appendMessage", prox_code)
         self.assertIn("this.widget.dissolveMessageById(messageUuid)", prox_code)
         self.assertIn("this.widget.burnAllMessages()", prox_code)
-        self.assertTrue(
-            "this.widget.setPeers(activePeers, activePeers.length" in prox_code
-            or "this.widget.setPeers(this.activeCluster, this.activeCluster.length)" in prox_code
-        )
+        self.assertIn("this.widget.setPeers(activePeers, activePeers.length", prox_code)
+        self.assertNotIn("this.widget.setPeers(this.activeCluster, this.activeCluster.length", prox_code)
 
         # Verify public API preserved
         for method in ("receiveMessage", "sendMessage", "burnMessage", "clearMessages", "getMessages", "getActivePeers", "update", "destroy"):
@@ -778,6 +790,79 @@ class TestZeroMeshIntegration(unittest.TestCase):
         # Check default room fallback to 'clifton-commons'
         self.assertIn("'clifton-commons'", code)
         self.assertIn("ZeroMeshNetworkManager", code)
+
+    def test_invite_and_drop_payload_serde_schema_contract(self):
+        """Verifies _stageNewInvite and _connectLiveMesh schemas match zero_protocol Rust envelope types."""
+        net_path = os.path.join(os.path.dirname(__file__), "..", "src", "net", "zero_mesh_network.js")
+        with open(net_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        # Check InvitePayload fields in _stageNewInvite
+        self.assertIn("do_id: this.roomId", code)
+        self.assertIn("token: token", code)
+        self.assertIn("sdp_offer: { sdp: sdpOffer }", code)
+        self.assertIn("guest_private_key: null", code)
+        self.assertIn("host_signing_key:", code)
+
+        # Check DropPayload fields in _connectLiveMesh
+        self.assertIn("invite_uuid: invite.invite_uuid", code)
+        self.assertIn("token: invite.token", code)
+        self.assertIn("sdp_answer: { sdp: 'SEALED' }", code)
+        self.assertIn("joiner_public_key:", code)
+        self.assertIn("joiner_signing_key:", code)
+        self.assertIn("sealed_sdp_answer:", code)
+        self.assertIn("signature: null", code)
+        self.assertIn("'Authorization': 'Bearer ' + (invite.token || invite.hmac_token)", code)
+
+    def test_browser_webrtc_bridge_contract(self):
+        """Verifies _attachBrowserWebRtc helper bridges RTCPeerConnection to Wasm engine with headless fallback."""
+        net_path = os.path.join(os.path.dirname(__file__), "..", "src", "net", "zero_mesh_network.js")
+        with open(net_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("_attachBrowserWebRtc(wasmEngine, isOfferer, iceServers)", code)
+        self.assertIn("window.RTCPeerConnection", code)
+        self.assertIn("createOfferSdp()", code)
+        self.assertIn("acceptOfferAndCreateAnswerSdp(offerSdp)", code)
+        self.assertIn("applyAnswerSdp(answerSdp)", code)
+        self.assertIn("wasmEngine.mark_open()", code)
+        self.assertIn("wasmEngine.mark_closed()", code)
+        self.assertIn("wasmEngine.inject_incoming_text(ev.data)", code)
+        self.assertIn("wasmEngine.set_outbound_tx(", code)
+
+    def test_proximity_chat_passes_active_peers_array_to_widget(self):
+        """Verifies updateParticipantsBadge passes activePeers array and length to widget.setPeers."""
+        chat_path = os.path.join(os.path.dirname(__file__), "..", "src", "ui", "proximity_chat.js")
+        with open(chat_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("const activePeers = this.getActivePeers();", code)
+        self.assertIn("this.widget.setPeers(activePeers, activePeers.length, peerMeta);", code)
+        self.assertIn("this.widget.setPeers(activePeers, activePeers.length);", code)
+
+    def test_customizer_accessory_selector_and_net_sync(self):
+        """Verifies SocialHUD accessory selector and network metadata synchronization."""
+        hud_path = os.path.join(os.path.dirname(__file__), "..", "src", "ui", "social_hud.js")
+        with open(hud_path, "r", encoding="utf-8") as f:
+            hud_code = f.read()
+
+        self.assertIn('id="accessory-options"', hud_code)
+        self.assertIn('data-accessory="NONE"', hud_code)
+        self.assertIn('data-accessory="BACKPACK"', hud_code)
+        self.assertIn('data-accessory="SCARF"', hud_code)
+        self.assertIn('data-accessory="HOODIE"', hud_code)
+        self.assertIn('this.owner.accessory = btn.getAttribute(\'data-accessory\')', hud_code)
+
+        proto_path = os.path.join(os.path.dirname(__file__), "..", "src", "net", "protocol.js")
+        with open(proto_path, "r", encoding="utf-8") as f:
+            proto_code = f.read()
+        self.assertIn("accessory: extraMeta.accessory || 'NONE'", proto_code)
+
+        main_path = os.path.join(os.path.dirname(__file__), "..", "src", "main.js")
+        with open(main_path, "r", encoding="utf-8") as f:
+            main_code = f.read()
+        self.assertIn("accessory: this.owner.accessory || 'NONE'", main_code)
+        self.assertIn("remoteOwner.accessory = meta?.accessory || 'NONE'", main_code)
 
 
 

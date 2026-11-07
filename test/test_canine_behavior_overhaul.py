@@ -187,7 +187,7 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         self.assertIn("DogState.SOCIAL_GREET", window)
 
     def test_rolling_completion_never_loops_rolling(self):
-        """ROLLING completion must directly enter SITTING with a positive timer, never re-roll."""
+        """ROLLING completion must enter SITTING with a positive timer, never re-roll."""
         class Dog:
             def __init__(self):
                 self.state = "ROLLING"
@@ -196,23 +196,28 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
                 self.currentZone = {"sunny": True}
                 self.wagSpeed = 20
 
+            def transitionTo(self, new_state):
+                if self.state == new_state:
+                    return
+                self.state = new_state
+
             def update_rolling(self, dt):
                 self.stateTimer -= dt
                 if self.stateTimer <= 0:
-                    # Direct assignment (no transitionTo) prevents re-roll RNG
-                    self.state = "SITTING"
-                    self.stateTimer = 2.0 + 1.0  # deterministic stand-in for Math.random()
+                    self.transitionTo("SITTING")
+                    if self.state == "SITTING":
+                        self.stateTimer = 2.0 + 1.0  # deterministic stand-in for Math.random()
 
         dog = Dog()
         dog.update_rolling(0.1)
         self.assertEqual(dog.state, "SITTING")
         self.assertGreater(dog.stateTimer, 0)
-        # Source must not route ROLLING completion through transitionTo(SITTING)
+        # Source must force a positive sitting timer after ROLLING completes
         idx = self.dog_src.find("case DogState.ROLLING:")
         self.assertNotEqual(idx, -1)
-        window = self.dog_src[idx:idx + 500]
-        self.assertIn("this.state = DogState.SITTING;", window)
-        self.assertNotIn("this.transitionTo(DogState.SITTING)", window)
+        window = self.dog_src[idx:idx + 600]
+        self.assertIn("this.transitionTo(DogState.SITTING)", window)
+        self.assertIn("this.stateTimer = 2.0 + Math.random() * 2.0;", window)
 
     def test_whine_trigger_includes_return_trot_active(self):
         """Whine audio trigger must include this.returnTrotActive."""

@@ -675,9 +675,12 @@ export class CompanionDog {
         this.wagSpeed = 20;
         this.stateTimer -= dt;
         if (this.stateTimer <= 0) {
-          // Directly enter SITTING to avoid re-evaluating the rolling-entry RNG
-          this.state = DogState.SITTING;
-          this.stateTimer = 2.0 + Math.random() * 2.0;
+          // Route through transitionTo for consistency, then force a positive sitting
+          // duration so the dog never re-rolls immediately after finishing a roll.
+          this.transitionTo(DogState.SITTING);
+          if (this.state === DogState.SITTING) {
+            this.stateTimer = 2.0 + Math.random() * 2.0;
+          }
         }
         break;
 

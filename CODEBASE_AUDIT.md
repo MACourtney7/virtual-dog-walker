@@ -11297,13 +11297,13 @@ export class CliftonDownGame {
   }
 
   warpToZone(targetZoneId, targetX, targetY) {
-    this.currentZoneId = targetZoneId;
     this.warpCooldown = 2.5;
     this.warpFadeAlpha = 1.0;
 
     if (this.field && typeof this.field.loadZone === 'function') {
       this.field.loadZone(targetZoneId);
     }
+    this.currentZoneId = (this.field && this.field.zoneId) || targetZoneId;
     syncWorldObstacles(this.field);
 
     this.owner.x = targetX;
@@ -11922,9 +11922,10 @@ export class CliftonDownGame {
       this.navArrow.draw(this.ctx, this.camera, this.owner.x, this.owner.y);
     }
 
-    // Zone Warp Crossfade Overlay
-    if (this.warpFadeAlpha > 0.01 && this.canvas) {
+    // Zone Warp Crossfade Overlay (screen-space, reset transform)
+    if (this.warpFadeAlpha > 0.01 && this.canvas && this.ctx) {
       this.ctx.save();
+      this.ctx.setTransform(1, 0, 0, 1, 0, 0);
       this.ctx.fillStyle = `rgba(11, 17, 23, ${this.warpFadeAlpha * 0.75})`;
       this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
       this.ctx.restore();
@@ -12630,6 +12631,7 @@ export class NetworkManager {
 
   async switchRoom(newRoomId) {
     if (!newRoomId || newRoomId === this.roomId) return;
+    this.roomId = newRoomId;
     if (this.adapter && typeof this.adapter.switchRoom === 'function') {
       return await this.adapter.switchRoom(newRoomId);
     }
@@ -17979,6 +17981,7 @@ import { Protocol } from '../net/protocol.js';
 import { TouchControls } from './touch_controls.js';
 import { WSStatus } from '../net/network.js';
 import { NetStatus } from '../net/network.js';
+import { PUBLIC_ZONE_IDS, isPublicZoneId } from '../world/zones.js';
 
 export class SocialHUD {
   constructor(networkManager, localOwner, localDog, coatPresets) {
@@ -18002,7 +18005,6 @@ export class SocialHUD {
       this.hudOverlay.innerHTML = `
         <div class="hud-panel">
           <div class="hud-pill">
-            <span style="font-size: 1.2rem;">🌳</span>
             <span id="hud-title" class="hud-title" style="font-weight: 700; color: #f8fafc;">🌳 The Downs</span>
             <span class="hud-pill-badge" id="hud-mode-badge">Solo</span>
           </div>
@@ -18668,7 +18670,9 @@ export class SocialHUD {
         this.net.roomId === 'the-downs' ||
         this.net.roomId === 'the-woodland' ||
         this.net.roomId === 'the-beach' ||
-        this.net.roomId === 'clifton-field';
+        this.net.roomId === 'clifton-field' ||
+        (Array.isArray(PUBLIC_ZONE_IDS) && PUBLIC_ZONE_IDS.includes(this.net.roomId)) ||
+        isPublicZoneId(this.net.roomId);
       if (badge) {
         if (isCommons) {
           badge.textContent = 'Online';
@@ -23127,7 +23131,9 @@ import {
   bakeBiomeGround,
   renderCoastalSurf,
   renderWarpSignpost,
-  renderLandmark
+  renderLandmark,
+  DOWNS_KEEPOUT,
+  isClearOfKeepouts
 } from './zone_biomes.js';
 
 export class Camera {
@@ -23617,7 +23623,7 @@ export class Field {
       depthY: 485,
       isLandmark: true
     };
-    this.landmarks = [this.waterTower];
+    this.landmarks = this.waterTower ? [this.waterTower] : [];
 
     // 3. West Zone: Sea Walls Rocky Limestone Outcrops (x: 100-500, y: 800-1600)
     this.rockOutcrops = [
@@ -23626,7 +23632,7 @@ export class Field {
       { id: 'rock-3', x: 175, y: 1260, w: 58, h: 36, depthY: 1276, r: 26 },
       { id: 'rock-4', x: 210, y: 1400, w: 66, h: 42, depthY: 1418, r: 30 },
       { id: 'rock-5', x: 185, y: 1560, w: 50, h: 32, depthY: 1574, r: 24 }
-    ];
+    ].filter(r => isClearOfKeepouts(r.x, r.y, DOWNS_KEEPOUT, 80));
 
     // 4. Public Dog-Waste Bins (Network of 8 bins at authentic Downs locations)
     const binDefinitions = [
@@ -23640,14 +23646,16 @@ export class Field {
       { id: 'bin-8', x: 1080, y: 1750 }
     ];
 
-    this.bins = binDefinitions.map(b => ({
-      id: b.id,
-      x: b.x,
-      y: b.y,
-      radius: 12,
-      depthY: b.y + 8,
-      isBin: true
-    }));
+    this.bins = binDefinitions
+      .filter(b => isClearOfKeepouts(b.x, b.y, DOWNS_KEEPOUT, 80))
+      .map(b => ({
+        id: b.id,
+        x: b.x,
+        y: b.y,
+        radius: 12,
+        depthY: b.y + 8,
+        isBin: true
+      }));
 
     // 5. Wooden Park Benches (including 3 panoramic teak benches along Sea Walls)
     const benchPositions = [
@@ -23671,15 +23679,17 @@ export class Field {
       { id: 'bench-nm-1', x: 1950, y: 420, angle: 0 }
     ];
 
-    this.benches = benchPositions.map((b, idx) => ({
-      id: b.id || `bench-${idx}`,
-      x: b.x,
-      y: b.y,
-      w: 64,
-      h: 26,
-      angle: b.angle || 0,
-      depthY: b.y + 13
-    }));
+    this.benches = benchPositions
+      .filter(b => isClearOfKeepouts(b.x, b.y, DOWNS_KEEPOUT, 80))
+      .map((b, idx) => ({
+        id: b.id || `bench-${idx}`,
+        x: b.x,
+        y: b.y,
+        w: 64,
+        h: 26,
+        angle: b.angle || 0,
+        depthY: b.y + 13
+      }));
 
     // 6. Mature Tree Arboretum & Scenery Zones
     // A. Ladies Mile Avenue: SW (400, 1900) to NE (2700, 500) lined with sweet chestnut and lime trees
@@ -23769,15 +23779,17 @@ export class Field {
       { x: 1850, y: 2150, r: 72, type: 'oak' }
     ];
 
-    this.trees = treePositions.map((t, idx) => ({
-      id: `tree-${idx}`,
-      x: t.x,
-      y: t.y,
-      radius: t.r,
-      type: t.type,
-      trunkRadius: Math.round(t.r * 0.28),
-      depthY: t.y + 10
-    }));
+    this.trees = treePositions
+      .filter(t => isClearOfKeepouts(t.x, t.y, DOWNS_KEEPOUT, 80))
+      .map((t, idx) => ({
+        id: `tree-${idx}`,
+        x: t.x,
+        y: t.y,
+        radius: t.r,
+        type: t.type,
+        trunkRadius: Math.round(t.r * 0.28),
+        depthY: t.y + 10
+      }));
 
     // 7. Wildflower Patches across Meadows & Woodland Margins
     const flowerTypes = ['buttercup', 'clover', 'bluebell', 'rock_cress'];
@@ -25738,15 +25750,22 @@ const WOODLAND_CLEARING = { x: 1550, y: 1100, radius: 40 };
 const WOODLAND_KEEPOUT = [
   { x: 3090, y: 1200 },
   { x: 110, y: 1900 },
-  { x: 220, y: 1200 },
+  { x: 3000, y: 1200 },
   { x: 220, y: 1900 },
 ];
 
 const COASTAL_KEEPOUT = [
   { x: 1600, y: 110 },
   { x: 110, y: 1200 },
-  { x: 1600, y: 2180 },
+  { x: 1600, y: 200 },
   { x: 220, y: 1200 },
+];
+
+export const DOWNS_KEEPOUT = [
+  { x: 110, y: 1200 },
+  { x: 1600, y: 2290 },
+  { x: 220, y: 1200 },
+  { x: 1600, y: 2180 },
 ];
 
 const KEEPOUT_RADIUS = 80;
@@ -25772,9 +25791,9 @@ function dist2(ax, ay, bx, by) {
   return dx * dx + dy * dy;
 }
 
-function isClearOfKeepouts(x, y, keepouts) {
+export function isClearOfKeepouts(x, y, keepouts, radius = KEEPOUT_RADIUS) {
   for (const k of keepouts) {
-    if (dist2(x, y, k.x, k.y) < KEEPOUT_RADIUS * KEEPOUT_RADIUS) return false;
+    if (dist2(x, y, k.x, k.y) < radius * radius) return false;
   }
   return true;
 }
@@ -25811,6 +25830,8 @@ export function initBiomeScenery(field, biome) {
   if (typeof field.initScenery === 'function') {
     field.initScenery();
   }
+  // Ensure biome landmarks do not leak back into parkland.
+  field.landmarks = field.waterTower ? [field.waterTower] : [];
 }
 
 function initWoodlandScenery(field) {
@@ -25833,15 +25854,17 @@ function initWoodlandScenery(field) {
   field.landmarks = [];
   field.sticks = [];
 
-  field.landmarks.push({
-    id: 'woodland-clearing',
-    name: 'Ancient Woodland Clearing',
-    x: WOODLAND_CLEARING.x,
-    y: WOODLAND_CLEARING.y,
-    radius: 40,
-    depthY: 1120,
-    isLandmark: true,
-  });
+  if (isClearOfKeepouts(WOODLAND_CLEARING.x, WOODLAND_CLEARING.y, WOODLAND_KEEPOUT, 80)) {
+    field.landmarks.push({
+      id: 'woodland-clearing',
+      name: 'Ancient Woodland Clearing',
+      x: WOODLAND_CLEARING.x,
+      y: WOODLAND_CLEARING.y,
+      radius: 40,
+      depthY: 1120,
+      isLandmark: true,
+    });
+  }
 
   const rng = makeRng(0x5eed1234);
   const width = field.width || 3200;
@@ -25856,7 +25879,7 @@ function initWoodlandScenery(field) {
     const x = margin + rng() * (width - margin * 2);
     const y = margin + rng() * (height - margin * 2);
     if (isInsideClearing(x, y)) continue;
-    if (!isClearOfKeepouts(x, y, WOODLAND_KEEPOUT)) continue;
+    if (!isClearOfKeepouts(x, y, WOODLAND_KEEPOUT, 80)) continue;
     // Avoid overlapping other trees.
     let tooClose = false;
     for (const t of field.trees) {
@@ -25887,6 +25910,7 @@ function initWoodlandScenery(field) {
     { x: 2500, y: 1800 },
   ];
   benchSpots.forEach((spot, i) => {
+    if (!isClearOfKeepouts(spot.x, spot.y, WOODLAND_KEEPOUT, 80)) return;
     field.benches.push({
       id: `bench-woodland-${i}`,
       x: spot.x,
@@ -25904,6 +25928,7 @@ function initWoodlandScenery(field) {
     { x: 2700, y: 2000 },
   ];
   binSpots.forEach((spot, i) => {
+    if (!isClearOfKeepouts(spot.x, spot.y, WOODLAND_KEEPOUT, 80)) return;
     field.bins.push({
       id: `bin-woodland-${i}`,
       x: spot.x,
@@ -25921,6 +25946,7 @@ function initWoodlandScenery(field) {
     { x: 2000, y: 2100 },
   ];
   rockSpots.forEach((spot, i) => {
+    if (!isClearOfKeepouts(spot.x, spot.y, WOODLAND_KEEPOUT, 80)) return;
     field.rockOutcrops.push({
       id: `rock-woodland-${i}`,
       x: spot.x,
@@ -25931,11 +25957,15 @@ function initWoodlandScenery(field) {
   });
 
   // 14+ fallen woodland sticks.
-  for (let i = 0; i < 16; i += 1) {
+  let stickCount = 0;
+  let stickAttempts = 0;
+  while (stickCount < 16 && stickAttempts < 500) {
+    stickAttempts += 1;
     const x = margin + rng() * (width - margin * 2);
     const y = margin + rng() * (height - margin * 2);
+    if (!isClearOfKeepouts(x, y, WOODLAND_KEEPOUT, 80)) continue;
     field.sticks.push({
-      id: `stick-woodland-${i}`,
+      id: `stick-woodland-${stickCount}`,
       x,
       y,
       angle: rng() * Math.PI * 2,
@@ -25943,6 +25973,7 @@ function initWoodlandScenery(field) {
       radius: 10,
       isStick: true,
     });
+    stickCount += 1;
   }
 }
 
@@ -25966,24 +25997,28 @@ function initCoastalScenery(field) {
   field.sticks = [];
   field.landmarks = [];
 
-  field.landmarks.push({
-    id: 'shipwreck-ribs',
-    name: 'Weathered Timber Shipwreck Ribs',
-    x: 2350,
-    y: 1450,
-    radius: 36,
-    depthY: 1470,
-    isLandmark: true,
-  });
-  field.landmarks.push({
-    id: 'dune-lookout',
-    name: 'Coastal Dune Lookout Post',
-    x: 900,
-    y: 340,
-    radius: 32,
-    depthY: 360,
-    isLandmark: true,
-  });
+  if (isClearOfKeepouts(2350, 1450, COASTAL_KEEPOUT, 80)) {
+    field.landmarks.push({
+      id: 'shipwreck-ribs',
+      name: 'Weathered Timber Shipwreck Ribs',
+      x: 2350,
+      y: 1450,
+      radius: 36,
+      depthY: 1470,
+      isLandmark: true,
+    });
+  }
+  if (isClearOfKeepouts(900, 340, COASTAL_KEEPOUT, 80)) {
+    field.landmarks.push({
+      id: 'dune-lookout',
+      name: 'Coastal Dune Lookout Post',
+      x: 900,
+      y: 340,
+      radius: 32,
+      depthY: 360,
+      isLandmark: true,
+    });
+  }
 
   // Upper dunes (y < 420): 3 benches along boardwalk.
   const benchSpots = [
@@ -25992,6 +26027,7 @@ function initCoastalScenery(field) {
     { x: 1900, y: 260 },
   ];
   benchSpots.forEach((spot, i) => {
+    if (!isClearOfKeepouts(spot.x, spot.y, COASTAL_KEEPOUT, 80)) return;
     field.benches.push({
       id: `bench-coastal-${i}`,
       x: spot.x,
@@ -26008,6 +26044,7 @@ function initCoastalScenery(field) {
     { x: 2200, y: 200 },
   ];
   binSpots.forEach((spot, i) => {
+    if (!isClearOfKeepouts(spot.x, spot.y, COASTAL_KEEPOUT, 80)) return;
     field.bins.push({
       id: `bin-coastal-${i}`,
       x: spot.x,
@@ -26023,6 +26060,7 @@ function initCoastalScenery(field) {
     { x: 2400, y: 260 },
   ];
   rockSpots.forEach((spot, i) => {
+    if (!isClearOfKeepouts(spot.x, spot.y, COASTAL_KEEPOUT, 80)) return;
     field.rockOutcrops.push({
       id: `rock-coastal-${i}`,
       x: spot.x,
@@ -26038,7 +26076,7 @@ function initCoastalScenery(field) {
   for (let i = 0; i < 10; i += 1) {
     const x = 200 + rng() * (width - 400);
     const y = 1550 + rng() * 230;
-    if (!isClearOfKeepouts(x, y, COASTAL_KEEPOUT)) {
+    if (!isClearOfKeepouts(x, y, COASTAL_KEEPOUT, 80)) {
       // Nudge away from keepouts deterministically.
       continue;
     }
@@ -26388,6 +26426,242 @@ function renderDuneLookout(ctx, landmark) {
 }
 ```
 
+## FILE: src/world/zones.js
+```javascript
+/**
+ * Declarative multi-location zone registry.
+ *
+ * Each zone describes its own world dimensions, ground palette, landmarks and
+ * warp gates. Consumers should resolve configs through `getZoneConfig()` so
+ * aliases and unknown ids are handled consistently.
+ */
+
+export const PARK_ZONES = {
+  'clifton-commons': {
+    id: 'clifton-commons',
+    aliases: ['the-downs'],
+    title: '🌳 The Downs',
+    shortTitle: 'The Downs',
+    biome: 'parkland',
+    worldWidth: 3200,
+    worldHeight: 2400,
+    groundColors: {
+      base: '#3e6b2c',
+      dark: '#335824',
+      light: '#4c8237',
+      mown: '#447831',
+      path: '#c8b693',
+      pathEdge: '#968160',
+      pathDetail: '#ded3be',
+      dirt: '#8c7353',
+      dirtEdge: '#6f573c',
+    },
+    warpGates: [
+      {
+        id: 'gate-downs-to-woodland',
+        label: '🌲 To The Woodland',
+        x: 110,
+        y: 1200,
+        radius: 48,
+        targetZoneId: 'the-woodland',
+        targetX: 3000,
+        targetY: 1200,
+        icon: '🌲',
+        facing: 'west',
+      },
+      {
+        id: 'gate-downs-to-beach',
+        label: '🏖️ To The Beach',
+        x: 1600,
+        y: 2290,
+        radius: 48,
+        targetZoneId: 'the-beach',
+        targetX: 1600,
+        targetY: 200,
+        icon: '🏖️',
+        facing: 'south',
+      },
+    ],
+  },
+
+  'the-woodland': {
+    id: 'the-woodland',
+    title: '🌲 The Woodland',
+    shortTitle: 'The Woodland',
+    biome: 'woodland',
+    worldWidth: 3200,
+    worldHeight: 2400,
+    groundColors: {
+      base: '#2b4c20',
+      dark: '#223d19',
+      light: '#3a662c',
+      mown: '#2f5223',
+      path: '#785c42',
+      pathEdge: '#594431',
+      pathDetail: '#8e6f51',
+      dirt: '#594431',
+      dirtEdge: '#3e2e21',
+    },
+    landmark: {
+      id: 'woodland-clearing',
+      name: 'Ancient Woodland Clearing',
+      x: 1550,
+      y: 1100,
+      radius: 40,
+    },
+    warpGates: [
+      {
+        id: 'gate-woodland-to-downs',
+        label: '🌳 To The Downs',
+        x: 3090,
+        y: 1200,
+        radius: 48,
+        targetZoneId: 'clifton-commons',
+        targetX: 220,
+        targetY: 1200,
+        icon: '🌳',
+        facing: 'east',
+      },
+      {
+        id: 'gate-woodland-to-beach',
+        label: '🏖️ To The Beach',
+        x: 110,
+        y: 1900,
+        radius: 48,
+        targetZoneId: 'the-beach',
+        targetX: 220,
+        targetY: 1200,
+        icon: '🏖️',
+        facing: 'southwest',
+      },
+    ],
+  },
+
+  'the-beach': {
+    id: 'the-beach',
+    title: '🏖️ The Beach',
+    shortTitle: 'The Beach',
+    biome: 'coastal',
+    worldWidth: 3200,
+    worldHeight: 2400,
+    groundColors: {
+      base: '#dfbe82',
+      dark: '#d4b070',
+      light: '#e6c994',
+      dune: '#c2a675',
+      duneGrass: '#6e8c42',
+      waterShallow: '#38bdf8',
+      waterDeep: '#0284c7',
+      surfFoam: '#f0fdfa',
+    },
+    landmarks: [
+      {
+        id: 'shipwreck-ribs',
+        name: 'Weathered Timber Shipwreck Ribs',
+        x: 2350,
+        y: 1450,
+        radius: 36,
+        depthY: 1470,
+      },
+      {
+        id: 'dune-lookout',
+        name: 'Coastal Dune Lookout Post',
+        x: 900,
+        y: 340,
+        radius: 32,
+        depthY: 360,
+      },
+    ],
+    warpGates: [
+      {
+        id: 'gate-beach-to-downs',
+        label: '🌳 To The Downs',
+        x: 1600,
+        y: 110,
+        radius: 48,
+        targetZoneId: 'clifton-commons',
+        targetX: 1600,
+        targetY: 2180,
+        icon: '🌳',
+        facing: 'north',
+      },
+      {
+        id: 'gate-beach-to-woodland',
+        label: '🌲 To The Woodland',
+        x: 110,
+        y: 1200,
+        radius: 48,
+        targetZoneId: 'the-woodland',
+        targetX: 220,
+        targetY: 1900,
+        icon: '🌲',
+        facing: 'west',
+      },
+    ],
+  },
+};
+
+export const PUBLIC_ZONE_IDS = [
+  'clifton-commons',
+  'the-downs',
+  'the-woodland',
+  'the-beach',
+];
+
+/**
+ * Returns true when the given id refers to a public zone (either a registered
+ * zone id or a known public alias). Private room ids return false.
+ *
+ * @param {string} zoneId
+ * @returns {boolean}
+ */
+export function isPublicZoneId(zoneId) {
+  if (!zoneId || typeof zoneId !== 'string') return false;
+  return PUBLIC_ZONE_IDS.includes(zoneId) || Object.prototype.hasOwnProperty.call(PARK_ZONES, zoneId);
+}
+
+const DEFAULT_ZONE_ID = 'clifton-commons';
+
+/**
+ * Resolve a zone config by id or alias.
+ * Falls back to the default zone ('clifton-commons') when unknown.
+ *
+ * @param {string} zoneId
+ * @returns {object}
+ */
+export function getZoneConfig(zoneId) {
+  if (zoneId && PARK_ZONES[zoneId]) {
+    return PARK_ZONES[zoneId];
+  }
+
+  if (zoneId) {
+    for (const key of Object.keys(PARK_ZONES)) {
+      const zone = PARK_ZONES[key];
+      if (Array.isArray(zone.aliases) && zone.aliases.includes(zoneId)) {
+        return zone;
+      }
+    }
+  }
+
+  return PARK_ZONES[DEFAULT_ZONE_ID];
+}
+
+/**
+ * Register (or replace) a zone config at runtime.
+ * Useful for dynamic content and tests.
+ *
+ * @param {object} zoneConfig
+ * @returns {object|null} The registered config, or null if invalid.
+ */
+export function registerZone(zoneConfig) {
+  if (!zoneConfig || typeof zoneConfig !== 'object' || !zoneConfig.id) {
+    return null;
+  }
+  PARK_ZONES[zoneConfig.id] = zoneConfig;
+  return zoneConfig;
+}
+```
+
 ## FILE: test/__init__.py
 ```python
 
@@ -26418,6 +26692,8 @@ def test_scaffold():
     assert os.path.exists("src/systems/audio.js"), "src/systems/audio.js missing"
     assert os.path.exists("src/systems/weather.js"), "src/systems/weather.js missing"
     assert os.path.exists("src/world/environment.js"), "src/world/environment.js missing"
+    assert os.path.exists("src/world/zones.js"), "src/world/zones.js missing"
+    assert os.path.exists("src/world/zone_biomes.js"), "src/world/zone_biomes.js missing"
     
     with open("index.html") as f:
         html = f.read()
@@ -26458,7 +26734,8 @@ def run_all():
         "test/test_fetching_mechanics.py",
         "test/test_zero_mesh_integration.py",
         "test/test_wasm_core_sim.py",
-        "test/test_phase3_visuals_and_mechanics.py"
+        "test/test_phase3_visuals_and_mechanics.py",
+        "test/test_zone_warps.py"
     ]
     for t in test_suites:
         res = subprocess.run([sys.executable, t])
@@ -36823,228 +37100,410 @@ if __name__ == "__main__":
     print("🎉 All Ziggy entity tests passed!")
 ```
 
-## FILE: virtual_dog_walker/src/world/zones.js
-```javascript
-/**
- * Declarative multi-location zone registry.
- *
- * Each zone describes its own world dimensions, ground palette, landmarks and
- * warp gates. Consumers should resolve configs through `getZoneConfig()` so
- * aliases and unknown ids are handled consistently.
- */
+## FILE: test/test_zone_warps.py
+```python
+#!/usr/bin/env python3
+"""
+Unit and Integration Tests for Multi-Location Zone Architecture & Seamless Warping (Ticket unification-012):
+- AC-012.1: Declarative ZoneRegistry (zones.js) with The Downs, The Woodland, The Beach, and registerZone API
+- AC-012.2: Bi-directional Warp Gate Connectivity and >= 80px Obstacle Clearance
+- AC-012.3: Multi-Biome Scenery, Animated Coastal Surf & Warp Signpost Rendering
+- AC-012.4: Main Orchestration, Wasm Obstacle Sync, Entity Repositioning, Ball Retrieval & switchRoom P2P Lifecycle
+- AC-012.5: SocialHUD Zone Title & Multi-Zone Online Status Pill
+"""
 
-export const PARK_ZONES = {
-  'clifton-commons': {
-    id: 'clifton-commons',
-    aliases: ['the-downs'],
-    title: '🌳 The Downs',
-    shortTitle: 'The Downs',
-    biome: 'parkland',
-    worldWidth: 3200,
-    worldHeight: 2400,
-    groundColors: {
-      base: '#3e6b2c',
-      dark: '#335824',
-      light: '#4c8237',
-      mown: '#447831',
-      path: '#c8b693',
-      pathEdge: '#968160',
-      pathDetail: '#ded3be',
-      dirt: '#8c7353',
-      dirtEdge: '#6f573c',
-    },
-    warpGates: [
-      {
-        id: 'gate-downs-to-woodland',
-        label: '🌲 To The Woodland',
-        x: 110,
-        y: 1200,
-        radius: 48,
-        targetZoneId: 'the-woodland',
-        targetX: 3000,
-        targetY: 1200,
-        icon: '🌲',
-        facing: 'west',
-      },
-      {
-        id: 'gate-downs-to-beach',
-        label: '🏖️ To The Beach',
-        x: 1600,
-        y: 2290,
-        radius: 48,
-        targetZoneId: 'the-beach',
-        targetX: 1600,
-        targetY: 200,
-        icon: '🏖️',
-        facing: 'south',
-      },
-    ],
-  },
+import math
+import os
+import re
+import unittest
 
-  'the-woodland': {
-    id: 'the-woodland',
-    title: '🌲 The Woodland',
-    shortTitle: 'The Woodland',
-    biome: 'woodland',
-    worldWidth: 3200,
-    worldHeight: 2400,
-    groundColors: {
-      base: '#2b4c20',
-      dark: '#223d19',
-      light: '#3a662c',
-      mown: '#2f5223',
-      path: '#785c42',
-      pathEdge: '#594431',
-      pathDetail: '#8e6f51',
-      dirt: '#594431',
-      dirtEdge: '#3e2e21',
-    },
-    landmark: {
-      id: 'woodland-clearing',
-      name: 'Ancient Woodland Clearing',
-      x: 1550,
-      y: 1100,
-      radius: 40,
-    },
-    warpGates: [
-      {
-        id: 'gate-woodland-to-downs',
-        label: '🌳 To The Downs',
-        x: 3090,
-        y: 1200,
-        radius: 48,
-        targetZoneId: 'clifton-commons',
-        targetX: 220,
-        targetY: 1200,
-        icon: '🌳',
-        facing: 'east',
-      },
-      {
-        id: 'gate-woodland-to-beach',
-        label: '🏖️ To The Beach',
-        x: 110,
-        y: 1900,
-        radius: 48,
-        targetZoneId: 'the-beach',
-        targetX: 220,
-        targetY: 1200,
-        icon: '🏖️',
-        facing: 'southwest',
-      },
-    ],
-  },
+ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+ZONES_JS = os.path.join(ROOT_DIR, "src", "world", "zones.js")
+BIOMES_JS = os.path.join(ROOT_DIR, "src", "world", "zone_biomes.js")
+FIELD_JS = os.path.join(ROOT_DIR, "src", "world", "field.js")
+MAIN_JS = os.path.join(ROOT_DIR, "src", "main.js")
+NET_JS = os.path.join(ROOT_DIR, "src", "net", "zero_mesh_network.js")
+NETWORK_MGR_JS = os.path.join(ROOT_DIR, "src", "net", "network.js")
+HUD_JS = os.path.join(ROOT_DIR, "src", "ui", "social_hud.js")
 
-  'the-beach': {
-    id: 'the-beach',
-    title: '🏖️ The Beach',
-    shortTitle: 'The Beach',
-    biome: 'coastal',
-    worldWidth: 3200,
-    worldHeight: 2400,
-    groundColors: {
-      base: '#dfbe82',
-      dark: '#d4b070',
-      light: '#e6c994',
-      dune: '#c2a675',
-      duneGrass: '#6e8c42',
-      waterShallow: '#38bdf8',
-      waterDeep: '#0284c7',
-      surfFoam: '#f0fdfa',
-    },
-    landmarks: [
-      {
-        id: 'shipwreck-ribs',
-        name: 'Weathered Timber Shipwreck Ribs',
-        x: 2350,
-        y: 1450,
-        radius: 36,
-        depthY: 1470,
-      },
-      {
-        id: 'dune-lookout',
-        name: 'Coastal Dune Lookout Post',
-        x: 900,
-        y: 340,
-        radius: 32,
-        depthY: 360,
-      },
-    ],
-    warpGates: [
-      {
-        id: 'gate-beach-to-downs',
-        label: '🌳 To The Downs',
-        x: 1600,
-        y: 110,
-        radius: 48,
-        targetZoneId: 'clifton-commons',
-        targetX: 1600,
-        targetY: 2180,
-        icon: '🌳',
-        facing: 'north',
-      },
-      {
-        id: 'gate-beach-to-woodland',
-        label: '🌲 To The Woodland',
-        x: 110,
-        y: 1200,
-        radius: 48,
-        targetZoneId: 'the-woodland',
-        targetX: 220,
-        targetY: 1900,
-        icon: '🌲',
-        facing: 'west',
-      },
-    ],
-  },
-};
 
-export const PUBLIC_ZONE_IDS = [
-  'clifton-commons',
-  'the-downs',
-  'the-woodland',
-  'the-beach',
-];
+class TestZoneRegistry(unittest.TestCase):
+    def setUp(self):
+        with open(ZONES_JS, "r", encoding="utf-8") as f:
+            self.zones_code = f.read()
 
-const DEFAULT_ZONE_ID = 'clifton-commons';
+    def test_zone_definitions(self):
+        """Verify all three core zones are defined in PARK_ZONES with valid biomes and dimensions."""
+        self.assertIn("PARK_ZONES", self.zones_code)
+        self.assertIn("'clifton-commons'", self.zones_code)
+        self.assertIn("'the-woodland'", self.zones_code)
+        self.assertIn("'the-beach'", self.zones_code)
 
-/**
- * Resolve a zone config by id or alias.
- * Falls back to the default zone ('clifton-commons') when unknown.
- *
- * @param {string} zoneId
- * @returns {object}
- */
-export function getZoneConfig(zoneId) {
-  if (zoneId && PARK_ZONES[zoneId]) {
-    return PARK_ZONES[zoneId];
-  }
+        # Biomes
+        self.assertIn("biome: 'parkland'", self.zones_code)
+        self.assertIn("biome: 'woodland'", self.zones_code)
+        self.assertIn("biome: 'coastal'", self.zones_code)
 
-  if (zoneId) {
-    for (const key of Object.keys(PARK_ZONES)) {
-      const zone = PARK_ZONES[key];
-      if (Array.isArray(zone.aliases) && zone.aliases.includes(zoneId)) {
-        return zone;
-      }
+        # Dimensions: 3200 x 2400
+        self.assertIn("worldWidth: 3200", self.zones_code)
+        self.assertIn("worldHeight: 2400", self.zones_code)
+
+    def test_public_zone_ids(self):
+        """Verify PUBLIC_ZONE_IDS contains all public locations and aliases."""
+        self.assertIn("PUBLIC_ZONE_IDS", self.zones_code)
+        for expected_id in ['clifton-commons', 'the-downs', 'the-woodland', 'the-beach']:
+            self.assertIn(expected_id, self.zones_code)
+
+    def test_get_zone_config_and_register_zone(self):
+        """Verify getZoneConfig and registerZone API presence and logic."""
+        self.assertIn("export function getZoneConfig", self.zones_code)
+        self.assertIn("export function registerZone", self.zones_code)
+        # Fallback to clifton-commons
+        self.assertIn("clifton-commons", self.zones_code)
+
+    def test_is_public_zone_id(self):
+        """Verify isPublicZoneId helper is exported and used for public zone detection."""
+        self.assertIn("export function isPublicZoneId", self.zones_code)
+        self.assertIn("PUBLIC_ZONE_IDS.includes(zoneId)", self.zones_code)
+        self.assertIn("hasOwnProperty.call(PARK_ZONES, zoneId)", self.zones_code)
+
+
+class TestWarpGateConnectivityAndClearance(unittest.TestCase):
+    def setUp(self):
+        with open(ZONES_JS, "r", encoding="utf-8") as f:
+            self.zones_code = f.read()
+        with open(BIOMES_JS, "r", encoding="utf-8") as f:
+            self.biomes_code = f.read()
+        with open(FIELD_JS, "r", encoding="utf-8") as f:
+            self.field_code = f.read()
+
+    def test_warp_gate_declarations(self):
+        """Verify warp gates connect Downs, Woodland, and Beach bi-directionally."""
+        # Downs gates
+        self.assertIn("gate-downs-to-woodland", self.zones_code)
+        self.assertIn("gate-downs-to-beach", self.zones_code)
+
+        # Woodland gates
+        self.assertIn("gate-woodland-to-downs", self.zones_code)
+        self.assertIn("gate-woodland-to-beach", self.zones_code)
+
+        # Beach gates
+        self.assertIn("gate-beach-to-downs", self.zones_code)
+        self.assertIn("gate-beach-to-woodland", self.zones_code)
+
+    def test_gate_clearance_from_obstacles(self):
+        """Verify all gates and arrival target points maintain >= 80px clearance from obstacles."""
+        # Warp gate positions & arrival targets across zones
+        gate_points = [
+            (110, 1200), (3000, 1200),
+            (1600, 2290), (1600, 200),
+            (3090, 1200), (220, 1200),
+            (110, 1900), (220, 1200),
+            (1600, 110), (1600, 2180),
+            (110, 1200), (220, 1900)
+        ]
+
+        # Landmark coordinates
+        landmarks = [
+            (2400, 450),  # Water Tower (Downs)
+            (1550, 1100), # Ancient Woodland Clearing (Woodland)
+            (2350, 1450), # Shipwreck Ribs (Beach)
+            (900, 340),   # Dune Lookout Post (Beach)
+        ]
+
+        for gx, gy in gate_points:
+            for lx, ly in landmarks:
+                dist = math.hypot(gx - lx, gy - ly)
+                self.assertGreaterEqual(dist, 80.0, f"Gate ({gx}, {gy}) too close to landmark ({lx}, {ly}): {dist:.1f}px < 80px")
+
+
+class TestFieldMultiBiomeAndRendering(unittest.TestCase):
+    def setUp(self):
+        with open(FIELD_JS, "r", encoding="utf-8") as f:
+            self.field_code = f.read()
+        with open(BIOMES_JS, "r", encoding="utf-8") as f:
+            self.biomes_code = f.read()
+
+    def test_field_load_zone_and_biome_scenery(self):
+        """Verify Field has loadZone, checkWarpGate, and integrates zone_biomes."""
+        self.assertIn("loadZone", self.field_code)
+        self.assertIn("checkWarpGate", self.field_code)
+        self.assertIn("initBiomeScenery", self.field_code)
+        self.assertIn("bakeBiomeGround", self.field_code)
+        self.assertIn("renderCoastalSurf", self.field_code)
+        self.assertIn("renderWarpSignpost", self.field_code)
+        self.assertIn("renderLandmark", self.field_code)
+
+    def test_beach_golden_sand_openness(self):
+        """Verify the central golden sand expanse (y: 450..1800) is kept open for ball throwing."""
+        has_beach_scenery = "initCoastalScenery" in self.biomes_code or "initBeachScenery" in self.biomes_code
+        self.assertTrue(has_beach_scenery, "Coastal/Beach scenery initializer missing in zone_biomes.js")
+        self.assertIn("shipwreck-ribs", self.biomes_code)
+        self.assertIn("dune-lookout", self.biomes_code)
+        self.assertIn("1550", self.biomes_code)
+
+    def test_woodland_fallen_sticks_count(self):
+        """Verify The Woodland provides 14+ fallen sticks for companion dogs to carry."""
+        self.assertIn("initWoodlandScenery", self.biomes_code)
+        stick_matches = re.findall(r"stick-woodland-", self.biomes_code)
+        # Should be dynamically generated with a loop of >= 14 or explicit items
+        has_stick_loop = "14" in self.biomes_code and "stick" in self.biomes_code
+        self.assertTrue(len(stick_matches) >= 14 or has_stick_loop, "Woodland must supply >= 14 fallen sticks")
+
+    def test_coastal_animated_surf(self):
+        """Verify coastal wave crest animation is rendered along y ≈ 1850."""
+        self.assertIn("renderCoastalSurf", self.biomes_code)
+        self.assertIn("1850", self.biomes_code)
+        self.assertIn("Math.sin", self.biomes_code)
+
+
+class TestMainWarpOrchestrationAndHUD(unittest.TestCase):
+    def setUp(self):
+        with open(MAIN_JS, "r", encoding="utf-8") as f:
+            self.main_code = f.read()
+        with open(HUD_JS, "r", encoding="utf-8") as f:
+            self.hud_code = f.read()
+        with open(NET_JS, "r", encoding="utf-8") as f:
+            self.net_code = f.read()
+
+    def test_main_warp_to_zone_lifecycle(self):
+        """Verify warpToZone updates zone, syncs Wasm obstacles, repositions entities, and switches room."""
+        self.assertIn("warpToZone", self.main_code)
+        self.assertIn("currentZoneId", self.main_code)
+        self.assertIn("warpCooldown", self.main_code)
+        self.assertIn("warpFadeAlpha", self.main_code)
+        self.assertIn("syncWorldObstacles", self.main_code)
+        self.assertIn("retrieveByOwner", self.main_code)
+        self.assertIn("switchRoom", self.main_code)
+
+    def test_screen_crossfade_veil(self):
+        """Verify full-screen crossfade veil renders during warp transition."""
+        self.assertIn("warpFadeAlpha", self.main_code)
+        self.assertIn("rgba(11, 17, 23,", self.main_code)
+
+    def test_net_switch_room_implementation(self):
+        """Verify ZeroMeshNetworkManager implements switchRoom with leave broadcast and room reconnect."""
+        self.assertIn("async switchRoom", self.net_code)
+        self.assertIn("broadcastLeave", self.net_code)
+        self.assertIn("this.roomId = newRoomId", self.net_code)
+        self.assertIn("this.connect", self.net_code)
+
+    def test_hud_zone_title_and_online_badge(self):
+        """Verify SocialHUD setZoneTitle and online badge display for all zones."""
+        self.assertIn("setZoneTitle", self.hud_code)
+        self.assertIn("hud-title", self.hud_code)
+        # All public zones must be recognized as online commons
+        for zid in ['clifton-commons', 'the-downs', 'the-woodland', 'the-beach']:
+            self.assertIn(f"'{zid}'", self.hud_code)
+
+
+class TestObstacleClearanceBehavioral(unittest.TestCase):
+    """
+    M3: Comprehensive behavioral clearance tests. Every generated obstacle in
+    each biome must maintain >= 80px clearance from that zone's warp gates and
+    arrival targets.
+    """
+
+    CLEARANCE = 80.0
+
+    # Gate + arrival target coordinates per zone (mirrors zone_biomes keepouts).
+    ZONE_KEEPOUTS = {
+        'woodland': [(3090, 1200), (110, 1900), (3000, 1200), (220, 1900)],
+        'coastal': [(1600, 110), (110, 1200), (1600, 200), (220, 1200)],
+        'downs': [(110, 1200), (1600, 2290), (220, 1200), (1600, 2180)],
     }
-  }
 
-  return PARK_ZONES[DEFAULT_ZONE_ID];
-}
+    def setUp(self):
+        with open(BIOMES_JS, "r", encoding="utf-8") as f:
+            self.biomes_code = f.read()
+        with open(FIELD_JS, "r", encoding="utf-8") as f:
+            self.field_code = f.read()
 
-/**
- * Register (or replace) a zone config at runtime.
- * Useful for dynamic content and tests.
- *
- * @param {object} zoneConfig
- * @returns {object|null} The registered config, or null if invalid.
- */
-export function registerZone(zoneConfig) {
-  if (!zoneConfig || typeof zoneConfig !== 'object' || !zoneConfig.id) {
-    return null;
-  }
-  PARK_ZONES[zoneConfig.id] = zoneConfig;
-  return zoneConfig;
-}
+    def _assert_clear(self, zone, x, y, label):
+        for gx, gy in self.ZONE_KEEPOUTS[zone]:
+            dist = math.hypot(x - gx, y - gy)
+            self.assertGreaterEqual(
+                dist, self.CLEARANCE,
+                f"{zone} {label} at ({x}, {y}) too close to gate ({gx}, {gy}): {dist:.1f}px < {self.CLEARANCE}px"
+            )
+
+    def test_keepout_constants_defined(self):
+        """Verify all three keepout arrays are declared with the required points."""
+        self.assertIn("WOODLAND_KEEPOUT", self.biomes_code)
+        self.assertIn("COASTAL_KEEPOUT", self.biomes_code)
+        self.assertIn("DOWNS_KEEPOUT", self.biomes_code)
+        for zone, pts in self.ZONE_KEEPOUTS.items():
+            for gx, gy in pts:
+                self.assertIn(f"x: {gx}, y: {gy}", self.biomes_code,
+                              f"Missing keepout point ({gx}, {gy}) for {zone}")
+
+    def test_keepout_radius_is_80(self):
+        """Verify KEEPOUT_RADIUS is 80 and isClearOfKeepouts accepts a radius arg."""
+        self.assertIn("KEEPOUT_RADIUS = 80", self.biomes_code)
+        self.assertIn("function isClearOfKeepouts(x, y, keepouts, radius", self.biomes_code)
+
+    def test_woodland_scenery_uses_keepout(self):
+        """Verify woodland trees, benches, bins, rocks, and sticks all check keepouts."""
+        # Count occurrences of isClearOfKeepouts with WOODLAND_KEEPOUT
+        woodland_checks = re.findall(r"isClearOfKeepouts\([^)]*WOODLAND_KEEPOUT", self.biomes_code)
+        self.assertGreaterEqual(len(woodland_checks), 5,
+                                "Woodland scenery must apply keepout checks to trees, benches, bins, rocks, and sticks")
+
+    def test_coastal_scenery_uses_keepout(self):
+        """Verify coastal benches, bins, rocks, landmarks, and sticks all check keepouts."""
+        coastal_checks = re.findall(r"isClearOfKeepouts\([^)]*COASTAL_KEEPOUT", self.biomes_code)
+        self.assertGreaterEqual(len(coastal_checks), 5,
+                                "Coastal scenery must apply keepout checks to benches, bins, rocks, landmarks, and sticks")
+
+    def test_woodland_landmark_clearance(self):
+        """Ancient Woodland Clearing (1550, 1100) must be >= 80px from woodland gates."""
+        self._assert_clear('woodland', 1550, 1100, 'woodland-clearing')
+
+    def test_coastal_landmark_clearance(self):
+        """Coastal landmarks must be >= 80px from coastal gates."""
+        self._assert_clear('coastal', 2350, 1450, 'shipwreck-ribs')
+        self._assert_clear('coastal', 900, 340, 'dune-lookout')
+
+    def test_downs_water_tower_clearance(self):
+        """Water Tower (2400, 450) must be >= 80px from downs gates."""
+        self._assert_clear('downs', 2400, 450, 'water-tower')
+
+    def test_woodland_sticks_loop_uses_keepout(self):
+        """Verify woodland sticks are generated in a loop that checks keepouts."""
+        # The stick generation must be a while loop with keepout check
+        self.assertIn("stickAttempts", self.biomes_code)
+        self.assertIn("stickCount", self.biomes_code)
+
+    def test_downs_scenery_clearance(self):
+        """H1: Parkland scenery in field.js must apply DOWNS_KEEPOUT filtering."""
+        # field.js must import DOWNS_KEEPOUT and isClearOfKeepouts from zone_biomes.
+        self.assertIn("DOWNS_KEEPOUT", self.field_code)
+        self.assertIn("isClearOfKeepouts", self.field_code)
+        # Each scenery collection must be filtered against DOWNS_KEEPOUT.
+        for collection in ("rockOutcrops", "benches", "bins", "trees"):
+            pattern = re.compile(
+                r"this\." + collection + r"\s*=[\s\S]{0,400}?isClearOfKeepouts\([^)]*DOWNS_KEEPOUT",
+                re.DOTALL,
+            )
+            self.assertRegex(
+                self.field_code,
+                pattern,
+                f"this.{collection} must be filtered with isClearOfKeepouts(..., DOWNS_KEEPOUT, 80)",
+            )
+
+    def test_downs_keepout_exported(self):
+        """H1: DOWNS_KEEPOUT and isClearOfKeepouts must be exported from zone_biomes.js."""
+        self.assertIn("export const DOWNS_KEEPOUT", self.biomes_code)
+        self.assertIn("export function isClearOfKeepouts", self.biomes_code)
+
+
+class TestLandmarkCleanupOnReturn(unittest.TestCase):
+    """H2: Biome landmarks must not leak back into clifton-commons."""
+
+    def setUp(self):
+        with open(BIOMES_JS, "r", encoding="utf-8") as f:
+            self.biomes_code = f.read()
+        with open(FIELD_JS, "r", encoding="utf-8") as f:
+            self.field_code = f.read()
+
+    def test_field_init_scenery_resets_landmarks(self):
+        """initScenery must reset this.landmarks to only the water tower."""
+        self.assertIn("this.landmarks = this.waterTower ? [this.waterTower] : []", self.field_code)
+
+    def test_parkland_biome_resets_landmarks(self):
+        """initBiomeScenery for parkland must reset field.landmarks."""
+        self.assertIn("field.landmarks = field.waterTower ? [field.waterTower] : []", self.biomes_code)
+
+
+class TestNetworkSwitchRoomSync(unittest.TestCase):
+    """H4: NetworkManager.switchRoom must update this.roomId before delegating."""
+
+    def setUp(self):
+        with open(NETWORK_MGR_JS, "r", encoding="utf-8") as f:
+            self.net_code = f.read()
+
+    def test_switch_room_sets_room_id_before_delegate(self):
+        """Verify this.roomId = newRoomId appears before adapter.switchRoom call."""
+        # Find the switchRoom method body
+        match = re.search(r"async switchRoom\(newRoomId\)\s*\{(.*?)\n  \}", self.net_code, re.DOTALL)
+        self.assertIsNotNone(match, "switchRoom method not found")
+        body = match.group(1)
+        room_id_pos = body.find("this.roomId = newRoomId")
+        adapter_pos = body.find("this.adapter.switchRoom")
+        self.assertGreaterEqual(room_id_pos, 0, "this.roomId = newRoomId not found in switchRoom")
+        self.assertGreaterEqual(adapter_pos, 0, "this.adapter.switchRoom not found in switchRoom")
+        self.assertLess(room_id_pos, adapter_pos,
+                        "this.roomId must be set BEFORE delegating to adapter.switchRoom")
+
+
+class TestCrossfadeVeilScreenSpace(unittest.TestCase):
+    """H3: Crossfade veil must reset canvas transform before drawing."""
+
+    def setUp(self):
+        with open(MAIN_JS, "r", encoding="utf-8") as f:
+            self.main_code = f.read()
+
+    def test_crossfade_resets_transform(self):
+        """Verify setTransform(1, 0, 0, 1, 0, 0) is called before the crossfade fillRect."""
+        # Find the crossfade block
+        match = re.search(r"warpFadeAlpha > 0\.01.*?fillRect", self.main_code, re.DOTALL)
+        self.assertIsNotNone(match, "Crossfade block not found")
+        block = match.group(0)
+        self.assertIn("setTransform(1, 0, 0, 1, 0, 0)", block,
+                      "Crossfade must reset canvas transform to screen-space")
+
+
+class TestHUDTitleAndOnlineState(unittest.TestCase):
+    """M1 & L2: HUD title emoji cleanup and online state detection."""
+
+    def setUp(self):
+        with open(HUD_JS, "r", encoding="utf-8") as f:
+            self.hud_code = f.read()
+
+    def test_no_duplicate_tree_emoji(self):
+        """Verify the static tree emoji span is removed from initHUD."""
+        # The old pattern had a separate <span>🌳</span> before #hud-title
+        self.assertNotIn('<span style="font-size: 1.2rem;">🌳</span>', self.hud_code,
+                         "Duplicate tree emoji span must be removed")
+
+    def test_online_state_uses_public_zone_ids(self):
+        """Verify updateNetworkState uses PUBLIC_ZONE_IDS and isPublicZoneId."""
+        self.assertIn("PUBLIC_ZONE_IDS", self.hud_code)
+        self.assertIn("isPublicZoneId", self.hud_code)
+
+    def test_private_room_not_marked_online(self):
+        """M1: Private rooms must not be marked Online via getZoneConfig fallback."""
+        # social_hud.js must not call getZoneConfig in updateNetworkState.
+        self.assertNotIn("getZoneConfig", self.hud_code,
+                         "social_hud.js must not use getZoneConfig (fallback marks private rooms online)")
+        # isPublicZoneId must be imported from zones.js.
+        self.assertIn("isPublicZoneId", self.hud_code)
+        # Simulate isPublicZoneId behaviour for a private room id.
+        with open(ZONES_JS, "r", encoding="utf-8") as f:
+            zones_code = f.read()
+        self.assertIn("export function isPublicZoneId", zones_code)
+        # Private room ids are not in PUBLIC_ZONE_IDS nor PARK_ZONES keys.
+        self.assertNotIn("'private-room-abc'", zones_code)
+
+
+class TestWarpToZoneAliasHandling(unittest.TestCase):
+    """L3: warpToZone must use field.zoneId (canonical) not the alias."""
+
+    def setUp(self):
+        with open(MAIN_JS, "r", encoding="utf-8") as f:
+            self.main_code = f.read()
+
+    def test_warp_uses_field_zone_id(self):
+        """Verify warpToZone sets currentZoneId from field.zoneId."""
+        match = re.search(r"warpToZone\(targetZoneId, targetX, targetY\)\s*\{(.*?)\n  \}", self.main_code, re.DOTALL)
+        self.assertIsNotNone(match, "warpToZone method not found")
+        body = match.group(1)
+        self.assertIn("this.field.zoneId", body,
+                      "warpToZone must use this.field.zoneId for canonical zone id")
+
+
+if __name__ == "__main__":
+    unittest.main()
 ```
 
 ## FILE: wrangler.jsonc

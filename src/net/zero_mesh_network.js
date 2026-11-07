@@ -299,6 +299,8 @@ export class ZeroMeshNetworkManager {
     if (this._demoting) return;
     this._demoting = true;
     try {
+      // Cancel any in-flight sleeps / fetches from the previous lifecycle,
+      // then reset the abort flag so the new lifecycle can proceed cleanly.
       this._abortLifecycle();
       this._isAborted = false;
       this._lifecycleAbortController = (typeof AbortController !== 'undefined')
@@ -318,10 +320,16 @@ export class ZeroMeshNetworkManager {
         }
       }
     } catch (err) {
-      if (err && err.name === 'AbortError') return;
+      if (err && err.name === 'AbortError') {
+        // Expected when a newer lifecycle superseded this demotion attempt.
+        return;
+      }
       console.warn('[ZeroMesh] Demotion re-negotiation failed:', err);
     } finally {
       this._demoting = false;
+      // Ensure any lingering timers from this attempt are cleared so they
+      // cannot fire against a subsequent lifecycle.
+      this._clearLifecycleTimers();
     }
   }
 
@@ -612,7 +620,17 @@ export class ZeroMeshNetworkManager {
       const roomSecret = negotiation.roomSecret;
 
       // Phase 2: construct mesh with final peerId + room_secret.
-      this._constructMesh(negotiation.assignedPeerId, roomSecret);
+      // Fatal crypto/topology errors must fail fast and loud — never fall back
+      // to the simulated mesh, which would silently mask key/scalar mismatches.
+      try {
+        this._constructMesh(negotiation.assignedPeerId, roomSecret);
+      } catch (cryptoErr) {
+        console.error('[ZeroMesh] Fatal cryptographic initialization error:', cryptoErr);
+        this._state = 'error';
+        this._logPhase('error', { error: String(cryptoErr && cryptoErr.message || cryptoErr) });
+        this.setStatus(NetStatus.OFFLINE);
+        throw cryptoErr;
+      }
       // hostSecret is normalized to a hex string inside _constructMesh.
       const hostSecretHex = this.hostSecret;
 
@@ -696,6 +714,12 @@ export class ZeroMeshNetworkManager {
         console.log('[ZeroMesh] Lifecycle aborted. Skipping simulation fallback.');
         this._logPhase('aborted', { error: String(err && err.message || err) });
         return;
+      }
+      // Fatal crypto/topology errors must never be masked by simulation fallback.
+      if (this._state === 'error') {
+        console.error('[ZeroMesh] Fatal initialization error; refusing simulation fallback:', err);
+        this._logPhase('error', { error: String(err && err.message || err) });
+        throw err;
       }
       console.error('[ZeroMesh] Live connection failed, falling back to simulated mesh:', err);
       this._logPhase('fallback', { error: String(err && err.message || err) });
@@ -1020,7 +1044,12 @@ export class ZeroMeshNetworkManager {
   _setupHostSocket(secretHex) {
     if (typeof WebSocket === 'undefined') return;
     try {
-      const wsUrl = this.workerOrigin.replace(/^http/, 'ws') + `/host/${encodeURIComponent(this.roomId)}?secret=${encodeURIComponent(secretHex)}`;
+      // Browser WebSockets cannot send custom HTTP headers (e.g. X-Peer-Id),
+      // so pass peer_id via the query string for host authentication.
+      const wsUrl = this.workerOrigin.replace(/^http/, 'ws')
+        + `/host/${encodeURIComponent(this.roomId)}`
+        + `?secret=${encodeURIComponent(secretHex)}`
+        + `&peer_id=${encodeURIComponent(this.peerId)}`;
       this.hostWs = new WebSocket(wsUrl);
 
       this.hostWs.onopen = async () => {

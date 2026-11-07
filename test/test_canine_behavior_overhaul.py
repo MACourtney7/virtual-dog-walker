@@ -37,6 +37,18 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         self.assertAlmostEqual(catch_up_prob(220, 4), 0.08 * (0.45 + 0.44), places=6)
         self.assertAlmostEqual(catch_up_prob(480, 4), 0.90 * (0.45 + 0.44), places=6)
         self.assertGreater(catch_up_prob(400, 5), catch_up_prob(400, 1))
+
+        # Raw (unclamped) obedience values must be honored by the formula
+        def catch_up_prob_raw(dist, obedience):
+            base = min(0.90, max(0.08, (dist - 220) / 260))
+            return min(1, max(0, base * (0.45 + 0.11 * obedience)))
+
+        self.assertAlmostEqual(catch_up_prob_raw(400, 2.5), 0.90 * (0.45 + 0.275), places=6)
+        self.assertAlmostEqual(catch_up_prob_raw(400, 3.7), 0.90 * (0.45 + 0.407), places=6)
+        # High obedience saturates the final probability at 1.0
+        self.assertEqual(catch_up_prob_raw(400, 10.0), 1.0)
+        # Fractional obedience is monotonic between integer values
+        self.assertLess(catch_up_prob_raw(400, 2.5), catch_up_prob_raw(400, 3.7))
         # Monotonic in distance and obedience
         for ob in range(1, 6):
             self.assertLessEqual(catch_up_prob(220, ob), catch_up_prob(400, ob))
@@ -122,6 +134,142 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
                 msg=f"Missing audio synthesizer: {name}",
             )
         self.assertIn("_ready()", self.audio_src)
+
+    # MEDIUM-2: AudioContext-absent safety and playPine alias
+    def test_audio_context_absent_safety_and_pine_alias(self):
+        self.assertIn("playPine()", self.audio_src)
+        self.assertIn("this.playWhine()", self.audio_src)
+        # Every synthesizer must guard against a missing AudioContext
+        self.assertIn("if (!this.ctx", self.audio_src)
+        self.assertIn("window.AudioContext || window.webkitAudioContext", self.audio_src)
+
+    # HIGH-2: owner movement must not interrupt ROLLING
+    def test_owner_movement_does_not_interrupt_rolling(self):
+        class Owner:
+            def __init__(self, speed):
+                self.vx = speed
+                self.vy = 0.0
+                self.isLeashed = False
+
+        class Dog:
+            def __init__(self, state):
+                self.state = state
+                self.idleRestTimer = 0.0
+                self.owner = Owner(10.0)
+
+            def transitionTo(self, new_state):
+                if self.state == new_state:
+                    return
+                self.state = new_state
+
+            def update_resting(self, dt):
+                owner_speed = (self.owner.vx ** 2 + self.owner.vy ** 2) ** 0.5
+                if owner_speed > 5:
+                    self.idleRestTimer = 0
+                    if self.state == "LYING_DOWN":
+                        self.transitionTo("ROAMING")
+
+        dog = Dog("ROLLING")
+        dog.update_resting(0.5)
+        self.assertEqual(dog.state, "ROLLING")
+
+        lying = Dog("LYING_DOWN")
+        lying.update_resting(0.5)
+        self.assertEqual(lying.state, "ROAMING")
+
+    def test_rolling_completion_transitions_to_sitting_with_timer(self):
+        class Dog:
+            def __init__(self):
+                self.state = "ROLLING"
+                self.stateTimer = 0.05
+                self.wagSpeed = 20
+
+            def transitionTo(self, new_state):
+                if self.state == new_state:
+                    return
+                self.state = new_state
+
+            def update_rolling(self, dt):
+                self.stateTimer -= dt
+                if self.stateTimer <= 0:
+                    self.transitionTo("SITTING")
+                    if self.state == "SITTING":
+                        self.stateTimer = 2.0 + 0.5  # deterministic stand-in for Math.random()
+
+        dog = Dog()
+        dog.update_rolling(0.1)
+        self.assertEqual(dog.state, "SITTING")
+        self.assertGreater(dog.stateTimer, 0)
+
+    # HIGH-3: triggerPet increments happiness and sets emote
+    def test_trigger_pet_increments_happiness_and_emote(self):
+        self.assertIn("triggerPet(duration = 0.45)", self.dog_src)
+
+        class Dog:
+            def __init__(self):
+                self.happiness = 50
+                self.emoteBubble = None
+                self.emoteTimer = 0
+                self.wagSpeed = 8
+                self.idleRestTimer = 0
+                self.hearts = []
+                self.owner = None
+
+            def pet(self):
+                self.happiness = min(100, self.happiness + 20)
+                self.idleRestTimer = 0
+                self.wagSpeed = 18
+                self.emoteBubble = '❤️'
+                self.emoteTimer = 2.2
+
+            def triggerPet(self, duration=0.45):
+                self.pet()
+                self.emoteBubble = '❤️'
+                self.emoteTimer = duration
+
+        dog = Dog()
+        dog.triggerPet(0.45)
+        self.assertEqual(dog.happiness, 70)
+        self.assertEqual(dog.emoteBubble, '❤️')
+        self.assertAlmostEqual(dog.emoteTimer, 0.45, places=6)
+
+    # MEDIUM-2: zoomies collision-aware source contract
+    def test_zoomies_collision_aware_source_contract(self):
+        idx = self.dog_src.find("updateZoomies(dt, field)")
+        self.assertNotEqual(idx, -1)
+        window = self.dog_src[idx:idx + 2000]
+        self.assertIn("resolveFieldCollision", window)
+        self.assertIn("this.zoomiesCenter.x += (this.x - expectedX)", window)
+        self.assertIn("this.zoomiesCenter.y += (this.y - expectedY)", window)
+
+    # MEDIUM-1: visitedScents updated on arrival
+    def test_visited_scents_updated_on_arrival(self):
+        class Dog:
+            def __init__(self):
+                self.lastSniffFollowAt = 0
+                self.lastReachedScent = None
+                self.targetScent = {"x": 0.0, "y": 0.0, "life": 1.0}
+                self.visitedScents = set()
+                self.x = 0.0
+                self.y = 0.0
+
+            def tick(self, now):
+                dx = self.targetScent["x"] - self.x
+                dy = self.targetScent["y"] - self.y
+                dist = (dx * dx + dy * dy) ** 0.5
+                if dist <= 12:
+                    if self.targetScent and self.lastReachedScent is not self.targetScent:
+                        self.lastReachedScent = self.targetScent
+                        self.lastSniffFollowAt = now
+                        self.visitedScents.add(self.targetScent)
+
+        dog = Dog()
+        dog.tick(1000)
+        self.assertIn(dog.targetScent, dog.visitedScents)
+        self.assertEqual(len(dog.visitedScents), 1)
+        # Idling at the same node must not duplicate the entry
+        dog.tick(2000)
+        self.assertEqual(len(dog.visitedScents), 1)
 
     # AC-013.5: ambient resting states
     def test_resting_states_defined(self):

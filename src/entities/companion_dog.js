@@ -29,6 +29,19 @@ function lerpAngle(a, b, t) {
   return a + d * Math.min(1, Math.max(0, t));
 }
 
+// States that must never be interrupted by ambient resting (LYING_DOWN) transitions.
+const ACTIVE_REST_BLOCKED_STATES = new Set([
+  DogState.FETCHING,
+  DogState.ZOOMIES,
+  DogState.BARKING,
+  DogState.POOPING,
+  DogState.LOST,
+  DogState.RECALLED,
+  DogState.PLAY_BOW,
+  DogState.ROLLING,
+  DogState.LYING_DOWN
+]);
+
 export const CoatPreset = {
   CHOCOLATE_TAN: {
     name: 'Chocolate & Tan (Ziggy)',
@@ -387,6 +400,12 @@ export class CompanionDog {
     }
   }
 
+  triggerPet(duration = 0.45) {
+    this.pet();
+    this.emoteBubble = '❤️';
+    this.emoteTimer = duration;
+  }
+
   pet() {
     this.happiness = Math.min(100, this.happiness + 20);
     this.idleRestTimer = 0;
@@ -490,7 +509,7 @@ export class CompanionDog {
     if (this.owner && !isLeashed && this.state !== DogState.LOST) {
       const distToOwnerAudio = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
       this._whineCooldown -= dt;
-      if (distToOwnerAudio > 220 && this._whineCooldown <= 0 && this.audio && typeof this.audio.playWhine === 'function') {
+      if ((distToOwnerAudio > 220 || this.isReturningToOwner) && this._whineCooldown <= 0 && this.audio && typeof this.audio.playWhine === 'function') {
         this.audio.playWhine();
         this._whineCooldown = 1.5;
       }
@@ -498,19 +517,8 @@ export class CompanionDog {
 
     // Ambient resting transitions: lie down after 15s of continuous owner stillness (off-leash).
     // Only ambient resting-capable states may enter LYING_DOWN; active/interactive states are excluded.
-    const activeStates = new Set([
-      DogState.FETCHING,
-      DogState.ZOOMIES,
-      DogState.BARKING,
-      DogState.POOPING,
-      DogState.LOST,
-      DogState.RECALLED,
-      DogState.PLAY_BOW,
-      DogState.ROLLING,
-      DogState.LYING_DOWN
-    ]);
     const ownerSpeed = Math.hypot(this.owner?.vx || 0, this.owner?.vy || 0);
-    if (this.owner && !this.owner.isLeashed && ownerSpeed < 5 && !activeStates.has(this.state)) {
+    if (this.owner && !this.owner.isLeashed && ownerSpeed < 5 && !ACTIVE_REST_BLOCKED_STATES.has(this.state)) {
       this.idleRestTimer += dt;
       if (this.idleRestTimer > 15) {
         this.transitionTo(DogState.LYING_DOWN);
@@ -518,10 +526,10 @@ export class CompanionDog {
       }
     } else if (ownerSpeed > 5) {
       this.idleRestTimer = 0;
-      if (this.state === DogState.LYING_DOWN || this.state === DogState.ROLLING) {
+      if (this.state === DogState.LYING_DOWN) {
         this.transitionTo(DogState.ROAMING);
       }
-    } else if (activeStates.has(this.state)) {
+    } else if (ACTIVE_REST_BLOCKED_STATES.has(this.state)) {
       // Reset rest timer during active interactions
       this.idleRestTimer = 0;
     }
@@ -670,6 +678,9 @@ export class CompanionDog {
         this.stateTimer -= dt;
         if (this.stateTimer <= 0) {
           this.transitionTo(DogState.SITTING);
+          if (this.state === DogState.SITTING) {
+            this.stateTimer = 2.0 + Math.random() * 2.0;
+          }
         }
         break;
 
@@ -1016,7 +1027,7 @@ export class CompanionDog {
     this.catchUpTimer += dt;
     if (this.catchUpTimer >= 1.2 && distToOwner > 220) {
       const base = Math.min(0.90, Math.max(0.08, (distToOwner - 220) / 260));
-      const obedience = Math.max(1, Math.min(5, Math.round(this.personality.obedience || 4)));
+      const obedience = Number(this.personality?.obedience ?? 4);
       const p = Math.min(1, Math.max(0, base * (0.45 + 0.11 * obedience)));
       if (Math.random() < p) {
         this.returnTrotActive = true;
@@ -1441,6 +1452,7 @@ export class CompanionDog {
         if (this.targetScent && this.lastReachedScent !== this.targetScent) {
           this.lastReachedScent = this.targetScent;
           this.lastSniffFollowAt = now;
+          this.visitedScents.add(this.targetScent);
         }
         // Seek next connected scent if available (exclude own scents and already-visited nodes)
         if (field && typeof field.getNearbyScents === 'function') {
@@ -1452,7 +1464,6 @@ export class CompanionDog {
           );
           if (nearby.length > 0) {
             const next = nearby[Math.floor(Math.random() * nearby.length)];
-            this.visitedScents.add(next);
             this.targetScent = next;
           }
         }

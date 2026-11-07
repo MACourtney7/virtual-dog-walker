@@ -29,6 +29,10 @@ export class WasmCryptoSession {
     }
     /**
      * Computes HMAC-SHA256 hex string token for invite authentication.
+     *
+     * Accepts either raw secret bytes or a 64-character hex string encoding of the
+     * secret. When `secret` is exactly 64 ASCII hex digits, it is decoded to raw
+     * bytes before computing the HMAC so both representations yield identical tokens.
      * @param {Uint8Array | number[]} secret
      * @param {string} invite_uuid
      * @returns {string}
@@ -972,7 +976,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 165, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 166, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___wasm_bindgen_70557cdeb3a4b157___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_70557cdeb3a4b157___JsError___true_);
             return ret;
         },

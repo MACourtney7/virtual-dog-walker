@@ -14,6 +14,10 @@ export class WasmCryptoSession {
     burn_all(): void;
     /**
      * Computes HMAC-SHA256 hex string token for invite authentication.
+     *
+     * Accepts either raw secret bytes or a 64-character hex string encoding of the
+     * secret. When `secret` is exactly 64 ASCII hex digits, it is decoded to raw
+     * bytes before computing the HMAC so both representations yield identical tokens.
      */
     static compute_hmac_hex(secret: Uint8Array | number[], invite_uuid: string): string;
     /**

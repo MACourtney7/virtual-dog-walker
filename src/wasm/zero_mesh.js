@@ -667,6 +667,15 @@ export class WasmWebRtcEngine {
         return ret;
     }
     /**
+     * Injects an incoming binary payload into this peer's receive pipeline.
+     * @param {Uint8Array | number[]} bytes
+     */
+    inject_incoming_binary(bytes) {
+        const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.wasmwebrtcengine_inject_incoming_binary(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
      * Injects an incoming text message into this peer's receive pipeline.
      * @param {string} text
      */
@@ -746,6 +755,13 @@ export class WasmWebRtcEngine {
      */
     set_on_state_change(callback) {
         wasm.wasmwebrtcengine_set_on_state_change(this.__wbg_ptr, callback);
+    }
+    /**
+     * Sets an outbound binary transmission callback `(bytes: Uint8Array) => void` invoked when binary data is sent.
+     * @param {Function} callback
+     */
+    set_outbound_binary_tx(callback) {
+        wasm.wasmwebrtcengine_set_outbound_binary_tx(this.__wbg_ptr, callback);
     }
     /**
      * Sets an outbound transmission callback `(text: string) => void` invoked when text is sent.
@@ -913,7 +929,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 163, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 165, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___wasm_bindgen_70557cdeb3a4b157___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_70557cdeb3a4b157___JsError___true_);
             return ret;
         },

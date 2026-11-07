@@ -39,6 +39,7 @@ export const wasmwebrtcengine_accept_offer_and_create_answer: (a: number, b: num
 export const wasmwebrtcengine_apply_answer: (a: number, b: number, c: number) => any;
 export const wasmwebrtcengine_close: (a: number) => [number, number];
 export const wasmwebrtcengine_create_offer: (a: number) => any;
+export const wasmwebrtcengine_inject_incoming_binary: (a: number, b: number, c: number) => void;
 export const wasmwebrtcengine_inject_incoming_text: (a: number, b: number, c: number) => void;
 export const wasmwebrtcengine_mark_closed: (a: number) => [number, number];
 export const wasmwebrtcengine_mark_open: (a: number) => [number, number];
@@ -48,6 +49,7 @@ export const wasmwebrtcengine_send_text: (a: number, b: number, c: number) => [n
 export const wasmwebrtcengine_set_on_binary_message: (a: number, b: any) => void;
 export const wasmwebrtcengine_set_on_message: (a: number, b: any) => void;
 export const wasmwebrtcengine_set_on_state_change: (a: number, b: any) => void;
+export const wasmwebrtcengine_set_outbound_binary_tx: (a: number, b: any) => void;
 export const wasmwebrtcengine_set_outbound_tx: (a: number, b: any) => void;
 export const wasmwebrtcengine_state: (a: number) => [number, number];
 export const wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;

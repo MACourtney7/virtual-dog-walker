@@ -829,6 +829,9 @@ class TestZeroMeshIntegration(unittest.TestCase):
         self.assertIn("wasmEngine.mark_closed()", code)
         self.assertIn("wasmEngine.inject_incoming_text(ev.data)", code)
         self.assertIn("wasmEngine.set_outbound_tx(", code)
+        self.assertIn("pc.oniceconnectionstatechange", code)
+        self.assertIn("close() {", code)
+        self.assertIn("this.activeBridges", code)
 
     def test_proximity_chat_passes_active_peers_array_to_widget(self):
         """Verifies updateParticipantsBadge passes activePeers array and length to widget.setPeers."""

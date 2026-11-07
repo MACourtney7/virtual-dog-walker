@@ -171,6 +171,10 @@ export class WasmWebRtcEngine {
      */
     create_offer(): Promise<string>;
     /**
+     * Injects an incoming binary payload into this peer's receive pipeline.
+     */
+    inject_incoming_binary(bytes: Uint8Array | number[]): void;
+    /**
      * Injects an incoming text message into this peer's receive pipeline.
      */
     inject_incoming_text(text: string): void;
@@ -206,6 +210,10 @@ export class WasmWebRtcEngine {
      * Registers a JS callback `(state: string) => void` for lifecycle state transitions.
      */
     set_on_state_change(callback: Function): void;
+    /**
+     * Sets an outbound binary transmission callback `(bytes: Uint8Array) => void` invoked when binary data is sent.
+     */
+    set_outbound_binary_tx(callback: Function): void;
     /**
      * Sets an outbound transmission callback `(text: string) => void` invoked when text is sent.
      */
@@ -258,6 +266,7 @@ export interface InitOutput {
     readonly wasmwebrtcengine_apply_answer: (a: number, b: number, c: number) => any;
     readonly wasmwebrtcengine_close: (a: number) => [number, number];
     readonly wasmwebrtcengine_create_offer: (a: number) => any;
+    readonly wasmwebrtcengine_inject_incoming_binary: (a: number, b: number, c: number) => void;
     readonly wasmwebrtcengine_inject_incoming_text: (a: number, b: number, c: number) => void;
     readonly wasmwebrtcengine_mark_closed: (a: number) => [number, number];
     readonly wasmwebrtcengine_mark_open: (a: number) => [number, number];
@@ -267,6 +276,7 @@ export interface InitOutput {
     readonly wasmwebrtcengine_set_on_binary_message: (a: number, b: any) => void;
     readonly wasmwebrtcengine_set_on_message: (a: number, b: any) => void;
     readonly wasmwebrtcengine_set_on_state_change: (a: number, b: any) => void;
+    readonly wasmwebrtcengine_set_outbound_binary_tx: (a: number, b: any) => void;
     readonly wasmwebrtcengine_set_outbound_tx: (a: number, b: any) => void;
     readonly wasmwebrtcengine_state: (a: number) => [number, number];
     readonly wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;

@@ -109,6 +109,7 @@ export class ZeroMeshNetworkManager {
     this.hostSecret = null;
     this.pendingEngine = null;
     this.pendingBridge = null;
+    this.activeBridges = new Map();
 
     // Event hooks
     this.onPeerJoin = null;
@@ -346,6 +347,9 @@ export class ZeroMeshNetworkManager {
         });
 
         this.gameMesh.register_peer(invite.host_peer_id || 'host', hostPubX, engine);
+        if (this.activeBridges) {
+          this.activeBridges.set(invite.host_peer_id || 'host', bridge);
+        }
         this.setStatus(NetStatus.CONNECTED_PEER);
         this.isHost = false;
         this._setupHostSocket(hostSecretHex);
@@ -376,6 +380,9 @@ export class ZeroMeshNetworkManager {
         },
         async applyAnswerSdp(answerSdp) {
           return wasmEngine.apply_answer(answerSdp);
+        },
+        close() {
+          try { wasmEngine.close(); } catch (_) {}
         }
       };
     }
@@ -384,10 +391,18 @@ export class ZeroMeshNetworkManager {
       iceServers: iceServers || this.iceServers || [{ urls: 'stun:stun.cloudflare.com:3478' }]
     });
 
+    pc.oniceconnectionstatechange = () => {
+      const state = pc.iceConnectionState;
+      if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+        try { wasmEngine.mark_closed(); } catch (_) {}
+      }
+    };
+
     let dc = null;
 
     const wireDataChannel = (channel) => {
       dc = channel;
+      try { dc.binaryType = 'arraybuffer'; } catch (_) {}
       dc.onopen = () => {
         try { wasmEngine.mark_open(); } catch (_) {}
       };
@@ -397,6 +412,8 @@ export class ZeroMeshNetworkManager {
       dc.onmessage = (ev) => {
         if (typeof ev.data === 'string') {
           try { wasmEngine.inject_incoming_text(ev.data); } catch (_) {}
+        } else if (ev.data instanceof ArrayBuffer) {
+          try { wasmEngine.inject_incoming_binary(new Uint8Array(ev.data)); } catch (_) {}
         }
       };
       try {
@@ -405,6 +422,15 @@ export class ZeroMeshNetworkManager {
             dc.send(text);
           }
         });
+      } catch (_) {}
+      try {
+        if (typeof wasmEngine.set_outbound_binary_tx === 'function') {
+          wasmEngine.set_outbound_binary_tx((bytes) => {
+            if (dc && dc.readyState === 'open') {
+              dc.send(bytes);
+            }
+          });
+        }
       } catch (_) {}
     };
 
@@ -437,6 +463,8 @@ export class ZeroMeshNetworkManager {
     });
 
     return {
+      pc,
+      dc,
       async createOfferSdp() {
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
@@ -452,7 +480,16 @@ export class ZeroMeshNetworkManager {
       },
       async applyAnswerSdp(answerSdp) {
         await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
-        try { await wasmEngine.apply_answer(answerSdp); } catch (_) {}
+        try {
+          await wasmEngine.apply_answer(answerSdp);
+        } catch (e) {
+          console.warn('[ZeroMesh] apply_answer error:', e);
+        }
+      },
+      close() {
+        try { if (dc) dc.close(); } catch (_) {}
+        try { pc.close(); } catch (_) {}
+        try { wasmEngine.mark_closed(); } catch (_) {}
       }
     };
   }
@@ -521,6 +558,9 @@ export class ZeroMeshNetworkManager {
             );
             if (this.pendingBridge) {
               await this.pendingBridge.applyAnswerSdp(answerSdp);
+              if (this.activeBridges) {
+                this.activeBridges.set(drop.joiner_peer_id, this.pendingBridge);
+              }
             } else {
               await this.pendingEngine.apply_answer(answerSdp);
             }
@@ -818,6 +858,24 @@ export class ZeroMeshNetworkManager {
       try { this.hostWs.close(); } catch (e) {}
       this.hostWs = null;
     }
+    if (this.activeBridges) {
+      for (const [id, bridge] of this.activeBridges.entries()) {
+        try { if (bridge && typeof bridge.close === 'function') bridge.close(); } catch (_) {}
+      }
+      this.activeBridges.clear();
+    }
+    if (this.pendingBridge && typeof this.pendingBridge.close === 'function') {
+      try { this.pendingBridge.close(); } catch (_) {}
+      this.pendingBridge = null;
+    }
+    if (this.pendingProximityEngines) {
+      for (const [id, pending] of this.pendingProximityEngines.entries()) {
+        if (pending && pending.bridge && typeof pending.bridge.close === 'function') {
+          try { pending.bridge.close(); } catch (_) {}
+        }
+      }
+      this.pendingProximityEngines.clear();
+    }
     this.remotePeers.clear();
     this.meshPeerIds.clear();
     this.setStatus(NetStatus.OFFLINE);
@@ -1106,7 +1164,15 @@ export class ZeroMeshNetworkManager {
     // For departing peers: tear down proximity link
     for (const remoteId of left) {
       if (this.pendingProximityEngines && this.pendingProximityEngines.has(remoteId)) {
+        const pending = this.pendingProximityEngines.get(remoteId);
+        if (pending && pending.bridge && typeof pending.bridge.close === 'function') {
+          try { pending.bridge.close(); } catch (_) {}
+        }
         this.pendingProximityEngines.delete(remoteId);
+      }
+      if (this.activeBridges && this.activeBridges.has(remoteId)) {
+        try { this.activeBridges.get(remoteId).close(); } catch (_) {}
+        this.activeBridges.delete(remoteId);
       }
       if (this.proximityMesh && typeof this.proximityMesh.remove_peer === 'function') {
         try { this.proximityMesh.remove_peer(remoteId); } catch (e) {}
@@ -1130,6 +1196,9 @@ export class ZeroMeshNetworkManager {
         const answerSdp = await bridge.acceptOfferAndCreateAnswerSdp(payload.sdpOffer);
         const pubKeyBytes = payload.pubKey ? new Uint8Array(payload.pubKey) : new Uint8Array(32);
         this.proximityMesh.register_peer(originPeerId, pubKeyBytes, engine);
+        if (this.activeBridges) {
+          this.activeBridges.set(originPeerId, bridge);
+        }
         const dropBytes = new TextEncoder().encode(JSON.stringify({
           responder: this.peerId,
           sdpAnswer: answerSdp,
@@ -1170,6 +1239,9 @@ export class ZeroMeshNetworkManager {
         const bridge = pending && pending.bridge ? pending.bridge : null;
         if (bridge) {
           await bridge.applyAnswerSdp(payload.sdpAnswer);
+          if (this.activeBridges) {
+            this.activeBridges.set(originPeerId, bridge);
+          }
         } else {
           await engine.apply_answer(payload.sdpAnswer);
         }

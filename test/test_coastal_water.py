@@ -202,7 +202,7 @@ const particleSystem = {
 };
 const owner = { x: 300, y: 1900 };
 const dog = { x: 0, y: 0, zoomiesLevel: 0 };
-applyCoastalShallowWaterInteraction(owner, dog, particleSystem, 0.016, 0);
+applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 0.016, randomValue: 0 });
 console.log(JSON.stringify({ calls, zoomies: dog.zoomiesLevel }));
 """)
         self.assertEqual(out["calls"], [[300, 1900]])
@@ -216,7 +216,7 @@ const particleSystem = {
 };
 const owner = { x: 0, y: 0 };
 const dog = { x: 500, y: 1900, zoomiesLevel: 0 };
-applyCoastalShallowWaterInteraction(owner, dog, particleSystem, 1.0, 0);
+applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 1.0, randomValue: 0 });
 console.log(JSON.stringify({ calls, zoomies: dog.zoomiesLevel }));
 """)
         self.assertEqual(out["calls"], [[500, 1900]])
@@ -230,7 +230,7 @@ const particleSystem = {
 };
 const owner = { x: 100, y: 1900 };
 const dog = { x: 0, y: 0, zoomiesLevel: 0 };
-applyCoastalShallowWaterInteraction(owner, dog, particleSystem, 0.016, 0);
+applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 0.016, randomValue: 0 });
 console.log(JSON.stringify({ calls }));
 """)
         self.assertGreaterEqual(len(out["calls"]), 1)
@@ -247,7 +247,7 @@ const owner = { x: 0, y: 0 };
 const dog = { x: 500, y: 1900, zoomiesLevel: 0 };
 let threw = false;
 try {
-  applyCoastalShallowWaterInteraction(owner, dog, particleSystem, 1.0, 0);
+  applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 1.0, randomValue: 0 });
 } catch (e) {
   threw = true;
 }
@@ -265,7 +265,7 @@ const particleSystem = {
 };
 const owner = { x: 100, y: 1000 };
 const dog = { x: 500, y: 1000, zoomiesLevel: 0 };
-applyCoastalShallowWaterInteraction(owner, dog, particleSystem, 1.0, 0);
+applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 1.0, randomValue: 0 });
 console.log(JSON.stringify({ calls, zoomies: dog.zoomiesLevel }));
 """)
         self.assertEqual(out["calls"], [])
@@ -280,11 +280,56 @@ const particleSystem = {
 };
 const owner = { x: 0, y: 0 };
 const dog = { x: 500, y: 1900, zoomiesLevel: 0 };
-applyCoastalShallowWaterInteraction(owner, dog, particleSystem, 1.0, 0.9);
+applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 1.0, randomValue: 0.9 });
 console.log(JSON.stringify({ calls, zoomies: dog.zoomiesLevel }));
 """)
         self.assertEqual(out["calls"], [])
         self.assertEqual(out["zoomies"], 12)
+
+    def test_positional_arguments_supported(self):
+        out = self._run("""
+const calls = [];
+const particleSystem = {
+  emitWaterSplash(x, y) { calls.push([x, y]); }
+};
+const owner = { x: 0, y: 0 };
+const dog = { x: 500, y: 1900, zoomiesLevel: 0 };
+applyCoastalShallowWaterInteraction(owner, dog, particleSystem, 1.0, 0);
+console.log(JSON.stringify({ calls, zoomies: dog.zoomiesLevel }));
+""")
+        self.assertEqual(out["calls"], [[500, 1900]])
+        self.assertEqual(out["zoomies"], 12)
+
+    def test_null_and_undefined_inputs_do_not_throw(self):
+        out = self._run("""
+const results = [];
+try {
+  const r = applyCoastalShallowWaterInteraction(null);
+  results.push({ input: 'null', r });
+} catch (e) {
+  results.push({ input: 'null', threw: e.message });
+}
+try {
+  const r = applyCoastalShallowWaterInteraction(undefined);
+  results.push({ input: 'undefined', r });
+} catch (e) {
+  results.push({ input: 'undefined', threw: e.message });
+}
+try {
+  const r = applyCoastalShallowWaterInteraction(42);
+  results.push({ input: 'number', r });
+} catch (e) {
+  results.push({ input: 'number', threw: e.message });
+}
+console.log(JSON.stringify({ results }));
+""")
+        for entry in out["results"]:
+            self.assertNotIn("threw", entry, f"threw for input {entry.get('input')}")
+            self.assertEqual(entry["r"], {
+                "emitted": False,
+                "usedFallback": False,
+                "zoomiesIncremented": False,
+            })
 
 
 class TestCoastalWaterStaticContract(unittest.TestCase):

@@ -108,7 +108,9 @@ export class SniffParticle extends Particle {
 
 export class ParticleSystem {
   constructor() {
-    this.particles = [];
+    if (!Array.isArray(this.particles)) {
+      this.particles = [];
+    }
   }
 
   // Dirt & grass specks when running or jumping
@@ -198,8 +200,16 @@ export class ParticleSystem {
     }
 
     const num = (value, fallback) => {
-      const n = Number(value);
-      return Number.isFinite(n) ? n : fallback;
+      const t = typeof value;
+      if (t !== 'number' && t !== 'string' && t !== 'boolean') {
+        return fallback;
+      }
+      try {
+        const n = Number(value);
+        return Number.isFinite(n) ? n : fallback;
+      } catch (_err) {
+        return fallback;
+      }
     };
 
     const x = num(config.x, 0);
@@ -228,13 +238,25 @@ export class ParticleSystem {
 
   // Water splash droplets (e.g. puddle / pond impacts)
   emitWaterSplash(x, y, count = 6) {
-    const px = Number(x);
-    const py = Number(y);
+    const safeNumber = (value) => {
+      const t = typeof value;
+      if (t !== 'number' && t !== 'string' && t !== 'boolean') {
+        return NaN;
+      }
+      try {
+        return Number(value);
+      } catch (_err) {
+        return NaN;
+      }
+    };
+
+    const px = safeNumber(x);
+    const py = safeNumber(y);
     if (!Number.isFinite(px) || !Number.isFinite(py)) {
       return 0;
     }
 
-    let n = Math.floor(Number(count));
+    let n = Math.floor(safeNumber(count));
     if (!Number.isFinite(n)) {
       n = 6;
     }

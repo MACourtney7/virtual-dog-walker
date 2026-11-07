@@ -7,32 +7,66 @@ const ZOOMIES_RATE = 12;
 const ZOOMIES_MAX = 100;
 
 function isShallow(entity) {
-  return Boolean(entity) && Number.isFinite(entity.y) && entity.y > SHALLOW_WATER_Y;
+  return Boolean(entity) && Number.isFinite(entity?.y) && entity.y > SHALLOW_WATER_Y;
+}
+
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
 /**
  * Apply coastal shallow-water splash + zoomies effects.
  *
- * @param {Object} [options]
- * @param {Object} [options.particleSystem]
- * @param {Object} [options.owner]
- * @param {Object} [options.dog]
- * @param {number} [options.dt]
- * @param {number} [options.randomValue]
+ * Supports both an options object and positional arguments:
+ *   applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt, randomValue })
+ *   applyCoastalShallowWaterInteraction(owner, dog, particleSystem, dt, randomValue)
+ *
+ * @param {Object|Object} [optionsOrOwner]
+ * @param {Object} [dogArg]
+ * @param {Object} [particleSystemArg]
+ * @param {number} [dtArg]
+ * @param {number} [randomValueArg]
  * @returns {{ emitted: boolean, usedFallback: boolean, zoomiesIncremented: boolean }}
  */
-export function applyCoastalShallowWaterInteraction({
-  particleSystem,
-  owner,
-  dog,
-  dt,
-  randomValue = Math.random(),
-} = {}) {
+export function applyCoastalShallowWaterInteraction(
+  optionsOrOwner,
+  dogArg,
+  particleSystemArg,
+  dtArg,
+  randomValueArg,
+) {
   const result = {
     emitted: false,
     usedFallback: false,
     zoomiesIncremented: false,
   };
+
+  // Resolve arguments: options object vs positional.
+  let particleSystem;
+  let owner;
+  let dog;
+  let dt;
+  let randomValue;
+
+  if (isPlainObject(optionsOrOwner) && (
+    'owner' in optionsOrOwner ||
+    'dog' in optionsOrOwner ||
+    'particleSystem' in optionsOrOwner ||
+    'dt' in optionsOrOwner ||
+    'randomValue' in optionsOrOwner
+  )) {
+    ({ particleSystem, owner, dog, dt, randomValue } = optionsOrOwner);
+  } else {
+    owner = optionsOrOwner;
+    dog = dogArg;
+    particleSystem = particleSystemArg;
+    dt = dtArg;
+    randomValue = randomValueArg;
+  }
+
+  if (randomValue === undefined) {
+    randomValue = Math.random();
+  }
 
   const ownerShallow = isShallow(owner);
   const dogShallow = isShallow(dog);
@@ -75,7 +109,7 @@ export function applyCoastalShallowWaterInteraction({
   }
 
   // Independently update zoomies when dog is shallow.
-  if (dogShallow && typeof dog.zoomiesLevel === 'number' && Number.isFinite(dog.zoomiesLevel)) {
+  if (dogShallow && typeof dog?.zoomiesLevel === 'number' && Number.isFinite(dog.zoomiesLevel)) {
     const safeDt = Number.isFinite(dt) ? Math.max(0, dt) : 0;
     dog.zoomiesLevel = Math.min(ZOOMIES_MAX, dog.zoomiesLevel + ZOOMIES_RATE * safeDt);
     result.zoomiesIncremented = true;

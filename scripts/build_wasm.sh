@@ -8,6 +8,11 @@ OUT_DIR_MESH="${PROJECT_ROOT}/src/wasm"
 OUT_DIR_CORE="${PROJECT_ROOT}/src/wasm_core"
 
 echo "=== Building zero_mesh WebAssembly Package ==="
+if [[ ! -f "${ZERO_PROTOCOL_DIR}/crates/zero_mesh/Cargo.toml" ]]; then
+    echo "Error: zero_protocol crate not found at ${ZERO_PROTOCOL_DIR}/crates/zero_mesh/Cargo.toml" >&2
+    echo "Expected zero_protocol to be checked out as a sibling of virtual_dog_walker." >&2
+    exit 1
+fi
 echo "Building crate from ${ZERO_PROTOCOL_DIR}/crates/zero_mesh..."
 cargo build --manifest-path "${ZERO_PROTOCOL_DIR}/crates/zero_mesh/Cargo.toml" --target wasm32-unknown-unknown --release
 
@@ -23,6 +28,10 @@ if command -v wasm-bindgen >/dev/null 2>&1; then
     wasm-bindgen --target web --out-dir "${OUT_DIR_MESH}" "${WASM_TARGET_MESH}"
 else
     echo "Error: wasm-bindgen CLI not found in PATH." >&2
+    exit 1
+fi
+if [[ ! -f "${OUT_DIR_MESH}/zero_mesh.js" || ! -f "${OUT_DIR_MESH}/zero_mesh_bg.wasm" ]]; then
+    echo "Error: wasm-bindgen did not produce expected zero_mesh outputs in ${OUT_DIR_MESH}" >&2
     exit 1
 fi
 echo "✅ zero_mesh Wasm bundle built into ${OUT_DIR_MESH}"
@@ -43,6 +52,10 @@ if command -v wasm-bindgen >/dev/null 2>&1; then
     wasm-bindgen --target web --out-dir "${OUT_DIR_CORE}" "${WASM_TARGET_CORE}"
 else
     echo "Error: wasm-bindgen CLI not found in PATH." >&2
+    exit 1
+fi
+if [[ ! -f "${OUT_DIR_CORE}/dog_walker_core.js" || ! -f "${OUT_DIR_CORE}/dog_walker_core_bg.wasm" ]]; then
+    echo "Error: wasm-bindgen did not produce expected dog_walker_core outputs in ${OUT_DIR_CORE}" >&2
     exit 1
 fi
 echo "✅ dog_walker_core Wasm bundle built into ${OUT_DIR_CORE}"

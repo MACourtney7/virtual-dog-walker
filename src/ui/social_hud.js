@@ -131,6 +131,16 @@ export class SocialHUD {
             <div class="color-swatch" data-palette="pantsColor" data-color="#1f2937" style="background: #1f2937;" title="Dark Slate"></div>
           </div>
         </div>
+
+        <div class="cust-form-group">
+          <label class="cust-label">Accessory</label>
+          <div class="cust-btn-group" id="accessory-options">
+            <button class="accessory-btn active" data-accessory="NONE">None</button>
+            <button class="accessory-btn" data-accessory="BACKPACK">Backpack</button>
+            <button class="accessory-btn" data-accessory="SCARF">Scarf</button>
+            <button class="accessory-btn" data-accessory="HOODIE">Hoodie</button>
+          </div>
+        </div>
       </div>
 
       <!-- Tab 2: Dog Companion -->
@@ -269,6 +279,7 @@ export class SocialHUD {
       if (saved.pantsColor) {
         this.owner.pantsColor = saved.pantsColor;
       }
+      this.owner.accessory = saved.accessory || 'NONE';
 
       // 2. Dog companion attributes (with fallback defaults)
       if (saved.coatKey && this.coatPresets && this.coatPresets[saved.coatKey]) {
@@ -310,6 +321,7 @@ export class SocialHUD {
           hairStyle: this.owner.hairStyle,
           hairColor: this.owner.hairColor,
           pantsColor: this.owner.pantsColor,
+          accessory: this.owner.accessory || 'NONE',
           skinTone: this.owner.skinTone,
           collarColor: this.dog.collarColor,
           personality
@@ -351,6 +363,16 @@ export class SocialHUD {
     const styleBtns = document.querySelectorAll('.cust-style-btn');
     styleBtns.forEach(btn => {
       if (btn.getAttribute('data-style') === (this.owner.hairStyle || 'SHORT')) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+
+    // Update accessory buttons
+    const accessoryBtns = document.querySelectorAll('.accessory-btn');
+    accessoryBtns.forEach(btn => {
+      if (btn.getAttribute('data-accessory') === (this.owner.accessory || 'NONE')) {
         btn.classList.add('active');
       } else {
         btn.classList.remove('active');
@@ -463,6 +485,16 @@ export class SocialHUD {
       });
     });
 
+    // Accessory selector buttons
+    const accessoryBtns = document.querySelectorAll('.accessory-btn');
+    accessoryBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        accessoryBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.owner.accessory = btn.getAttribute('data-accessory');
+      });
+    });
+
     // Palette swatches selection
     const swatches = document.querySelectorAll('.color-swatch');
     swatches.forEach(swatch => {
@@ -553,6 +585,7 @@ export class SocialHUD {
               hairColor: this.owner.hairColor,
               jacketColor: this.owner.jacketColor,
               pantsColor: this.owner.pantsColor,
+              accessory: this.owner.accessory || 'NONE',
               coatKey: coatSelect ? coatSelect.value : coatKey,
               collarColor: this.dog.collarColor,
               personality: personality
@@ -568,6 +601,7 @@ export class SocialHUD {
             hairStyle: this.owner.hairStyle,
             hairColor: this.owner.hairColor,
             pantsColor: this.owner.pantsColor,
+            accessory: this.owner.accessory || 'NONE',
             skinTone: this.owner.skinTone,
             collarColor: this.dog.collarColor,
             personality: personality

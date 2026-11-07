@@ -577,9 +577,9 @@ export class ProximityChat {
         }
       }
       if (peerMeta && Object.keys(peerMeta).length > 0) {
-        this.widget.setPeers(this.activeCluster, this.activeCluster.length, peerMeta);
+        this.widget.setPeers(activePeers, activePeers.length, peerMeta);
       } else {
-        this.widget.setPeers(this.activeCluster, this.activeCluster.length);
+        this.widget.setPeers(activePeers, activePeers.length);
       }
     }
     if (!this.pillsContainer || typeof document === 'undefined') return;

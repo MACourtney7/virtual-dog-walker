@@ -172,6 +172,7 @@ export class ZeroMeshNetworkManager {
           hairStyle: meta.hairStyle,
           hairColor: meta.hairColor,
           pantsColor: meta.pantsColor,
+          accessory: meta.accessory || 'NONE',
           skinTone: meta.skinTone,
           collarColor: meta.collarColor,
           personality: meta.personality || null
@@ -185,6 +186,7 @@ export class ZeroMeshNetworkManager {
       if (meta.hairStyle) peerData.meta.hairStyle = meta.hairStyle;
       if (meta.hairColor) peerData.meta.hairColor = meta.hairColor;
       if (meta.pantsColor) peerData.meta.pantsColor = meta.pantsColor;
+      if (meta.accessory !== undefined) peerData.meta.accessory = meta.accessory || 'NONE';
       if (meta.skinTone) peerData.meta.skinTone = meta.skinTone;
       if (meta.collarColor) peerData.meta.collarColor = meta.collarColor;
       if (meta.personality) peerData.meta.personality = meta.personality;

@@ -687,7 +687,10 @@ class TestZeroMeshIntegration(unittest.TestCase):
         self.assertIn("this.widget.appendMessage", prox_code)
         self.assertIn("this.widget.dissolveMessageById(messageUuid)", prox_code)
         self.assertIn("this.widget.burnAllMessages()", prox_code)
-        self.assertIn("this.widget.setPeers(this.activeCluster, this.activeCluster.length)", prox_code)
+        self.assertTrue(
+            "this.widget.setPeers(activePeers, activePeers.length" in prox_code
+            or "this.widget.setPeers(this.activeCluster, this.activeCluster.length)" in prox_code
+        )
 
         # Verify public API preserved
         for method in ("receiveMessage", "sendMessage", "burnMessage", "clearMessages", "getMessages", "getActivePeers", "update", "destroy"):

@@ -180,18 +180,27 @@ export class ZeroMeshNetworkManager {
   }
 
   _sleep(ms) {
-    return new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        this._lifecycleTimers.delete(timer);
-        resolve();
+    return new Promise((resolve, reject) => {
+      const entry = { timer: null, resolve, reject, cancelled: false };
+      entry.timer = setTimeout(() => {
+        this._lifecycleTimers.delete(entry);
+        if (!entry.cancelled) resolve();
       }, ms);
-      this._lifecycleTimers.add(timer);
+      this._lifecycleTimers.add(entry);
     });
   }
 
   _clearLifecycleTimers() {
-    for (const timer of this._lifecycleTimers) {
-      try { clearTimeout(timer); } catch (_) {}
+    for (const entry of this._lifecycleTimers) {
+      try {
+        if (entry && entry.timer !== null && entry.timer !== undefined) {
+          clearTimeout(entry.timer);
+        }
+        if (entry && typeof entry.resolve === 'function') {
+          entry.cancelled = true;
+          entry.resolve();
+        }
+      } catch (_) {}
     }
     this._lifecycleTimers.clear();
   }
@@ -284,6 +293,43 @@ export class ZeroMeshNetworkManager {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
   }
 
+  /**
+   * Normalize a secret (hex string or byte array) to a lowercase hex string.
+   * Returns null when the input is empty/invalid.
+   */
+  _normalizeSecretHex(secret) {
+    if (secret === null || secret === undefined) return null;
+    if (typeof secret === 'string') {
+      const trimmed = secret.trim();
+      if (!trimmed) return null;
+      // Already hex? Validate and normalize casing.
+      if (/^[0-9a-fA-F]+$/.test(trimmed) && trimmed.length % 2 === 0) {
+        return trimmed.toLowerCase();
+      }
+      // Non-hex string: encode its UTF-8 bytes as hex.
+      try {
+        const enc = new TextEncoder().encode(trimmed);
+        return this.bytesToHex(enc);
+      } catch (_) {
+        return null;
+      }
+    }
+    if (secret instanceof Uint8Array) {
+      return this.bytesToHex(secret);
+    }
+    if (Array.isArray(secret)) {
+      return this.bytesToHex(Uint8Array.from(secret));
+    }
+    if (typeof secret === 'object' && typeof secret.length === 'number') {
+      try {
+        return this.bytesToHex(Uint8Array.from(secret));
+      } catch (_) {
+        return null;
+      }
+    }
+    return null;
+  }
+
   async connect(roomId) {
     if (roomId) this.roomId = roomId;
     this.setStatus(NetStatus.CONNECTING);
@@ -311,7 +357,11 @@ export class ZeroMeshNetworkManager {
     for (let i = 0; i <= backoff.length; i++) {
       let body = null;
       try {
-        const resp = await fetch(`${this.workerOrigin}/match/${encodeURIComponent(doId)}`);
+        const resp = await fetch(`${this.workerOrigin}/match/${encodeURIComponent(doId)}`, {
+          headers: {
+            'X-Peer-Id': this.peerId
+          }
+        });
         if (!resp.ok) throw new Error(`match ${resp.status}`);
         body = await resp.json();
       } catch (err) {
@@ -350,10 +400,17 @@ export class ZeroMeshNetworkManager {
 
   _constructMesh(assignedPeerId, roomSecret) {
     this.peerId = assignedPeerId;
-    if (roomSecret) {
-      this.hostSecret = roomSecret;
+    // Normalize hostSecret to a lowercase hex string so downstream consumers
+    // (WebSocket query params, HMAC, Authorization headers) never double-encode.
+    const normalizedRoomSecret = this._normalizeSecretHex(roomSecret);
+    if (normalizedRoomSecret) {
+      this.hostSecret = normalizedRoomSecret;
     } else if (!this.hostSecret) {
-      this.hostSecret = this.generateSecret();
+      this.hostSecret = this.bytesToHex(this.generateSecret());
+    } else {
+      // Ensure any pre-existing hostSecret is also normalized.
+      const existing = this._normalizeSecretHex(this.hostSecret);
+      if (existing) this.hostSecret = existing;
     }
 
     const privKey = this.generateSecret();
@@ -383,7 +440,8 @@ export class ZeroMeshNetworkManager {
 
       // Phase 2: construct mesh with final peerId + room_secret.
       this._constructMesh(negotiation.assignedPeerId, roomSecret);
-      const hostSecretHex = this.bytesToHex(this.hostSecret);
+      // hostSecret is normalized to a hex string inside _constructMesh.
+      const hostSecretHex = this.hostSecret;
 
       this.proximityMesh.set_on_message((senderPeerId, plaintext) => {
         const cleanSenderId = String(senderPeerId).replace(/^prox-/, '');
@@ -418,13 +476,23 @@ export class ZeroMeshNetworkManager {
 
       this._wireMeshCallbacks(this.gameMesh);
 
-      if (role === 'joiner' && negotiation.invite) {
-        // Joiner flow: Accept offer, generate SDP answer, seal drop payload, and POST /drop
-        const invite = negotiation.invite;
+      if (role === 'joiner') {
+        // Joiner flow: Accept offer, generate SDP answer, seal drop payload, and POST /drop.
+        // If /match did not return an inline invite, fetch one from the invite endpoint.
+        let invite = negotiation.invite;
+        if (!invite) {
+          invite = await this._fetchInviteForJoiner();
+        }
+        if (!invite) {
+          throw new Error('[ZeroMesh] Joiner role but no invite available');
+        }
         if (invite.assigned_peer_id && invite.assigned_peer_id !== this.peerId) {
-          // Post-construction identity change: keep mesh and this.peerId in lockstep.
+          // Post-construction identity change: keep both meshes and this.peerId in lockstep.
           if (typeof this.gameMesh.set_local_peer_id === 'function') {
             this.gameMesh.set_local_peer_id(invite.assigned_peer_id);
+          }
+          if (this.proximityMesh && typeof this.proximityMesh.set_local_peer_id === 'function') {
+            try { this.proximityMesh.set_local_peer_id(`prox-${invite.assigned_peer_id}`); } catch (_) {}
           }
           this.peerId = invite.assigned_peer_id;
         }
@@ -475,19 +543,47 @@ export class ZeroMeshNetworkManager {
         this.setStatus(NetStatus.CONNECTED_PEER);
         this.isHost = false;
         this._setupHostSocket(hostSecretHex);
-      } else {
+      } else if (role === 'host' || role === 'empty') {
         // Seed host flow (role === 'host' or 'empty' after retry budget exhausted)
         this._logPhase('host', { peerId: this.peerId });
         this.setStatus(NetStatus.HOSTING);
         this.isHost = true;
         this._setupHostSocket(hostSecretHex);
         this.initNpcSpawner();
+      } else {
+        throw new Error(`[ZeroMesh] Unhandled negotiation role: ${role}`);
       }
     } catch (err) {
       console.error('[ZeroMesh] Live connection failed, falling back to simulated mesh:', err);
       this._logPhase('fallback', { error: String(err && err.message || err) });
       await this._connectSimulatedMesh();
     }
+  }
+
+  async _fetchInviteForJoiner() {
+    const doId = this._doId();
+    const backoff = [100, 200, 400, 800, 1600];
+    const deadline = Date.now() + 8000;
+    for (let i = 0; i <= backoff.length; i++) {
+      try {
+        const resp = await fetch(`${this.workerOrigin}/invite/${encodeURIComponent(doId)}`, {
+          headers: { 'X-Peer-Id': this.peerId }
+        });
+        if (resp.ok) {
+          const body = await resp.json();
+          if (body && body.invite) return body.invite;
+          if (body && body.invite_uuid) return body;
+        }
+      } catch (err) {
+        if (this._debug) console.warn('[ZeroMesh] /invite error:', err);
+      }
+      if (Date.now() >= deadline) break;
+      if (i < backoff.length) {
+        this._matchRetries++;
+        await this._sleep(backoff[i]);
+      }
+    }
+    return null;
   }
 
   _attachBrowserWebRtc(wasmEngine, isOfferer, iceServers) {

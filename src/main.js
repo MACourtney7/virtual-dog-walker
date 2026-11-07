@@ -796,12 +796,17 @@ export class CliftonDownGame {
       this.owner.triggerPickup(0.8);
     }
     const pile = this.activePoopPileNearPlayer;
-    if (this.field && typeof this.field.removePoopPile === 'function') {
+    if (this.field && typeof this.field.pickupPoop === 'function') {
+      this.field.pickupPoop(pile.x, pile.y);
+    } else if (this.field && typeof this.field.removePoopPile === 'function') {
       this.field.removePoopPile(pile.id);
     }
     this.hasPoopBag = true;
     this.activePoopPileNearPlayer = null;
-    this.hud.showToast('Collected in poop bag 🟤 Find a dog bin!');
+    this.hud.showToast('💩 Cleaned up waste! Dispose in bin [E]');
+    if (this.hud && typeof this.hud.updateInventory === 'function') {
+      this.hud.updateInventory(true);
+    }
 
     if (this.field && typeof this.field.getNearestBin === 'function') {
       const nearestBin = this.field.getNearestBin(this.owner.x, this.owner.y);

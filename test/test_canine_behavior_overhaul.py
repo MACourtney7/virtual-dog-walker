@@ -198,6 +198,22 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         self.assertIn("PICKUP_RADIUS = 38", self.field_src)
         self.assertIn("Math.hypot(p.x - target.x, p.y - target.y) > 6", self.field_src)
 
+    def test_main_pickup_poop_wires_field_pickup_poop(self):
+        self.assertIn("this.field.pickupPoop(pile.x, pile.y)", self.main_src)
+
+    def test_zoomies_timer_decrements_before_exit_check(self):
+        # The decrement must appear before the exit check so velocity is zeroed
+        # on the exact frame the timer expires.
+        idx_decrement = self.dog_src.find("this.zoomiesTimer -= dt;")
+        idx_exit = self.dog_src.find("if (this.zoomiesTimer <= 0)")
+        self.assertNotEqual(idx_decrement, -1)
+        self.assertNotEqual(idx_exit, -1)
+        self.assertLess(idx_decrement, idx_exit)
+        # Velocity zeroing must live inside the exit branch
+        window = self.dog_src[idx_exit:idx_exit + 300]
+        self.assertIn("this.vx = 0;", window)
+        self.assertIn("this.vy = 0;", window)
+
     # HIGH-1: zoomies must not double-apply movement integration
     def test_zoomies_movement_single_integration(self):
         self.assertIn("if (this.state !== DogState.ZOOMIES)", self.dog_src)

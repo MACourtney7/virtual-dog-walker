@@ -1315,6 +1315,7 @@ export class CompanionDog {
       this.state = DogState.FOLLOWING;
       return;
     }
+    this.zoomiesTimer -= dt;
     if (this.zoomiesTimer <= 0) {
       this.vx = 0;
       this.vy = 0;
@@ -1324,7 +1325,6 @@ export class CompanionDog {
       this.transitionTo((this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING);
       return;
     }
-    this.zoomiesTimer -= dt;
     this.zoomiesPhase += dt * this.zoomiesSpeed;
 
     const t = this.zoomiesPhase;

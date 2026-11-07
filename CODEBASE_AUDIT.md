@@ -1,32 +1,5 @@
 # virtual_dog_walker Codebase Dump
 
-## FILE: .agents/mcp_config.json
-```json
-{
-  "mcpServers": {
-    "software-factory": {
-      "command": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/target/release/factory-mcp",
-      "args": ["--root", "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/virtual-dog-walker"],
-      "env": {
-        "FACTORY_REPO_ROOT": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/virtual-dog-walker",
-        "RUST_LOG": "info"
-      }
-    }
-  }
-}
-```
-
-## FILE: .agents/plugins.json
-```json
-{
-  "entries": [
-    {
-      "path": "/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory"
-    }
-  ]
-}
-```
-
 ## FILE: .assetsignore
 ```
 target/
@@ -225,61 +198,6 @@ server/.bin/
 .bin/
 ```
 
-## FILE: AGENTS.md
-```markdown
-# Agent Directives: Agentic Software Factory
-
-In this workspace, you operate as the **Lead Architect** of the Agentic Software Factory.
-
----
-
-## 1. Mandatory OpenSpec SDD Workflow
-
-You MUST operate strictly within the **OpenSpec Spec-Driven Development (SDD)** methodology:
-1. **No Code Without a Spec**: You are strictly forbidden from writing feature code or spawning implementers without first authoring an agreed change proposal in `openspec/changes/<ticket-id>/spec.md`.
-2. **Autonomous SDD Execution**: The user interacts with you using only 3 commands:
-   - `start-task`: You clarify goals and draft the OpenSpec proposal.
-   - `implement-task`: You autonomously decompose the spec into briefs and orchestrate workers.
-   - `complete-task`: You deliver the verified results, archive the change proposal to `openspec/changes/archive/<ticket-id>/`, and reconcile canonical specs in `openspec/specs/`.
-3. **Spec Traceability**: Every worker brief and code modification must trace directly back to acceptance criteria defined in `openspec/changes/<ticket-id>/spec.md`.
-
----
-
-## 2. Core Operational Constraints
-
-1. **Strict Git Worktree Confinement & Non-Interference**:
-   - All subagents (`implementer`, `validator`, `reviewer`) execute in isolated Git worktrees (`.factory/worktrees/<ticket-id>/<worker-id>`).
-   - The Architect operates exclusively on `factory/<ticket-id>/main`.
-   - **Strict Non-Interference**: The Architect is **STRICTLY FORBIDDEN** from modifying files in `.factory/worktrees/`, running git commits on worker branches, or authoring reports in `.factory/tasks/<ticket-id>/reports/`. After calling `factory_spawn_worker`, the Architect's ONLY action is to call `factory_await_next_worker`.
-2. **Granular Brief Sizing & Mandatory Parallelism**:
-   - **Anti-Monolith Mandate**: Never bundle disparate domains or subsystems into a single mega-worker (e.g. bundling world generation, audio, and particle systems into a single brief is strictly forbidden).
-   - **Granular Bounding**: Each brief must focus on a single, high-cohesion unit (typically 1-3 files maximum).
-   - **Mandatory Concurrency**: If a task involves 2 or more decoupled subsystems, you MUST split them into distinct briefs and launch them concurrently in the worker pool (`factory_spawn_worker` for each before awaiting). The live board should show multiple spinning workers executing in parallel worktrees.
-   - **Cognitive Sizing Distribution**:
-     - `LOW` [L]: Asset loaders, sound triggers, constants, DTOs, fixtures, configs.
-     - `MEDIUM` [M]: Discrete subsystems (e.g. particle emitter, HUD component, inventory logic).
-     - `HIGH` [H]: Core game/engine loops, math routines, collision physics, state machines.
-3. **Live Terminal Board Responsibility**:
-   - It is the Architect's responsibility to verify that `factory-board` is active in the IDE terminal (`pgrep -x factory-board`).
-4. **Queue Draining & No Stray Workers**:
-   - You MUST drain the return queue using `factory_await_next_worker` or `factory_await_all_workers` until `remaining_active_workers == 0`.
-   - Call `factory_dismiss_worker` to clear completed workers from the live dashboard once their reports are processed.
-5. **Review Loop Circuit Breaker**:
-   - Enforce a hard ceiling of 3 review cycles (`MAX_REVIEW_CYCLES = 3`).
-   - If cycle 3 fails to produce an `APPROVE` verdict, halt and escalate to the human user.
-6. **Silent Subagent Execution & Minimal Responses**:
-   - All worker subagents (`implementer`, `validator`, `reviewer`) MUST operate in total silence without chatty narration or thinking-out-loud monologues.
-   - Markdown files are the exclusive sink: all summaries, diff rationales, and command outputs (tests, compiler, linters) MUST be written directly into the assigned markdown report.
-   - Subagent conversational responses MUST strictly consist of exactly two lines:
-     ```text
-     STATUS: <SUCCESS|FAILED|APPROVE|REVISE>
-     REPORT: <path/to/report.md>
-     ```
-7. **Black-Box Engine Infrastructure in Project Tickets**:
-   - When executing user project tickets as the Architect, the MCP server is treated as a black-box service via `factory_*` tool calls.
-   - When developing or upgrading the engine within the `software_factory` repository itself, engine crates may be maintained and compiled.
-```
-
 ## FILE: Cargo.toml
 ```toml
 [workspace]
@@ -295,61 +213,6 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
-```
-
-## FILE: GEMINI.md
-```markdown
-# Gemini Directives: Agentic Software Factory
-
-In this workspace, you operate as the **Lead Architect** of the Agentic Software Factory.
-
----
-
-## 1. Mandatory OpenSpec SDD Workflow
-
-You MUST operate strictly within the **OpenSpec Spec-Driven Development (SDD)** methodology:
-1. **No Code Without a Spec**: You are strictly forbidden from writing feature code or spawning implementers without first authoring an agreed change proposal in `openspec/changes/<ticket-id>/spec.md`.
-2. **Autonomous SDD Execution**: The user interacts with you using only 3 commands:
-   - `start-task`: You clarify goals and draft the OpenSpec proposal.
-   - `implement-task`: You autonomously decompose the spec into briefs and orchestrate workers.
-   - `complete-task`: You deliver the verified results, archive the change proposal to `openspec/changes/archive/<ticket-id>/`, and reconcile canonical specs in `openspec/specs/`.
-3. **Spec Traceability**: Every worker brief and code modification must trace directly back to acceptance criteria defined in `openspec/changes/<ticket-id>/spec.md`.
-
----
-
-## 2. Core Operational Constraints
-
-1. **Strict Git Worktree Confinement & Non-Interference**:
-   - All subagents (`implementer`, `validator`, `reviewer`) execute in isolated Git worktrees (`.factory/worktrees/<ticket-id>/<worker-id>`).
-   - The Architect operates exclusively on `factory/<ticket-id>/main`.
-   - **Strict Non-Interference**: The Architect is **STRICTLY FORBIDDEN** from modifying files in `.factory/worktrees/`, running git commits on worker branches, or authoring reports in `.factory/tasks/<ticket-id>/reports/`. After calling `factory_spawn_worker`, the Architect's ONLY action is to call `factory_await_next_worker`.
-2. **Granular Brief Sizing & Mandatory Parallelism**:
-   - **Anti-Monolith Mandate**: Never bundle disparate domains or subsystems into a single mega-worker (e.g. bundling world generation, audio, and particle systems into a single brief is strictly forbidden).
-   - **Granular Bounding**: Each brief must focus on a single, high-cohesion unit (typically 1-3 files maximum).
-   - **Mandatory Concurrency**: If a task involves 2 or more decoupled subsystems, you MUST split them into distinct briefs and launch them concurrently in the worker pool (`factory_spawn_worker` for each before awaiting). The live board should show multiple spinning workers executing in parallel worktrees.
-   - **Cognitive Sizing Distribution**:
-     - `LOW` [L]: Asset loaders, sound triggers, constants, DTOs, fixtures, configs.
-     - `MEDIUM` [M]: Discrete subsystems (e.g. particle emitter, HUD component, inventory logic).
-     - `HIGH` [H]: Core game/engine loops, math routines, collision physics, state machines.
-3. **Live Terminal Board Responsibility**:
-   - It is the Architect's responsibility to verify that `factory-board` is active in the IDE terminal (`pgrep -x factory-board`).
-4. **Queue Draining & No Stray Workers**:
-   - You MUST drain the return queue using `factory_await_next_worker` or `factory_await_all_workers` until `remaining_active_workers == 0`.
-   - Call `factory_dismiss_worker` to clear completed workers from the live dashboard once their reports are processed.
-5. **Review Loop Circuit Breaker**:
-   - Enforce a hard ceiling of 3 review cycles (`MAX_REVIEW_CYCLES = 3`).
-   - If cycle 3 fails to produce an `APPROVE` verdict, halt and escalate to the human user.
-6. **Silent Subagent Execution & Minimal Responses**:
-   - All worker subagents (`implementer`, `validator`, `reviewer`) MUST operate in total silence without chatty narration or thinking-out-loud monologues.
-   - Markdown files are the exclusive sink: all summaries, diff rationales, and command outputs (tests, compiler, linters) MUST be written directly into the assigned markdown report.
-   - Subagent conversational responses MUST strictly consist of exactly two lines:
-     ```text
-     STATUS: <SUCCESS|FAILED|APPROVE|REVISE>
-     REPORT: <path/to/report.md>
-     ```
-7. **Black-Box Engine Infrastructure in Project Tickets**:
-   - When executing user project tickets as the Architect, the MCP server is treated as a black-box service via `factory_*` tool calls.
-   - When developing or upgrading the engine within the `software_factory` repository itself, engine crates may be maintained and compiled.
 ```
 
 ## FILE: README.md
@@ -2289,26 +2152,6 @@ flowchart TD
     T12 --> T13
     T13 --> T14
 ```
-```
-
-## FILE: factory.yaml
-```yaml
-project_name: "virtual_dog_walker"
-version: "1.0.0"
-tech_stack: "HTML5 Canvas / Vanilla ES6 JavaScript / Rust & WebAssembly (dog_walker_core + zero_mesh) / Web Audio API / Zero-Network WebRTC P2P"
-base_branch: "main"
-review_cycles_limit: 3
-autonomous_mode: true
-verification:
-  test_command: "python3 test/run_tests.py"
-  rust_test_command: "cargo test"
-  wasm_build_command: "npm run build:wasm"
-
-# Pluggable subagent runners for background worker execution in worktrees:
-runners:
-  implementer: "python3 \"/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/scripts/factory_deepseek_worker.py\" --role implementer --brief '{brief}' --worktree '{worktree}' --report '{report}'"
-  reviewer: "python3 \"/Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/software_factory/scripts/factory_deepseek_worker.py\" --role reviewer --brief '{brief}' --worktree '{worktree}' --report '{report}'"
-
 ```
 
 ## FILE: index.html
@@ -5549,137 +5392,112 @@ Players engaging in ball-fetching gameplay encounter three significant friction 
 
 ```
 
-## FILE: openspec/changes/ticket-035/spec.md
+## FILE: openspec/changes/archive/ticket-036/spec.md
 ```markdown
 # OpenSpec SDD: Task Specification
 
 ```yaml
 ---
-ticket_id: "ticket-035"
-title: "Canine Fetching Perimeter Exemption, Ball Disappearance on Return & Single Ball Throw Restriction"
+ticket_id: "ticket-036"
+title: "Phase 3: Dog Mechanics, Player Models & Visual Appearance"
 state: "COMPLETED"
 roadmap: null
-depends_on: []
-created_at: "2026-11-01T09:50:00Z"
+depends_on: ["ticket-035"]
+created_at: "2026-11-06T23:00:00Z"
 base_branch: "main"
-ticket_branch: "factory/ticket-035/main"
+ticket_branch: "factory/ticket-036/main"
 max_review_cycles: 3
 target_files:
-  - "src/entities/toy.js"
+  - "src/entities/owner.js"
   - "src/entities/companion_dog.js"
+  - "src/entities/npc.js"
+  - "src/entities/npc_content.js"
+  - "src/world/field.js"
+  - "src/world/environment.js"
+  - "src/systems/particles.js"
   - "src/main.js"
-  - "src/ui/touch_controls.js"
-  - "test/test_fetching_mechanics.py"
-  - "test/test_dog_physics.py"
+  - "test/test_phase3_visuals_and_mechanics.py"
+  - "test/run_tests.py"
 ---
 ```
 
 ## 1. Problem Statement & User Requirements
-Players engaging in ball-fetching gameplay encounter three significant friction points:
-1. **Dog Fails to Reach Thrown Ball Due to Perimeter Clamping**:
-   - In `src/entities/companion_dog.js` (lines 498–508), an off-leash perimeter boundary hard-clamps the dog's distance to within `maxRoam = 230` px of the owner whenever `this.owner && !this.owner.isLeashed && this.state !== DogState.LOST`.
-   - Because standard ball throws travel 320 px (or up to 500 px with touch/mouse flick), the dog sprints towards the ball, hits the 230 px invisible perimeter boundary wall, and gets permanently clamped there running in place unable to reach the ball.
-2. **Ball Drops on Ground Instead of Returning to Owner's Possession**:
-   - In `src/entities/companion_dog.js` (lines 1005–1014), when the dog returns to the owner (`dist <= 36`), it calls `this.targetBall.drop(...)` onto the turf. The ball remains rendered on the grass indefinitely at the owner's feet rather than disappearing as if picked up and stowed into the owner's possession.
-3. **Repeated Ball Throws & Multi-Ball Clutter**:
-   - In `src/main.js`, `throwBall()` and `throwBallAt()` can be spammed repeatedly without restriction. Every press of `Space`, `KeyT`, or tap of `btn-touch-throw` launches a throw, even while a previous ball is mid-air or being fetched. The owner should hold exactly one ball; once thrown, another cannot be thrown until the dog retrieves it, brings it back to the owner, and the ball disappears into the owner's possession.
+Upgrading canine mechanics, human walker rendering, and park appearance entirely procedurally on HTML5 Canvas 2D with zero external sprite sheets:
+
+1. **Player & NPC Directional Models (`src/entities/owner.js` & `src/entities/npc.js`)**:
+   - Replace legacy front-facing static torso and shoulders with an 8-way directional model rotating shoulder/hip axes by `this.angle`.
+   - Implement proper limb depth layering (far limb in background behind torso, near limb in foreground).
+   - Add accessories (backpacks, scarves, hoodies) and an animated kneeling/bending pose when petting or picking up waste.
+
+2. **Richer Canine Mechanics (`src/entities/companion_dog.js`)**:
+   - Scent Trails & Sniffing: Detect and follow short-lived scent trails left by other dogs or squirrels, with animated nose-twitching and sniffing vapor particles.
+   - Zoomies & Stick Carrying: Burst of figure-eight "zoomies" when happiness hits 100%; fallen woodland sticks around oak groves that dogs pick up and proudly trot with clamped across jaws.
+   - Dynamic Gait Transitions: Visually distinguish slow walk, rhythmic Spaniel trot (with characteristic diagonal bounce), and full-extension gallop (volume-preserving torso stretch, ear sweep back, and dust puffs during `FETCHING`, `RECALLED`, `ZOOMIES`).
+
+3. **Park Appearance (`src/world/field.js`, `src/world/environment.js`, `src/systems/particles.js`)**:
+   - Wind-rippled tree canopy sway offsetting foliage puffs by `Math.sin(this.windTime + tree.x)`.
+   - Directional sun/moon ground shadows that skew and lengthen up to 3.2x during `GOLDEN_HOUR`.
+   - Autumn leaf clusters around chestnut and oak groves that scatter into fluttering, spinning `LeafParticle`s when a dog sprints through them.
 
 ---
 
 ## 2. Technical Specification & Implementation Plan
 
-### 2.1 Ball Possession State in `src/entities/toy.js` (`TennisBall`)
-1. **Possession State Flag**:
-   - Add property `this.inOwnerPossession = true;` to `TennisBall` constructor.
-   - When instantiated in `src/main.js`, the ball starts in the owner's possession (`inOwnerPossession = true`, not lying on the ground).
-2. **Throw Transition**:
-   - In `throw(fromX, fromY, dirX, dirY, speed, launchZ)`:
-     - Set `this.inOwnerPossession = false;`.
-     - Set `this.isThrown = true;`.
-3. **Owner Pickup / Retrieval**:
-   - Add method `retrieveByOwner()` (or `pickupByOwner()`):
-     - Sets `this.inOwnerPossession = true;`.
-     - Sets `this.isThrown = false;`.
-     - Sets `this.isCarried = false;`.
-     - Sets `this.carrier = null;`.
-     - Resets velocity and elevation: `this.vx = 0; this.vy = 0; this.vz = 0; this.z = 0;`.
-4. **Render & Physics Suppression**:
-   - In `draw(ctx)`: If `this.inOwnerPossession` is `true`, return early without drawing ball or shadow.
-   - In `update(dt, field)`: If `this.inOwnerPossession` is `true`, return early without simulating ballistic trajectory or boundary checks.
+### 2.1 Player & NPC Directional 3D Silhouettes
+1. **Directional Shoulder and Hip Projection**:
+   - Calculate normal perpendicular vector: `perpX = -sinA`, `perpY = cosA`.
+   - Project left shoulder/hip and right shoulder/hip outward along perpendicular normal by `shoulderSpan` (12px) and `hipSpan` (7px).
+   - Six-stage depth layering:
+     - Depth Layer 1: Far Arm & Far Leg (behind torso)
+     - Depth Layer 2: Torso-back accessories (Backpack when facing South)
+     - Depth Layer 3: 3D Directional Torso / Jacket with thickness shading and directional lapels/zipper
+     - Depth Layer 4: Torso-front accessories (Backpack when facing North/Side, Scarf, or Hoodie)
+     - Depth Layer 5: Near Leg & Near Arm (in front of torso)
+     - Depth Layer 6: Head, Face, Ears & Hairstyle
+2. **Accessories**:
+   - Customizable accessories: `BACKPACK`, `SCARF`, `HOODIE`, `NONE`.
+   - Integrated into `Owner` customization and `ParkNPC` seeded identities (`npcIdentityFromSeed`).
+3. **Animated Kneeling / Bending Pose**:
+   - `triggerPet(duration = 0.8)` and `triggerPickup(duration = 0.8)`:
+     - Sets `petTimer` and `bendTimer`.
+     - Lowers torso (`kneelDrop = 4.5px`) and leans forward (`kneelLeanX = cosA * 3.5px`).
+     - Reaches near arm downward toward target on ground.
+
+### 2.2 Richer Canine Mechanics
+1. **Scent Trails & Sniffing (`DogState.SNIFFING_TRAIL`)**:
+   - Dogs deposit short-lived scent trail nodes (`this.scentDropTimer >= 2.2s`, life = 22s) in `field.addScent(x, y, 'dog', this)`.
+   - Roaming dogs detect nearby scents (`field.getNearbyScents`), transition to `SNIFFING_TRAIL`, trot at investigative pace (`0.38x speed`), animate nose twitching (`noseTwitch`), and emit sniff particles (`emitSniffParticles`).
+2. **Figure-Eight Zoomies (`DogState.ZOOMIES`)**:
+   - Reaching 100% happiness in `pet()` or roaming triggers `triggerZoomies()`.
+   - Sprints at `1.15x sprintSpeed` along parametric Lissajous figure-eight (`sin(phase)` and `sin(2 * phase)`), with rapid tail wagging (`wagSpeed = 24`) and gallop dust puffs.
+3. **Woodland Stick Pickup & Carrying**:
+   - Uncarried woodland sticks under oak/chestnut groves (`field.sticks`) are picked up when trotting nearby (`pickupStick(stick)`).
+   - Rendered clamped horizontally across jaws (`this.hasStick`).
+   - Automatically dropped (`dropStick()`) on whistle recall or ball throw.
+4. **Dynamic Gait Transitions**:
+   - `this.gaitMode`: `IDLE` (<10 px/s), `WALK` (10–65 px/s, 4-beat cadence 6.5), `TROT` (65–220 px/s, diagonal pairs with `trotBob = 1.5px`), `GALLOP` (>=220 px/s or during `FETCHING`/`RECALLED`/`ZOOMIES`).
+   - Gallop features: volume-preserving torso ellipse stretch (`stretchX` up to 1.32, `stretchY` compressed), streamlined ear sweep (`gallopSweep = -0.52`), front paws reaching forward +14px, rear paws kicking -15px, and dust puff emission (`emitGallopPuff`).
+
+### 2.3 Park Visual Appearance
+1. **Canopy Wind Sway**:
+   - Offsets foliage puffs by `Math.sin(this.windTime + tree.x) * (2.8 * gustFactor)`.
+2. **Directional Ground Shadows & Golden Hour**:
+   - `Environment.prototype.getShadowParameters()` computes sun/moon ground shadow properties (`lengthFactor`, `offsetX`, `offsetY`, `skewX`, `color`).
+   - Elongates shadows up to 3.2x during `GOLDEN_HOUR` (17.0–19.5) with warm sepia glow (`rgba(42, 26, 14, 0.45)`).
+3. **Autumn Leaf Clusters & Particle Scattering**:
+   - Oak and chestnut groves spawn multi-leaf clusters (`this.leafClusters`).
+   - High-speed movement (>125 px/s) through clusters triggers explosive scattering into spinning, air-resistant `LeafParticle`s that flutter and settle.
+   - Scent trails and woodland sticks populated under groves.
 
 ---
 
-### 2.2 Perimeter Clamping Exemption & Return Hand-off in `src/entities/companion_dog.js`
-1. **Perimeter Distance Clamping Exemption (AC-035.1)**:
-   - In `src/entities/companion_dog.js` (line 498):
-     Update the off-leash perimeter check to exempt `DogState.FETCHING`:
-     ```javascript
-     } else if (this.owner && !this.owner.isLeashed && this.state !== DogState.LOST && this.state !== DogState.FETCHING) {
-     ```
-   - Ensure the dog is completely free to break the 230 px `maxRoam` limit when fetching a thrown ball or returning with it.
-   - Ensure obstacle and map boundary collision checks continue to protect the dog from navigating out of bounds.
-2. **Owner Contact Retrieval Hand-off (AC-035.2)**:
-   - In `updateFetching(dt)` (lines 1005–1014):
-     When the dog carrying the ball (`this.hasBall === true`) arrives back within contact distance of the owner (`dist <= 36` or `dist <= 42`):
-     - Call `this.targetBall.retrieveByOwner();` so the ball immediately disappears into the owner's possession.
-     - Reset dog state: `this.hasBall = false; this.targetBall = null; this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;`.
-     - Reward dog: `this.pet();` and show positive emote (`this.emoteBubble = '❤️'; this.emoteTimer = 2.0;`).
-     - Play sound chime / pop if audio is active.
-3. **Direct Owner Pickup Safeguard**:
-   - If the ball is resting on the ground uncarried (`!this.isThrown && !this.isCarried && !this.inOwnerPossession`) and the owner walks over it (`Math.hypot(this.owner.x - this.ball.x, this.owner.y - this.ball.y) < 32`), the owner picks up the ball automatically (`this.ball.retrieveByOwner()`). This prevents edge-case soft-locks if the dog is recalled or distracted.
-
----
-
-### 2.3 Single Active Ball Enforcement & UI HUD in `src/main.js` & `src/ui/touch_controls.js`
-1. **Can-Throw Validation (`src/main.js`) (AC-035.3)**:
-   - Add helper method `canThrowBall()`:
-     ```javascript
-     canThrowBall() {
-       return Boolean(
-         this.ball &&
-         this.ball.inOwnerPossession &&
-         !this.ball.isThrown &&
-         !this.ball.isCarried &&
-         this.dog.state !== DogState.FETCHING &&
-         !this.dog.hasBall
-       );
-     }
-     ```
-   - In `throwBall()` and `throwBallAt(...)`:
-     - If `!this.canThrowBall()`, abort execution immediately.
-     - If the user presses Space/KeyT while unable to throw, display a subtle feedback toast: `"🎾 Wait for your dog to return the ball!"`.
-2. **Touch & HUD Throw Button Feedback (`src/ui/touch_controls.js`)**:
-   - Add method `setThrowEnabled(enabled)` on `TouchControls`:
-     - Toggles an `.is-disabled` CSS class / disabled attribute on `#btn-touch-throw`.
-     - Visually dims the throw button (`opacity: 0.45; filter: grayscale(80%);`) when the ball is already in play.
-   - In `src/main.js` `update()` loop: update touch throw button state based on `this.canThrowBall()`.
-
----
-
-## 3. Acceptance Criteria & Verification Matrix
-
-- [x] **AC-035.1 (Perimeter Exemption)**: When a ball is thrown > 230 px away (e.g., 350–500 px), the dog in `FETCHING` state breaks the 230 px owner perimeter clamp without restriction, reaches the ball, and picks it up (`hasBall = true`).
-- [x] **AC-035.2 (Ball Pickup on Owner Contact)**: When the dog returns to the owner with the ball, upon reaching owner contact distance (`dist <= 36–42 px`), the ball transitions to `inOwnerPossession = true`, ceases rendering, and disappears as if picked up by the owner.
-- [x] **AC-035.3 (Single Active Ball Constraint)**: The owner can only throw when `canThrowBall()` is true. Subsequent throw attempts while the ball is thrown, rolling, carried, or being fetched are strictly blocked.
-- [x] **AC-035.4 (Touch HUD Feedback)**: The on-screen throw button reflects throw readiness, disabling/dimming when a ball is currently in flight or being fetched.
-- [x] **AC-035.5 (Harness Validation)**: All unit and integration test suites in `python3 test/run_tests.py` pass 100%, including new fetching mechanics tests in `test/test_fetching_mechanics.py`.
-
----
-
-## 4. Work Breakdown & Granular Briefs
-
-### Brief 1: Ball Possession & Physics Entity (`src/entities/toy.js`) [L]
-- Add `inOwnerPossession` property, `retrieveByOwner()` method, and render/update bypass logic.
-
-### Brief 2: Companion Dog Fetching & Perimeter Logic (`src/entities/companion_dog.js`) [M]
-- Exempt `DogState.FETCHING` from off-leash 230 px perimeter clamping.
-- Update `updateFetching()` to hand off the ball to the owner (`retrieveByOwner()`) upon contact instead of dropping it on the ground.
-
-### Brief 3: Throw Restriction, Owner Direct Pickup & HUD Sync (`src/main.js`, `src/ui/touch_controls.js`) [M]
-- Implement `canThrowBall()`, block multiple throws, add owner direct pickup safeguard, and bind throw button enabled state.
-
-### Brief 4: Comprehensive Test Suite (`test/test_fetching_mechanics.py`) [L]
-- Author pytest/unittest suite asserting perimeter exemption, owner hand-off disappearance, and single ball throw restriction.
+## 3. Verification & Acceptance Criteria
+- AC-036.1: Owner and NPC directional models render 8-way directional silhouettes with depth layering and accessories.
+- AC-036.2: Petting and poop pickup trigger animated kneeling/bending poses.
+- AC-036.3: Canine companion supports scent trails, sniffing, figure-eight zoomies, and stick carrying.
+- AC-036.4: Visual gait transitions cleanly distinguish slow walk, rhythmic Spaniel trot bounce, and full-extension gallop with torso stretch and ear sweep.
+- AC-036.5: Tree canopies sway in the wind, ground shadows lengthen during Golden Hour, and leaf clusters scatter when sprinted through.
+- AC-036.6: 100% test pass rate across all 28 test suites in `python3 test/run_tests.py`.
 
 ```
 
@@ -6215,7 +6033,14 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
   - 8 public park dog-waste bins strategically placed at path intersections and overlooks with collision resolution and depth-sorted rendering.
   - 12 authentic Victorian cast-iron streetlamps with warm incandescent lighting cores (`#fef08a`, `glowRadius: 120px`).
   - Active canine waste pile registry (`this.poopPiles`) and nearest-bin spatial queries (`getNearestBin(x, y)`).
-  - Ambient particle system: floating dandelion seeds/pollen and wind streaks.
+  - Ambient particle system: floating dandelion seeds/pollen, wind streaks, and dynamic gallop/sniff/leaf emitters.
+  - **Tree Canopy Wind Sway & Directional Ground Shadows**:
+    - Procedural sweet chestnut, oak, and lime trees feature wind-rippled canopy foliage puff sway calculated via `Math.sin(this.windTime + tree.x) * (2.8 * gustFactor)`.
+    - Directional sun and moon ground shadows (`environment.getShadowParameters()`) that dynamically skew and elongate up to 3.2x factor during `GOLDEN_HOUR` with warm sepia glow (`rgba(42, 26, 14, 0.45)`).
+  - **Fallen Woodland Sticks & Autumn Leaf Clusters**:
+    - Oak and chestnut groves spawn fallen woodland sticks (`this.sticks`) and multi-leaf autumn clusters (`this.leafClusters`).
+    - Entities sprinting (> 125 px/s) through unscattered leaf clusters trigger explosive scattering into fluttering, spinning, air-resistant `LeafParticle`s that drift and settle back to earth.
+    - Scent trails (`this.scentTrails`) weave through the oak groves, deposited by wildlife squirrels and wandering dogs.
   - **Static Ground & Path Offscreen Canvas Baking (Render Optimization)**:
     - Complete static park background (base turf, Avon cliff gradient, mown stripes, procedural grass blade flecks, gravel pathways, and wildflowers) is pre-rendered once at initialization into a 3200 × 2400 `OffscreenCanvas` (`this.bakedCanvas`, with DOM `<canvas>` fallback).
     - `renderGround(ctx, camera)` executes a single `ctx.drawImage()` call blitting only the visible camera viewport window from the baked canvas, eliminating per-frame `Math.sin()` noise loops and Bezier path stroking operations at 60 FPS.
@@ -6238,7 +6063,11 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 ## 3. Entities, Canine Companion & Ambient Life
 - **Owner Avatar (`src/entities/owner.js`)**:
   - 8-directional movement (<kbd>WASD</kbd> / touch joystick) with acceleration and deceleration.
-  - Expressive 2D top-down / soft isometric vector rendering with directional facial cues, natural walking leg oscillation, dual-tone shoes, torso jacket with collar lapels, and arm swing.
+  - **8-Way Directional Silhouette & 6-Stage Depth Layering**:
+    - Shoulders and hips project orthogonally to `this.angle`, replacing flat 2D silhouettes with smooth directional turns.
+    - Rigorous 6-stage depth layering: (1) Far limb layer behind torso, (2) Back accessories, (3) 3D directional torso/jacket with thickness shading and lapel/zipper details, (4) Front accessories, (5) Near limb layer in front of torso, (6) Head, face, and hairstyle.
+  - **Accessories**: Customizable accessories (`BACKPACK`, `SCARF`, `HOODIE`, `NONE`) with front and rear perspective transforms.
+  - **Animated Kneeling / Bending Pose**: `triggerPet()` and `triggerPickup()` trigger smooth crouching/bending animations (`petTimer`, `bendTimer`) lowering the torso by 4.5px and extending the near arm downward.
   - Customizable hairstyles (`SHORT`, `WAVY`, `PONYTAIL`, `BEANIE`) with layered rear plumes and forehead bangs.
   - Diverse palette tokens for skin tones, hair colors, jacket colors, pants colors, and player names.
   - Clean baseline player naming: default name is `"Walker"` with local avatar nametag dynamically displaying `"${this.name} (You)"` in yellow (`#fde047`), while remote avatars display `"${this.name}"` in white (`#f8fafc`).
@@ -6260,7 +6089,15 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
     - *Obedience*: Scales leash responsiveness, heel arrival deadband, and idle stray run-off probability.
   - Overhauled Leash Dynamics:
     - When leashed, dog strictly respects max 105px lead length and never breaks into ball fetching; looks towards thrown balls with eager pull and renders lead taut under tension.
-  - Multi-state steering AI (`FOLLOWING`, `ROAMING`, `SOCIAL_GREET`, `PLAY_BOW`, `IDLE_SNIFF`, `SITTING`, `FETCHING`, `BARKING`, `RECALLED`, `LOST`, `POOPING`):
+  - Multi-state steering AI (`FOLLOWING`, `ROAMING`, `SOCIAL_GREET`, `PLAY_BOW`, `IDLE_SNIFF`, `SITTING`, `FETCHING`, `BARKING`, `RECALLED`, `LOST`, `POOPING`, `ZOOMIES`, `SNIFFING_TRAIL`):
+    - *Scent Trails & Sniffing*: Deposition of short-lived scent trail nodes; off-leash dogs investigate squirrel and canine scent trails with animated nose twitching and snout vapor particles.
+    - *Figure-Eight Zoomies*: Reaching 100% happiness triggers spontaneous high-speed figure-eight "zoomies" with rapid tail wags and gallop puffs.
+    - *Woodland Stick Carrying*: Trotting near fallen sticks under oak groves allows picking them up to proudly carry clamped across jaws (`this.hasStick`), automatically dropping them upon whistle recall or ball throw.
+    - *Dynamic Gait Transitions*: Visual distinction across four discrete gaits:
+      - `IDLE`: Resting stationary stance.
+      - `WALK`: 4-beat staggered sequence with gentle torso sway.
+      - `TROT`: 2-beat diagonal stride pairs with Spaniel vertical bounce bob (`trotBob = 1.5px`).
+      - `GALLOP`: Full-extension leap reaching forward +14px and kicking rear -15px, volume-preserving torso squash & stretch (length expands to 17.2px), streamlined ear sweep (`gallopSweep = -0.52` streaming ears back), and periodic gallop dust puffs (`emitGallopPuff`).
     - *Idle Stray Run-Off Engine*: Standing still without whistling for >35s triggers a stray roll inversely weighted by obedience (50% down to 1%). When triggered, dog sprints to a secluded park spot, enters `DogState.LOST`, and activates the HUD compass arrow. Approaching within 55px or whistling recalls the dog.
     - *Poop Lifecycle*: Periodic event while walking (~150–240s); dog pauses in squatted posture (`DogState.POOPING`) and spawns a depth-sorted `PoopPile` entity on the turf.
     - *Canine Social Greetings*: Detects other dogs within 110px, initiating mutual sniffing greetings, circular orbits, rapid tail wagging, and play-bows.
@@ -6378,7 +6215,10 @@ Players inhabit the meadow as an **Owner** and **Dog companion** walking togethe
 ---
 
 ## 8. Test Suite & CI/CD
-- `python3 test/run_tests.py`: Comprehensive test runner executing 27 test suites covering:
+- `python3 test/run_tests.py`: Comprehensive test runner executing 28 test suites covering:
+  - Directional player and NPC models, depth layering, accessories, and animated kneeling/bending poses (`test_phase3_visuals_and_mechanics.py`).
+  - Canine scent trails, sniffing particles, figure-eight zoomies, stick carrying, and visual walk/trot/gallop gait transitions (`test_phase3_visuals_and_mechanics.py`).
+  - Wind-rippled tree canopy sway, Golden Hour directional ground shadows, and autumn leaf cluster scattering (`test_phase3_visuals_and_mechanics.py`).
   - Physics ballistics, arrival steering, leash clamping and off-lead rendering.
   - Ball possession lifecycle, canine fetch perimeter exemption, and single active ball limits (`test_fetching_mechanics.py`).
   - Real-time leash synchronization, entity interpolator discrete propagation, network packet schemas.
@@ -6977,7 +6817,9 @@ export const DogState = {
   BARKING: 'BARKING',
   RECALLED: 'RECALLED',
   LOST: 'LOST',
-  POOPING: 'POOPING'
+  POOPING: 'POOPING',
+  ZOOMIES: 'ZOOMIES',
+  SNIFFING_TRAIL: 'SNIFFING_TRAIL'
 };
 
 export const CoatPreset = {
@@ -7126,10 +6968,61 @@ export class CompanionDog {
     this.nextPoopTime = 150 + Math.random() * 90;
     this.poopSquatDuration = 0;
 
+    // Richer Canine Mechanics: Scent trails, Sticks, Zoomies & Gait
+    this.hasStick = false;
+    this.carriedStick = null;
+    this.zoomiesTimer = 0;
+    this.zoomiesPhase = 0;
+    this.zoomiesCenter = { x: this.x, y: this.y };
+    this.scentDropTimer = 0;
+    this.targetScent = null;
+    this.sniffTime = 0;
+    this.noseTwitch = 0;
+    this.gaitMode = 'IDLE'; // 'IDLE' | 'WALK' | 'TROT' | 'GALLOP'
+    this.gaitPhase = 0;
+    this.gallopPuffTimer = 0;
+
     // Event callbacks
     this.onStrayTriggered = null;
     this.onStrayResolved = null;
     this.onPoopDropped = null;
+  }
+
+  triggerZoomies() {
+    if (this.owner && this.owner.isLeashed) return false;
+    if (this.state === DogState.LOST || this.state === DogState.POOPING) return false;
+    this.dropStick();
+    this.state = DogState.ZOOMIES;
+    this.zoomiesTimer = 4.2;
+    this.zoomiesPhase = 0;
+    this.zoomiesCenter = { x: this.x, y: this.y };
+    this.emoteBubble = '⚡';
+    this.emoteTimer = 2.0;
+    this.wagSpeed = 22;
+    return true;
+  }
+
+  pickupStick(stick) {
+    if (!stick || this.hasBall || this.hasStick) return false;
+    this.hasStick = true;
+    this.carriedStick = stick;
+    stick.isCarried = true;
+    stick.carrier = this;
+    this.emoteBubble = '🪵';
+    this.emoteTimer = 2.5;
+    this.wagSpeed = 15;
+    return true;
+  }
+
+  dropStick() {
+    if (this.carriedStick) {
+      this.carriedStick.x = this.x;
+      this.carriedStick.y = this.y;
+      this.carriedStick.isCarried = false;
+      this.carriedStick.carrier = null;
+      this.carriedStick = null;
+    }
+    this.hasStick = false;
   }
 
   setPersonality(p) {
@@ -7204,6 +7097,7 @@ export class CompanionDog {
     this.socialTargetDog = null;
     this.isReturningToOwner = false;
     this.isPullingLeash = false;
+    this.dropStick();
     if (this.hasBall && this.targetBall) {
       this.hasBall = false;
       this.targetBall.drop(this.x, this.y);
@@ -7243,6 +7137,11 @@ export class CompanionDog {
         size: 10 + Math.random() * 4
       });
     }
+
+    // Occasional burst of figure-eight zoomies when happiness reaches 100%
+    if (this.happiness >= 100 && this.owner && !this.owner.isLeashed && Math.random() < 0.45) {
+      this.triggerZoomies();
+    }
   }
 
   fetchBall(ball) {
@@ -7253,6 +7152,7 @@ export class CompanionDog {
     if (this.state === DogState.LOST || this.state === DogState.POOPING) {
       return;
     }
+    this.dropStick();
     this.targetBall = ball;
     this.state = DogState.FETCHING;
     this.wagSpeed = 15;
@@ -7327,6 +7227,36 @@ export class CompanionDog {
       }
     }
 
+    // Dynamic Gait cadence & galloping particles
+    if (curSpeed < 10) {
+      this.gaitMode = 'IDLE';
+    } else if (this.state === DogState.FETCHING || this.state === DogState.RECALLED || this.state === DogState.ZOOMIES || curSpeed >= 220) {
+      this.gaitMode = 'GALLOP';
+      this.gaitPhase += dt * 16.5;
+      this.gallopPuffTimer += dt;
+      if (this.gallopPuffTimer >= 0.28) {
+        this.gallopPuffTimer = 0;
+        if (field && field.particleSystem) {
+          field.particleSystem.emitGallopPuff(this.x, this.y, this.angle);
+        }
+      }
+    } else if (curSpeed >= 65) {
+      this.gaitMode = 'TROT';
+      this.gaitPhase += dt * 11.0;
+    } else {
+      this.gaitMode = 'WALK';
+      this.gaitPhase += dt * 6.5;
+    }
+
+    // Scent trail deposition: dog leaves subtle scent nodes while trotting/walking
+    if (field && typeof field.addScent === 'function') {
+      this.scentDropTimer += dt;
+      if (this.scentDropTimer >= 2.2 && curSpeed > 15) {
+        this.scentDropTimer = 0;
+        field.addScent(this.x, this.y, 'dog', this);
+      }
+    }
+
     // 1. Check ball status & enforce strict prohibition of ball chasing on-leash / while lost / while pooping
     if (isLeashed) {
       if (this.state === DogState.FETCHING) {
@@ -7382,12 +7312,20 @@ export class CompanionDog {
         this.updateRecalled(dt);
         break;
 
+      case DogState.ZOOMIES:
+        this.updateZoomies(dt, field);
+        break;
+
+      case DogState.SNIFFING_TRAIL:
+        this.updateSniffingTrail(dt, field);
+        break;
+
       case DogState.SOCIAL_GREET:
         this.updateSocialGreet(dt);
         break;
 
       case DogState.ROAMING:
-        this.updateRoaming(dt, otherDogs);
+        this.updateRoaming(dt, otherDogs, field);
         break;
 
       case DogState.PLAY_BOW:
@@ -7412,7 +7350,7 @@ export class CompanionDog {
 
       case DogState.FOLLOWING:
       default:
-        this.updateFollowing(dt, otherDogs);
+        this.updateFollowing(dt, otherDogs, field);
         break;
     }
 
@@ -7429,6 +7367,12 @@ export class CompanionDog {
     // 3. Movement integration
     this.x += this.vx * dt;
     this.y += this.vy * dt;
+
+    // Sync carried stick position
+    if (this.hasStick && this.carriedStick) {
+      this.carriedStick.x = this.x;
+      this.carriedStick.y = this.y;
+    }
 
     // Leash constraint & pulling physics: If leashed to owner, hard clamp to max leash length
     if (this.owner && this.owner.isLeashed && this.state !== DogState.FETCHING) {
@@ -7631,12 +7575,12 @@ export class CompanionDog {
     return false;
   }
 
-  updateFollowing(dt, otherDogs = []) {
+  updateFollowing(dt, otherDogs = [], field = null) {
     if (!this.owner) return;
 
     if (!this.owner.isLeashed) {
       this.state = DogState.ROAMING;
-      this.updateRoaming(dt, otherDogs);
+      this.updateRoaming(dt, otherDogs, field);
       return;
     }
 
@@ -7689,7 +7633,7 @@ export class CompanionDog {
     }
   }
 
-  updateRoaming(dt, otherDogs = []) {
+  updateRoaming(dt, otherDogs = [], field = null) {
     if (!this.owner) return;
 
     if (this.owner.isLeashed) {
@@ -7699,6 +7643,40 @@ export class CompanionDog {
     }
 
     if (this.checkSocialInteractions(otherDogs)) {
+      return;
+    }
+
+    // 1. Woodland stick pickup check (trotting near fallen oak/chestnut grove sticks)
+    if (!this.hasStick && !this.hasBall && field && Array.isArray(field.sticks)) {
+      for (const stick of field.sticks) {
+        if (!stick.isCarried && Math.hypot(this.x - stick.x, this.y - stick.y) < 28) {
+          if (Math.random() < 0.35) {
+            this.pickupStick(stick);
+            break;
+          }
+        }
+      }
+    }
+
+    // 2. Scent trail detection (investigating squirrel or canine scent trails)
+    if (!this.hasStick && !this.hasBall && field && typeof field.getNearbyScents === 'function') {
+      if (Math.random() < 0.08) {
+        const nearbyScents = field.getNearbyScents(this.x, this.y, 85);
+        if (nearbyScents.length > 0) {
+          const chosen = nearbyScents[Math.floor(Math.random() * nearbyScents.length)];
+          this.targetScent = chosen;
+          this.state = DogState.SNIFFING_TRAIL;
+          this.stateTimer = 2.8 + Math.random() * 2.0;
+          this.emoteBubble = '👃';
+          this.emoteTimer = 1.8;
+          return;
+        }
+      }
+    }
+
+    // 3. Occasional zoomies burst when happiness reaches 100%
+    if (this.happiness >= 100 && !this.owner.isLeashed && Math.random() < 0.002) {
+      this.triggerZoomies();
       return;
     }
 
@@ -8030,6 +8008,88 @@ export class CompanionDog {
     }
   }
 
+  updateZoomies(dt, field) {
+    if (this.owner && this.owner.isLeashed) {
+      this.state = DogState.FOLLOWING;
+      return;
+    }
+    this.zoomiesTimer -= dt;
+    this.zoomiesPhase += dt * 3.8;
+    const rx = 72;
+    const ry = 48;
+    const targetX = this.zoomiesCenter.x + Math.sin(this.zoomiesPhase) * rx;
+    const targetY = this.zoomiesCenter.y + Math.sin(this.zoomiesPhase * 2) * ry * 0.5;
+    const dx = targetX - this.x;
+    const dy = targetY - this.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const sprint = this.sprintSpeed * 1.15;
+    this.vx = (dx / dist) * sprint;
+    this.vy = (dy / dist) * sprint;
+    this.angle = Math.atan2(this.vy, this.vx);
+    this.wagSpeed = 24;
+
+    if (field && field.particleSystem && Math.random() < 0.35) {
+      field.particleSystem.emitGallopPuff(this.x, this.y, this.angle);
+    }
+
+    if (this.zoomiesTimer <= 0) {
+      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
+      this.emoteBubble = '👅';
+      this.emoteTimer = 2.0;
+    }
+  }
+
+  updateSniffingTrail(dt, field) {
+    this.stateTimer -= dt;
+    this.sniffTime += dt;
+    this.noseTwitch = Math.sin(this.sniffTime * 25) * 1.6;
+
+    // Snout position for vapor particles
+    const snoutDist = 20;
+    const sx = this.x + Math.cos(this.angle) * snoutDist;
+    const sy = this.y + Math.sin(this.angle) * snoutDist;
+    if (field && field.particleSystem && Math.random() < 0.22) {
+      field.particleSystem.emitSniffParticles(sx, sy, this.angle);
+    }
+
+    // Follow or inspect target scent node
+    if (this.targetScent && this.targetScent.life > 0) {
+      const dx = this.targetScent.x - this.x;
+      const dy = this.targetScent.y - this.y;
+      const dist = Math.hypot(dx, dy);
+
+      if (dist > 12) {
+        const sniffSpeed = this.speed * 0.38;
+        this.vx = (dx / dist) * sniffSpeed;
+        this.vy = (dy / dist) * sniffSpeed;
+        this.angle = Math.atan2(this.vy, this.vx);
+      } else {
+        this.vx *= 0.5;
+        this.vy *= 0.5;
+        // Seek next connected scent if available
+        if (field && typeof field.getNearbyScents === 'function') {
+          const nearby = field.getNearbyScents(this.x, this.y, 65).filter(s => s !== this.targetScent);
+          if (nearby.length > 0) {
+            this.targetScent = nearby[Math.floor(Math.random() * nearby.length)];
+          }
+        }
+      }
+    } else {
+      this.vx *= 0.5;
+      this.vy *= 0.5;
+    }
+
+    this.wagSpeed = 8;
+    if (this.owner && this.owner.isMoving && this.owner.isLeashed) {
+      this.state = DogState.FOLLOWING;
+    } else if (this.owner && !this.owner.isLeashed && Math.hypot(this.x - this.owner.x, this.y - this.owner.y) > 160) {
+      this.state = DogState.ROAMING;
+    } else if (this.stateTimer <= 0) {
+      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
+      this.targetScent = null;
+    }
+  }
+
   draw(ctx) {
     ctx.save();
 
@@ -8057,22 +8117,60 @@ export class CompanionDog {
     ctx.translate(this.x, this.y);
     ctx.rotate(this.angle);
 
-    // Play-bow or squat posture squash/stretch
+    // Play-bow, squat posture, or dynamic gait squash/stretch
+    let stretchX = 1.0;
+    let stretchY = 1.0;
+    let trotBob = 0;
     if (this.state === DogState.PLAY_BOW) {
-      ctx.scale(1.1, 0.85);
+      stretchX = 1.1;
+      stretchY = 0.85;
     } else if (this.state === DogState.POOPING) {
-      ctx.scale(0.88, 1.12);
+      stretchX = 0.88;
+      stretchY = 1.12;
       ctx.translate(-2, 0);
+    } else if (this.gaitMode === 'GALLOP') {
+      const cycle = Math.sin(this.gaitPhase);
+      const stretch = 1.0 + Math.max(0, cycle) * 0.28 - Math.max(0, -cycle) * 0.12;
+      stretchX = stretch;
+      stretchY = 1.0 / Math.sqrt(stretch);
+    } else if (this.gaitMode === 'TROT') {
+      trotBob = Math.abs(Math.sin(this.gaitPhase)) * 1.5;
     }
+    ctx.scale(stretchX, stretchY);
 
-    // Paws (front and back)
-    const legOffset = Math.sin(Date.now() * 0.012) * (Math.hypot(this.vx, this.vy) > 10 ? 3 : 0);
+    // Paws (front and back) responding to dynamic gait transitions (walk, rhythmic Spaniel trot, gallop)
     const pawColor = this.coat.hasEyePatch ? '#f1f5f9' : (this.coat.tanColor || this.coat.bodyColor);
     ctx.fillStyle = pawColor;
-    ctx.fillRect(-10, -9 - legOffset, 5, 4);
-    ctx.fillRect(-10, 5 + legOffset, 5, 4);
-    ctx.fillRect(8, -9 + legOffset, 5, 4);
-    ctx.fillRect(8, 5 - legOffset, 5, 4);
+
+    let flx = 8, fly = -9;
+    let frx = 8, fry = 5;
+    let rlx = -10, rly = -9;
+    let rrx = -10, rry = 5;
+
+    if (this.gaitMode === 'GALLOP') {
+      const reach = Math.sin(this.gaitPhase) * 6.5;
+      flx += reach;
+      frx += reach;
+      rlx -= reach;
+      rrx -= reach;
+    } else if (this.gaitMode === 'TROT') {
+      const diag1 = Math.sin(this.gaitPhase) * 4.5;
+      const diag2 = Math.sin(this.gaitPhase + Math.PI) * 4.5;
+      flx += diag1;
+      rrx += diag1;
+      frx += diag2;
+      rlx += diag2;
+    } else if (this.gaitMode === 'WALK') {
+      flx += Math.sin(this.gaitPhase) * 3.0;
+      frx += Math.sin(this.gaitPhase + Math.PI * 0.5) * 3.0;
+      rlx += Math.sin(this.gaitPhase + Math.PI) * 3.0;
+      rrx += Math.sin(this.gaitPhase + Math.PI * 1.5) * 3.0;
+    }
+
+    ctx.fillRect(rlx, rly, 5, 4);
+    ctx.fillRect(rrx, rry, 5, 4);
+    ctx.fillRect(flx, fly, 5, 4);
+    ctx.fillRect(frx, fry, 5, 4);
 
     // Feathered Wagging Tail matching breed coat colors with tufted brush tip
     ctx.save();
@@ -8094,16 +8192,16 @@ export class CompanionDog {
     ctx.fill();
     ctx.restore();
 
-    // Torso (rich coat)
+    // Torso (rich coat, with Spaniel trot bounce)
     ctx.fillStyle = this.coat.bodyColor;
     ctx.beginPath();
-    ctx.ellipse(-2, 0, 13, 8.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(-2, -trotBob, 13, 8.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
     // Subtle coat dorsal sheen
     ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
     ctx.beginPath();
-    ctx.ellipse(-2, -2, 10, 4.5, -0.05, 0, Math.PI * 2);
+    ctx.ellipse(-2, -2 - trotBob, 10, 4.5, -0.05, 0, Math.PI * 2);
     ctx.fill();
 
     // Creamy white chest bib
@@ -8167,17 +8265,41 @@ export class CompanionDog {
     ctx.arc(15.8, 1.0, 0.5, 0, Math.PI * 2);
     ctx.fill();
 
-    // Truffle Nose
+    // Truffle Nose (with sniffing twitch)
+    const noseTwitchY = (this.state === DogState.SNIFFING_TRAIL || this.state === DogState.IDLE_SNIFF) ? (this.noseTwitch || 0) : 0;
     ctx.fillStyle = this.coat.noseColor || '#1e293b';
     ctx.beginPath();
-    ctx.ellipse(19.2, 0, 1.8, 1.6, 0, 0, Math.PI * 2);
+    ctx.ellipse(19.2, noseTwitchY, 1.8, 1.6, 0, 0, Math.PI * 2);
     ctx.fill();
 
     // Nose specular shine
     ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
     ctx.beginPath();
-    ctx.arc(18.8, -0.6, 0.6, 0, Math.PI * 2);
+    ctx.arc(18.8, -0.6 + noseTwitchY, 0.6, 0, Math.PI * 2);
     ctx.fill();
+
+    // Clamped woodland stick held proudly across jaws
+    if (this.hasStick) {
+      ctx.save();
+      // Soft stick shadow
+      ctx.fillStyle = 'rgba(20, 35, 15, 0.35)';
+      ctx.fillRect(16, -13, 3.5, 26);
+
+      // Bark body
+      ctx.fillStyle = '#4a2e18';
+      ctx.fillRect(15.5, -14, 3.5, 28);
+
+      // Wood grain core
+      ctx.fillStyle = '#85512b';
+      ctx.fillRect(16.5, -10, 1.5, 20);
+
+      // Small green leaf/bud on branch tip
+      ctx.fillStyle = '#65a30d';
+      ctx.beginPath();
+      ctx.arc(17.2, -14, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    }
 
     // Expressive Eyes with amber iris, dark pupils, and specular catchlights
     ctx.fillStyle = '#261b12';
@@ -8213,11 +8335,12 @@ export class CompanionDog {
       ctx.fill();
     }
 
-    // Floppy Ears (with spring rotation responding to trot speed inertia)
+    // Floppy Ears (with spring rotation responding to trot speed inertia and streamlined gallop sweep)
+    const gallopSweep = (this.gaitMode === 'GALLOP') ? -0.52 : 0;
     // Left ear
     ctx.save();
     ctx.translate(9, -6);
-    ctx.rotate(this.leftEar.angle);
+    ctx.rotate(this.leftEar.angle + gallopSweep);
     ctx.fillStyle = this.coat.earRoot || this.coat.bodyColor;
     ctx.beginPath();
     ctx.ellipse(-1, -4, 4.6, 8.2, -Math.PI * 0.15, 0, Math.PI * 2);
@@ -8232,7 +8355,7 @@ export class CompanionDog {
     // Right ear
     ctx.save();
     ctx.translate(9, 6);
-    ctx.rotate(this.rightEar.angle);
+    ctx.rotate(this.rightEar.angle + gallopSweep);
     ctx.fillStyle = this.coat.earRoot || this.coat.bodyColor;
     ctx.beginPath();
     ctx.ellipse(-1, 4, 4.6, 8.2, Math.PI * 0.15, 0, Math.PI * 2);
@@ -8395,6 +8518,7 @@ export class ParkNPC {
     this.jacketColor = opts.jacketColor !== undefined ? opts.jacketColor : identity.jacketColor;
     this.pantsColor = opts.pantsColor !== undefined ? opts.pantsColor : identity.pantsColor;
     this.shoeColor = opts.shoeColor !== undefined ? opts.shoeColor : identity.shoeColor;
+    this.accessory = opts.accessory !== undefined ? opts.accessory : (identity.accessory || (['BACKPACK', 'SCARF', 'HOODIE', 'NONE'][this.seed % 4]));
 
     // Path & Waypoints
     const path = opts.path || (opts.pathId ? getNpcPath(opts.pathId) : null);
@@ -8594,6 +8718,16 @@ export class ParkNPC {
     return null;
   }
 
+  getShadedColor(color, percent) {
+    if (!color || typeof color !== 'string' || !color.startsWith('#')) return color;
+    const num = parseInt(color.replace('#', ''), 16);
+    const amt = Math.round(255 * percent);
+    const R = Math.max(0, Math.min(255, (num >> 16) + amt));
+    const G = Math.max(0, Math.min(255, ((num >> 8) & 0x00ff) + amt));
+    const B = Math.max(0, Math.min(255, (num & 0x0000ff) + amt));
+    return '#' + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
+  }
+
   draw(ctx) {
     if (this.done || this.opacity <= 0) {
       return;
@@ -8602,222 +8736,229 @@ export class ParkNPC {
     ctx.save();
     ctx.globalAlpha = this.opacity;
 
+    const angle = this.angle !== undefined ? this.angle : Math.PI / 2;
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+
     // 1. Soft ground drop shadow
     ctx.fillStyle = 'rgba(20, 35, 15, 0.32)';
     ctx.beginPath();
-    ctx.ellipse(this.x, this.y + 10, 14, 6.5, 0, 0, Math.PI * 2);
+    ctx.ellipse(this.x, this.y + 11, 14, 6.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // 2. Walking / Running Legs & Shoes
+    // 2. Directional Shoulder/Hip Axes:
+    // Transverse axis perpendicular to facing angle with 2.5D vertical foreshortening
+    const perpX = -sinA;
+    const perpY = cosA * 0.36;
+
+    const shoulderSpan = 10.5;
+    const hipSpan = 6.2;
+
+    const leftShoulderX = -perpX * shoulderSpan;
+    const leftShoulderY = -perpY * shoulderSpan;
+    const rightShoulderX = perpX * shoulderSpan;
+    const rightShoulderY = perpY * shoulderSpan;
+
+    // Depth metric for arm & leg layering: higher screen Y means closer to camera (foreground)
+    const leftDepthY = leftShoulderY - sinA * 2.5;
+    const rightDepthY = rightShoulderY - sinA * 2.5;
+    const leftIsFar = leftDepthY < rightDepthY;
+
+    // Walking / running strides
     const isMoving = Math.hypot(this.vx, this.vy) > 0.1;
     const legSwing = isMoving ? Math.sin(this.walkPhase) * (this.isJogger ? 7.5 : 5.5) : 0;
-    const legSpread = 7;
+    const armSwing = isMoving ? Math.cos(this.walkPhase) * (this.isJogger ? 6.5 : 5.0) : 0;
 
-    // Left leg & shoe
-    ctx.fillStyle = this.pantsColor;
-    ctx.beginPath();
-    if (typeof ctx.roundRect === 'function') {
-      ctx.roundRect(this.x - legSpread - 3.5, this.y + 1 + legSwing, 5.5, 9, 2);
-    } else {
-      ctx.rect(this.x - legSpread - 3.5, this.y + 1 + legSwing, 5.5, 9);
-    }
-    ctx.fill();
-    ctx.fillStyle = this.shoeColor;
-    ctx.beginPath();
-    if (typeof ctx.roundRect === 'function') {
-      ctx.roundRect(this.x - legSpread - 4, this.y + 9 + legSwing, 6.8, 5, 2.5);
-    } else {
-      ctx.rect(this.x - legSpread - 4, this.y + 9 + legSwing, 6.8, 5);
-    }
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
-    ctx.fillRect(this.x - legSpread - 4, this.y + 13 + legSwing, 6.8, 1.2);
+    const torsoX = this.x;
+    const torsoY = this.y - 3;
 
-    // Right leg & shoe
-    ctx.fillStyle = this.pantsColor;
-    ctx.beginPath();
-    if (typeof ctx.roundRect === 'function') {
-      ctx.roundRect(this.x + legSpread - 2, this.y + 1 - legSwing, 5.5, 9, 2);
-    } else {
-      ctx.rect(this.x + legSpread - 2, this.y + 1 - legSwing, 5.5, 9);
-    }
-    ctx.fill();
-    ctx.fillStyle = this.shoeColor;
-    ctx.beginPath();
-    if (typeof ctx.roundRect === 'function') {
-      ctx.roundRect(this.x + legSpread - 2.5, this.y + 9 - legSwing, 6.8, 5, 2.5);
-    } else {
-      ctx.rect(this.x + legSpread - 2.5, this.y + 9 - legSwing, 6.8, 5);
-    }
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
-    ctx.fillRect(this.x + legSpread - 2.5, this.y + 13 - legSwing, 6.8, 1.2);
+    // Helper for legs
+    const drawLeg = (hipX, hipY, swing, isFar) => {
+      ctx.save();
+      const strideX = cosA * swing * 0.45;
+      const strideY = sinA * swing * 0.45 + (Math.abs(swing) * 0.4);
+      const lx = this.x + hipX + strideX;
+      const ly = this.y + 1 + hipY + strideY;
 
-    // 3. Torso / Top
-    if (this.isJogger) {
-      // Athletic technical running top
-      ctx.fillStyle = this.jacketColor;
+      ctx.fillStyle = isFar ? this.getShadedColor(this.pantsColor, -0.15) : this.pantsColor;
       ctx.beginPath();
       if (typeof ctx.roundRect === 'function') {
-        ctx.roundRect(this.x - 10.5, this.y - 12, 21, 17, 4.5);
+        ctx.roundRect(lx - 2.8, ly, 5.5, 9, 2);
       } else {
-        ctx.rect(this.x - 10.5, this.y - 12, 21, 17);
+        ctx.rect(lx - 2.8, ly, 5.5, 9);
       }
       ctx.fill();
 
-      // Reflective chest stripe
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
-      ctx.fillRect(this.x - 10, this.y - 5, 20, 2.5);
-
-      // Sport bib / accent
-      ctx.fillStyle = '#ffffff';
+      ctx.fillStyle = isFar ? this.getShadedColor(this.shoeColor, -0.15) : this.shoeColor;
       ctx.beginPath();
+      const shoeW = Math.abs(cosA) > 0.4 ? 7.8 : 6.8;
+      const shoeH = 5.0;
       if (typeof ctx.roundRect === 'function') {
-        ctx.roundRect(this.x - 4, this.y - 2, 8, 6.5, 1.5);
+        ctx.roundRect(lx - 3.2 + cosA * 1.5, ly + 8, shoeW, shoeH, 2.5);
       } else {
-        ctx.rect(this.x - 4, this.y - 2, 8, 6.5);
+        ctx.rect(lx - 3.2, ly + 8, shoeW, shoeH);
       }
       ctx.fill();
-      ctx.fillStyle = '#0f172a';
-      ctx.fillRect(this.x - 2.5, this.y, 5, 1.2);
+
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.35)';
+      ctx.fillRect(lx - 3.2 + cosA * 1.5, ly + 12, shoeW, 1.2);
+      ctx.restore();
+    };
+
+    // Helper for arms
+    const drawArm = (shX, shY, swing, isFar) => {
+      ctx.save();
+      const ax = torsoX + shX;
+      const ay = torsoY - 7 + shY;
+
+      ctx.fillStyle = isFar ? this.getShadedColor(this.jacketColor, -0.18) : this.jacketColor;
+      const reachX = cosA * swing * 0.45;
+      const reachY = swing * 0.8;
+      ctx.beginPath();
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(ax - 2.3 + reachX, ay - reachY, 4.6, 12, 2.3);
+      } else {
+        ctx.rect(ax - 2.3 + reachX, ay - reachY, 4.6, 12);
+      }
+      ctx.fill();
+
+      ctx.fillStyle = this.skinTone;
+      ctx.beginPath();
+      ctx.arc(ax + reachX, ay + 12 - reachY, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    };
+
+    // --- DEPTH LAYER 1: Far Arm & Far Leg (behind torso) ---
+    if (leftIsFar) {
+      drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, true);
+      drawArm(leftShoulderX, leftShoulderY, -armSwing, true);
     } else {
-      // Casual outdoor jacket / windbreaker
-      ctx.fillStyle = this.jacketColor;
-      ctx.beginPath();
-      if (typeof ctx.roundRect === 'function') {
-        ctx.roundRect(this.x - 11, this.y - 12, 22, 18, 5);
+      drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, true);
+      drawArm(rightShoulderX, rightShoulderY, armSwing, true);
+    }
+
+    // --- DEPTH LAYER 2: Accessory (Backpack when facing South / from front) ---
+    if (this.accessory === 'BACKPACK' && sinA > 0.25) {
+      this.drawBackpack(ctx, torsoX, torsoY, angle, true);
+    }
+
+    // --- DEPTH LAYER 3: 3D Directional Torso / Top ---
+    ctx.save();
+    ctx.translate(torsoX, torsoY);
+    ctx.rotate(angle - Math.PI / 2);
+
+    ctx.fillStyle = this.jacketColor;
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(-10.5, -9, 21, 18, 5);
+    } else {
+      ctx.rect(-10.5, -9, 21, 18);
+    }
+    ctx.fill();
+
+    // 3D elliptical depth shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
+    ctx.beginPath();
+    ctx.ellipse(0, 7, 10.5, 3.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+
+    // Torso Front Details if facing South / towards camera
+    if (sinA > -0.2) {
+      ctx.save();
+      ctx.translate(torsoX, torsoY);
+
+      if (this.isJogger) {
+        // Reflective chest stripe
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.fillRect(-9, -2, 18, 2.5);
+
+        // Sport bib / accent
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        if (typeof ctx.roundRect === 'function') {
+          ctx.roundRect(-4, 1, 8, 6.0, 1.5);
+        } else {
+          ctx.rect(-4, 1, 8, 6.0);
+        }
+        ctx.fill();
+        ctx.fillStyle = '#0f172a';
+        ctx.fillRect(-2.5, 3, 5, 1.2);
       } else {
-        ctx.rect(this.x - 11, this.y - 12, 22, 18);
+        // Lapels & collar
+        ctx.fillStyle = '#ffffff';
+        ctx.beginPath();
+        ctx.moveTo(-4, -9);
+        ctx.lineTo(4, -9);
+        ctx.lineTo(0, -3);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
+        ctx.beginPath();
+        ctx.moveTo(-7, -9);
+        ctx.lineTo(-3, -9);
+        ctx.lineTo(0, -2);
+        ctx.lineTo(-5, -2);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.beginPath();
+        ctx.moveTo(7, -9);
+        ctx.lineTo(3, -9);
+        ctx.lineTo(0, -2);
+        ctx.lineTo(5, -2);
+        ctx.closePath();
+        ctx.fill();
+
+        // Jacket zipper line
+        ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(0, -2);
+        ctx.lineTo(0, 8);
+        ctx.stroke();
       }
-      ctx.fill();
-
-      // Lapels & collar
-      ctx.fillStyle = '#ffffff';
+      ctx.restore();
+    } else {
+      // Facing North / away from camera
+      ctx.save();
+      ctx.translate(torsoX, torsoY);
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.18)';
+      ctx.lineWidth = 1.4;
       ctx.beginPath();
-      ctx.moveTo(this.x - 4, this.y - 12);
-      ctx.lineTo(this.x + 4, this.y - 12);
-      ctx.lineTo(this.x, this.y - 6);
-      ctx.closePath();
-      ctx.fill();
-
-      // Collar trim
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
-      ctx.beginPath();
-      ctx.moveTo(this.x - 7, this.y - 12);
-      ctx.lineTo(this.x - 3, this.y - 12);
-      ctx.lineTo(this.x, this.y - 5);
-      ctx.lineTo(this.x - 5, this.y - 5);
-      ctx.closePath();
-      ctx.fill();
-
-      ctx.beginPath();
-      ctx.moveTo(this.x + 7, this.y - 12);
-      ctx.lineTo(this.x + 3, this.y - 12);
-      ctx.lineTo(this.x, this.y - 5);
-      ctx.lineTo(this.x + 5, this.y - 5);
-      ctx.closePath();
-      ctx.fill();
-
-      // Jacket zipper line
-      ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.moveTo(this.x, this.y - 5);
-      ctx.lineTo(this.x, this.y + 6);
+      ctx.moveTo(0, -8);
+      ctx.lineTo(0, 8);
       ctx.stroke();
+      ctx.restore();
     }
 
-    // 4. Arms & Hands
-    const armSwing = isMoving ? Math.cos(this.walkPhase) * (this.isJogger ? 6 : 4.5) : 0;
-    // Left arm
-    ctx.fillStyle = this.jacketColor;
-    ctx.beginPath();
-    if (typeof ctx.roundRect === 'function') {
-      ctx.roundRect(this.x - 15.5, this.y - 10 - armSwing, 4.5, 12, 2);
+    // --- DEPTH LAYER 4: Accessory (Backpack, Scarf, or Hoodie) ---
+    if (this.accessory === 'BACKPACK') {
+      if (sinA <= 0.25) {
+        this.drawBackpack(ctx, torsoX, torsoY, angle, false);
+      } else {
+        this.drawBackpackStraps(ctx, torsoX, torsoY);
+      }
+    } else if (this.accessory === 'SCARF') {
+      this.drawScarf(ctx, torsoX, torsoY, angle);
+    } else if (this.accessory === 'HOODIE') {
+      this.drawHoodie(ctx, torsoX, torsoY, angle);
+    }
+
+    // --- DEPTH LAYER 5: Near Leg & Near Arm (in front of torso) ---
+    if (leftIsFar) {
+      drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, false);
+      drawArm(rightShoulderX, rightShoulderY, armSwing, false);
     } else {
-      ctx.rect(this.x - 15.5, this.y - 10 - armSwing, 4.5, 12);
-    }
-    ctx.fill();
-    ctx.fillStyle = this.skinTone;
-    ctx.beginPath();
-    ctx.arc(this.x - 13.25, this.y + 3 - armSwing, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Right arm
-    ctx.fillStyle = this.jacketColor;
-    ctx.beginPath();
-    if (typeof ctx.roundRect === 'function') {
-      ctx.roundRect(this.x + 11, this.y - 10 + armSwing, 4.5, 12, 2);
-    } else {
-      ctx.rect(this.x + 11, this.y - 10 + armSwing, 4.5, 12);
-    }
-    ctx.fill();
-    ctx.fillStyle = this.skinTone;
-    ctx.beginPath();
-    ctx.arc(this.x + 13.25, this.y + 3 + armSwing, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 5. Head & Face
-    const style = (this.hairStyle || 'SHORT').toUpperCase();
-
-    // Rear hair layer for WAVY or PONYTAIL
-    if (style === 'WAVY') {
-      ctx.fillStyle = this.hairColor;
-      ctx.beginPath();
-      ctx.ellipse(this.x, this.y - 18, 11.5, 10, 0, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (style === 'PONYTAIL') {
-      const backAngle = (this.angle || Math.PI / 2) + Math.PI;
-      const pBaseX = this.x + Math.cos(backAngle) * 7.5;
-      const pBaseY = this.y - 22 + Math.sin(backAngle) * 6.5;
-
-      ctx.fillStyle = '#dc2626';
-      ctx.beginPath();
-      ctx.arc(pBaseX, pBaseY, 2.8, 0, Math.PI * 2);
-      ctx.fill();
-
-      ctx.fillStyle = this.hairColor;
-      const pTipX = pBaseX + Math.cos(backAngle) * 9.5;
-      const pTipY = pBaseY + Math.sin(backAngle) * 9.5;
-      ctx.beginPath();
-      ctx.ellipse(pTipX, pTipY, 4.8, 7.8, backAngle + Math.PI / 2, 0, Math.PI * 2);
-      ctx.fill();
+      drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, false);
+      drawArm(leftShoulderX, leftShoulderY, -armSwing, false);
     }
 
-    // Head base with skin tone
-    ctx.fillStyle = this.skinTone;
-    ctx.beginPath();
-    ctx.arc(this.x, this.y - 20, 8.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Ears on sides
-    ctx.fillStyle = this.skinTone;
-    ctx.beginPath();
-    ctx.arc(this.x - 8.8, this.y - 20, 2.2, 0, Math.PI * 2);
-    ctx.arc(this.x + 8.8, this.y - 20, 2.2, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Directional facial cues based on angle
-    const angle = this.angle || Math.PI / 2;
-    const eyeForwardX = Math.cos(angle) * 3.5;
-    const eyeForwardY = Math.sin(angle) * 3.5;
-    const eyeSideX = Math.sin(angle) * 2.8;
-    const eyeSideY = -Math.cos(angle) * 2.8;
-
-    ctx.fillStyle = '#1e293b';
-    ctx.beginPath();
-    ctx.arc(this.x + eyeForwardX + eyeSideX, this.y - 20 + eyeForwardY + eyeSideY, 1.1, 0, Math.PI * 2);
-    ctx.arc(this.x + eyeForwardX - eyeSideX, this.y - 20 + eyeForwardY - eyeSideY, 1.1, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Subtle nose directional indicator
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
-    ctx.beginPath();
-    ctx.arc(this.x + Math.cos(angle) * 4.6, this.y - 20 + Math.sin(angle) * 4.6, 1.0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 6. Hairstyle
-    this.drawHair(ctx, style);
+    // --- DEPTH LAYER 6: Head, Face, Ears & Hairstyle ---
+    this.drawHeadAndFace(ctx, torsoX, torsoY, angle, cosA, sinA);
 
     // Jogger athletic headband
     if (this.isJogger) {
@@ -8834,7 +8975,7 @@ export class ParkNPC {
       ctx.stroke();
     }
 
-    // 7. Overhead Nametag Badge
+    // --- DEPTH LAYER 7: Overhead Nametag Badge ---
     ctx.font = NPC_TAG_STYLE.font;
     ctx.textAlign = 'center';
     const displayNametag = this.name || (this.isJogger ? 'Jogger' : 'Walker');
@@ -8866,6 +9007,190 @@ export class ParkNPC {
     }
 
     ctx.restore();
+  }
+
+  drawBackpack(ctx, torsoX, torsoY, angle, isFront) {
+    ctx.save();
+    const packX = torsoX - Math.cos(angle) * 7.0;
+    const packY = torsoY - Math.sin(angle) * 5.5;
+
+    ctx.fillStyle = '#334155';
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(packX - 7.5, packY - 8, 15, 16, 4);
+    } else {
+      ctx.rect(packX - 7.5, packY - 8, 15, 16);
+    }
+    ctx.fill();
+
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(packX - 7, packY - 8, 14, 6.5, 2.5);
+    } else {
+      ctx.rect(packX - 7, packY - 8, 14, 6.5);
+    }
+    ctx.fill();
+
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillRect(packX - 1.5, packY - 2.5, 3.0, 2.5);
+
+    ctx.fillStyle = '#0284c7';
+    ctx.beginPath();
+    ctx.arc(packX + 7, packY + 2, 2.0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  drawBackpackStraps(ctx, torsoX, torsoY) {
+    ctx.save();
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 2.0;
+
+    ctx.beginPath();
+    ctx.moveTo(torsoX - 6.5, torsoY - 8);
+    ctx.lineTo(torsoX - 5.5, torsoY + 7);
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(torsoX + 6.5, torsoY - 8);
+    ctx.lineTo(torsoX + 5.5, torsoY + 7);
+    ctx.stroke();
+
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(torsoX - 5.5, torsoY);
+    ctx.lineTo(torsoX + 5.5, torsoY);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  drawScarf(ctx, torsoX, torsoY, angle) {
+    ctx.save();
+    ctx.fillStyle = '#b91c1c';
+    ctx.beginPath();
+    ctx.ellipse(torsoX, torsoY - 8.5, 8.5, 4.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    const flutter = Math.sin(this.walkPhase * 0.8 + Date.now() * 0.005) * 4.0;
+    ctx.fillStyle = '#991b1b';
+    ctx.beginPath();
+    ctx.moveTo(torsoX + 2, torsoY - 7);
+    ctx.lineTo(torsoX + 7 + flutter, torsoY + 5);
+    ctx.lineTo(torsoX + 3 + flutter, torsoY + 6);
+    ctx.lineTo(torsoX - 1, torsoY - 6);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = '#fef08a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(torsoX + 3 + flutter, torsoY + 6);
+    ctx.lineTo(torsoX + 6 + flutter, torsoY + 8);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  drawHoodie(ctx, torsoX, torsoY, angle) {
+    ctx.save();
+    ctx.fillStyle = this.getShadedColor(this.jacketColor, -0.15);
+    ctx.beginPath();
+    ctx.ellipse(torsoX, torsoY - 8.5, 9.5, 4.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(torsoX - 3.5, torsoY - 7);
+    ctx.lineTo(torsoX - 3.0, torsoY + 1);
+    ctx.moveTo(torsoX + 3.5, torsoY - 7);
+    ctx.lineTo(torsoX + 3.0, torsoY + 1);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  drawHeadAndFace(ctx, torsoX, torsoY, angle, cosA, sinA) {
+    const headX = this.x;
+    const headY = this.y - 20;
+    const style = (this.hairStyle || 'SHORT').toUpperCase();
+
+    // 1. Rear hair layer for WAVY or PONYTAIL
+    if (style === 'WAVY') {
+      ctx.fillStyle = this.hairColor;
+      ctx.beginPath();
+      ctx.ellipse(headX, headY + 2, 11.5, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (style === 'PONYTAIL') {
+      const backAngle = angle + Math.PI;
+      const pBaseX = headX + Math.cos(backAngle) * 7.5;
+      const pBaseY = headY - 2 + Math.sin(backAngle) * 6.5;
+
+      ctx.fillStyle = '#dc2626';
+      ctx.beginPath();
+      ctx.arc(pBaseX, pBaseY, 2.8, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = this.hairColor;
+      const pTipX = pBaseX + Math.cos(backAngle) * 9.5;
+      const pTipY = pBaseY + Math.sin(backAngle) * 9.5;
+      ctx.beginPath();
+      ctx.ellipse(pTipX, pTipY, 4.8, 7.8, backAngle + Math.PI / 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 2. Base Head
+    ctx.fillStyle = this.skinTone;
+    ctx.beginPath();
+    ctx.arc(headX, headY, 8.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 3. Directional Ears
+    if (sinA > -0.5) {
+      ctx.fillStyle = this.skinTone;
+      const earOffsetX = -sinA * 8.6;
+      const earOffsetY = cosA * 2.8;
+      ctx.beginPath();
+      ctx.arc(headX - earOffsetX, headY + earOffsetY, 2.2, 0, Math.PI * 2);
+      ctx.arc(headX + earOffsetX, headY - earOffsetY, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 4. Directional Eyes & Nose (only when facing South or Side)
+    if (sinA > -0.2) {
+      const eyeForwardX = cosA * 3.5;
+      const eyeForwardY = sinA * 3.5;
+      const eyeSideX = sinA * 2.8;
+      const eyeSideY = -cosA * 2.8;
+
+      ctx.fillStyle = '#1e293b';
+      ctx.beginPath();
+      ctx.arc(headX + eyeForwardX + eyeSideX, headY + eyeForwardY + eyeSideY, 1.1, 0, Math.PI * 2);
+      ctx.arc(headX + eyeForwardX - eyeSideX, headY + eyeForwardY - eyeSideY, 1.1, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+      ctx.beginPath();
+      ctx.arc(headX + cosA * 4.6, headY + sinA * 4.6, 1.0, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (Math.abs(cosA) > 0.4) {
+      ctx.fillStyle = '#1e293b';
+      ctx.beginPath();
+      ctx.arc(headX + cosA * 4.2, headY - 0.5, 1.1, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = this.skinTone;
+      ctx.beginPath();
+      ctx.arc(headX + cosA * 7.5, headY + 1.0, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 5. Hairstyle
+    this.drawHair(ctx, style, headX, headY, angle, sinA, cosA);
   }
 
   drawSpeechBubble(ctx, text) {
@@ -8904,35 +9229,37 @@ export class ParkNPC {
     ctx.restore();
   }
 
-  drawHair(ctx, style) {
+  drawHair(ctx, style, headX = this.x, headY = this.y - 20, angle = Math.PI / 2, sinA = 1, cosA = 0) {
     ctx.save();
     switch (style) {
       case 'WAVY': {
         ctx.fillStyle = this.hairColor;
         ctx.beginPath();
-        ctx.ellipse(this.x - 8.5, this.y - 17, 3.8, 6.5, -0.25, 0, Math.PI * 2);
-        ctx.ellipse(this.x - 8.0, this.y - 11, 3.2, 5.0, 0.15, 0, Math.PI * 2);
-        ctx.ellipse(this.x + 8.5, this.y - 17, 3.8, 6.5, 0.25, 0, Math.PI * 2);
-        ctx.ellipse(this.x + 8.0, this.y - 11, 3.2, 5.0, -0.15, 0, Math.PI * 2);
+        ctx.ellipse(headX - 8.5, headY + 3, 3.8, 6.5, -0.25, 0, Math.PI * 2);
+        ctx.ellipse(headX - 8.0, headY + 9, 3.2, 5.0, 0.15, 0, Math.PI * 2);
+        ctx.ellipse(headX + 8.5, headY + 3, 3.8, 6.5, 0.25, 0, Math.PI * 2);
+        ctx.ellipse(headX + 8.0, headY + 9, 3.2, 5.0, -0.15, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.beginPath();
-        ctx.arc(this.x, this.y - 23, 9.5, Math.PI * 0.9, Math.PI * 2.1);
+        ctx.arc(headX, headY - 3, 9.5, Math.PI * 0.9, Math.PI * 2.1);
         ctx.fill();
 
-        ctx.beginPath();
-        ctx.moveTo(this.x - 8, this.y - 22);
-        ctx.quadraticCurveTo(this.x - 4, this.y - 18.5, this.x, this.y - 21.5);
-        ctx.quadraticCurveTo(this.x + 4, this.y - 18.5, this.x + 8, this.y - 22);
-        ctx.lineTo(this.x + 7, this.y - 26);
-        ctx.lineTo(this.x - 7, this.y - 26);
-        ctx.closePath();
-        ctx.fill();
+        if (sinA > -0.2) {
+          ctx.beginPath();
+          ctx.moveTo(headX - 8, headY - 2);
+          ctx.quadraticCurveTo(headX - 4, headY + 1.5, headX, headY - 1.5);
+          ctx.quadraticCurveTo(headX + 4, headY + 1.5, headX + 8, headY - 2);
+          ctx.lineTo(headX + 7, headY - 6);
+          ctx.lineTo(headX - 7, headY - 6);
+          ctx.closePath();
+          ctx.fill();
+        }
 
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
         ctx.lineWidth = 1.2;
         ctx.beginPath();
-        ctx.arc(this.x - 3, this.y - 25, 5.5, Math.PI * 1.15, Math.PI * 1.75);
+        ctx.arc(headX - 3, headY - 5, 5.5, Math.PI * 1.15, Math.PI * 1.75);
         ctx.stroke();
         break;
       }
@@ -8940,17 +9267,17 @@ export class ParkNPC {
       case 'PONYTAIL': {
         ctx.fillStyle = this.hairColor;
         ctx.beginPath();
-        ctx.arc(this.x, this.y - 22, 9.2, 0, Math.PI * 2);
+        ctx.arc(headX, headY - 2, 9.2, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.beginPath();
-        ctx.ellipse(this.x - 7.5, this.y - 21, 2.2, 3.8, -0.15, 0, Math.PI * 2);
-        ctx.ellipse(this.x + 7.5, this.y - 21, 2.2, 3.8, 0.15, 0, Math.PI * 2);
+        ctx.ellipse(headX - 7.5, headY - 1, 2.2, 3.8, -0.15, 0, Math.PI * 2);
+        ctx.ellipse(headX + 7.5, headY - 1, 2.2, 3.8, 0.15, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
         ctx.beginPath();
-        ctx.arc(this.x, this.y - 25.5, 4.2, Math.PI * 1.1, Math.PI * 1.9);
+        ctx.arc(headX, headY - 5.5, 4.2, Math.PI * 1.1, Math.PI * 1.9);
         ctx.fill();
         break;
       }
@@ -8958,27 +9285,29 @@ export class ParkNPC {
       case 'BEANIE': {
         ctx.fillStyle = this.hairColor;
         ctx.beginPath();
-        ctx.ellipse(this.x - 7.2, this.y - 19, 2.5, 4.0, -0.2, 0, Math.PI * 2);
-        ctx.ellipse(this.x + 7.2, this.y - 19, 2.5, 4.0, 0.2, 0, Math.PI * 2);
+        ctx.ellipse(headX - 7.2, headY + 1, 2.5, 4.0, -0.2, 0, Math.PI * 2);
+        ctx.ellipse(headX + 7.2, headY + 1, 2.5, 4.0, 0.2, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.beginPath();
-        ctx.arc(this.x, this.y - 21, 8.5, Math.PI * 0.95, Math.PI * 1.25);
-        ctx.arc(this.x, this.y - 21, 8.5, Math.PI * 1.75, Math.PI * 2.05);
-        ctx.fill();
+        if (sinA > -0.2) {
+          ctx.beginPath();
+          ctx.arc(headX, headY - 1, 8.5, Math.PI * 0.95, Math.PI * 1.25);
+          ctx.arc(headX, headY - 1, 8.5, Math.PI * 1.75, Math.PI * 2.05);
+          ctx.fill();
+        }
 
         const beanieMain = this.hatColor || '#c2410c';
         ctx.fillStyle = beanieMain;
         ctx.beginPath();
-        ctx.ellipse(this.x, this.y - 24, 10.0, 8.8, 0, 0, Math.PI * 2);
+        ctx.ellipse(headX, headY - 4, 10.0, 8.8, 0, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
         ctx.beginPath();
         if (typeof ctx.roundRect === 'function') {
-          ctx.roundRect(this.x - 9.5, this.y - 23, 19, 5.5, 2.5);
+          ctx.roundRect(headX - 9.5, headY - 3, 19, 5.5, 2.5);
         } else {
-          ctx.rect(this.x - 9.5, this.y - 23, 19, 5.5);
+          ctx.rect(headX - 9.5, headY - 3, 19, 5.5);
         }
         ctx.fill();
         break;
@@ -8988,28 +9317,30 @@ export class ParkNPC {
       default: {
         ctx.fillStyle = this.hairColor;
         ctx.beginPath();
-        ctx.arc(this.x, this.y - 22, 9.2, Math.PI * 0.85, Math.PI * 2.15);
+        ctx.arc(headX, headY - 2, 9.2, Math.PI * 0.85, Math.PI * 2.15);
         ctx.fill();
 
         ctx.beginPath();
-        ctx.ellipse(this.x - 7.5, this.y - 20.5, 2.5, 4.2, -0.2, 0, Math.PI * 2);
-        ctx.ellipse(this.x + 7.5, this.y - 20.5, 2.5, 4.2, 0.2, 0, Math.PI * 2);
+        ctx.ellipse(headX - 7.5, headY - 0.5, 2.5, 4.2, -0.2, 0, Math.PI * 2);
+        ctx.ellipse(headX + 7.5, headY - 0.5, 2.5, 4.2, 0.2, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.beginPath();
-        ctx.moveTo(this.x - 8, this.y - 22);
-        ctx.quadraticCurveTo(this.x - 4, this.y - 19.5, this.x - 2, this.y - 22.5);
-        ctx.quadraticCurveTo(this.x + 1, this.y - 19, this.x + 3.5, this.y - 22.5);
-        ctx.quadraticCurveTo(this.x + 6, this.y - 20, this.x + 8, this.y - 22);
-        ctx.lineTo(this.x + 7, this.y - 26);
-        ctx.lineTo(this.x - 7, this.y - 26);
-        ctx.closePath();
-        ctx.fill();
+        if (sinA > -0.2) {
+          ctx.beginPath();
+          ctx.moveTo(headX - 8, headY - 2);
+          ctx.quadraticCurveTo(headX - 4, headY + 0.5, headX - 2, headY - 2.5);
+          ctx.quadraticCurveTo(headX + 1, headY + 1.0, headX + 3.5, headY - 2.5);
+          ctx.quadraticCurveTo(headX + 6, headY, headX + 8, headY - 2);
+          ctx.lineTo(headX + 7, headY - 6);
+          ctx.lineTo(headX - 7, headY - 6);
+          ctx.closePath();
+          ctx.fill();
+        }
 
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
         ctx.lineWidth = 1.2;
         ctx.beginPath();
-        ctx.arc(this.x - 2, this.y - 26, 4.5, Math.PI * 1.1, Math.PI * 1.8);
+        ctx.arc(headX - 2, headY - 6, 4.5, Math.PI * 1.1, Math.PI * 1.8);
         ctx.stroke();
         break;
       }
@@ -9201,6 +9532,9 @@ export function npcIdentityFromSeed(seed, type = 'walker') {
     ? JOGGER_SHOES[Math.floor(rng() * JOGGER_SHOES.length)]
     : WALKER_SHOES[Math.floor(rng() * WALKER_SHOES.length)];
 
+  const accessories = ['BACKPACK', 'SCARF', 'HOODIE', 'NONE'];
+  const accessory = accessories[Math.floor(rng() * accessories.length)];
+
   return {
     name,
     skinTone,
@@ -9209,7 +9543,8 @@ export function npcIdentityFromSeed(seed, type = 'walker') {
     hatColor,
     jacketColor,
     pantsColor,
-    shoeColor
+    shoeColor,
+    accessory
   };
 }
 
@@ -9230,7 +9565,7 @@ export function nextSpeechDelay(rng) {
 
 ## FILE: src/entities/owner.js
 ```javascript
-// Human Owner Player Avatar - 8-Way Movement, Customization & Interaction Controller
+// Human Owner Player Avatar - 8-Way Directional Movement, 3D Procedural Silhouette, Customization & Interaction Controller
 import { resolveFieldCollision } from '../engine/wasm_sim_bridge.js';
 
 export class Owner {
@@ -9241,7 +9576,7 @@ export class Owner {
     this.vy = 0;
     this.speed = 190; // px/s
     this.facing = 'S';
-    this.angle = Math.PI / 2; // Facing downward
+    this.angle = Math.PI / 2; // Facing downward (South)
 
     this.name = name;
     this.isLocal = isLocal;
@@ -9255,12 +9590,15 @@ export class Owner {
     this.jacketColor = '#1e3a8a'; // Deep blue
     this.pantsColor = '#334155'; // Slate dark trousers
     this.shoeColor = '#0f172a';
+    this.accessory = 'BACKPACK'; // Supported: 'BACKPACK', 'SCARF', 'HOODIE', 'NONE'
 
     // State & Animations
     this.isMoving = false;
     this.walkPhase = 0;
     this.isPetting = false;
     this.petTimer = 0;
+    this.isBending = false;
+    this.bendTimer = 0;
     this.isLeashed = true;
 
     // Chat / Emote bubble
@@ -9286,6 +9624,16 @@ export class Owner {
   setEmote(emote, duration = 3.0) {
     this.emote = emote;
     this.emoteTimer = duration;
+  }
+
+  triggerPet(duration = 0.8) {
+    this.isPetting = true;
+    this.petTimer = duration;
+  }
+
+  triggerPickup(duration = 0.8) {
+    this.isBending = true;
+    this.bendTimer = duration;
   }
 
   update(dt, field) {
@@ -9329,6 +9677,11 @@ export class Owner {
       if (this.petTimer <= 0) this.isPetting = false;
     }
 
+    if (this.bendTimer > 0) {
+      this.bendTimer -= dt;
+      if (this.bendTimer <= 0) this.isBending = false;
+    }
+
     if (this.chatTimer > 0) {
       this.chatTimer -= dt;
       if (this.chatTimer <= 0) this.chatText = null;
@@ -9340,169 +9693,264 @@ export class Owner {
     }
   }
 
+  getShadedColor(color, percent) {
+    if (!color || typeof color !== 'string' || !color.startsWith('#')) return color;
+    const num = parseInt(color.replace('#', ''), 16);
+    const amt = Math.round(255 * percent);
+    const R = Math.max(0, Math.min(255, (num >> 16) + amt));
+    const G = Math.max(0, Math.min(255, ((num >> 8) & 0x00ff) + amt));
+    const B = Math.max(0, Math.min(255, (num & 0x0000ff) + amt));
+    return '#' + (0x1000000 + R * 0x10000 + G * 0x100 + B).toString(16).slice(1);
+  }
+
   draw(ctx) {
     ctx.save();
-    // 1. Soft ground drop shadow
+
+    const angle = this.angle !== undefined ? this.angle : Math.PI / 2;
+    const cosA = Math.cos(angle);
+    const sinA = Math.sin(angle);
+
+    // Animated kneeling/bending pose when petting or picking up waste
+    const isKneeling = this.isPetting || this.isBending;
+    const kneelProgress = isKneeling
+      ? Math.sin(Math.min(1.0, Math.max(0, (this.petTimer || this.bendTimer || 0.4) / 0.8)) * Math.PI)
+      : 0;
+    const kneelDrop = kneelProgress * 7;
+    const kneelLeanX = cosA * kneelProgress * 6;
+    const kneelLeanY = sinA * kneelProgress * 4;
+
+    // 1. Soft ground drop shadow (directionally oriented and widens when kneeling)
     ctx.fillStyle = 'rgba(20, 35, 15, 0.32)';
     ctx.beginPath();
-    ctx.ellipse(this.x, this.y + 14, 15, 7, 0, 0, Math.PI * 2);
+    ctx.ellipse(
+      this.x + kneelLeanX * 0.4,
+      this.y + 14 + kneelDrop * 0.3,
+      15 + kneelProgress * 3,
+      7 + kneelProgress * 2,
+      0,
+      0,
+      Math.PI * 2
+    );
     ctx.fill();
 
-    // 2. Walking Legs / Shoes
-    const legSwing = this.isMoving ? Math.sin(this.walkPhase) * 6 : 0;
-    const legSpread = 7;
+    // 2. Directional Shoulder/Hip Axes:
+    // Transverse axis perpendicular to facing direction with 2.5D vertical foreshortening
+    const perpX = -sinA;
+    const perpY = cosA * 0.36;
 
-    // Left leg / shoe
-    ctx.fillStyle = this.pantsColor;
-    ctx.beginPath();
-    ctx.roundRect(this.x - legSpread - 3.5, this.y + 1 + legSwing, 5.5, 9, 2);
-    ctx.fill();
-    ctx.fillStyle = this.shoeColor;
-    ctx.beginPath();
-    ctx.roundRect(this.x - legSpread - 4, this.y + 9 + legSwing, 6.8, 5, 2.5);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-    ctx.fillRect(this.x - legSpread - 4, this.y + 13 + legSwing, 6.8, 1.2);
+    const shoulderSpan = 10.5;
+    const hipSpan = 6.2;
 
-    // Right leg / shoe
-    ctx.fillStyle = this.pantsColor;
-    ctx.beginPath();
-    ctx.roundRect(this.x + legSpread - 2, this.y + 1 - legSwing, 5.5, 9, 2);
-    ctx.fill();
-    ctx.fillStyle = this.shoeColor;
-    ctx.beginPath();
-    ctx.roundRect(this.x + legSpread - 2.5, this.y + 9 - legSwing, 6.8, 5, 2.5);
-    ctx.fill();
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
-    ctx.fillRect(this.x + legSpread - 2.5, this.y + 13 - legSwing, 6.8, 1.2);
+    const leftShoulderX = -perpX * shoulderSpan;
+    const leftShoulderY = -perpY * shoulderSpan;
+    const rightShoulderX = perpX * shoulderSpan;
+    const rightShoulderY = perpY * shoulderSpan;
 
-    // 3. Torso / Jacket with lapels
-    ctx.fillStyle = this.jacketColor;
-    ctx.beginPath();
-    ctx.roundRect(this.x - 11, this.y - 12, 22, 18, 5);
-    ctx.fill();
+    // Depth metric for arm & leg layering: higher screen Y means closer to camera (foreground)
+    const leftDepthY = leftShoulderY - sinA * 2.5;
+    const rightDepthY = rightShoulderY - sinA * 2.5;
+    const leftIsFar = leftDepthY < rightDepthY;
 
-    // Shoulder lapels & collar
-    ctx.fillStyle = '#ffffff';
-    ctx.beginPath();
-    ctx.moveTo(this.x - 4, this.y - 12);
-    ctx.lineTo(this.x + 4, this.y - 12);
-    ctx.lineTo(this.x, this.y - 6);
-    ctx.closePath();
-    ctx.fill();
+    // Walk phase strides
+    const legSwing = this.isMoving ? Math.sin(this.walkPhase) * 6.5 : 0;
+    const armSwing = this.isMoving ? Math.cos(this.walkPhase) * 5.5 : 0;
 
-    // Lapels over neckline
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
-    ctx.beginPath();
-    ctx.moveTo(this.x - 7, this.y - 12);
-    ctx.lineTo(this.x - 3, this.y - 12);
-    ctx.lineTo(this.x, this.y - 5);
-    ctx.lineTo(this.x - 5, this.y - 5);
-    ctx.closePath();
-    ctx.fill();
+    const torsoX = this.x + kneelLeanX;
+    const torsoY = this.y - 3 + kneelDrop;
 
-    ctx.beginPath();
-    ctx.moveTo(this.x + 7, this.y - 12);
-    ctx.lineTo(this.x + 3, this.y - 12);
-    ctx.lineTo(this.x, this.y - 5);
-    ctx.lineTo(this.x + 5, this.y - 5);
-    ctx.closePath();
-    ctx.fill();
+    // Helper for legs
+    const drawLeg = (hipX, hipY, swing, isFar) => {
+      ctx.save();
+      const strideX = cosA * swing * 0.45;
+      const strideY = sinA * swing * 0.45 + (Math.abs(swing) * 0.4);
+      const lx = this.x + hipX + strideX;
+      const ly = this.y + 1 + hipY + (isKneeling ? (isFar ? kneelDrop * 0.7 : kneelDrop * 0.3) : strideY);
 
-    // Jacket zipper / seam line
-    ctx.strokeStyle = 'rgba(0, 0, 0, 0.22)';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(this.x, this.y - 5);
-    ctx.lineTo(this.x, this.y + 6);
-    ctx.stroke();
-
-    // 4. Arms & Hands swinging based on walkPhase
-    const armSwing = this.isMoving ? Math.cos(this.walkPhase) * 5 : 0;
-    // Left arm
-    ctx.fillStyle = this.jacketColor;
-    ctx.beginPath();
-    ctx.roundRect(this.x - 15.5, this.y - 10 - armSwing, 4.5, 12, 2);
-    ctx.fill();
-    ctx.fillStyle = this.skinTone;
-    ctx.beginPath();
-    ctx.arc(this.x - 13.25, this.y + 3 - armSwing, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Right arm
-    ctx.fillStyle = this.jacketColor;
-    ctx.beginPath();
-    ctx.roundRect(this.x + 11, this.y - 10 + armSwing, 4.5, 12, 2);
-    ctx.fill();
-    ctx.fillStyle = this.skinTone;
-    ctx.beginPath();
-    ctx.arc(this.x + 13.25, this.y + 3 + armSwing, 2.5, 0, Math.PI * 2);
-    ctx.fill();
-
-    // 5. Head & Face
-    const style = (this.hairStyle || 'SHORT').toUpperCase();
-
-    // Rear hair layer for WAVY or PONYTAIL
-    if (style === 'WAVY') {
-      ctx.fillStyle = this.hairColor;
+      // Pants
+      ctx.fillStyle = isFar ? this.getShadedColor(this.pantsColor, -0.15) : this.pantsColor;
       ctx.beginPath();
-      ctx.ellipse(this.x, this.y - 18, 11.5, 10, 0, 0, Math.PI * 2);
-      ctx.fill();
-    } else if (style === 'PONYTAIL') {
-      const backAngle = this.angle + Math.PI;
-      const pBaseX = this.x + Math.cos(backAngle) * 7.5;
-      const pBaseY = this.y - 22 + Math.sin(backAngle) * 6.5;
-
-      // Scrunchie tie
-      ctx.fillStyle = '#dc2626';
-      ctx.beginPath();
-      ctx.arc(pBaseX, pBaseY, 2.8, 0, Math.PI * 2);
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(lx - 2.8, ly, 5.6, 9 - (isKneeling ? kneelProgress * 3 : 0), 2);
+      } else {
+        ctx.rect(lx - 2.8, ly, 5.6, 9);
+      }
       ctx.fill();
 
-      // Tied ponytail plume extending behind head
-      ctx.fillStyle = this.hairColor;
-      const pTipX = pBaseX + Math.cos(backAngle) * 9.5;
-      const pTipY = pBaseY + Math.sin(backAngle) * 9.5;
+      // Shoe
+      ctx.fillStyle = isFar ? this.getShadedColor(this.shoeColor, -0.15) : this.shoeColor;
       ctx.beginPath();
-      ctx.ellipse(pTipX, pTipY, 4.8, 7.8, backAngle + Math.PI / 2, 0, Math.PI * 2);
+      const shoeW = Math.abs(cosA) > 0.4 ? 7.8 : 6.8;
+      const shoeH = 5.0;
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(lx - 3.2 + cosA * 1.5, ly + 8 - (isKneeling ? kneelProgress * 3 : 0), shoeW, shoeH, 2.5);
+      } else {
+        ctx.rect(lx - 3.2, ly + 8, shoeW, shoeH);
+      }
       ctx.fill();
+
+      // Shoe sole stripe
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.3)';
+      ctx.fillRect(lx - 3.2 + cosA * 1.5, ly + 12 - (isKneeling ? kneelProgress * 3 : 0), shoeW, 1.2);
+      ctx.restore();
+    };
+
+    // Helper for arms
+    const drawArm = (shX, shY, swing, isFar) => {
+      ctx.save();
+      const ax = torsoX + shX;
+      const ay = torsoY - 7 + shY;
+
+      ctx.fillStyle = isFar ? this.getShadedColor(this.jacketColor, -0.18) : this.jacketColor;
+
+      if (isKneeling && !isFar) {
+        // Kneeling / bending gesture: arm reaches down toward pet or waste
+        ctx.beginPath();
+        ctx.moveTo(ax - 2.5, ay);
+        ctx.lineTo(ax + 2.5, ay);
+        ctx.lineTo(ax + cosA * 6 + 2, ay + 13);
+        ctx.lineTo(ax + cosA * 6 - 2, ay + 13);
+        ctx.closePath();
+        ctx.fill();
+
+        ctx.fillStyle = this.skinTone;
+        ctx.beginPath();
+        ctx.arc(ax + cosA * 6, ay + 14.5, 2.6, 0, Math.PI * 2);
+        ctx.fill();
+      } else {
+        const reachX = cosA * swing * 0.4;
+        const reachY = swing * 0.8;
+        ctx.beginPath();
+        if (typeof ctx.roundRect === 'function') {
+          ctx.roundRect(ax - 2.3 + reachX, ay - reachY, 4.6, 12, 2.3);
+        } else {
+          ctx.rect(ax - 2.3 + reachX, ay - reachY, 4.6, 12);
+        }
+        ctx.fill();
+
+        ctx.fillStyle = this.skinTone;
+        ctx.beginPath();
+        ctx.arc(ax + reachX, ay + 12 - reachY, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    };
+
+    // --- DEPTH LAYER 1: Far Arm & Far Leg (behind torso) ---
+    if (leftIsFar) {
+      drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, true);
+      drawArm(leftShoulderX, leftShoulderY, -armSwing, true);
+    } else {
+      drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, true);
+      drawArm(rightShoulderX, rightShoulderY, armSwing, true);
     }
 
-    // Head base with skin tone
-    ctx.fillStyle = this.skinTone;
+    // --- DEPTH LAYER 2: Accessory (Backpack when facing South / from front) ---
+    if (this.accessory === 'BACKPACK' && sinA > 0.25) {
+      this.drawBackpack(ctx, torsoX, torsoY, angle, true);
+    }
+
+    // --- DEPTH LAYER 3: 3D Directional Torso / Jacket ---
+    ctx.save();
+    ctx.translate(torsoX, torsoY);
+    ctx.rotate(angle - Math.PI / 2); // Orient so angle = Math.PI / 2 (South) has zero rotation
+
+    ctx.fillStyle = this.jacketColor;
     ctx.beginPath();
-    ctx.arc(this.x, this.y - 20, 8.5, 0, Math.PI * 2);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(-10.5, -9, 21, 18, 5);
+    } else {
+      ctx.rect(-10.5, -9, 21, 18);
+    }
     ctx.fill();
 
-    // Ears on sides
-    ctx.fillStyle = this.skinTone;
+    // 3D elliptical thickness shadow
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.12)';
     ctx.beginPath();
-    ctx.arc(this.x - 8.8, this.y - 20, 2.2, 0, Math.PI * 2);
-    ctx.arc(this.x + 8.8, this.y - 20, 2.2, 0, Math.PI * 2);
+    ctx.ellipse(0, 7, 10.5, 3.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Subtle facial direction cues based on angle
-    const eyeForwardX = Math.cos(this.angle) * 3.5;
-    const eyeForwardY = Math.sin(this.angle) * 3.5;
-    const eyeSideX = Math.sin(this.angle) * 2.8;
-    const eyeSideY = -Math.cos(this.angle) * 2.8;
+    ctx.restore(); // Restore torso local transform
 
-    ctx.fillStyle = '#1e293b';
-    ctx.beginPath();
-    ctx.arc(this.x + eyeForwardX + eyeSideX, this.y - 20 + eyeForwardY + eyeSideY, 1.1, 0, Math.PI * 2);
-    ctx.arc(this.x + eyeForwardX - eyeSideX, this.y - 20 + eyeForwardY - eyeSideY, 1.1, 0, Math.PI * 2);
-    ctx.fill();
+    // Torso Front Details if facing South / towards camera
+    if (sinA > -0.2) {
+      ctx.save();
+      ctx.translate(torsoX, torsoY);
 
-    // Subtle nose directional indicator
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
-    ctx.beginPath();
-    ctx.arc(this.x + Math.cos(this.angle) * 4.6, this.y - 20 + Math.sin(this.angle) * 4.6, 1.0, 0, Math.PI * 2);
-    ctx.fill();
+      // White inner shirt neckline
+      ctx.fillStyle = '#ffffff';
+      ctx.beginPath();
+      ctx.moveTo(-4, -9);
+      ctx.lineTo(4, -9);
+      ctx.lineTo(0, -3);
+      ctx.closePath();
+      ctx.fill();
 
-    // 6. Hairstyle silhouettes
-    this.drawHair(ctx, style);
+      // Lapels
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.22)';
+      ctx.beginPath();
+      ctx.moveTo(-7, -9);
+      ctx.lineTo(-3, -9);
+      ctx.lineTo(0, -2);
+      ctx.lineTo(-5, -2);
+      ctx.closePath();
+      ctx.fill();
 
-    // 7. Name Label Badge
+      ctx.beginPath();
+      ctx.moveTo(7, -9);
+      ctx.lineTo(3, -9);
+      ctx.lineTo(0, -2);
+      ctx.lineTo(5, -2);
+      ctx.closePath();
+      ctx.fill();
+
+      // Jacket zipper / seam line
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.25)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(0, -2);
+      ctx.lineTo(0, 8);
+      ctx.stroke();
+
+      ctx.restore();
+    } else {
+      // Facing North / away from camera: Back jacket seams
+      ctx.save();
+      ctx.translate(torsoX, torsoY);
+      ctx.strokeStyle = 'rgba(0, 0, 0, 0.18)';
+      ctx.lineWidth = 1.4;
+      ctx.beginPath();
+      ctx.moveTo(0, -8);
+      ctx.lineTo(0, 8);
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    // --- DEPTH LAYER 4: Accessory (Backpack when facing North/Side, Scarf, or Hoodie) ---
+    if (this.accessory === 'BACKPACK') {
+      if (sinA <= 0.25) {
+        this.drawBackpack(ctx, torsoX, torsoY, angle, false);
+      } else {
+        this.drawBackpackStraps(ctx, torsoX, torsoY);
+      }
+    } else if (this.accessory === 'SCARF') {
+      this.drawScarf(ctx, torsoX, torsoY, angle);
+    } else if (this.accessory === 'HOODIE') {
+      this.drawHoodie(ctx, torsoX, torsoY, angle);
+    }
+
+    // --- DEPTH LAYER 5: Near Leg & Near Arm (in front of torso) ---
+    if (leftIsFar) {
+      drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, false);
+      drawArm(rightShoulderX, rightShoulderY, armSwing, false);
+    } else {
+      drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, false);
+      drawArm(leftShoulderX, leftShoulderY, -armSwing, false);
+    }
+
+    // --- DEPTH LAYER 6: Head, Face, Ears & Hairstyle ---
+    this.drawHeadAndFace(ctx, torsoX, torsoY, angle, cosA, sinA, kneelDrop);
+
+    // --- DEPTH LAYER 7: Nametag Badge ---
     ctx.font = '600 11px Outfit, sans-serif';
     ctx.textAlign = 'center';
     const displayNametag = this.isLocal ? `${this.name} (You)` : this.name;
@@ -9510,13 +9958,17 @@ export class Owner {
 
     ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
     ctx.beginPath();
-    ctx.roundRect(this.x - textWidth / 2 - 6, this.y - 42, textWidth + 12, 16, 8);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(this.x - textWidth / 2 - 6, this.y - 42 + kneelDrop, textWidth + 12, 16, 8);
+    } else {
+      ctx.rect(this.x - textWidth / 2 - 6, this.y - 42 + kneelDrop, textWidth + 12, 16);
+    }
     ctx.fill();
 
     ctx.fillStyle = this.isLocal ? '#fde047' : '#f8fafc';
-    ctx.fillText(displayNametag, this.x, this.y - 30);
+    ctx.fillText(displayNametag, this.x, this.y - 30 + kneelDrop);
 
-    // 8. Speech Bubble or Emote
+    // --- DEPTH LAYER 8: Speech Bubble or Emote ---
     if (this.chatText) {
       this.drawSpeechBubble(ctx, this.chatText);
     } else if (this.emote) {
@@ -9526,111 +9978,298 @@ export class Owner {
     ctx.restore();
   }
 
-  drawHair(ctx, style) {
+  drawBackpack(ctx, torsoX, torsoY, angle, isFront) {
+    ctx.save();
+    const packX = torsoX - Math.cos(angle) * 7.0;
+    const packY = torsoY - Math.sin(angle) * 5.5;
+
+    // Structured daypack body
+    ctx.fillStyle = '#334155';
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(packX - 7.5, packY - 8, 15, 16, 4);
+    } else {
+      ctx.rect(packX - 7.5, packY - 8, 15, 16);
+    }
+    ctx.fill();
+
+    // Top pack flap with accent trim
+    ctx.fillStyle = '#1e293b';
+    ctx.beginPath();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(packX - 7, packY - 8, 14, 6.5, 2.5);
+    } else {
+      ctx.rect(packX - 7, packY - 8, 14, 6.5);
+    }
+    ctx.fill();
+
+    // Metallic buckle
+    ctx.fillStyle = '#f59e0b';
+    ctx.fillRect(packX - 1.5, packY - 2.5, 3.0, 2.5);
+
+    // Side water bottle mesh pocket
+    ctx.fillStyle = '#0284c7';
+    ctx.beginPath();
+    ctx.arc(packX + 7, packY + 2, 2.0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  drawBackpackStraps(ctx, torsoX, torsoY) {
+    ctx.save();
+    ctx.strokeStyle = '#1e293b';
+    ctx.lineWidth = 2.0;
+
+    // Left strap
+    ctx.beginPath();
+    ctx.moveTo(torsoX - 6.5, torsoY - 8);
+    ctx.lineTo(torsoX - 5.5, torsoY + 7);
+    ctx.stroke();
+
+    // Right strap
+    ctx.beginPath();
+    ctx.moveTo(torsoX + 6.5, torsoY - 8);
+    ctx.lineTo(torsoX + 5.5, torsoY + 7);
+    ctx.stroke();
+
+    // Sternum strap across chest
+    ctx.strokeStyle = '#f59e0b';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(torsoX - 5.5, torsoY);
+    ctx.lineTo(torsoX + 5.5, torsoY);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  drawScarf(ctx, torsoX, torsoY, angle) {
+    ctx.save();
+    ctx.fillStyle = '#b91c1c'; // Warm crimson red
+    ctx.beginPath();
+    ctx.ellipse(torsoX, torsoY - 8.5, 8.5, 4.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Trailing fluttering tail in the wind
+    const flutter = Math.sin(this.walkPhase * 0.8 + Date.now() * 0.005) * 4.0;
+    ctx.fillStyle = '#991b1b';
+    ctx.beginPath();
+    ctx.moveTo(torsoX + 2, torsoY - 7);
+    ctx.lineTo(torsoX + 7 + flutter, torsoY + 5);
+    ctx.lineTo(torsoX + 3 + flutter, torsoY + 6);
+    ctx.lineTo(torsoX - 1, torsoY - 6);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.strokeStyle = '#fef08a';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(torsoX + 3 + flutter, torsoY + 6);
+    ctx.lineTo(torsoX + 6 + flutter, torsoY + 8);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  drawHoodie(ctx, torsoX, torsoY, angle) {
+    ctx.save();
+    ctx.fillStyle = this.getShadedColor(this.jacketColor, -0.15);
+    ctx.beginPath();
+    ctx.ellipse(torsoX, torsoY - 8.5, 9.5, 4.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.moveTo(torsoX - 3.5, torsoY - 7);
+    ctx.lineTo(torsoX - 3.0, torsoY + 1);
+    ctx.moveTo(torsoX + 3.5, torsoY - 7);
+    ctx.lineTo(torsoX + 3.0, torsoY + 1);
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  drawHeadAndFace(ctx, torsoX, torsoY, angle, cosA, sinA, kneelDrop) {
+    const headX = this.x + (torsoX - this.x) * 0.8;
+    const headY = this.y - 20 + kneelDrop;
+    const style = (this.hairStyle || 'SHORT').toUpperCase();
+
+    // 1. Rear hair layer for WAVY or PONYTAIL
+    if (style === 'WAVY') {
+      ctx.fillStyle = this.hairColor;
+      ctx.beginPath();
+      ctx.ellipse(headX, headY + 2, 11.5, 10, 0, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (style === 'PONYTAIL') {
+      const backAngle = angle + Math.PI;
+      const pBaseX = headX + Math.cos(backAngle) * 7.5;
+      const pBaseY = headY - 2 + Math.sin(backAngle) * 6.5;
+
+      ctx.fillStyle = '#dc2626';
+      ctx.beginPath();
+      ctx.arc(pBaseX, pBaseY, 2.8, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = this.hairColor;
+      const pTipX = pBaseX + Math.cos(backAngle) * 9.5;
+      const pTipY = pBaseY + Math.sin(backAngle) * 9.5;
+      ctx.beginPath();
+      ctx.ellipse(pTipX, pTipY, 4.8, 7.8, backAngle + Math.PI / 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 2. Base Head
+    ctx.fillStyle = this.skinTone;
+    ctx.beginPath();
+    ctx.arc(headX, headY, 8.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 3. Directional Ears
+    if (sinA > -0.5) {
+      ctx.fillStyle = this.skinTone;
+      const earOffsetX = -sinA * 8.6;
+      const earOffsetY = cosA * 2.8;
+      ctx.beginPath();
+      ctx.arc(headX - earOffsetX, headY + earOffsetY, 2.2, 0, Math.PI * 2);
+      ctx.arc(headX + earOffsetX, headY - earOffsetY, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 4. Directional Eyes & Nose (only when facing South or Side)
+    if (sinA > -0.2) {
+      const eyeForwardX = cosA * 3.5;
+      const eyeForwardY = sinA * 3.5;
+      const eyeSideX = sinA * 2.8;
+      const eyeSideY = -cosA * 2.8;
+
+      ctx.fillStyle = '#1e293b';
+      ctx.beginPath();
+      ctx.arc(headX + eyeForwardX + eyeSideX, headY + eyeForwardY + eyeSideY, 1.1, 0, Math.PI * 2);
+      ctx.arc(headX + eyeForwardX - eyeSideX, headY + eyeForwardY - eyeSideY, 1.1, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
+      ctx.beginPath();
+      ctx.arc(headX + cosA * 4.6, headY + sinA * 4.6, 1.0, 0, Math.PI * 2);
+      ctx.fill();
+    } else if (Math.abs(cosA) > 0.4) {
+      ctx.fillStyle = '#1e293b';
+      ctx.beginPath();
+      ctx.arc(headX + cosA * 4.2, headY - 0.5, 1.1, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = this.skinTone;
+      ctx.beginPath();
+      ctx.arc(headX + cosA * 7.5, headY + 1.0, 1.6, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // 5. Hairstyle
+    this.drawHair(ctx, style, headX, headY, angle, sinA, cosA);
+  }
+
+  drawHair(ctx, style, headX = this.x, headY = this.y - 20, angle = Math.PI / 2, sinA = 1, cosA = 0) {
     ctx.save();
     switch (style) {
       case 'WAVY': {
         ctx.fillStyle = this.hairColor;
-        // Wavy locks framing face
         ctx.beginPath();
-        ctx.ellipse(this.x - 8.5, this.y - 17, 3.8, 6.5, -0.25, 0, Math.PI * 2);
-        ctx.ellipse(this.x - 8.0, this.y - 11, 3.2, 5.0, 0.15, 0, Math.PI * 2);
-        ctx.ellipse(this.x + 8.5, this.y - 17, 3.8, 6.5, 0.25, 0, Math.PI * 2);
-        ctx.ellipse(this.x + 8.0, this.y - 11, 3.2, 5.0, -0.15, 0, Math.PI * 2);
+        ctx.ellipse(headX - 8.5, headY + 3, 3.8, 6.5, -0.25, 0, Math.PI * 2);
+        ctx.ellipse(headX - 8.0, headY + 9, 3.2, 5.0, 0.15, 0, Math.PI * 2);
+        ctx.ellipse(headX + 8.5, headY + 3, 3.8, 6.5, 0.25, 0, Math.PI * 2);
+        ctx.ellipse(headX + 8.0, headY + 9, 3.2, 5.0, -0.15, 0, Math.PI * 2);
         ctx.fill();
 
-        // Crown volume
         ctx.beginPath();
-        ctx.arc(this.x, this.y - 23, 9.5, Math.PI * 0.9, Math.PI * 2.1);
+        ctx.arc(headX, headY - 3, 9.5, Math.PI * 0.9, Math.PI * 2.1);
         ctx.fill();
 
-        // Soft parted wavy bangs
-        ctx.beginPath();
-        ctx.moveTo(this.x - 8, this.y - 22);
-        ctx.quadraticCurveTo(this.x - 4, this.y - 18.5, this.x, this.y - 21.5);
-        ctx.quadraticCurveTo(this.x + 4, this.y - 18.5, this.x + 8, this.y - 22);
-        ctx.lineTo(this.x + 7, this.y - 26);
-        ctx.lineTo(this.x - 7, this.y - 26);
-        ctx.closePath();
-        ctx.fill();
+        if (sinA > -0.2) {
+          ctx.beginPath();
+          ctx.moveTo(headX - 8, headY - 2);
+          ctx.quadraticCurveTo(headX - 4, headY + 1.5, headX, headY - 1.5);
+          ctx.quadraticCurveTo(headX + 4, headY + 1.5, headX + 8, headY - 2);
+          ctx.lineTo(headX + 7, headY - 6);
+          ctx.lineTo(headX - 7, headY - 6);
+          ctx.closePath();
+          ctx.fill();
+        }
 
-        // Highlight
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.22)';
         ctx.lineWidth = 1.2;
         ctx.beginPath();
-        ctx.arc(this.x - 3, this.y - 25, 5.5, Math.PI * 1.15, Math.PI * 1.75);
+        ctx.arc(headX - 3, headY - 5, 5.5, Math.PI * 1.15, Math.PI * 1.75);
         ctx.stroke();
         break;
       }
 
       case 'PONYTAIL': {
         ctx.fillStyle = this.hairColor;
-        // Swept-back hair over crown
         ctx.beginPath();
-        ctx.arc(this.x, this.y - 22, 9.2, 0, Math.PI * 2);
+        ctx.arc(headX, headY - 2, 9.2, 0, Math.PI * 2);
         ctx.fill();
 
-        // Temple strands
         ctx.beginPath();
-        ctx.ellipse(this.x - 7.5, this.y - 21, 2.2, 3.8, -0.15, 0, Math.PI * 2);
-        ctx.ellipse(this.x + 7.5, this.y - 21, 2.2, 3.8, 0.15, 0, Math.PI * 2);
+        ctx.ellipse(headX - 7.5, headY - 1, 2.2, 3.8, -0.15, 0, Math.PI * 2);
+        ctx.ellipse(headX + 7.5, headY - 1, 2.2, 3.8, 0.15, 0, Math.PI * 2);
         ctx.fill();
 
-        // Crown shine
         ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
         ctx.beginPath();
-        ctx.arc(this.x, this.y - 25.5, 4.2, Math.PI * 1.1, Math.PI * 1.9);
+        ctx.arc(headX, headY - 5.5, 4.2, Math.PI * 1.1, Math.PI * 1.9);
         ctx.fill();
         break;
       }
 
       case 'BEANIE': {
-        // Peeking hair tufts below beanie brim
         ctx.fillStyle = this.hairColor;
         ctx.beginPath();
-        ctx.ellipse(this.x - 7.2, this.y - 19, 2.5, 4.0, -0.2, 0, Math.PI * 2);
-        ctx.ellipse(this.x + 7.2, this.y - 19, 2.5, 4.0, 0.2, 0, Math.PI * 2);
+        ctx.ellipse(headX - 7.2, headY + 1, 2.5, 4.0, -0.2, 0, Math.PI * 2);
+        ctx.ellipse(headX + 7.2, headY + 1, 2.5, 4.0, 0.2, 0, Math.PI * 2);
         ctx.fill();
 
-        // Hair bangs peeking out
-        ctx.beginPath();
-        ctx.arc(this.x, this.y - 21, 8.5, Math.PI * 0.95, Math.PI * 1.25);
-        ctx.arc(this.x, this.y - 21, 8.5, Math.PI * 1.75, Math.PI * 2.05);
-        ctx.fill();
+        if (sinA > -0.2) {
+          ctx.beginPath();
+          ctx.arc(headX, headY - 1, 8.5, Math.PI * 0.95, Math.PI * 1.25);
+          ctx.arc(headX, headY - 1, 8.5, Math.PI * 1.75, Math.PI * 2.05);
+          ctx.fill();
+        }
 
-        // Beanie dome
         const beanieMain = '#c2410c';
         const beanieCuff = '#9a3412';
         ctx.fillStyle = beanieMain;
         ctx.beginPath();
-        ctx.ellipse(this.x, this.y - 24, 10.0, 8.8, 0, 0, Math.PI * 2);
+        ctx.ellipse(headX, headY - 4, 10.0, 8.8, 0, 0, Math.PI * 2);
         ctx.fill();
 
-        // Ribbed folded cuff
         ctx.fillStyle = beanieCuff;
         ctx.beginPath();
-        ctx.roundRect(this.x - 9.5, this.y - 23, 19, 5.5, 2.5);
+        if (typeof ctx.roundRect === 'function') {
+          ctx.roundRect(headX - 9.5, headY - 3, 19, 5.5, 2.5);
+        } else {
+          ctx.rect(headX - 9.5, headY - 3, 19, 5.5);
+        }
         ctx.fill();
 
-        // Vertical ribbed knit stitches on cuff
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
         ctx.lineWidth = 1;
         for (let rx = -7.5; rx <= 7.5; rx += 2.5) {
           ctx.beginPath();
-          ctx.moveTo(this.x + rx, this.y - 23);
-          ctx.lineTo(this.x + rx, this.y - 18);
+          ctx.moveTo(headX + rx, headY - 3);
+          ctx.lineTo(headX + rx, headY + 2);
           ctx.stroke();
         }
 
-        // Fluffy pom-pom on top
         ctx.fillStyle = '#f8fafc';
         ctx.beginPath();
-        ctx.arc(this.x, this.y - 32.5, 3.8, 0, Math.PI * 2);
+        ctx.arc(headX, headY - 12.5, 3.8, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.fillStyle = '#cbd5e1';
         ctx.beginPath();
-        ctx.arc(this.x - 1, this.y - 32.5, 2.2, 0, Math.PI * 2);
+        ctx.arc(headX - 1, headY - 12.5, 2.2, 0, Math.PI * 2);
         ctx.fill();
         break;
       }
@@ -9638,33 +10277,31 @@ export class Owner {
       case 'SHORT':
       default: {
         ctx.fillStyle = this.hairColor;
-        // Main cropped crown
         ctx.beginPath();
-        ctx.arc(this.x, this.y - 22, 9.2, Math.PI * 0.85, Math.PI * 2.15);
+        ctx.arc(headX, headY - 2, 9.2, Math.PI * 0.85, Math.PI * 2.15);
         ctx.fill();
 
-        // Side crops
         ctx.beginPath();
-        ctx.ellipse(this.x - 7.5, this.y - 20.5, 2.5, 4.2, -0.2, 0, Math.PI * 2);
-        ctx.ellipse(this.x + 7.5, this.y - 20.5, 2.5, 4.2, 0.2, 0, Math.PI * 2);
+        ctx.ellipse(headX - 7.5, headY - 0.5, 2.5, 4.2, -0.2, 0, Math.PI * 2);
+        ctx.ellipse(headX + 7.5, headY - 0.5, 2.5, 4.2, 0.2, 0, Math.PI * 2);
         ctx.fill();
 
-        // Textured bangs across forehead
-        ctx.beginPath();
-        ctx.moveTo(this.x - 8, this.y - 22);
-        ctx.quadraticCurveTo(this.x - 4, this.y - 19.5, this.x - 2, this.y - 22.5);
-        ctx.quadraticCurveTo(this.x + 1, this.y - 19, this.x + 3.5, this.y - 22.5);
-        ctx.quadraticCurveTo(this.x + 6, this.y - 20, this.x + 8, this.y - 22);
-        ctx.lineTo(this.x + 7, this.y - 26);
-        ctx.lineTo(this.x - 7, this.y - 26);
-        ctx.closePath();
-        ctx.fill();
+        if (sinA > -0.2) {
+          ctx.beginPath();
+          ctx.moveTo(headX - 8, headY - 2);
+          ctx.quadraticCurveTo(headX - 4, headY + 0.5, headX - 2, headY - 2.5);
+          ctx.quadraticCurveTo(headX + 1, headY + 1.0, headX + 3.5, headY - 2.5);
+          ctx.quadraticCurveTo(headX + 6, headY, headX + 8, headY - 2);
+          ctx.lineTo(headX + 7, headY - 6);
+          ctx.lineTo(headX - 7, headY - 6);
+          ctx.closePath();
+          ctx.fill();
+        }
 
-        // Hair crown highlight
         ctx.strokeStyle = 'rgba(255, 255, 255, 0.2)';
         ctx.lineWidth = 1.2;
         ctx.beginPath();
-        ctx.arc(this.x - 2, this.y - 26, 4.5, Math.PI * 1.1, Math.PI * 1.8);
+        ctx.arc(headX - 2, headY - 6, 4.5, Math.PI * 1.1, Math.PI * 1.8);
         ctx.stroke();
         break;
       }
@@ -9687,10 +10324,14 @@ export class Owner {
     ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
     ctx.shadowBlur = 8;
     ctx.beginPath();
-    ctx.roundRect(bx, by, bubbleW, bubbleH, 8);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(bx, by, bubbleW, bubbleH, 8);
+    } else {
+      ctx.rect(bx, by, bubbleW, bubbleH);
+    }
     ctx.fill();
 
-    // Small triangle pointer
+    // Triangle pointer
     ctx.beginPath();
     ctx.moveTo(this.x - 4, by + bubbleH);
     ctx.lineTo(this.x, by + bubbleH + 6);
@@ -9712,10 +10353,13 @@ export class Owner {
     ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
     ctx.shadowBlur = 6;
     ctx.beginPath();
-    ctx.roundRect(bx, by, 32, 28, 8);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(bx, by, 32, 28, 8);
+    } else {
+      ctx.rect(bx, by, 32, 28);
+    }
     ctx.fill();
 
-    // Pointer
     ctx.beginPath();
     ctx.moveTo(this.x - 4, by + 28);
     ctx.lineTo(this.x, by + 34);
@@ -10171,6 +10815,7 @@ export class CliftonDownGame {
     // Environment & Weather Systems
     this.weatherClient = weatherClient;
     this.environment = environmentSystem;
+    this.field.environment = this.environment;
     this.weatherClient.startAutoRefresh();
     this.weatherClient.addListener((weather) => {
       sound.setWeather(weather);
@@ -10260,6 +10905,7 @@ export class CliftonDownGame {
       hairStyle: this.owner.hairStyle,
       hairColor: this.owner.hairColor,
       pantsColor: this.owner.pantsColor,
+      accessory: this.owner.accessory || 'NONE',
       skinTone: this.owner.skinTone,
       collarColor: this.dog.collarColor,
       personality: this.dog.personality || null
@@ -10305,6 +10951,7 @@ export class CliftonDownGame {
         if (meta.hairStyle) existing.owner.hairStyle = meta.hairStyle;
         if (meta.hairColor) existing.owner.hairColor = meta.hairColor;
         if (meta.pantsColor) existing.owner.pantsColor = meta.pantsColor;
+        if (meta.accessory !== undefined) existing.owner.accessory = meta.accessory || 'NONE';
         if (meta.skinTone) existing.owner.skinTone = meta.skinTone;
         if (meta.collarColor) existing.dog.collarColor = meta.collarColor;
         if (meta.personality) {
@@ -10323,6 +10970,7 @@ export class CliftonDownGame {
       if (meta?.hairStyle) remoteOwner.hairStyle = meta.hairStyle;
       if (meta?.hairColor) remoteOwner.hairColor = meta.hairColor;
       if (meta?.pantsColor) remoteOwner.pantsColor = meta.pantsColor;
+      remoteOwner.accessory = meta?.accessory || 'NONE';
       if (meta?.skinTone) remoteOwner.skinTone = meta.skinTone;
 
       const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
@@ -10369,6 +11017,9 @@ export class CliftonDownGame {
     this.net.onPet = (peerId) => {
       const p = this.remotePlayers.get(peerId);
       if (p) {
+        if (p.owner && typeof p.owner.triggerPet === 'function') {
+          p.owner.triggerPet(0.8);
+        }
         p.dog.pet();
       }
     };
@@ -10683,6 +11334,9 @@ export class CliftonDownGame {
   petDog() {
     const distToDog = Math.hypot(this.owner.x - this.dog.x, this.owner.y - this.dog.y);
     if (distToDog < 90) {
+      if (typeof this.owner.triggerPet === 'function') {
+        this.owner.triggerPet(0.8);
+      }
       this.dog.pet();
       sound.playPet();
       this.hud.showToast('❤️ Good dog!');
@@ -10694,6 +11348,9 @@ export class CliftonDownGame {
 
   pickUpPoop() {
     if (!this.activePoopPileNearPlayer) return;
+    if (typeof this.owner.triggerPickup === 'function') {
+      this.owner.triggerPickup(0.8);
+    }
     const pile = this.activePoopPileNearPlayer;
     if (this.field && typeof this.field.removePoopPile === 'function') {
       this.field.removePoopPile(pile.id);
@@ -10917,14 +11574,15 @@ export class CliftonDownGame {
       }
     }
 
-    // 1. Update Field & Ambient Particles
-    this.field.update(dt);
-
     // 2. Gather all other dogs for social play-bow reactions
     const allDogs = [this.dog];
     for (const p of this.remotePlayers.values()) {
       allDogs.push(p.dog);
     }
+
+    // 1. Update Field & Ambient Particles with dynamic entities for leaf scattering
+    const allFieldEntities = [this.owner, ...allDogs, ...this.npcs.values()];
+    this.field.update(dt, allFieldEntities);
 
     const nowSec = this.getCurrentServerTime();
     const npcList = Array.from(this.npcs.values());
@@ -11414,6 +12072,7 @@ export class PeerNetworkManager {
           hairStyle: meta.hairStyle,
           hairColor: meta.hairColor,
           pantsColor: meta.pantsColor,
+          accessory: meta.accessory || 'NONE',
           skinTone: meta.skinTone,
           collarColor: meta.collarColor,
           personality: meta.personality || null
@@ -11427,6 +12086,7 @@ export class PeerNetworkManager {
       if (meta.hairStyle) peerData.meta.hairStyle = meta.hairStyle;
       if (meta.hairColor) peerData.meta.hairColor = meta.hairColor;
       if (meta.pantsColor) peerData.meta.pantsColor = meta.pantsColor;
+      if (meta.accessory !== undefined) peerData.meta.accessory = meta.accessory || 'NONE';
       if (meta.skinTone) peerData.meta.skinTone = meta.skinTone;
       if (meta.collarColor) peerData.meta.collarColor = meta.collarColor;
       if (meta.personality) peerData.meta.personality = meta.personality;
@@ -11945,6 +12605,7 @@ export class Protocol {
       hairStyle: extraMeta.hairStyle,
       hairColor: extraMeta.hairColor,
       pantsColor: extraMeta.pantsColor,
+      accessory: extraMeta.accessory || 'NONE',
       skinTone: extraMeta.skinTone,
       collarColor: extraMeta.collarColor,
       personality: extraMeta.personality || null,
@@ -12278,6 +12939,8 @@ export class ZeroMeshNetworkManager {
     this.hostWs = null;
     this.hostSecret = null;
     this.pendingEngine = null;
+    this.pendingBridge = null;
+    this.activeBridges = new Map();
 
     // Event hooks
     this.onPeerJoin = null;
@@ -12342,6 +13005,7 @@ export class ZeroMeshNetworkManager {
           hairStyle: meta.hairStyle,
           hairColor: meta.hairColor,
           pantsColor: meta.pantsColor,
+          accessory: meta.accessory || 'NONE',
           skinTone: meta.skinTone,
           collarColor: meta.collarColor,
           personality: meta.personality || null
@@ -12355,6 +13019,7 @@ export class ZeroMeshNetworkManager {
       if (meta.hairStyle) peerData.meta.hairStyle = meta.hairStyle;
       if (meta.hairColor) peerData.meta.hairColor = meta.hairColor;
       if (meta.pantsColor) peerData.meta.pantsColor = meta.pantsColor;
+      if (meta.accessory !== undefined) peerData.meta.accessory = meta.accessory || 'NONE';
       if (meta.skinTone) peerData.meta.skinTone = meta.skinTone;
       if (meta.collarColor) peerData.meta.collarColor = meta.collarColor;
       if (meta.personality) peerData.meta.personality = meta.personality;
@@ -12474,8 +13139,13 @@ export class ZeroMeshNetworkManager {
           this.peerId = invite.assigned_peer_id;
         }
 
+        const offerSdpStr = typeof invite.sdp_offer === 'object' && invite.sdp_offer !== null
+          ? invite.sdp_offer.sdp
+          : invite.sdp_offer;
+
         const engine = new this.wasmMod.WasmWebRtcEngine();
-        const answerSdp = await engine.accept_offer_and_create_answer(invite.sdp_offer);
+        const bridge = this._attachBrowserWebRtc(engine, false, this.iceServers);
+        const answerSdp = await bridge.acceptOfferAndCreateAnswerSdp(offerSdpStr);
 
         const hostPubX = new Uint8Array(invite.host_public_key);
         const hostPubEd = invite.host_signing_key ? new Uint8Array(invite.host_signing_key) : null;
@@ -12488,10 +13158,13 @@ export class ZeroMeshNetworkManager {
 
         const dropPayload = {
           invite_uuid: invite.invite_uuid,
-          joiner_peer_id: this.peerId,
+          token: invite.token,
+          sdp_answer: { sdp: 'SEALED' },
           joiner_public_key: Array.from(this.cryptoSession.x25519_public_key_bytes()),
+          joiner_peer_id: this.peerId,
           joiner_signing_key: Array.from(this.cryptoSession.ed25519_public_key_bytes()),
-          sealed_sdp_answer: JSON.parse(sealedSdpJson)
+          sealed_sdp_answer: JSON.parse(sealedSdpJson),
+          signature: null
         };
 
         const dropUrl = `${this.workerOrigin}/drop/${encodeURIComponent(this.roomId)}/${encodeURIComponent(invite.invite_uuid)}`;
@@ -12499,12 +13172,15 @@ export class ZeroMeshNetworkManager {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': `Bearer ${invite.hmac_token || invite.token}`
+            'Authorization': 'Bearer ' + (invite.token || invite.hmac_token)
           },
           body: JSON.stringify(dropPayload)
         });
 
         this.gameMesh.register_peer(invite.host_peer_id || 'host', hostPubX, engine);
+        if (this.activeBridges) {
+          this.activeBridges.set(invite.host_peer_id || 'host', bridge);
+        }
         this.setStatus(NetStatus.CONNECTED_PEER);
         this.isHost = false;
         this._setupHostSocket(hostSecretHex);
@@ -12521,23 +13197,155 @@ export class ZeroMeshNetworkManager {
     }
   }
 
+  _attachBrowserWebRtc(wasmEngine, isOfferer, iceServers) {
+    const hasBrowserRtc = typeof window !== 'undefined' && typeof window.RTCPeerConnection === 'function';
+
+    if (!hasBrowserRtc) {
+      // Headless / test fallback: delegate directly to the Wasm engine.
+      return {
+        async createOfferSdp() {
+          return wasmEngine.create_offer();
+        },
+        async acceptOfferAndCreateAnswerSdp(offerSdp) {
+          return wasmEngine.accept_offer_and_create_answer(offerSdp);
+        },
+        async applyAnswerSdp(answerSdp) {
+          return wasmEngine.apply_answer(answerSdp);
+        },
+        close() {
+          try { wasmEngine.close(); } catch (_) {}
+        }
+      };
+    }
+
+    const pc = new window.RTCPeerConnection({
+      iceServers: iceServers || this.iceServers || [{ urls: 'stun:stun.cloudflare.com:3478' }]
+    });
+
+    pc.oniceconnectionstatechange = () => {
+      const state = pc.iceConnectionState;
+      if (state === 'failed' || state === 'closed') {
+        try { wasmEngine.mark_closed(); } catch (_) {}
+      }
+    };
+
+    let dc = null;
+
+    const wireDataChannel = (channel) => {
+      dc = channel;
+      try { dc.binaryType = 'arraybuffer'; } catch (_) {}
+      dc.onopen = () => {
+        try { wasmEngine.mark_open(); } catch (_) {}
+      };
+      dc.onclose = () => {
+        try { wasmEngine.mark_closed(); } catch (_) {}
+      };
+      dc.onmessage = (ev) => {
+        if (typeof ev.data === 'string') {
+          try { wasmEngine.inject_incoming_text(ev.data); } catch (_) {}
+        } else if (ev.data instanceof ArrayBuffer) {
+          try { wasmEngine.inject_incoming_binary(new Uint8Array(ev.data)); } catch (_) {}
+        }
+      };
+      try {
+        wasmEngine.set_outbound_tx((text) => {
+          if (dc && dc.readyState === 'open') {
+            dc.send(text);
+          }
+        });
+      } catch (_) {}
+      try {
+        if (typeof wasmEngine.set_outbound_binary_tx === 'function') {
+          wasmEngine.set_outbound_binary_tx((bytes) => {
+            if (dc && dc.readyState === 'open') {
+              dc.send(bytes);
+            }
+          });
+        }
+      } catch (_) {}
+    };
+
+    if (isOfferer === true) {
+      const channel = pc.createDataChannel('zero-mesh', { ordered: true });
+      wireDataChannel(channel);
+    } else {
+      pc.ondatachannel = (ev) => {
+        wireDataChannel(ev.channel);
+      };
+    }
+
+    const waitForIceGathering = () => new Promise((resolve) => {
+      if (pc.iceGatheringState === 'complete') {
+        resolve();
+        return;
+      }
+      let settled = false;
+      const finish = () => {
+        if (settled) return;
+        settled = true;
+        try { pc.removeEventListener('icegatheringstatechange', onChange); } catch (_) {}
+        resolve();
+      };
+      const onChange = () => {
+        if (pc.iceGatheringState === 'complete') finish();
+      };
+      try { pc.addEventListener('icegatheringstatechange', onChange); } catch (_) {}
+      const timeoutMs = (this.iceGatheringTimeoutMs && this.iceGatheringTimeoutMs > 0) ? this.iceGatheringTimeoutMs : 2500;
+      setTimeout(finish, timeoutMs);
+    });
+
+    return {
+      pc,
+      dc,
+      async createOfferSdp() {
+        const offer = await pc.createOffer();
+        await pc.setLocalDescription(offer);
+        await waitForIceGathering();
+        return pc.localDescription ? pc.localDescription.sdp : offer.sdp;
+      },
+      async acceptOfferAndCreateAnswerSdp(offerSdp) {
+        await pc.setRemoteDescription({ type: 'offer', sdp: offerSdp });
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        await waitForIceGathering();
+        return pc.localDescription ? pc.localDescription.sdp : answer.sdp;
+      },
+      async applyAnswerSdp(answerSdp) {
+        await pc.setRemoteDescription({ type: 'answer', sdp: answerSdp });
+        try {
+          await wasmEngine.apply_answer(answerSdp);
+        } catch (e) {
+          console.warn('[ZeroMesh] apply_answer error:', e);
+        }
+      },
+      close() {
+        try { if (dc) dc.close(); } catch (_) {}
+        try { pc.close(); } catch (_) {}
+        try { wasmEngine.mark_closed(); } catch (_) {}
+      }
+    };
+  }
+
   async _stageNewInvite(secretHex) {
     if (!this.wasmMod || !this.hostSecret) return;
     try {
       this.pendingEngine = new this.wasmMod.WasmWebRtcEngine();
-      const sdpOffer = await this.pendingEngine.create_offer();
+      const bridge = this._attachBrowserWebRtc(this.pendingEngine, true, this.iceServers);
+      this.pendingBridge = bridge;
+      const sdpOffer = await bridge.createOfferSdp();
       const inviteUuid = `inv-${this.peerId}-${Date.now().toString(36)}`;
-      const assignedPeerId = `walker-${Math.random().toString(36).substring(2, 8)}`;
 
       const token = this.wasmMod.WasmCryptoSession.compute_hmac_hex(this.hostSecret, inviteUuid);
       const invite = {
+        do_id: this.roomId,
         invite_uuid: inviteUuid,
-        assigned_peer_id: assignedPeerId,
-        host_peer_id: this.peerId,
+        token: token,
+        sdp_offer: { sdp: sdpOffer },
         host_public_key: Array.from(this.cryptoSession.x25519_public_key_bytes()),
-        host_signing_key: Array.from(this.cryptoSession.ed25519_public_key_bytes()),
-        sdp_offer: sdpOffer,
-        hmac_token: token
+        guest_private_key: null,
+        host_peer_id: this.peerId,
+        assigned_peer_id: 'peer-' + Math.random().toString(36).substring(2, 8),
+        host_signing_key: Array.from(this.cryptoSession.ed25519_public_key_bytes())
       };
 
       if (this.hostWs && this.hostWs.readyState === WebSocket.OPEN) {
@@ -12580,9 +13388,17 @@ export class ZeroMeshNetworkManager {
               joinerPubEd,
               JSON.stringify(drop.sealed_sdp_answer)
             );
-            await this.pendingEngine.apply_answer(answerSdp);
+            if (this.pendingBridge) {
+              await this.pendingBridge.applyAnswerSdp(answerSdp);
+              if (this.activeBridges) {
+                this.activeBridges.set(drop.joiner_peer_id, this.pendingBridge);
+              }
+            } else {
+              await this.pendingEngine.apply_answer(answerSdp);
+            }
             this.gameMesh.register_peer(drop.joiner_peer_id, joinerPubX, this.pendingEngine);
             this.pendingEngine = null;
+            this.pendingBridge = null;
 
             // Replenish slot in dead drop pool for the next joiner
             await this._stageNewInvite(secretHex);
@@ -12874,6 +13690,24 @@ export class ZeroMeshNetworkManager {
       try { this.hostWs.close(); } catch (e) {}
       this.hostWs = null;
     }
+    if (this.activeBridges) {
+      for (const [id, bridge] of this.activeBridges.entries()) {
+        try { if (bridge && typeof bridge.close === 'function') bridge.close(); } catch (_) {}
+      }
+      this.activeBridges.clear();
+    }
+    if (this.pendingBridge && typeof this.pendingBridge.close === 'function') {
+      try { this.pendingBridge.close(); } catch (_) {}
+      this.pendingBridge = null;
+    }
+    if (this.pendingProximityEngines) {
+      for (const [id, pending] of this.pendingProximityEngines.entries()) {
+        if (pending && pending.bridge && typeof pending.bridge.close === 'function') {
+          try { pending.bridge.close(); } catch (_) {}
+        }
+      }
+      this.pendingProximityEngines.clear();
+    }
     this.remotePeers.clear();
     this.meshPeerIds.clear();
     this.setStatus(NetStatus.OFFLINE);
@@ -13130,10 +13964,11 @@ export class ZeroMeshNetworkManager {
         if (this.wasmMod && this.proximityMesh && typeof window !== 'undefined' && window.RTCPeerConnection) {
           try {
             const engine = new this.wasmMod.WasmWebRtcEngine();
+            const bridge = this._attachBrowserWebRtc(engine, true, this.iceServers);
             if (this.pendingProximityEngines) {
-              this.pendingProximityEngines.set(remoteId, engine);
+              this.pendingProximityEngines.set(remoteId, { engine, bridge });
             }
-            const sdpOffer = await engine.create_offer();
+            const sdpOffer = await bridge.createOfferSdp();
             const inviteBytes = new TextEncoder().encode(JSON.stringify({
               initiator: this.peerId,
               sdpOffer,
@@ -13161,7 +13996,15 @@ export class ZeroMeshNetworkManager {
     // For departing peers: tear down proximity link
     for (const remoteId of left) {
       if (this.pendingProximityEngines && this.pendingProximityEngines.has(remoteId)) {
+        const pending = this.pendingProximityEngines.get(remoteId);
+        if (pending && pending.bridge && typeof pending.bridge.close === 'function') {
+          try { pending.bridge.close(); } catch (_) {}
+        }
         this.pendingProximityEngines.delete(remoteId);
+      }
+      if (this.activeBridges && this.activeBridges.has(remoteId)) {
+        try { this.activeBridges.get(remoteId).close(); } catch (_) {}
+        this.activeBridges.delete(remoteId);
       }
       if (this.proximityMesh && typeof this.proximityMesh.remove_peer === 'function') {
         try { this.proximityMesh.remove_peer(remoteId); } catch (e) {}
@@ -13181,9 +14024,13 @@ export class ZeroMeshNetworkManager {
     if (payload.sdpOffer && this.wasmMod && this.proximityMesh) {
       try {
         const engine = new this.wasmMod.WasmWebRtcEngine();
-        const answerSdp = await engine.accept_offer_and_create_answer(payload.sdpOffer);
+        const bridge = this._attachBrowserWebRtc(engine, false, this.iceServers);
+        const answerSdp = await bridge.acceptOfferAndCreateAnswerSdp(payload.sdpOffer);
         const pubKeyBytes = payload.pubKey ? new Uint8Array(payload.pubKey) : new Uint8Array(32);
         this.proximityMesh.register_peer(originPeerId, pubKeyBytes, engine);
+        if (this.activeBridges) {
+          this.activeBridges.set(originPeerId, bridge);
+        }
         const dropBytes = new TextEncoder().encode(JSON.stringify({
           responder: this.peerId,
           sdpAnswer: answerSdp,
@@ -13219,15 +14066,25 @@ export class ZeroMeshNetworkManager {
 
     if (payload.sdpAnswer && this.pendingProximityEngines && this.pendingProximityEngines.has(originPeerId)) {
       try {
-        const engine = this.pendingProximityEngines.get(originPeerId);
-        await engine.apply_answer(payload.sdpAnswer);
+        const pending = this.pendingProximityEngines.get(originPeerId);
+        const engine = pending && pending.engine ? pending.engine : pending;
+        const bridge = pending && pending.bridge ? pending.bridge : null;
+        if (bridge) {
+          await bridge.applyAnswerSdp(payload.sdpAnswer);
+          if (this.activeBridges) {
+            this.activeBridges.set(originPeerId, bridge);
+          }
+        } else {
+          await engine.apply_answer(payload.sdpAnswer);
+        }
         if (this.proximityMesh) {
           const pubKeyBytes = payload.pubKey ? new Uint8Array(payload.pubKey) : new Uint8Array(32);
           this.proximityMesh.register_peer(originPeerId, pubKeyBytes, engine);
         }
-        this.pendingProximityEngines.delete(originPeerId);
       } catch (e) {
         console.warn('[ZeroMesh] Failed applying proximity answer:', e);
+      } finally {
+        this.pendingProximityEngines.delete(originPeerId);
       }
     }
   }
@@ -13613,9 +14470,12 @@ body {
 }
 
 @keyframes pulseContextualBtn {
-  0%, 100% {
+
+  0%,
+  100% {
     transform: scale(1);
   }
+
   50% {
     transform: scale(1.08);
   }
@@ -13808,11 +14668,33 @@ body {
   color: #fff;
 }
 
-.cust-style-btn.active {
+.cust-style-btn.active,
+.accessory-btn.active {
   background: #2563eb;
   border-color: #3b82f6;
   color: #fff;
   box-shadow: 0 2px 8px rgba(37, 99, 235, 0.4);
+}
+
+.accessory-btn {
+  flex: 1;
+  min-width: 64px;
+  padding: 7px 10px;
+  background: #1e293b;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  color: #cbd5e1;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+  text-align: center;
+}
+
+.accessory-btn:hover {
+  background: #334155;
+  color: #fff;
 }
 
 .btn-primary-cust {
@@ -15138,7 +16020,7 @@ export const sound = new SoundSynthesizer();
 
 ## FILE: src/systems/particles.js
 ```javascript
-// Particle FX System for Ziggy's Park Adventure
+// Particle FX System for The Downs - Nature Soundscape, Canine Actions & Visual Overlays
 
 export class Particle {
   constructor(x, y, vx, vy, color, radius, maxLife, gravity = 180) {
@@ -15173,6 +16055,79 @@ export class Particle {
   }
 }
 
+export class LeafParticle extends Particle {
+  constructor(x, y, vx, vy, color, width = 5, height = 3, angle = 0, rotSpeed = 2, maxLife = 1.8) {
+    super(x, y, vx, vy, color, Math.max(width, height) / 2, maxLife, 35);
+    this.w = width;
+    this.h = height;
+    this.angle = angle;
+    this.rotSpeed = rotSpeed;
+    this.flutterPhase = Math.random() * Math.PI * 2;
+    this.flutterSpeed = 5.0 + Math.random() * 4.0;
+  }
+
+  update(dt) {
+    super.update(dt);
+    this.angle += this.rotSpeed * dt;
+    this.flutterPhase += dt * this.flutterSpeed;
+    this.x += Math.sin(this.flutterPhase) * 22 * dt;
+    this.vx *= 0.94;
+    this.vy *= 0.95;
+  }
+
+  draw(ctx) {
+    ctx.save();
+    ctx.globalAlpha = this.alpha * 0.95;
+    ctx.translate(this.x, this.y);
+    ctx.rotate(this.angle);
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    // Render leaf shape with pointed tip and tapered stem
+    ctx.ellipse(0, 0, this.w, this.h, 0, 0, Math.PI * 2);
+    ctx.fill();
+    // Subtle central leaf vein
+    ctx.strokeStyle = 'rgba(0, 0, 0, 0.2)';
+    ctx.lineWidth = 0.6;
+    ctx.beginPath();
+    ctx.moveTo(-this.w * 0.8, 0);
+    ctx.lineTo(this.w * 0.8, 0);
+    ctx.stroke();
+    ctx.restore();
+  }
+}
+
+export class SniffParticle extends Particle {
+  constructor(x, y, vx, vy, color = 'rgba(251, 191, 36, 0.85)', radius = 1.5, maxLife = 0.7) {
+    super(x, y, vx, vy, color, radius, maxLife, -10); // gentle buoyant upward waft
+    this.ringRadius = 1.0;
+    this.expandSpeed = 7.0 + Math.random() * 5.0;
+  }
+
+  update(dt) {
+    super.update(dt);
+    this.ringRadius += dt * this.expandSpeed;
+    this.vx *= 0.92;
+    this.vy *= 0.92;
+  }
+
+  draw(ctx) {
+    ctx.save();
+    ctx.globalAlpha = this.alpha * 0.8;
+    ctx.strokeStyle = this.color;
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.ringRadius, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Center scent pip
+    ctx.fillStyle = this.color;
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, 0.8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+}
+
 export class ParticleSystem {
   constructor() {
     this.particles = [];
@@ -15188,6 +16143,73 @@ export class ParticleSystem {
       const radius = 2 + Math.random() * 2.5;
       const life = 0.25 + Math.random() * 0.25;
       this.particles.push(new Particle(x, y, vx, vy, color, radius, life, 350));
+    }
+  }
+
+  // Gallop turf kick-up puffs behind sprinting canine/owner paws
+  emitGallopPuff(x, y, angle = 0) {
+    const colors = ['#3d682b', '#2e521e', '#593a20', '#422814', '#607d3b'];
+    const oppAngle = angle + Math.PI;
+    for (let i = 0; i < 4; i++) {
+      const spread = (Math.random() - 0.5) * 0.9;
+      const speed = 40 + Math.random() * 70;
+      const vx = Math.cos(oppAngle + spread) * speed;
+      const vy = Math.sin(oppAngle + spread) * speed - (15 + Math.random() * 25);
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      const radius = 1.4 + Math.random() * 1.8;
+      const life = 0.3 + Math.random() * 0.25;
+      this.particles.push(new Particle(x, y, vx, vy, color, radius, life, 220));
+    }
+  }
+
+  // Fallen autumn leaves scattering when sprinted through
+  emitFallenLeaves(x, y, impactVx = 0, impactVy = 0, clusterLeaves = null) {
+    const leafColors = ['#b45309', '#c2410c', '#d97706', '#78350f', '#991b1b', '#ea580c', '#eab308'];
+    const count = clusterLeaves && Array.isArray(clusterLeaves) ? clusterLeaves.length : 14;
+
+    for (let i = 0; i < count; i++) {
+      let color = leafColors[Math.floor(Math.random() * leafColors.length)];
+      let w = 4.5 + Math.random() * 3.5;
+      let h = 2.4 + Math.random() * 1.8;
+      let initAngle = Math.random() * Math.PI * 2;
+      let spawnX = x + (Math.random() - 0.5) * 20;
+      let spawnY = y + (Math.random() - 0.5) * 20;
+
+      if (clusterLeaves && clusterLeaves[i]) {
+        const cl = clusterLeaves[i];
+        if (cl.color) color = cl.color;
+        if (cl.w) w = cl.w;
+        if (cl.h) h = cl.h;
+        if (cl.angle !== undefined) initAngle = cl.angle;
+        if (cl.dx !== undefined) spawnX = x + cl.dx;
+        if (cl.dy !== undefined) spawnY = y + cl.dy;
+      }
+
+      // Scatter outward radially with bias in the sprint direction
+      const scatterAngle = Math.random() * Math.PI * 2;
+      const scatterSpeed = 70 + Math.random() * 140;
+      const vx = Math.cos(scatterAngle) * scatterSpeed + impactVx * 0.45;
+      const vy = Math.sin(scatterAngle) * scatterSpeed + impactVy * 0.45 - (40 + Math.random() * 60);
+      const rotSpeed = (Math.random() - 0.5) * 12;
+      const maxLife = 1.4 + Math.random() * 1.0;
+
+      this.particles.push(new LeafParticle(spawnX, spawnY, vx, vy, color, w, h, initAngle, rotSpeed, maxLife));
+    }
+  }
+
+  // Nose-twitching sniffing scent particles wafting toward or from snout
+  emitSniffParticles(x, y, angle = 0) {
+    const colors = ['rgba(251, 191, 36, 0.75)', 'rgba(245, 158, 11, 0.75)', 'rgba(255, 255, 255, 0.85)', 'rgba(168, 85, 247, 0.65)'];
+    for (let i = 0; i < 2; i++) {
+      const spread = (Math.random() - 0.5) * 1.2;
+      const speed = 12 + Math.random() * 18;
+      // Drifts slightly toward / around nose
+      const vx = Math.cos(angle + spread) * speed;
+      const vy = Math.sin(angle + spread) * speed - 6;
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      const radius = 1.0 + Math.random() * 1.2;
+      const life = 0.45 + Math.random() * 0.35;
+      this.particles.push(new SniffParticle(x, y, vx, vy, color, radius, life));
     }
   }
 
@@ -16411,9 +17433,9 @@ export class ProximityChat {
         }
       }
       if (peerMeta && Object.keys(peerMeta).length > 0) {
-        this.widget.setPeers(this.activeCluster, this.activeCluster.length, peerMeta);
+        this.widget.setPeers(activePeers, activePeers.length, peerMeta);
       } else {
-        this.widget.setPeers(this.activeCluster, this.activeCluster.length);
+        this.widget.setPeers(activePeers, activePeers.length);
       }
     }
     if (!this.pillsContainer || typeof document === 'undefined') return;
@@ -16934,6 +17956,16 @@ export class SocialHUD {
             <div class="color-swatch" data-palette="pantsColor" data-color="#1f2937" style="background: #1f2937;" title="Dark Slate"></div>
           </div>
         </div>
+
+        <div class="cust-form-group">
+          <label class="cust-label">Accessory</label>
+          <div class="cust-btn-group" id="accessory-options">
+            <button class="accessory-btn active" data-accessory="NONE">None</button>
+            <button class="accessory-btn" data-accessory="BACKPACK">Backpack</button>
+            <button class="accessory-btn" data-accessory="SCARF">Scarf</button>
+            <button class="accessory-btn" data-accessory="HOODIE">Hoodie</button>
+          </div>
+        </div>
       </div>
 
       <!-- Tab 2: Dog Companion -->
@@ -17072,6 +18104,7 @@ export class SocialHUD {
       if (saved.pantsColor) {
         this.owner.pantsColor = saved.pantsColor;
       }
+      this.owner.accessory = saved.accessory || 'NONE';
 
       // 2. Dog companion attributes (with fallback defaults)
       if (saved.coatKey && this.coatPresets && this.coatPresets[saved.coatKey]) {
@@ -17113,6 +18146,7 @@ export class SocialHUD {
           hairStyle: this.owner.hairStyle,
           hairColor: this.owner.hairColor,
           pantsColor: this.owner.pantsColor,
+          accessory: this.owner.accessory || 'NONE',
           skinTone: this.owner.skinTone,
           collarColor: this.dog.collarColor,
           personality
@@ -17154,6 +18188,16 @@ export class SocialHUD {
     const styleBtns = document.querySelectorAll('.cust-style-btn');
     styleBtns.forEach(btn => {
       if (btn.getAttribute('data-style') === (this.owner.hairStyle || 'SHORT')) {
+        btn.classList.add('active');
+      } else {
+        btn.classList.remove('active');
+      }
+    });
+
+    // Update accessory buttons
+    const accessoryBtns = document.querySelectorAll('.accessory-btn');
+    accessoryBtns.forEach(btn => {
+      if (btn.getAttribute('data-accessory') === (this.owner.accessory || 'NONE')) {
         btn.classList.add('active');
       } else {
         btn.classList.remove('active');
@@ -17266,6 +18310,16 @@ export class SocialHUD {
       });
     });
 
+    // Accessory selector buttons
+    const accessoryBtns = document.querySelectorAll('.accessory-btn');
+    accessoryBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        accessoryBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.owner.accessory = btn.getAttribute('data-accessory');
+      });
+    });
+
     // Palette swatches selection
     const swatches = document.querySelectorAll('.color-swatch');
     swatches.forEach(swatch => {
@@ -17356,6 +18410,7 @@ export class SocialHUD {
               hairColor: this.owner.hairColor,
               jacketColor: this.owner.jacketColor,
               pantsColor: this.owner.pantsColor,
+              accessory: this.owner.accessory || 'NONE',
               coatKey: coatSelect ? coatSelect.value : coatKey,
               collarColor: this.dog.collarColor,
               personality: personality
@@ -17371,6 +18426,7 @@ export class SocialHUD {
             hairStyle: this.owner.hairStyle,
             hairColor: this.owner.hairColor,
             pantsColor: this.owner.pantsColor,
+            accessory: this.owner.accessory || 'NONE',
             skinTone: this.owner.skinTone,
             collarColor: this.dog.collarColor,
             personality: personality
@@ -18912,6 +19968,10 @@ export class WasmMeshTopology {
      */
     broadcast_state(topic: string, payload: Uint8Array | number[], ttl: number): string;
     /**
+     * Disconnects a peer from the mesh topology and closes its channel.
+     */
+    disconnect_peer(peer_id: string): void;
+    /**
      * Returns whether a peer exists in the mesh.
      */
     has_peer(peer_id: string): boolean;
@@ -18935,6 +19995,10 @@ export class WasmMeshTopology {
      * Registers a peer with its public key and `WasmWebRtcEngine` instance.
      */
     register_peer(peer_id: string, public_key: Uint8Array | number[], engine: WasmWebRtcEngine): void;
+    /**
+     * Removes a peer from the mesh topology and closes its channel.
+     */
+    remove_peer(peer_id: string): void;
     /**
      * Transmits application state or binary event payload directly to a target peer.
      */
@@ -18981,6 +20045,22 @@ export class WasmWebRtcEngine {
      */
     create_offer(): Promise<string>;
     /**
+     * Injects an incoming binary payload into this peer's receive pipeline.
+     */
+    inject_incoming_binary(bytes: Uint8Array | number[]): void;
+    /**
+     * Injects an incoming text message into this peer's receive pipeline.
+     */
+    inject_incoming_text(text: string): void;
+    /**
+     * Transitions the peer state to `Closed` directly.
+     */
+    mark_closed(): void;
+    /**
+     * Transitions the peer state to `Open` directly for deterministic bridging/testing.
+     */
+    mark_open(): void;
+    /**
      * Creates a new `WasmWebRtcEngine` instance.
      */
     constructor();
@@ -19004,6 +20084,14 @@ export class WasmWebRtcEngine {
      * Registers a JS callback `(state: string) => void` for lifecycle state transitions.
      */
     set_on_state_change(callback: Function): void;
+    /**
+     * Sets an outbound binary transmission callback `(bytes: Uint8Array) => void` invoked when binary data is sent.
+     */
+    set_outbound_binary_tx(callback: Function): void;
+    /**
+     * Sets an outbound transmission callback `(text: string) => void` invoked when text is sent.
+     */
+    set_outbound_tx(callback: Function): void;
     /**
      * Returns the current lifecycle state string (`"connecting"`, `"open"`, `"closing"`, `"closed"`).
      */
@@ -19035,12 +20123,14 @@ export interface InitOutput {
     readonly wasmmeshtopology_broadcast_global_burn: (a: number) => [number, number];
     readonly wasmmeshtopology_broadcast_leave_and_burn: (a: number) => [number, number];
     readonly wasmmeshtopology_broadcast_state: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+    readonly wasmmeshtopology_disconnect_peer: (a: number, b: number, c: number) => [number, number];
     readonly wasmmeshtopology_has_peer: (a: number, b: number, c: number) => number;
     readonly wasmmeshtopology_local_peer_id: (a: number) => [number, number];
     readonly wasmmeshtopology_local_public_key: (a: number) => [number, number];
     readonly wasmmeshtopology_new: (a: number, b: number, c: number, d: number) => [number, number, number];
     readonly wasmmeshtopology_peer_count: (a: number) => number;
     readonly wasmmeshtopology_register_peer: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+    readonly wasmmeshtopology_remove_peer: (a: number, b: number, c: number) => [number, number];
     readonly wasmmeshtopology_send_direct_state: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
     readonly wasmmeshtopology_set_on_message: (a: number, b: any) => void;
     readonly wasmmeshtopology_set_on_peer_joined: (a: number, b: any) => void;
@@ -19050,12 +20140,18 @@ export interface InitOutput {
     readonly wasmwebrtcengine_apply_answer: (a: number, b: number, c: number) => any;
     readonly wasmwebrtcengine_close: (a: number) => [number, number];
     readonly wasmwebrtcengine_create_offer: (a: number) => any;
+    readonly wasmwebrtcengine_inject_incoming_binary: (a: number, b: number, c: number) => void;
+    readonly wasmwebrtcengine_inject_incoming_text: (a: number, b: number, c: number) => void;
+    readonly wasmwebrtcengine_mark_closed: (a: number) => [number, number];
+    readonly wasmwebrtcengine_mark_open: (a: number) => [number, number];
     readonly wasmwebrtcengine_new: () => number;
     readonly wasmwebrtcengine_send_binary: (a: number, b: number, c: number) => [number, number];
     readonly wasmwebrtcengine_send_text: (a: number, b: number, c: number) => [number, number];
     readonly wasmwebrtcengine_set_on_binary_message: (a: number, b: any) => void;
     readonly wasmwebrtcengine_set_on_message: (a: number, b: any) => void;
     readonly wasmwebrtcengine_set_on_state_change: (a: number, b: any) => void;
+    readonly wasmwebrtcengine_set_outbound_binary_tx: (a: number, b: any) => void;
+    readonly wasmwebrtcengine_set_outbound_tx: (a: number, b: any) => void;
     readonly wasmwebrtcengine_state: (a: number) => [number, number];
     readonly wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___wasm_bindgen_70557cdeb3a4b157___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_70557cdeb3a4b157___JsError___true_: (a: number, b: number, c: any) => [number, number];
@@ -19522,6 +20618,18 @@ export class WasmMeshTopology {
         }
     }
     /**
+     * Disconnects a peer from the mesh topology and closes its channel.
+     * @param {string} peer_id
+     */
+    disconnect_peer(peer_id) {
+        const ptr0 = passStringToWasm0(peer_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmeshtopology_disconnect_peer(this.__wbg_ptr, ptr0, len0);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
      * Returns whether a peer exists in the mesh.
      * @param {string} peer_id
      * @returns {boolean}
@@ -19611,6 +20719,18 @@ export class WasmMeshTopology {
             throw e;
         }
         const ret = wasm.wasmmeshtopology_register_peer(this.__wbg_ptr, ptr0, len0, ptr1, len1, engine.__wbg_ptr);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Removes a peer from the mesh topology and closes its channel.
+     * @param {string} peer_id
+     */
+    remove_peer(peer_id) {
+        const ptr0 = passStringToWasm0(peer_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmmeshtopology_remove_peer(this.__wbg_ptr, ptr0, len0);
         if (ret[1]) {
             throw takeFromExternrefTable0(ret[0]);
         }
@@ -19740,6 +20860,42 @@ export class WasmWebRtcEngine {
         return ret;
     }
     /**
+     * Injects an incoming binary payload into this peer's receive pipeline.
+     * @param {Uint8Array | number[]} bytes
+     */
+    inject_incoming_binary(bytes) {
+        const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.wasmwebrtcengine_inject_incoming_binary(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * Injects an incoming text message into this peer's receive pipeline.
+     * @param {string} text
+     */
+    inject_incoming_text(text) {
+        const ptr0 = passStringToWasm0(text, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.wasmwebrtcengine_inject_incoming_text(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
+     * Transitions the peer state to `Closed` directly.
+     */
+    mark_closed() {
+        const ret = wasm.wasmwebrtcengine_mark_closed(this.__wbg_ptr);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
+     * Transitions the peer state to `Open` directly for deterministic bridging/testing.
+     */
+    mark_open() {
+        const ret = wasm.wasmwebrtcengine_mark_open(this.__wbg_ptr);
+        if (ret[1]) {
+            throw takeFromExternrefTable0(ret[0]);
+        }
+    }
+    /**
      * Creates a new `WasmWebRtcEngine` instance.
      */
     constructor() {
@@ -19792,6 +20948,20 @@ export class WasmWebRtcEngine {
      */
     set_on_state_change(callback) {
         wasm.wasmwebrtcengine_set_on_state_change(this.__wbg_ptr, callback);
+    }
+    /**
+     * Sets an outbound binary transmission callback `(bytes: Uint8Array) => void` invoked when binary data is sent.
+     * @param {Function} callback
+     */
+    set_outbound_binary_tx(callback) {
+        wasm.wasmwebrtcengine_set_outbound_binary_tx(this.__wbg_ptr, callback);
+    }
+    /**
+     * Sets an outbound transmission callback `(text: string) => void` invoked when text is sent.
+     * @param {Function} callback
+     */
+    set_outbound_tx(callback) {
+        wasm.wasmwebrtcengine_set_outbound_tx(this.__wbg_ptr, callback);
     }
     /**
      * Returns the current lifecycle state string (`"connecting"`, `"open"`, `"closing"`, `"closed"`).
@@ -19952,7 +21122,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 163, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 165, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___wasm_bindgen_70557cdeb3a4b157___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_70557cdeb3a4b157___JsError___true_);
             return ret;
         },
@@ -20288,12 +21458,14 @@ export const wasmmeshtopology_broadcast_chat: (a: number, b: number, c: number) 
 export const wasmmeshtopology_broadcast_global_burn: (a: number) => [number, number];
 export const wasmmeshtopology_broadcast_leave_and_burn: (a: number) => [number, number];
 export const wasmmeshtopology_broadcast_state: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number, number, number];
+export const wasmmeshtopology_disconnect_peer: (a: number, b: number, c: number) => [number, number];
 export const wasmmeshtopology_has_peer: (a: number, b: number, c: number) => number;
 export const wasmmeshtopology_local_peer_id: (a: number) => [number, number];
 export const wasmmeshtopology_local_public_key: (a: number) => [number, number];
 export const wasmmeshtopology_new: (a: number, b: number, c: number, d: number) => [number, number, number];
 export const wasmmeshtopology_peer_count: (a: number) => number;
 export const wasmmeshtopology_register_peer: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
+export const wasmmeshtopology_remove_peer: (a: number, b: number, c: number) => [number, number];
 export const wasmmeshtopology_send_direct_state: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
 export const wasmmeshtopology_set_on_message: (a: number, b: any) => void;
 export const wasmmeshtopology_set_on_peer_joined: (a: number, b: any) => void;
@@ -20303,12 +21475,18 @@ export const wasmwebrtcengine_accept_offer_and_create_answer: (a: number, b: num
 export const wasmwebrtcengine_apply_answer: (a: number, b: number, c: number) => any;
 export const wasmwebrtcengine_close: (a: number) => [number, number];
 export const wasmwebrtcengine_create_offer: (a: number) => any;
+export const wasmwebrtcengine_inject_incoming_binary: (a: number, b: number, c: number) => void;
+export const wasmwebrtcengine_inject_incoming_text: (a: number, b: number, c: number) => void;
+export const wasmwebrtcengine_mark_closed: (a: number) => [number, number];
+export const wasmwebrtcengine_mark_open: (a: number) => [number, number];
 export const wasmwebrtcengine_new: () => number;
 export const wasmwebrtcengine_send_binary: (a: number, b: number, c: number) => [number, number];
 export const wasmwebrtcengine_send_text: (a: number, b: number, c: number) => [number, number];
 export const wasmwebrtcengine_set_on_binary_message: (a: number, b: any) => void;
 export const wasmwebrtcengine_set_on_message: (a: number, b: any) => void;
 export const wasmwebrtcengine_set_on_state_change: (a: number, b: any) => void;
+export const wasmwebrtcengine_set_outbound_binary_tx: (a: number, b: any) => void;
+export const wasmwebrtcengine_set_outbound_tx: (a: number, b: any) => void;
 export const wasmwebrtcengine_state: (a: number) => [number, number];
 export const wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
 export const wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___wasm_bindgen_70557cdeb3a4b157___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_70557cdeb3a4b157___JsError___true_: (a: number, b: number, c: any) => [number, number];
@@ -21107,6 +22285,83 @@ export class EnvironmentSystem {
     return strObj;
   }
 
+  // --- Directional Sun/Moon Ground Shadow Engine ---
+
+  /**
+   * Calculates directional ground shadow parameters (length multiplier, offsets, skew, and color).
+   * Shadows dramatically lengthen during GOLDEN_HOUR and DAWN, stay short at midday DAY,
+   * and take on soft cool tones at NIGHT.
+   */
+  getShadowParameters(hour = null) {
+    const tod = this.getTimeOfDay(hour);
+    const h = hour !== null && hour !== undefined
+      ? ((hour % 24) + 24) % 24
+      : this.getCurrentHour();
+
+    let lengthFactor = 1.0;
+    let offsetX = 8;
+    let offsetY = 6;
+    let color = 'rgba(22, 42, 16, 0.35)';
+    let skewX = 0.15;
+
+    switch (tod) {
+      case TimeOfDay.GOLDEN_HOUR: {
+        // Golden Hour (17:00 - 19:30): low warm sun in West, shadows dramatically lengthen toward East/North-East
+        const progress = Math.min(1.0, Math.max(0, (h - 17.0) / 2.5));
+        lengthFactor = 2.4 + progress * 0.8; // Lengthens between 2.4x and 3.2x!
+        offsetX = 20 + progress * 10;
+        offsetY = 10 + progress * 6;
+        skewX = 0.55 + progress * 0.2;
+        color = 'rgba(42, 26, 14, 0.45)'; // Rich warm golden hour sepia shadow
+        break;
+      }
+      case TimeOfDay.DAWN: {
+        // Dawn (05:00 - 07:00): low morning sun in East, lengthened shadows toward West
+        lengthFactor = 2.0;
+        offsetX = -18;
+        offsetY = 9;
+        skewX = -0.45;
+        color = 'rgba(28, 22, 38, 0.38)';
+        break;
+      }
+      case TimeOfDay.DUSK: {
+        lengthFactor = 1.6;
+        offsetX = 14;
+        offsetY = 9;
+        skewX = 0.35;
+        color = 'rgba(18, 24, 40, 0.44)';
+        break;
+      }
+      case TimeOfDay.NIGHT: {
+        // Soft silver-blue moonlight shadow
+        lengthFactor = 1.25;
+        offsetX = -10;
+        offsetY = 8;
+        skewX = -0.25;
+        color = 'rgba(10, 16, 32, 0.48)';
+        break;
+      }
+      case TimeOfDay.DAY:
+      default: {
+        lengthFactor = 1.0;
+        offsetX = 8;
+        offsetY = 6;
+        skewX = 0.15;
+        color = 'rgba(22, 42, 16, 0.35)';
+        break;
+      }
+    }
+
+    return {
+      timeOfDay: tod,
+      lengthFactor,
+      offsetX,
+      offsetY,
+      skewX,
+      color
+    };
+  }
+
   // --- Weather State Management ---
 
   setWeather(weather) {
@@ -21701,6 +22956,7 @@ export default environmentSystem;
 ## FILE: src/world/field.js
 ```javascript
 // The Downs (Clifton & Durdham Downs, Bristol) - Top-Down Environment, Camera & Depth-Sorted Rendering Engine
+import { ParticleSystem } from '../systems/particles.js';
 
 export class Camera {
   constructor(viewportWidth = 1280, viewportHeight = 720, worldWidth = 3200, worldHeight = 2400, zoom = 1.0) {
@@ -21815,6 +23071,11 @@ export class Field {
     this.streetlamps = [];
     this.poopPiles = [];
     this.windTime = 0;
+    this.environment = null;
+    this.particleSystem = new ParticleSystem();
+    this.leafClusters = [];
+    this.sticks = [];
+    this.scentTrails = [];
 
     this.initScenery();
     this.initParticles();
@@ -22340,6 +23601,68 @@ export class Field {
       depthY: l.y + 8,     // y + 8 for accurate 2D Y-sorting
       isLamp: true
     }));
+
+    // 9. Autumn Fallen Leaf Clusters around Chestnut & Oak Groves
+    const leafColors = ['#b45309', '#c2410c', '#d97706', '#78350f', '#991b1b', '#ea580c', '#eab308'];
+    this.leafClusters = [];
+    for (const tree of this.trees) {
+      if (tree.type === 'chestnut' || tree.type === 'oak') {
+        const numClusters = 2 + Math.floor(Math.random() * 2);
+        for (let c = 0; c < numClusters; c++) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = tree.radius * 0.45 + Math.random() * (tree.radius * 0.55);
+          const cx = tree.x + Math.cos(angle) * dist;
+          const cy = tree.depthY + Math.sin(angle) * (dist * 0.45);
+          const leafCount = 10 + Math.floor(Math.random() * 8);
+          const leaves = [];
+          for (let l = 0; l < leafCount; l++) {
+            leaves.push({
+              dx: (Math.random() - 0.5) * 28,
+              dy: (Math.random() - 0.5) * 18,
+              color: leafColors[Math.floor(Math.random() * leafColors.length)],
+              w: 4.0 + Math.random() * 3.5,
+              h: 2.2 + Math.random() * 1.8,
+              angle: Math.random() * Math.PI * 2
+            });
+          }
+          this.leafClusters.push({
+            id: `leaf-cluster-${tree.id}-${c}`,
+            x: cx,
+            y: cy,
+            radius: 20,
+            treeType: tree.type,
+            isScattered: false,
+            scatterTimer: 0,
+            leaves: leaves
+          });
+        }
+      }
+    }
+
+    // 10. Fallen Woodland Sticks around Oak & Chestnut Groves
+    this.sticks = [];
+    let stickIndex = 0;
+    for (const tree of this.trees) {
+      if (tree.type === 'oak' || tree.type === 'chestnut') {
+        if (Math.random() < 0.45) {
+          const angle = Math.random() * Math.PI * 2;
+          const dist = tree.radius * 0.4 + Math.random() * (tree.radius * 0.5);
+          this.sticks.push({
+            id: `stick-${stickIndex++}`,
+            x: tree.x + Math.cos(angle) * dist,
+            y: tree.depthY + Math.sin(angle) * (dist * 0.5),
+            length: 20 + Math.random() * 8,
+            angle: Math.random() * Math.PI,
+            treeId: tree.id,
+            isCarried: false,
+            carrier: null
+          });
+        }
+      }
+    }
+
+    // 11. Initial Ambient Squirrel Scent Trails around Oak Groves
+    this.initSquirrelTrails();
   }
 
   initParticles() {
@@ -22403,8 +23726,79 @@ export class Field {
     return nearest;
   }
 
-  update(dt) {
+  // --- Scent Trails System for Dogs & Ambient Squirrels ---
+
+  initSquirrelTrails() {
+    this.scentTrails = [];
+    const oakTrees = (this.trees || []).filter(t => t.type === 'oak');
+    if (oakTrees.length >= 2) {
+      for (let s = 0; s < 3; s++) {
+        const startTree = oakTrees[s % oakTrees.length];
+        const nextTree = oakTrees[(s + 1) % oakTrees.length];
+        const steps = 6;
+        for (let i = 0; i <= steps; i++) {
+          const t = i / steps;
+          const curveX = (Math.random() - 0.5) * 40;
+          const curveY = (Math.random() - 0.5) * 40;
+          this.scentTrails.push({
+            id: `squirrel-scent-${s}-${i}`,
+            x: startTree.x + (nextTree.x - startTree.x) * t + curveX,
+            y: startTree.depthY + (nextTree.depthY - startTree.depthY) * t + curveY,
+            type: 'squirrel',
+            sourceId: 'squirrel',
+            life: 35.0 + Math.random() * 20.0,
+            maxLife: 55.0
+          });
+        }
+      }
+    }
+  }
+
+  spawnSquirrelScentTrail() {
+    const oakTrees = (this.trees || []).filter(t => t.type === 'oak');
+    if (oakTrees.length >= 2) {
+      const idx = Math.floor(Math.random() * (oakTrees.length - 1));
+      const t1 = oakTrees[idx];
+      const t2 = oakTrees[idx + 1];
+      for (let i = 0; i < 5; i++) {
+        const t = i / 4;
+        this.addScent(
+          t1.x + (t2.x - t1.x) * t + (Math.random() - 0.5) * 30,
+          t1.depthY + (t2.depthY - t1.depthY) * t + (Math.random() - 0.5) * 30,
+          'squirrel'
+        );
+      }
+    }
+  }
+
+  addScent(x, y, type = 'dog', source = null) {
+    if (!Array.isArray(this.scentTrails)) this.scentTrails = [];
+    if (this.scentTrails.length >= 100) {
+      this.scentTrails.shift();
+    }
+    const maxLife = type === 'squirrel' ? 35.0 : 22.0;
+    this.scentTrails.push({
+      id: 'scent-' + Math.random().toString(36).substr(2, 9),
+      x,
+      y,
+      type,
+      sourceId: source ? (source.id || source.name || 'entity') : null,
+      life: maxLife,
+      maxLife
+    });
+  }
+
+  getNearbyScents(x, y, radius = 90) {
+    if (!Array.isArray(this.scentTrails)) return [];
+    return this.scentTrails.filter(s => s.life > 0 && Math.hypot(s.x - x, s.y - y) <= radius);
+  }
+
+  update(dt, dynamicEntities = []) {
     this.windTime += dt;
+
+    if (this.particleSystem && typeof this.particleSystem.update === 'function') {
+      this.particleSystem.update(dt);
+    }
 
     // Update poop piles and cull cleaned ones
     for (let i = this.poopPiles.length - 1; i >= 0; i--) {
@@ -22427,6 +23821,53 @@ export class Field {
       if (p.y > this.height) p.y = 0;
       if (p.x < 0) p.x = this.width;
       if (p.y < 0) p.y = this.height;
+    }
+
+    // Update Scent Trails
+    if (Array.isArray(this.scentTrails)) {
+      for (let i = this.scentTrails.length - 1; i >= 0; i--) {
+        const s = this.scentTrails[i];
+        s.life -= dt;
+        if (s.life <= 0) {
+          this.scentTrails.splice(i, 1);
+        }
+      }
+      if (this.scentTrails.length < 8 && Math.random() < 0.05) {
+        this.spawnSquirrelScentTrail();
+      }
+    }
+
+    // Update Leaf Clusters and trigger scattering when dogs or entities sprint through
+    if (Array.isArray(this.leafClusters)) {
+      for (const cluster of this.leafClusters) {
+        if (cluster.isScattered) {
+          cluster.scatterTimer -= dt;
+          if (cluster.scatterTimer <= 0) {
+            cluster.isScattered = false;
+          }
+        }
+      }
+
+      // Check dynamic entities for sprint impacts
+      const entitiesToCheck = Array.isArray(dynamicEntities) ? dynamicEntities : [];
+      for (const ent of entitiesToCheck) {
+        if (!ent || typeof ent.x !== 'number' || typeof ent.y !== 'number') continue;
+        const speed = Math.hypot(ent.vx || 0, ent.vy || 0);
+        // Sprints (> 125 px/s) trigger leaf explosion
+        if (speed > 125) {
+          for (const cluster of this.leafClusters) {
+            if (cluster.isScattered) continue;
+            const dist = Math.hypot(ent.x - cluster.x, ent.y - cluster.y);
+            if (dist < cluster.radius + (ent.radius || 14)) {
+              cluster.isScattered = true;
+              cluster.scatterTimer = 18.0;
+              if (this.particleSystem && typeof this.particleSystem.emitFallenLeaves === 'function') {
+                this.particleSystem.emitFallenLeaves(cluster.x, cluster.y, ent.vx || 0, ent.vy || 0, cluster.leaves);
+              }
+            }
+          }
+        }
+      }
     }
   }
 
@@ -22784,6 +24225,11 @@ export class Field {
     // 1. Procedural/Baked Background Turf & Pathways
     this.renderGround(ctx, camera);
 
+    // 1b. Ground Layers: Scent Trails, Woodland Sticks & Autumn Leaf Clusters
+    this.renderScentTrails(ctx, viewLeft, viewTop, viewRight, viewBottom);
+    this.renderWoodlandSticks(ctx, viewLeft, viewTop, viewRight, viewBottom);
+    this.renderLeafClusters(ctx, viewLeft, viewTop, viewRight, viewBottom);
+
     // 2. Gather Scenery and Dynamic Entities for Depth-Sorted Pass
     const renderList = this.getDepthSortedRenderList(viewLeft, viewRight, viewTop, viewBottom, dynamicEntities);
 
@@ -23061,14 +24507,26 @@ export class Field {
     ctx.restore();
   }
 
-  // Render mature tree with layered leafy canopies, distinct species hues, and soft ground shadows
+  // Render mature tree with layered leafy canopies, distinct species hues, wind-rippled sway, and soft directional ground shadows
   renderTree(ctx, tree) {
     ctx.save();
 
-    // 1. Soft Ground Shadow
-    ctx.fillStyle = 'rgba(22, 42, 16, 0.35)';
+    // 1. Soft Directional Ground Shadow (lengthens during GOLDEN_HOUR and adjusts by time of day)
+    const shadow = (this.environment && typeof this.environment.getShadowParameters === 'function')
+      ? this.environment.getShadowParameters()
+      : { offsetX: 8, offsetY: 6, lengthFactor: 1.0, color: 'rgba(22, 42, 16, 0.35)', skewX: 0.15 };
+
+    ctx.fillStyle = shadow.color;
     ctx.beginPath();
-    ctx.ellipse(tree.x + 8, tree.depthY + 6, tree.radius * 0.92, tree.radius * 0.44, 0, 0, Math.PI * 2);
+    ctx.ellipse(
+      tree.x + shadow.offsetX,
+      tree.depthY + shadow.offsetY,
+      tree.radius * 0.92 * shadow.lengthFactor,
+      tree.radius * 0.44,
+      shadow.skewX || 0.15,
+      0,
+      Math.PI * 2
+    );
     ctx.fill();
 
     // 2. Trunk with textured bark details
@@ -23097,15 +24555,24 @@ export class Field {
       baseColor = '#2f581e';
       midColor = '#467b2d';
       lightColor = '#63a03f';
+    } else if (tree.type === 'oak') {
+      baseColor = '#1f3c18';
+      midColor = '#2f5724';
+      lightColor = '#487c37';
     }
+
+    // Wind-rippled canopy sway: offsetting tree foliage puffs by Math.sin(this.windTime + tree.x)
+    const windOffset = Math.sin(this.windTime + tree.x);
+    const windSwayX = windOffset * (tree.radius * 0.08);
+    const windSwayY = Math.cos(this.windTime * 0.8 + tree.y * 0.02) * (tree.radius * 0.03);
 
     // Base dark canopy
     ctx.fillStyle = baseColor;
     ctx.beginPath();
-    ctx.arc(tree.x, tree.y, tree.radius, 0, Math.PI * 2);
+    ctx.arc(tree.x + windSwayX * 0.5, tree.y + windSwayY * 0.5, tree.radius, 0, Math.PI * 2);
     ctx.fill();
 
-    // Mid puff foliage clusters
+    // Mid puff foliage clusters with individualized wind-rippled sway
     ctx.fillStyle = midColor;
     const puffs = [
       { dx: -tree.radius * 0.45, dy: -tree.radius * 0.22, r: tree.radius * 0.55 },
@@ -23114,16 +24581,19 @@ export class Field {
       { dx: -tree.radius * 0.28, dy: tree.radius * 0.24, r: tree.radius * 0.46 },
       { dx: tree.radius * 0.32, dy: tree.radius * 0.22, r: tree.radius * 0.48 }
     ];
-    for (const p of puffs) {
+    for (let idx = 0; idx < puffs.length; idx++) {
+      const p = puffs[idx];
+      const puffWindX = Math.sin(this.windTime + tree.x + idx * 1.3) * (tree.radius * 0.08);
+      const puffWindY = Math.cos(this.windTime * 0.9 + tree.y + idx * 1.1) * (tree.radius * 0.035);
       ctx.beginPath();
-      ctx.arc(tree.x + p.dx, tree.y + p.dy, p.r, 0, Math.PI * 2);
+      ctx.arc(tree.x + p.dx + puffWindX, tree.y + p.dy + puffWindY, p.r, 0, Math.PI * 2);
       ctx.fill();
     }
 
     // Top sunlight highlights
     ctx.fillStyle = lightColor;
     ctx.beginPath();
-    ctx.arc(tree.x - tree.radius * 0.18, tree.y - tree.radius * 0.28, tree.radius * 0.44, 0, Math.PI * 2);
+    ctx.arc(tree.x - tree.radius * 0.18 + windSwayX * 0.7, tree.y - tree.radius * 0.28 + windSwayY * 0.7, tree.radius * 0.44, 0, Math.PI * 2);
     ctx.fill();
 
     ctx.restore();
@@ -23546,6 +25016,96 @@ export class Field {
     ctx.restore();
   }
 
+  renderLeafClusters(ctx, left, top, right, bottom) {
+    if (!Array.isArray(this.leafClusters)) return;
+    ctx.save();
+    for (const cluster of this.leafClusters) {
+      if (cluster.isScattered) continue;
+      if (
+        cluster.x + cluster.radius < left ||
+        cluster.x - cluster.radius > right ||
+        cluster.y + cluster.radius < top ||
+        cluster.y - cluster.radius > bottom
+      ) {
+        continue;
+      }
+      for (const leaf of cluster.leaves) {
+        ctx.save();
+        ctx.translate(cluster.x + leaf.dx, cluster.y + leaf.dy);
+        ctx.rotate(leaf.angle);
+        ctx.fillStyle = leaf.color;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, leaf.w, leaf.h, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+    }
+    ctx.restore();
+  }
+
+  renderWoodlandSticks(ctx, left, top, right, bottom) {
+    if (!Array.isArray(this.sticks)) return;
+    ctx.save();
+    for (const stick of this.sticks) {
+      if (stick.isCarried) continue;
+      if (stick.x < left - 30 || stick.x > right + 30 || stick.y < top - 30 || stick.y > bottom + 30) continue;
+
+      ctx.save();
+      ctx.translate(stick.x, stick.y);
+      ctx.rotate(stick.angle);
+
+      // Soft ground stick shadow
+      ctx.fillStyle = 'rgba(20, 35, 15, 0.28)';
+      ctx.fillRect(-stick.length / 2, 2, stick.length, 2);
+
+      // Fallen woodland stick twig body
+      ctx.strokeStyle = '#54361e';
+      ctx.lineWidth = 3.0;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(-stick.length / 2, 0);
+      ctx.lineTo(stick.length / 2, 0);
+      ctx.stroke();
+
+      // Small secondary twig fork
+      ctx.strokeStyle = '#6c4728';
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(-stick.length * 0.15, 0);
+      ctx.lineTo(-stick.length * 0.05, -5.0);
+      ctx.stroke();
+
+      // Tiny green bud on fork
+      ctx.fillStyle = '#65a30d';
+      ctx.beginPath();
+      ctx.arc(-stick.length * 0.05, -5.0, 1.2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  renderScentTrails(ctx, left, top, right, bottom) {
+    if (!Array.isArray(this.scentTrails)) return;
+    ctx.save();
+    for (const scent of this.scentTrails) {
+      if (scent.x < left - 20 || scent.x > right + 20 || scent.y < top - 20 || scent.y > bottom + 20) continue;
+      const alpha = Math.max(0, Math.min(0.65, (scent.life / (scent.maxLife || 22)) * 0.65));
+      ctx.globalAlpha = alpha;
+      ctx.strokeStyle = scent.type === 'squirrel' ? 'rgba(245, 158, 11, 0.7)' : 'rgba(56, 189, 248, 0.7)';
+      ctx.fillStyle = scent.type === 'squirrel' ? '#f59e0b' : '#38bdf8';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(scent.x, scent.y, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(scent.x, scent.y, 5.0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   renderParticles(ctx, left, top, right, bottom) {
     ctx.save();
     ctx.fillStyle = '#f8fafc';
@@ -23558,6 +25118,11 @@ export class Field {
       }
     }
     ctx.restore();
+
+    // Render active dynamic particle system (autumn leaves, gallop dust, sniffing rings)
+    if (this.particleSystem && typeof this.particleSystem.draw === 'function') {
+      this.particleSystem.draw(ctx);
+    }
   }
 
   renderPerimeterWalls(ctx) {
@@ -23979,7 +25544,8 @@ def run_all():
         "test/test_field.py",
         "test/test_fetching_mechanics.py",
         "test/test_zero_mesh_integration.py",
-        "test/test_wasm_core_sim.py"
+        "test/test_wasm_core_sim.py",
+        "test/test_phase3_visuals_and_mechanics.py"
     ]
     for t in test_suites:
         res = subprocess.run([sys.executable, t])
@@ -30141,6 +31707,180 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
+## FILE: test/test_phase3_visuals_and_mechanics.py
+```python
+#!/usr/bin/env python3
+"""
+Unit tests for Phase 3: Dog Mechanics, Player Models & Visual Appearance.
+Verifies:
+1. Player & NPC Directional Models (owner.js & npc.js):
+   - 8-way directional shoulder/hip axis rotated by this.angle.
+   - Arm/leg depth layering (far limb behind torso, near limb in foreground).
+   - Accessories (backpack, hoodie, scarf, none).
+   - Animated kneeling/bending pose on triggerPet() and triggerPickup().
+2. Richer Canine Mechanics (companion_dog.js):
+   - Scent trails & sniffing: DogState.SNIFFING_TRAIL, scent deposition, nose-twitching & sniff particles.
+   - Zoomies & stick carrying: DogState.ZOOMIES, figure-eight path, stick pickup/carry/drop across jaws.
+   - Dynamic gait transitions: IDLE, WALK, rhythmic Spaniel TROT, full-extension GALLOP with torso stretch and ear sweep.
+3. Park Appearance (field.js, environment.js, particles.js):
+   - Canopy wind sway offsetting foliage puffs.
+   - Directional sun/moon ground shadows with GOLDEN_HOUR lengthening.
+   - Autumn leaf clusters around chestnut/oak groves that scatter on sprint.
+"""
+
+import os
+import re
+import unittest
+
+
+class TestPlayerAndNPCDirectionalModels(unittest.TestCase):
+    def setUp(self):
+        self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(self.base_dir, "src", "entities", "owner.js"), "r", encoding="utf-8") as f:
+            self.owner_code = f.read()
+        with open(os.path.join(self.base_dir, "src", "entities", "npc.js"), "r", encoding="utf-8") as f:
+            self.npc_code = f.read()
+        with open(os.path.join(self.base_dir, "src", "entities", "npc_content.js"), "r", encoding="utf-8") as f:
+            self.npc_content_code = f.read()
+
+    def test_owner_directional_shoulders_and_depth_layering(self):
+        """Owner must rotate shoulder and hip axis by this.angle with proper limb depth layering."""
+        self.assertIn("const cosA = Math.cos(angle)", self.owner_code)
+        self.assertIn("const sinA = Math.sin(angle)", self.owner_code)
+        self.assertIn("shoulderSpan", self.owner_code)
+        # Verify far arm and near arm depth ordering relative to torso
+        self.assertIn("DEPTH LAYER 1: Far Arm & Far Leg (behind torso)", self.owner_code)
+        self.assertIn("DEPTH LAYER 3: 3D Directional Torso / Jacket", self.owner_code)
+        self.assertIn("DEPTH LAYER 5: Near Leg & Near Arm (in front of torso)", self.owner_code)
+
+    def test_owner_accessories_and_bending_pose(self):
+        """Owner must support accessories (BACKPACK, SCARF, HOODIE) and kneeling/bending timers."""
+        self.assertIn("this.accessory =", self.owner_code)
+        self.assertIn("triggerPet(", self.owner_code)
+        self.assertIn("triggerPickup(", self.owner_code)
+        self.assertIn("this.petTimer", self.owner_code)
+        self.assertIn("this.bendTimer", self.owner_code)
+        self.assertIn("this.isBending", self.owner_code)
+        # Accessory rendering
+        self.assertIn("BACKPACK", self.owner_code)
+        self.assertIn("SCARF", self.owner_code)
+        self.assertIn("HOODIE", self.owner_code)
+
+    def test_npc_directional_model_and_accessories(self):
+        """ParkNPC must support directional shoulder/hip axis and accessories from seed."""
+        self.assertIn("this.accessory = opts.accessory", self.npc_code)
+        self.assertIn("const cosA = Math.cos(angle)", self.npc_code)
+        self.assertIn("const sinA = Math.sin(angle)", self.npc_code)
+        self.assertIn("shoulderSpan", self.npc_code)
+        self.assertIn("BACKPACK", self.npc_code)
+        self.assertIn("SCARF", self.npc_code)
+        self.assertIn("HOODIE", self.npc_code)
+        # Verify npc_content generates accessory
+        self.assertIn("accessories", self.npc_content_code)
+        self.assertIn("accessory", self.npc_content_code)
+
+
+class TestCompanionDogPhase3Mechanics(unittest.TestCase):
+    def setUp(self):
+        self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(self.base_dir, "src", "entities", "companion_dog.js"), "r", encoding="utf-8") as f:
+            self.dog_code = f.read()
+
+    def test_dog_state_enums(self):
+        """DogState must include ZOOMIES and SNIFFING_TRAIL."""
+        self.assertIn("ZOOMIES: 'ZOOMIES'", self.dog_code)
+        self.assertIn("SNIFFING_TRAIL: 'SNIFFING_TRAIL'", self.dog_code)
+
+    def test_scent_trail_tracking_and_sniffing(self):
+        """CompanionDog must deposit scent trails, detect scents, and animate sniffing."""
+        self.assertIn("this.scentDropTimer", self.dog_code)
+        self.assertIn("this.targetScent", self.dog_code)
+        self.assertIn("this.noseTwitch", self.dog_code)
+        self.assertIn("updateSniffingTrail(dt, field)", self.dog_code)
+        self.assertIn("field.particleSystem.emitSniffParticles", self.dog_code)
+        self.assertIn("field.addScent(this.x, this.y, 'dog', this)", self.dog_code)
+
+    def test_zoomies_burst_and_figure_eight(self):
+        """CompanionDog must trigger zoomies burst at 100% happiness and follow figure-eight path."""
+        self.assertIn("triggerZoomies()", self.dog_code)
+        self.assertIn("this.zoomiesTimer", self.dog_code)
+        self.assertIn("this.zoomiesPhase", self.dog_code)
+        self.assertIn("updateZoomies(dt, field)", self.dog_code)
+        # Figure-eight parametric motion: sin(phase) and sin(phase * 2)
+        self.assertIn("Math.sin(this.zoomiesPhase)", self.dog_code)
+        self.assertIn("Math.sin(this.zoomiesPhase * 2)", self.dog_code)
+        # Happiness trigger in pet()
+        self.assertIn("this.happiness >= 100", self.dog_code)
+
+    def test_woodland_stick_pickup_and_carrying(self):
+        """CompanionDog must be able to pick up woodland sticks, carry across jaws, and drop on recall."""
+        self.assertIn("this.hasStick", self.dog_code)
+        self.assertIn("this.carriedStick", self.dog_code)
+        self.assertIn("pickupStick(stick)", self.dog_code)
+        self.assertIn("dropStick()", self.dog_code)
+        # Rendering clamped stick across jaws
+        self.assertIn("if (this.hasStick)", self.dog_code)
+        # Dropping stick on recall and fetch
+        self.assertIn("this.dropStick();\n    if (this.hasBall", self.dog_code)
+
+    def test_dynamic_gait_transitions(self):
+        """CompanionDog must visually transition between WALK, rhythmic Spaniel TROT, and GALLOP."""
+        self.assertIn("this.gaitMode", self.dog_code)
+        self.assertIn("this.gaitPhase", self.dog_code)
+        self.assertIn("this.gaitMode = 'GALLOP'", self.dog_code)
+        self.assertIn("this.gaitMode = 'TROT'", self.dog_code)
+        self.assertIn("this.gaitMode = 'WALK'", self.dog_code)
+        # Spaniel trot vertical bob
+        self.assertIn("trotBob", self.dog_code)
+        # Gallop torso stretch and streamlined ear sweep
+        self.assertIn("gallopSweep", self.dog_code)
+        self.assertIn("emitGallopPuff", self.dog_code)
+
+
+class TestParkAppearance(unittest.TestCase):
+    def setUp(self):
+        self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        with open(os.path.join(self.base_dir, "src", "world", "field.js"), "r", encoding="utf-8") as f:
+            self.field_code = f.read()
+        with open(os.path.join(self.base_dir, "src", "world", "environment.js"), "r", encoding="utf-8") as f:
+            self.env_code = f.read()
+        with open(os.path.join(self.base_dir, "src", "systems", "particles.js"), "r", encoding="utf-8") as f:
+            self.particles_code = f.read()
+
+    def test_environment_shadow_parameters(self):
+        """Environment must calculate directional ground shadow parameters with GOLDEN_HOUR lengthening."""
+        self.assertIn("getShadowParameters(hour = null)", self.env_code)
+        self.assertIn("lengthFactor", self.env_code)
+        self.assertIn("skewX", self.env_code)
+        self.assertIn("GOLDEN_HOUR", self.env_code)
+
+    def test_field_canopy_wind_sway_and_shadows(self):
+        """Field tree rendering must apply directional ground shadows and wind-rippled canopy sway."""
+        self.assertIn("Math.sin(this.windTime + tree.x)", self.field_code)
+        self.assertIn("getShadowParameters", self.field_code)
+
+    def test_field_leaf_clusters_and_sticks(self):
+        """Field must spawn autumn leaf clusters and woodland sticks around oak/chestnut groves."""
+        self.assertIn("this.leafClusters", self.field_code)
+        self.assertIn("this.sticks", self.field_code)
+        self.assertIn("this.scentTrails", self.field_code)
+        self.assertIn("renderLeafClusters", self.field_code)
+        self.assertIn("renderWoodlandSticks", self.field_code)
+        self.assertIn("renderScentTrails", self.field_code)
+
+    def test_particle_system_extensions(self):
+        """ParticleSystem must support LeafParticle flutter, emitFallenLeaves, emitGallopPuff, and emitSniffParticles."""
+        self.assertIn("class LeafParticle", self.particles_code)
+        self.assertIn("class SniffParticle", self.particles_code)
+        self.assertIn("emitFallenLeaves(", self.particles_code)
+        self.assertIn("emitGallopPuff(", self.particles_code)
+        self.assertIn("emitSniffParticles(", self.particles_code)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
 ## FILE: test/test_player_identity.py
 ```python
 #!/usr/bin/env python3
@@ -33568,7 +35308,12 @@ class TestZeroMeshIntegration(unittest.TestCase):
         # Check real WasmWebRtcEngine / WasmCryptoSession calls
         self.assertIn("this.cryptoSession.seal_drop_sdp", content)
         self.assertIn("this.cryptoSession.open_drop_sdp", content)
-        self.assertIn("engine.accept_offer_and_create_answer", content)
+        self.assertTrue(
+            "engine.accept_offer_and_create_answer" in content or
+            "wasmEngine.accept_offer_and_create_answer" in content or
+            "acceptOfferAndCreateAnswerSdp" in content,
+            "Must invoke accept_offer_and_create_answer directly or via WebRtc bridge"
+        )
 
     def test_no_bare_json_imports_in_browser_src(self):
         """Regression test (unification-006): Verify no browser .js files contain bare import ... from '*.json'."""
@@ -33786,11 +35531,20 @@ class TestZeroMeshIntegration(unittest.TestCase):
         self.assertIn("this.pendingProximityEngines = new Map();", net_code)
         self.assertIn("this.proximityCrypto = new this.wasmMod.WasmCryptoSession();", net_code)
         self.assertIn("const engine = new this.wasmMod.WasmWebRtcEngine();", net_code)
-        self.assertIn("const sdpOffer = await engine.create_offer();", net_code)
+        self.assertTrue(
+            "const sdpOffer = await engine.create_offer();" in net_code or
+            "const sdpOffer = await bridge.createOfferSdp();" in net_code
+        )
         self.assertIn("this.gameMesh.send_direct_state(remoteId, 'proximity_invite',", net_code)
-        self.assertIn("const answerSdp = await engine.accept_offer_and_create_answer(payload.sdpOffer);", net_code)
+        self.assertTrue(
+            "const answerSdp = await engine.accept_offer_and_create_answer(payload.sdpOffer);" in net_code or
+            "const answerSdp = await bridge.acceptOfferAndCreateAnswerSdp(payload.sdpOffer);" in net_code
+        )
         self.assertIn("this.gameMesh.send_direct_state(originPeerId, 'proximity_drop',", net_code)
-        self.assertIn("await engine.apply_answer(payload.sdpAnswer);", net_code)
+        self.assertTrue(
+            "await engine.apply_answer(payload.sdpAnswer);" in net_code or
+            "await bridge.applyAnswerSdp(payload.sdpAnswer);" in net_code
+        )
         self.assertIn("this.proximityMesh.broadcast_chat(text);", net_code)
         self.assertIn("Protocol.createProximityChat(this.peerId, this.localMeta.name, text, 0, 0, peers)", net_code)
         self.assertIn("case PacketType.PROXIMITY_CHAT:", net_code)
@@ -33903,7 +35657,8 @@ class TestZeroMeshIntegration(unittest.TestCase):
         self.assertIn("this.widget.appendMessage", prox_code)
         self.assertIn("this.widget.dissolveMessageById(messageUuid)", prox_code)
         self.assertIn("this.widget.burnAllMessages()", prox_code)
-        self.assertIn("this.widget.setPeers(this.activeCluster, this.activeCluster.length)", prox_code)
+        self.assertIn("this.widget.setPeers(activePeers, activePeers.length", prox_code)
+        self.assertNotIn("this.widget.setPeers(this.activeCluster, this.activeCluster.length", prox_code)
 
         # Verify public API preserved
         for method in ("receiveMessage", "sendMessage", "burnMessage", "clearMessages", "getMessages", "getActivePeers", "update", "destroy"):
@@ -33991,6 +35746,82 @@ class TestZeroMeshIntegration(unittest.TestCase):
         # Check default room fallback to 'clifton-commons'
         self.assertIn("'clifton-commons'", code)
         self.assertIn("ZeroMeshNetworkManager", code)
+
+    def test_invite_and_drop_payload_serde_schema_contract(self):
+        """Verifies _stageNewInvite and _connectLiveMesh schemas match zero_protocol Rust envelope types."""
+        net_path = os.path.join(os.path.dirname(__file__), "..", "src", "net", "zero_mesh_network.js")
+        with open(net_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        # Check InvitePayload fields in _stageNewInvite
+        self.assertIn("do_id: this.roomId", code)
+        self.assertIn("token: token", code)
+        self.assertIn("sdp_offer: { sdp: sdpOffer }", code)
+        self.assertIn("guest_private_key: null", code)
+        self.assertIn("host_signing_key:", code)
+
+        # Check DropPayload fields in _connectLiveMesh
+        self.assertIn("invite_uuid: invite.invite_uuid", code)
+        self.assertIn("token: invite.token", code)
+        self.assertIn("sdp_answer: { sdp: 'SEALED' }", code)
+        self.assertIn("joiner_public_key:", code)
+        self.assertIn("joiner_signing_key:", code)
+        self.assertIn("sealed_sdp_answer:", code)
+        self.assertIn("signature: null", code)
+        self.assertIn("'Authorization': 'Bearer ' + (invite.token || invite.hmac_token)", code)
+
+    def test_browser_webrtc_bridge_contract(self):
+        """Verifies _attachBrowserWebRtc helper bridges RTCPeerConnection to Wasm engine with headless fallback."""
+        net_path = os.path.join(os.path.dirname(__file__), "..", "src", "net", "zero_mesh_network.js")
+        with open(net_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("_attachBrowserWebRtc(wasmEngine, isOfferer, iceServers)", code)
+        self.assertIn("window.RTCPeerConnection", code)
+        self.assertIn("createOfferSdp()", code)
+        self.assertIn("acceptOfferAndCreateAnswerSdp(offerSdp)", code)
+        self.assertIn("applyAnswerSdp(answerSdp)", code)
+        self.assertIn("wasmEngine.mark_open()", code)
+        self.assertIn("wasmEngine.mark_closed()", code)
+        self.assertIn("wasmEngine.inject_incoming_text(ev.data)", code)
+        self.assertIn("wasmEngine.set_outbound_tx(", code)
+        self.assertIn("pc.oniceconnectionstatechange", code)
+        self.assertIn("close() {", code)
+        self.assertIn("this.activeBridges", code)
+
+    def test_proximity_chat_passes_active_peers_array_to_widget(self):
+        """Verifies updateParticipantsBadge passes activePeers array and length to widget.setPeers."""
+        chat_path = os.path.join(os.path.dirname(__file__), "..", "src", "ui", "proximity_chat.js")
+        with open(chat_path, "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertIn("const activePeers = this.getActivePeers();", code)
+        self.assertIn("this.widget.setPeers(activePeers, activePeers.length, peerMeta);", code)
+        self.assertIn("this.widget.setPeers(activePeers, activePeers.length);", code)
+
+    def test_customizer_accessory_selector_and_net_sync(self):
+        """Verifies SocialHUD accessory selector and network metadata synchronization."""
+        hud_path = os.path.join(os.path.dirname(__file__), "..", "src", "ui", "social_hud.js")
+        with open(hud_path, "r", encoding="utf-8") as f:
+            hud_code = f.read()
+
+        self.assertIn('id="accessory-options"', hud_code)
+        self.assertIn('data-accessory="NONE"', hud_code)
+        self.assertIn('data-accessory="BACKPACK"', hud_code)
+        self.assertIn('data-accessory="SCARF"', hud_code)
+        self.assertIn('data-accessory="HOODIE"', hud_code)
+        self.assertIn('this.owner.accessory = btn.getAttribute(\'data-accessory\')', hud_code)
+
+        proto_path = os.path.join(os.path.dirname(__file__), "..", "src", "net", "protocol.js")
+        with open(proto_path, "r", encoding="utf-8") as f:
+            proto_code = f.read()
+        self.assertIn("accessory: extraMeta.accessory || 'NONE'", proto_code)
+
+        main_path = os.path.join(os.path.dirname(__file__), "..", "src", "main.js")
+        with open(main_path, "r", encoding="utf-8") as f:
+            main_code = f.read()
+        self.assertIn("accessory: this.owner.accessory || 'NONE'", main_code)
+        self.assertIn("remoteOwner.accessory = meta?.accessory || 'NONE'", main_code)
 
 
 

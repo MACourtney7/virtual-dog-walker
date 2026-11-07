@@ -1,5 +1,13 @@
 // The Downs (Clifton & Durdham Downs, Bristol) - Top-Down Environment, Camera & Depth-Sorted Rendering Engine
 import { ParticleSystem } from '../systems/particles.js';
+import { getZoneConfig } from './zones.js';
+import {
+  initBiomeScenery,
+  bakeBiomeGround,
+  renderCoastalSurf,
+  renderWarpSignpost,
+  renderLandmark
+} from './zone_biomes.js';
 
 export class Camera {
   constructor(viewportWidth = 1280, viewportHeight = 720, worldWidth = 3200, worldHeight = 2400, zoom = 1.0) {
@@ -88,6 +96,11 @@ export class Field {
     this.width = width;
     this.height = height;
 
+    // Zone / biome configuration
+    this.zoneConfig = getZoneConfig('clifton-commons');
+    this.zoneId = this.zoneConfig.id;
+    this.warpGates = (this.zoneConfig.warpGates || []).map(g => ({ ...g }));
+
     // Rich procedural grass tones
     this.grassBase = '#3e6b2c';
     this.grassDark = '#335824';
@@ -125,6 +138,37 @@ export class Field {
 
     this.bakedCanvas = this.createOffscreenCanvas(this.width, this.height);
     this.bakeGround();
+  }
+
+  /**
+   * Switch the field to a different zone, re-initialising biome scenery and
+   * re-baking the ground layer.
+   *
+   * @param {string} zoneId
+   */
+  loadZone(zoneId) {
+    this.zoneConfig = getZoneConfig(zoneId);
+    this.zoneId = this.zoneConfig.id;
+    this.warpGates = (this.zoneConfig.warpGates || []).map(g => ({ ...g }));
+    initBiomeScenery(this, this.zoneConfig.biome || 'parkland');
+    this.bakeGround();
+  }
+
+  /**
+   * Return the warp gate whose radius contains the given point, or null.
+   *
+   * @param {number} x
+   * @param {number} y
+   * @returns {object|null}
+   */
+  checkWarpGate(x, y) {
+    if (!this.warpGates || this.warpGates.length === 0) return null;
+    for (const gate of this.warpGates) {
+      if (Math.hypot(x - gate.x, y - gate.y) <= (gate.radius || 48)) {
+        return gate;
+      }
+    }
+    return null;
   }
 
   createOffscreenCanvas(width, height) {
@@ -165,6 +209,11 @@ export class Field {
     for (const r of (this.rockOutcrops || [])) {
       if (fin(r.x, r.depthY)) out.push({ kind: 'circle', x: r.x, y: r.depthY - 8, r: r.r || 24 });
     }
+    for (const l of (this.landmarks || [])) {
+      if (l && l.id !== 'water-tower' && fin(l.x, l.depthY || l.y, l.radius)) {
+        out.push({ kind: 'circle', x: l.x, y: l.depthY || l.y, r: l.radius });
+      }
+    }
     return out;
   }
 
@@ -193,6 +242,13 @@ export class Field {
         colliders.push({ x: b.x, y: b.y, r: Math.max(b.w, b.h) / 2 || 20 });
       }
     }
+    if (Array.isArray(this.landmarks)) {
+      for (const l of this.landmarks) {
+        if (l && l.id !== 'water-tower') {
+          colliders.push({ x: l.x, y: l.y, r: l.radius || 32 });
+        }
+      }
+    }
     return colliders;
   }
 
@@ -200,6 +256,12 @@ export class Field {
     if (!this.bakedCanvas) return;
     const ctx = this.bakedCanvas.getContext('2d');
     if (!ctx) return;
+
+    const biome = this.zoneConfig?.biome || 'parkland';
+    if (biome !== 'parkland') {
+      bakeBiomeGround(this, ctx, biome);
+      return;
+    }
 
     // 1. Base turf fill
     ctx.fillStyle = this.grassBase;
@@ -1215,6 +1277,18 @@ export class Field {
       }
     }
 
+    // Add warp gates
+    for (const gate of (this.warpGates || [])) {
+      renderList.push({ type: 'warp_gate', data: gate, depthY: gate.y + 14, y: gate.y });
+    }
+
+    // Add non-water-tower landmarks
+    for (const l of (this.landmarks || [])) {
+      if (l && l.id !== 'water-tower') {
+        renderList.push({ type: 'landmark', data: l, depthY: l.depthY || l.y, y: l.y });
+      }
+    }
+
     // Add dynamic entities (Owner, Companion Dogs, Tennis Balls, etc.)
     for (const ent of dynamicEntities) {
       if (!ent) continue;
@@ -1251,6 +1325,10 @@ export class Field {
       this.renderRock(ctx, item.data);
     } else if (item.type === 'streetlamp') {
       this.renderStreetlamp(ctx, item.data);
+    } else if (item.type === 'warp_gate') {
+      renderWarpSignpost(this, ctx, item.data);
+    } else if (item.type === 'landmark') {
+      renderLandmark(this, ctx, item.data);
     } else if (item.type === 'entity') {
       if (typeof item.data.draw === 'function') {
         item.data.draw(ctx);
@@ -1267,6 +1345,11 @@ export class Field {
 
     // 1. Procedural/Baked Background Turf & Pathways
     this.renderGround(ctx, camera);
+
+    // 1a. Coastal surf animation along the tide line
+    if (this.zoneConfig?.biome === 'coastal') {
+      renderCoastalSurf(this, ctx);
+    }
 
     // 1b. Ground Layers: Scent Trails, Woodland Sticks & Autumn Leaf Clusters
     this.renderScentTrails(ctx, viewLeft, viewTop, viewRight, viewBottom);

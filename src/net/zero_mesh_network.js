@@ -393,7 +393,7 @@ export class ZeroMeshNetworkManager {
 
     pc.oniceconnectionstatechange = () => {
       const state = pc.iceConnectionState;
-      if (state === 'disconnected' || state === 'failed' || state === 'closed') {
+      if (state === 'failed' || state === 'closed') {
         try { wasmEngine.mark_closed(); } catch (_) {}
       }
     };
@@ -459,7 +459,8 @@ export class ZeroMeshNetworkManager {
         if (pc.iceGatheringState === 'complete') finish();
       };
       try { pc.addEventListener('icegatheringstatechange', onChange); } catch (_) {}
-      setTimeout(finish, 1500);
+      const timeoutMs = (this.iceGatheringTimeoutMs && this.iceGatheringTimeoutMs > 0) ? this.iceGatheringTimeoutMs : 2500;
+      setTimeout(finish, timeoutMs);
     });
 
     return {
@@ -1249,9 +1250,10 @@ export class ZeroMeshNetworkManager {
           const pubKeyBytes = payload.pubKey ? new Uint8Array(payload.pubKey) : new Uint8Array(32);
           this.proximityMesh.register_peer(originPeerId, pubKeyBytes, engine);
         }
-        this.pendingProximityEngines.delete(originPeerId);
       } catch (e) {
         console.warn('[ZeroMesh] Failed applying proximity answer:', e);
+      } finally {
+        this.pendingProximityEngines.delete(originPeerId);
       }
     }
   }

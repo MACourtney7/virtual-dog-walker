@@ -94,6 +94,14 @@ jobs:
           path: zero_chat
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Checkout zero_network sibling
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/zero-network
+          path: zero_network
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install Rust toolchain
         if: steps.check_creds.outputs.has_token == 'true'
         uses: dtolnay/rust-toolchain@stable
@@ -103,6 +111,19 @@ jobs:
       - name: Install wasm-bindgen-cli
         if: steps.check_creds.outputs.has_token == 'true'
         run: cargo install -q wasm-bindgen-cli --version 0.2.130
+
+      - name: Install worker-build
+        if: steps.check_creds.outputs.has_token == 'true'
+        run: cargo install -q worker-build --version "^0.7"
+
+      - name: Deploy Cloudflare Worker & Durable Object
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: 'zero_network'
+          command: 'deploy'
 
       - name: Set up Node.js
         if: steps.check_creds.outputs.has_token == 'true'

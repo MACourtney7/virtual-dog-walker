@@ -191,6 +191,88 @@ export class ParticleSystem {
     }
   }
 
+  // Generic particle emitter. Safely handles malformed input.
+  emit(config) {
+    if (!config || typeof config !== 'object') {
+      return null;
+    }
+
+    const num = (value, fallback) => {
+      const n = Number(value);
+      return Number.isFinite(n) ? n : fallback;
+    };
+
+    const x = num(config.x, 0);
+    const y = num(config.y, 0);
+    const vx = num(config.vx, 0);
+    const vy = num(config.vy, 0);
+    const gravity = num(config.gravity, 180);
+
+    // `radius` is an alias for `size`
+    const sizeSource = config.size !== undefined ? config.size : config.radius;
+    const radius = Math.max(0, num(sizeSource, 2));
+
+    let life = num(config.life, 0.5);
+    if (!(life > 0)) {
+      life = 0.5;
+    }
+
+    const color = typeof config.color === 'string' && config.color
+      ? config.color
+      : '#ffffff';
+
+    const particle = new Particle(x, y, vx, vy, color, radius, life, gravity);
+    this.particles.push(particle);
+    return particle;
+  }
+
+  // Water splash droplets (e.g. puddle / pond impacts)
+  emitWaterSplash(x, y, count = 6) {
+    const px = Number(x);
+    const py = Number(y);
+    if (!Number.isFinite(px) || !Number.isFinite(py)) {
+      return 0;
+    }
+
+    let n = Math.floor(Number(count));
+    if (!Number.isFinite(n)) {
+      n = 6;
+    }
+    n = Math.max(0, Math.min(100, n));
+
+    const colors = [
+      'rgba(240, 253, 250, 0.8)',
+      'rgba(56, 189, 248, 0.7)',
+      'rgba(255, 255, 255, 0.9)'
+    ];
+
+    let emitted = 0;
+    for (let i = 0; i < n; i++) {
+      const angle = Math.random() * Math.PI * 2;
+      const speed = 30 + Math.random() * 70;
+      const vx = Math.cos(angle) * speed;
+      const vy = -Math.abs(Math.sin(angle) * speed) - (40 + Math.random() * 60);
+      const color = colors[Math.floor(Math.random() * colors.length)];
+      const radius = 1.2 + Math.random() * 1.8;
+      const life = 0.35 + Math.random() * 0.35;
+
+      const particle = this.emit({
+        x: px,
+        y: py,
+        vx,
+        vy,
+        color,
+        size: radius,
+        life,
+        gravity: 260
+      });
+      if (particle) {
+        emitted++;
+      }
+    }
+    return emitted;
+  }
+
   // Shimmering golden stars when picking up bones
   emitSparkles(x, y) {
     const colors = ['#f3c948', '#ffffff', '#ffe082', '#ffd54f'];

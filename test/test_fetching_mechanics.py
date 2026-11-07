@@ -203,7 +203,7 @@ class MockCompanionDog:
             if not self.owner:
                 self.hasBall = False
                 self.targetBall.drop(self.x, self.y)
-                self.targetBall = null
+                self.targetBall = None
                 self.state = DogState.ROAMING
                 return
 

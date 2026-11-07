@@ -1251,10 +1251,10 @@ export class CliftonDownGame {
     // Dynamically dim the leash button when the dog is out of clipping range
     if (typeof document !== 'undefined') {
       const leashDist = Math.hypot(this.dog.x - this.owner.x, this.dog.y - this.owner.y);
-      const leashBtn = document.getElementById('btn-touch-leash');
-      if (leashBtn) {
+      this.leashBtn ??= document.getElementById('btn-touch-leash');
+      if (this.leashBtn) {
         const dim = !this.owner.isLeashed && leashDist > 68;
-        leashBtn.style.opacity = dim ? '0.55' : '1.0';
+        this.leashBtn.style.opacity = dim ? '0.55' : '1.0';
       }
     }
 

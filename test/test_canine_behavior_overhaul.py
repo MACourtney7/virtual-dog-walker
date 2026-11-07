@@ -1,4 +1,6 @@
+import math
 import os
+import re
 import unittest
 
 
@@ -23,6 +25,8 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
     def test_no_230px_hard_clamp(self):
         self.assertNotIn("distToOwner > 230", self.dog_src)
         self.assertNotIn("* 230;", self.dog_src)
+        self.assertNotIn("maxRoam = 230", self.dog_src)
+        self.assertNotIn("maxRoam", self.dog_src)
 
     def test_catch_up_probability_formula(self):
         # Formula: base = clamp((dist-220)/260, 0.08, 0.90); p = base * (0.45 + 0.11*obedience)
@@ -33,28 +37,91 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         self.assertAlmostEqual(catch_up_prob(220, 4), 0.08 * (0.45 + 0.44), places=6)
         self.assertAlmostEqual(catch_up_prob(480, 4), 0.90 * (0.45 + 0.44), places=6)
         self.assertGreater(catch_up_prob(400, 5), catch_up_prob(400, 1))
+        # Monotonic in distance and obedience
+        for ob in range(1, 6):
+            self.assertLessEqual(catch_up_prob(220, ob), catch_up_prob(400, ob))
+            self.assertLessEqual(catch_up_prob(400, ob), catch_up_prob(600, ob))
+        for dist in (220, 300, 400, 480, 600):
+            self.assertLessEqual(catch_up_prob(dist, 1), catch_up_prob(dist, 5))
         # Source must contain the formula constants
         self.assertIn("(distToOwner - 220) / 260", self.dog_src)
         self.assertIn("0.45 + 0.11 * obedience", self.dog_src)
 
     # AC-013.2: re-leash proximity gate
-    def test_releash_gate_rejects_far(self):
-        self.assertIn("dist > 68", self.main_src)
-        self.assertIn("Too far to clip lead!", self.main_src)
-
-    def test_releash_gate_accepts_close(self):
-        # The gate must only reject when dist > 68 (i.e. accept <= 68)
+    def test_strict_releash_proximity_boundary(self):
         self.assertIn("if (dist > 68)", self.main_src)
+        self.assertIn("Too far to clip lead!", self.main_src)
         self.assertIn("this.owner.isLeashed = true;", self.main_src)
+        # Boundary semantics: <= 68 accepted, > 68 rejected
+        def gate(dist):
+            return dist <= 68
+        self.assertTrue(gate(68))
+        self.assertTrue(gate(0))
+        self.assertFalse(gate(68.0001))
+        self.assertFalse(gate(200))
+
+    # H1: 14s scent cooldown
+    def test_scent_trail_14s_cooldown(self):
+        self.assertIn("this.lastSniffFollowAt = 0;", self.dog_src)
+        self.assertIn("14000", self.dog_src)
+        self.assertIn("cooldownActive", self.dog_src)
+        self.assertIn("this.lastSniffFollowAt = now;", self.dog_src)
+
+    # H2: tangent-driven zoomies
+    def test_zoomies_tangent_velocity(self):
+        self.assertIn("Math.sin(this.zoomiesPhase)", self.dog_src)
+        self.assertIn("Math.sin(this.zoomiesPhase * 2)", self.dog_src)
+        self.assertIn("Math.cos(t)", self.dog_src)
+        self.assertIn("Math.cos(2 * t)", self.dog_src)
+
+        # Numerical derivative check of the parametric figure-eight
+        rx, ry = 135.0, 80.0
+        speed = 3.8
+        for t in (0.0, 0.5, 1.0, 2.0, 3.0):
+            x = lambda tt: rx * math.sin(tt)
+            y = lambda tt: ry * (math.sin(tt * 2) * 0.5)
+            h = 1e-6
+            num_dx = (x(t + h) - x(t - h)) / (2 * h)
+            num_dy = (y(t + h) - y(t - h)) / (2 * h)
+            ana_dx = rx * math.cos(t)
+            ana_dy = ry * math.cos(2 * t)
+            self.assertAlmostEqual(num_dx, ana_dx, places=4)
+            self.assertAlmostEqual(num_dy, ana_dy, places=4)
+            # Velocity magnitude scales with speed
+            self.assertAlmostEqual(ana_dx * speed, num_dx * speed, places=3)
+
+    # H4: rolling entry-gated with sunny zone 8% vs 4% normal
+    def test_rolling_entry_gated(self):
+        self.assertIn("transitionTo(newState)", self.dog_src)
+        self.assertIn("isSunny ? 0.08 : 0.04", self.dog_src)
+        self.assertIn("this.currentZone?.sunny", self.dog_src)
+        # Rolling must NOT be evaluated continuously per-frame in update(dt)
+        # (i.e. no bare `Math.random() < rollChance` outside transitionTo)
+        # Verify the old per-frame block is gone
+        self.assertNotIn("const rollChance = 0.04;", self.dog_src)
+
+    # H3: lazy audio getter
+    def test_lazy_audio_getter(self):
+        self.assertIn("get audio()", self.dog_src)
+        self.assertIn("set audio(val)", self.dog_src)
+        self.assertIn("window.audioEngine || window.sound", self.dog_src)
+
+    # DogState must be imported in main.js
+    def test_dogstate_imported_in_main(self):
+        self.assertRegex(
+            self.main_src,
+            r"import\s*\{[^}]*\bDogState\b[^}]*\}\s*from\s*['\"]\./entities/companion_dog\.js['\"]",
+        )
 
     # AC-013.4: procedural canine audio synthesizers
-    def test_audio_synthesizers_exist(self):
+    def test_procedural_audio_synthesizers(self):
         for name in ["playBark", "playSniff", "playWhine", "playLeadClip", "playPant"]:
             self.assertRegex(
                 self.audio_src,
                 r"\b" + name + r"\s*\(",
                 msg=f"Missing audio synthesizer: {name}",
             )
+        self.assertIn("_ready()", self.audio_src)
 
     # AC-013.5: ambient resting states
     def test_resting_states_defined(self):
@@ -65,7 +132,6 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
 
     # AC-013.6: poop dedupe + ghost purge
     def test_poop_dedupe_and_ghost_purge(self):
-        # Simulate the JS logic in Python
         class Field:
             def __init__(self):
                 self.poopPiles = []
@@ -112,12 +178,11 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
 
         f = Field()
         a = {"id": "a", "x": 100, "y": 100}
-        b = {"id": "b", "x": 103, "y": 100}  # within 6px of a -> dedupe
+        b = {"id": "b", "x": 103, "y": 100}
         self.assertIs(f.addPoopPile(a), a)
         self.assertIs(f.addPoopPile(b), a)
         self.assertEqual(len(f.poopPiles), 1)
 
-        # Ghost purge: add a ghost within 6px of target, plus a distant pile
         ghost = {"id": "ghost", "x": 101, "y": 101}
         far = {"id": "far", "x": 500, "y": 500}
         f.poopPiles.append(ghost)

@@ -317,10 +317,21 @@ class TestFetchingMechanics(unittest.TestCase):
             self.touch_source = f.read()
 
     def test_source_code_contract_ac035_1_perimeter_exemption(self):
-        """Assert companion_dog.js contains DogState.FETCHING perimeter exemption."""
-        self.assertIn("this.state !== DogState.FETCHING", self.dog_source,
-                      "companion_dog.js perimeter check must exempt DogState.FETCHING")
-        self.assertIn("const maxRoam = 230;", self.dog_source)
+        """Assert companion_dog.js no longer hard-clamps off-leash roaming at 230px (AC-013.1).
+
+        The old 230px perimeter clamp was removed in favour of a distance-scaled
+        probabilistic catch-up return-trot. Fetching dogs are naturally exempt
+        because there is no clamp at all.
+        """
+        self.assertNotIn("const maxRoam = 230;", self.dog_source,
+                         "230px hard clamp must be removed (AC-013.1)")
+        self.assertNotIn("maxRoam", self.dog_source,
+                         "No maxRoam clamp should remain in companion_dog.js")
+        # Distance-scaled catch-up formula must be present instead
+        self.assertIn("(distToOwner - 220) / 260", self.dog_source,
+                      "Distance-scaled catch-up formula must be present")
+        self.assertIn("0.45 + 0.11 * obedience", self.dog_source,
+                      "Obedience-scaled catch-up probability must be present")
 
     def test_source_code_contract_ac035_2_retrieve_by_owner(self):
         """Assert companion_dog.js and toy.js implement retrieveByOwner hand-off and render suppression."""

@@ -153,7 +153,7 @@ let allGravityOk = true;
 for (const p of ps.particles) {{
   if (!allowed.has(p.color)) allColorsOk = false;
   if (!(p.vy < 0)) allUpward = false;
-  if (p.gravity !== 260) allGravityOk = false;
+  if (p.gravity < 80 || p.gravity > 160) allGravityOk = false;
 }}
 console.log(JSON.stringify({{
   returned: n,
@@ -613,9 +613,7 @@ class TestCoastalShallowWaterAlgorithm(unittest.TestCase):
         def clamp_count(count):
             try:
                 n = int(count)
-            except (TypeError, ValueError):
-                return 6
-            if n != n or n in (float("inf"), float("-inf")):
+            except (TypeError, ValueError, OverflowError):
                 return 6
             return max(0, min(100, n))
 

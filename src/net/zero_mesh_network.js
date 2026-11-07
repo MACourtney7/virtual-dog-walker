@@ -147,6 +147,53 @@ export class ZeroMeshNetworkManager {
 
     // In-memory simulation fallback channels (for testing)
     this._simulationHub = options.simulationHub || null;
+
+    // Two-phase lifecycle state (negotiate -> construct)
+    this._phase = 'idle';
+    this._matchRetries = 0;
+    this._role = null;
+    this._roomSecret = null;
+    this._debug = Boolean(options.debug || (typeof window !== 'undefined' && window.__ZERO_MESH_DEBUG));
+    this._lifecycleTimers = new Set();
+  }
+
+  _logPhase(phase, extra) {
+    this._phase = phase;
+    if (this._debug) {
+      try {
+        console.debug(`[ZeroMesh] phase=${phase}`, extra || '');
+      } catch (_) {}
+    }
+    if (typeof window !== 'undefined') {
+      window.__zeroMeshDebug = {
+        phase,
+        retries: this._matchRetries,
+        role: this._role,
+        roomSecret: this._roomSecret ? '<set>' : null,
+        peerId: this.peerId
+      };
+    }
+  }
+
+  _doId() {
+    return this.roomId;
+  }
+
+  _sleep(ms) {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this._lifecycleTimers.delete(timer);
+        resolve();
+      }, ms);
+      this._lifecycleTimers.add(timer);
+    });
+  }
+
+  _clearLifecycleTimers() {
+    for (const timer of this._lifecycleTimers) {
+      try { clearTimeout(timer); } catch (_) {}
+    }
+    this._lifecycleTimers.clear();
   }
 
   setLocalMeta(meta) {
@@ -254,19 +301,89 @@ export class ZeroMeshNetworkManager {
     }
   }
 
+  async _negotiateIdentity() {
+    const doId = this._doId();
+    const backoff = [100, 200, 400, 800, 1600, 2500];
+    const outerDeadline = Date.now() + 10000;
+    this._matchRetries = 0;
+    this._logPhase('negotiate', { doId });
+
+    for (let i = 0; i <= backoff.length; i++) {
+      let body = null;
+      try {
+        const resp = await fetch(`${this.workerOrigin}/match/${encodeURIComponent(doId)}`);
+        if (!resp.ok) throw new Error(`match ${resp.status}`);
+        body = await resp.json();
+      } catch (err) {
+        if (this._debug) console.warn('[ZeroMesh] /match error:', err);
+        body = null;
+      }
+
+      if (body) {
+        if (body.status === 'joiner' || body.status === 'host') {
+          this._role = body.status;
+          this._roomSecret = body.room_secret ?? null;
+          this._logPhase('negotiate', { role: body.status, retries: this._matchRetries });
+          return {
+            role: body.status,
+            assignedPeerId: body.assigned_peer_id ?? this.peerId,
+            roomSecret: body.room_secret ?? null,
+            invite: body.invite || null
+          };
+        }
+        if (body.status === 'waiting') {
+          this._logPhase('waiting', { retries: this._matchRetries });
+        }
+      }
+
+      if (Date.now() >= outerDeadline) break;
+      if (i < backoff.length) {
+        this._matchRetries++;
+        await this._sleep(backoff[i]);
+      }
+    }
+
+    this._role = 'empty';
+    this._logPhase('negotiate', { role: 'empty', retries: this._matchRetries });
+    return { role: 'empty', assignedPeerId: this.peerId, roomSecret: null, invite: null };
+  }
+
+  _constructMesh(assignedPeerId, roomSecret) {
+    this.peerId = assignedPeerId;
+    if (roomSecret) {
+      this.hostSecret = roomSecret;
+    } else if (!this.hostSecret) {
+      this.hostSecret = this.generateSecret();
+    }
+
+    const privKey = this.generateSecret();
+    this.cryptoSession = (typeof this.wasmMod.WasmCryptoSession.from_private_key === 'function')
+      ? this.wasmMod.WasmCryptoSession.from_private_key(privKey)
+      : new this.wasmMod.WasmCryptoSession();
+    this.gameMesh = new this.wasmMod.WasmMeshTopology(assignedPeerId, privKey);
+    this.proximityMesh = new this.wasmMod.WasmMeshTopology(`prox-${assignedPeerId}`, this.generateSecret());
+
+    // Pre-handshake invariant: mesh identity must agree with this.peerId.
+    if (typeof this.gameMesh.local_peer_id === 'function') {
+      const meshId = this.gameMesh.local_peer_id();
+      if (meshId !== this.peerId) {
+        throw new Error(`[ZeroMesh] Identity invariant violated: gameMesh.local_peer_id()=${meshId} !== peerId=${this.peerId}`);
+      }
+    }
+
+    this._logPhase('construct', { peerId: this.peerId, hasRoomSecret: Boolean(roomSecret) });
+  }
+
   async _connectLiveMesh() {
     try {
-      this.hostSecret = this.generateSecret();
+      // Phase 1: negotiate identity via /match with retry/backoff.
+      const negotiation = await this._negotiateIdentity();
+      const role = negotiation.role;
+      const roomSecret = negotiation.roomSecret;
+
+      // Phase 2: construct mesh with final peerId + room_secret.
+      this._constructMesh(negotiation.assignedPeerId, roomSecret);
       const hostSecretHex = this.bytesToHex(this.hostSecret);
-
-      const matchUrl = `${this.workerOrigin}/match/${encodeURIComponent(this.roomId)}`;
-      const matchResp = await fetch(matchUrl);
-      const matchData = matchResp.ok ? await matchResp.json() : { status: 'empty' };
-
-      const privKey = this.generateSecret();
-      this.cryptoSession = new this.wasmMod.WasmCryptoSession();
-      this.gameMesh = new this.wasmMod.WasmMeshTopology(this.peerId, privKey);
-      this.proximityMesh = new this.wasmMod.WasmMeshTopology(`prox-${this.peerId}`, this.generateSecret());
 
       this.proximityMesh.set_on_message((senderPeerId, plaintext) => {
         const cleanSenderId = String(senderPeerId).replace(/^prox-/, '');
@@ -301,12 +418,17 @@ export class ZeroMeshNetworkManager {
 
       this._wireMeshCallbacks(this.gameMesh);
 
-      if (matchData.status === 'matched' && matchData.invite) {
+      if (role === 'joiner' && negotiation.invite) {
         // Joiner flow: Accept offer, generate SDP answer, seal drop payload, and POST /drop
-        const invite = matchData.invite;
-        if (invite.assigned_peer_id) {
+        const invite = negotiation.invite;
+        if (invite.assigned_peer_id && invite.assigned_peer_id !== this.peerId) {
+          // Post-construction identity change: keep mesh and this.peerId in lockstep.
+          if (typeof this.gameMesh.set_local_peer_id === 'function') {
+            this.gameMesh.set_local_peer_id(invite.assigned_peer_id);
+          }
           this.peerId = invite.assigned_peer_id;
         }
+        this._logPhase('joiner', { peerId: this.peerId });
 
         const offerSdpStr = typeof invite.sdp_offer === 'object' && invite.sdp_offer !== null
           ? invite.sdp_offer.sdp
@@ -354,7 +476,8 @@ export class ZeroMeshNetworkManager {
         this.isHost = false;
         this._setupHostSocket(hostSecretHex);
       } else {
-        // Seed host flow
+        // Seed host flow (role === 'host' or 'empty' after retry budget exhausted)
+        this._logPhase('host', { peerId: this.peerId });
         this.setStatus(NetStatus.HOSTING);
         this.isHost = true;
         this._setupHostSocket(hostSecretHex);
@@ -362,6 +485,7 @@ export class ZeroMeshNetworkManager {
       }
     } catch (err) {
       console.error('[ZeroMesh] Live connection failed, falling back to simulated mesh:', err);
+      this._logPhase('fallback', { error: String(err && err.message || err) });
       await this._connectSimulatedMesh();
     }
   }
@@ -854,6 +978,7 @@ export class ZeroMeshNetworkManager {
 
   stop() {
     if (this.syncInterval) clearInterval(this.syncInterval);
+    this._clearLifecycleTimers();
     this.stopNpcSpawner();
     if (this.hostWs) {
       try { this.hostWs.close(); } catch (e) {}
@@ -879,6 +1004,14 @@ export class ZeroMeshNetworkManager {
     }
     this.remotePeers.clear();
     this.meshPeerIds.clear();
+    this.cryptoSession = null;
+    this.gameMesh = null;
+    this.proximityMesh = null;
+    this.hostSecret = null;
+    this._role = null;
+    this._roomSecret = null;
+    this._matchRetries = 0;
+    this._logPhase('idle');
     this.setStatus(NetStatus.OFFLINE);
   }
 
@@ -1382,6 +1515,7 @@ export class ZeroMeshNetworkManager {
       clearInterval(this.syncInterval);
       this.syncInterval = null;
     }
+    this._clearLifecycleTimers();
     this.stopNpcSpawner();
 
     if (this.hostWs) {
@@ -1413,6 +1547,13 @@ export class ZeroMeshNetworkManager {
     this.activeNpcs.clear();
     this.activeClusterPeerIds.clear();
     this.isHost = false;
+    this.cryptoSession = null;
+    this.gameMesh = null;
+    this.proximityMesh = null;
+    this.hostSecret = null;
+    this._role = null;
+    this._roomSecret = null;
+    this._matchRetries = 0;
 
     // 4. Update roomId and connect to new room
     this.roomId = newRoomId;

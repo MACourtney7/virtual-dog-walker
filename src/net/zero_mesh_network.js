@@ -1360,6 +1360,65 @@ export class ZeroMeshNetworkManager {
     }
   }
 
+  broadcastLeave() {
+    const packet = {
+      type: PacketType.PEER_LEFT,
+      peerId: this.peerId,
+      senderId: this.peerId
+    };
+    this.broadcast(packet);
+  }
+
+  async switchRoom(newRoomId) {
+    if (!newRoomId || newRoomId === this.roomId) return;
+
+    // 1. Broadcast peer departure to current room peers
+    try {
+      this.broadcastLeave();
+    } catch (_) {}
+
+    // 2. Tear down current room network channels & bridges
+    if (this.syncInterval) {
+      clearInterval(this.syncInterval);
+      this.syncInterval = null;
+    }
+    this.stopNpcSpawner();
+
+    if (this.hostWs) {
+      try { this.hostWs.close(); } catch (_) {}
+      this.hostWs = null;
+    }
+    if (this.activeBridges) {
+      for (const [id, bridge] of this.activeBridges.entries()) {
+        try { if (bridge && typeof bridge.close === 'function') bridge.close(); } catch (_) {}
+      }
+      this.activeBridges.clear();
+    }
+    if (this.pendingBridge && typeof this.pendingBridge.close === 'function') {
+      try { this.pendingBridge.close(); } catch (_) {}
+      this.pendingBridge = null;
+    }
+    if (this.pendingProximityEngines) {
+      for (const [id, pending] of this.pendingProximityEngines.entries()) {
+        if (pending && pending.bridge && typeof pending.bridge.close === 'function') {
+          try { pending.bridge.close(); } catch (_) {}
+        }
+      }
+      this.pendingProximityEngines.clear();
+    }
+
+    // 3. Reset peer tracking collections
+    this.remotePeers.clear();
+    this.meshPeerIds.clear();
+    this.activeNpcs.clear();
+    this.activeClusterPeerIds.clear();
+    this.isHost = false;
+
+    // 4. Update roomId and connect to new room
+    this.roomId = newRoomId;
+    return await this.connect(newRoomId);
+  }
+
   updateServerClock(serverTime) {
     if (typeof serverTime === 'number' && !isNaN(serverTime)) {
       this.serverClockOffset = serverTime - Date.now();

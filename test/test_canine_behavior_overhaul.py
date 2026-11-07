@@ -198,6 +198,30 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         self.assertIn("PICKUP_RADIUS = 38", self.field_src)
         self.assertIn("Math.hypot(p.x - target.x, p.y - target.y) > 6", self.field_src)
 
+    # HIGH-1: zoomies must not double-apply movement integration
+    def test_zoomies_movement_single_integration(self):
+        self.assertIn("if (this.state !== DogState.ZOOMIES)", self.dog_src)
+        # The guarded integration block must wrap the x/y increments
+        idx = self.dog_src.find("if (this.state !== DogState.ZOOMIES)")
+        self.assertNotEqual(idx, -1)
+        window = self.dog_src[idx:idx + 200]
+        self.assertIn("this.x += this.vx * dt;", window)
+        self.assertIn("this.y += this.vy * dt;", window)
+
+    # HIGH-2: resting state entries must route through transitionTo
+    def test_sitting_entry_routes_through_transitionTo(self):
+        self.assertIn("this.transitionTo(DogState.SITTING)", self.dog_src)
+        self.assertIn("this.transitionTo(DogState.IDLE_SNIFF)", self.dog_src)
+        # No direct assignments to SITTING / IDLE_SNIFF remain
+        self.assertNotIn("this.state = DogState.SITTING;", self.dog_src)
+        self.assertNotIn("this.state = DogState.IDLE_SNIFF;", self.dog_src)
+
+    # MEDIUM-1: currentZone must be synced from field.zoneConfig
+    def test_sunny_zone_current_zone_sync(self):
+        self.assertIn("this.currentZone = field.zoneConfig", self.dog_src)
+        self.assertIn("this.currentZone?.sunny", self.dog_src)
+        self.assertIn("isSunny ? 0.08 : 0.04", self.dog_src)
+
 
 if __name__ == "__main__":
     unittest.main()

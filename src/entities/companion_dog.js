@@ -423,6 +423,11 @@ export class CompanionDog {
     const nearbyNPCs = npcs || [];
     this.checkNPCInteractions(nearbyNPCs);
 
+    // Sync current zone reference for sunny-zone rolling evaluation
+    if (field && field.zoneConfig) {
+      this.currentZone = field.zoneConfig;
+    }
+
     // Idle Tracking & Whistle/Leash Reset
     if (this.owner && !isLeashed && this.state !== DogState.LOST) {
       const ownerVx = this.owner.vx || 0;
@@ -672,8 +677,11 @@ export class CompanionDog {
     }
 
     // 3. Movement integration
-    this.x += this.vx * dt;
-    this.y += this.vy * dt;
+    // Zoomies set x/y directly from the parametric curve; skip integration to avoid double movement.
+    if (this.state !== DogState.ZOOMIES) {
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+    }
 
     // Sync carried stick position
     if (this.hasStick && this.carriedStick) {
@@ -903,7 +911,7 @@ export class CompanionDog {
       this.vy *= 0.8;
       this.wagSpeed = 6;
       if (Math.random() < idleTransitionChance) {
-        this.state = Math.random() < 0.5 ? DogState.IDLE_SNIFF : DogState.SITTING;
+        this.transitionTo(Math.random() < 0.5 ? DogState.IDLE_SNIFF : DogState.SITTING);
         this.stateTimer = 2.0 + Math.random() * 3.0;
       }
       return;
@@ -1015,7 +1023,7 @@ export class CompanionDog {
 
       // Periodically pauses for 2-3s to sniff a spot (IDLE_SNIFF)
       if (Math.random() < 0.25) {
-        this.state = DogState.IDLE_SNIFF;
+        this.transitionTo(DogState.IDLE_SNIFF);
         this.stateTimer = 2.0 + Math.random() * 1.0;
         this.vx = 0;
         this.vy = 0;

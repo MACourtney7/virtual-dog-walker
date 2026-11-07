@@ -163,7 +163,7 @@ class SoundSynthesizer {
     const lfoGain = ctx.createGain();
     lfo.type = 'sine'; lfo.frequency.value = 4;
     lfoGain.gain.value = 0.03;
-    amp.gain.value = 0.02;
+    amp.gain.setValueAtTime(0.04, t);
     lfo.connect(lfoGain); lfoGain.connect(amp.gain);
     src.connect(lp); lp.connect(amp); amp.connect(this.ctx.destination);
     src.start(t); lfo.start(t);

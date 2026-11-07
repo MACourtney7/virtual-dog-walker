@@ -17,6 +17,7 @@ import { NavigationArrow } from './ui/navigation_arrow.js';
 import { weatherClient, WeatherType } from './systems/weather.js';
 import { environmentSystem, TimeOfDay } from './world/environment.js';
 import { initWasmSim, syncWorldObstacles } from './engine/wasm_sim_bridge.js';
+import { applyCoastalShallowWaterInteraction } from './systems/coastalWater.js';
 
 export class CliftonDownGame {
   constructor() {
@@ -988,17 +989,18 @@ export class CliftonDownGame {
       }
     }
 
-    // Coastal shallow water interaction
+    // Coastal shallow water interaction (safe, never throws)
     if (this.field && this.field.zoneConfig && this.field.zoneConfig.biome === 'coastal') {
-      if (this.owner.y > 1820 || this.dog.y > 1820) {
-        if (this.field.particleSystem && Math.random() < 0.25) {
-          const px = this.dog.y > 1820 ? this.dog.x : this.owner.x;
-          const py = this.dog.y > 1820 ? this.dog.y : this.owner.y;
-          this.field.particleSystem.emit({ x: px, y: py, color: 'rgba(240, 253, 250, 0.7)', size: 3, life: 0.4 });
-        }
-        if (this.dog.y > 1820 && typeof this.dog.zoomiesLevel === 'number') {
-          this.dog.zoomiesLevel = Math.min(100, this.dog.zoomiesLevel + 12 * dt);
-        }
+      try {
+        applyCoastalShallowWaterInteraction({
+          particleSystem: this.field.particleSystem,
+          owner: this.owner,
+          dog: this.dog,
+          dt,
+          randomValue: Math.random(),
+        });
+      } catch (_err) {
+        // Never let coastal interaction break the animation frame loop.
       }
     }
 

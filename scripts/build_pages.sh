@@ -7,7 +7,16 @@ DIST_DIR="${PROJECT_ROOT}/dist"
 
 echo "=== Building Cloudflare Pages Distribution ==="
 
-# build_wasm.sh handles both wasm compilation and ZeroChatWidget sync.
+# Sync ZeroChatWidget from zero_chat (idempotent; also done by build_wasm.sh).
+echo "Syncing ZeroChatWidget from zero_chat..."
+ZERO_CHAT_DIR="${PROJECT_ROOT}/../zero_chat"
+if [[ -f "${ZERO_CHAT_DIR}/zero_client/widget/zero_chat_widget.js" && -f "${ZERO_CHAT_DIR}/zero_client/widget/zero_chat_widget.css" ]]; then
+    mkdir -p "${PROJECT_ROOT}/src/ui"
+    cp "${ZERO_CHAT_DIR}/zero_client/widget/zero_chat_widget.js" "${PROJECT_ROOT}/src/ui/zero_chat_widget.js"
+    cp "${ZERO_CHAT_DIR}/zero_client/widget/zero_chat_widget.css" "${PROJECT_ROOT}/src/ui/zero_chat_widget.css"
+    echo "✅ ZeroChatWidget synced to src/ui/"
+fi
+
 bash "${SCRIPT_DIR}/build_wasm.sh"
 
 # Verify wasm outputs exist before copying into dist.

@@ -422,18 +422,16 @@ export class ZeroMeshNetworkManager {
   }
 
   /**
-   * Convert a hex string to a Uint8Array.
-   * Returns a 32-byte zero array on invalid input so callers never crash.
+   * Convert a 64-character hex string to a 32-byte Uint8Array.
+   * Returns null on invalid input so callers can fail fast.
    */
   hexToBytes(hex) {
-    if (!hex || typeof hex !== 'string') return new Uint8Array(32);
+    if (!hex || typeof hex !== 'string') return null;
     const clean = hex.trim();
-    if (clean.length % 2 !== 0) return new Uint8Array(32);
-    const bytes = new Uint8Array(clean.length / 2);
-    for (let i = 0; i < bytes.length; i++) {
-      const byteVal = parseInt(clean.substring(i * 2, i * 2 + 2), 16);
-      if (isNaN(byteVal)) return new Uint8Array(32);
-      bytes[i] = byteVal;
+    if (!/^[0-9a-fA-F]{64}$/.test(clean)) return null;
+    const bytes = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+      bytes[i] = parseInt(clean.substring(i * 2, i * 2 + 2), 16);
     }
     return bytes;
   }
@@ -968,28 +966,28 @@ export class ZeroMeshNetworkManager {
       }
     };
 
+    // Hook outbound tx callbacks immediately at engine creation so any frames
+    // the Wasm engine emits before the DataChannel exists are buffered (not dropped).
+    try {
+      wasmEngine.set_outbound_tx((text) => {
+        sendOrQueue(text);
+      });
+    } catch (_) {}
+    try {
+      if (typeof wasmEngine.set_outbound_binary_tx === 'function') {
+        wasmEngine.set_outbound_binary_tx((bytes) => {
+          sendOrQueue(bytes);
+        });
+      }
+    } catch (_) {}
+
     const wireDataChannel = (channel) => {
       dc = channel;
       try { dc.binaryType = 'arraybuffer'; } catch (_) {}
 
-      // Hook outbound tx callbacks immediately so any frames the Wasm engine
-      // emits before the channel opens are buffered (not dropped).
-      try {
-        wasmEngine.set_outbound_tx((text) => {
-          sendOrQueue(text);
-        });
-      } catch (_) {}
-      try {
-        if (typeof wasmEngine.set_outbound_binary_tx === 'function') {
-          wasmEngine.set_outbound_binary_tx((bytes) => {
-            sendOrQueue(bytes);
-          });
-        }
-      } catch (_) {}
-
+      let opened = false;
       dc.onopen = () => {
-        try { wasmEngine.mark_open(); } catch (_) {}
-        // Flush buffered outbound messages in FIFO order.
+        // Flush buffered outbound messages in FIFO order first.
         while (pending.length > 0) {
           const msg = pending.shift();
           try {
@@ -1004,6 +1002,10 @@ export class ZeroMeshNetworkManager {
               e
             );
           }
+        }
+        if (!opened) {
+          opened = true;
+          try { wasmEngine.mark_open(); } catch (_) {}
         }
       };
       dc.onclose = () => {
@@ -1093,6 +1095,10 @@ export class ZeroMeshNetworkManager {
       const inviteUuid = `inv-${this.peerId}-${Date.now().toString(36)}`;
 
       const secretBytes = this.hexToBytes(this.hostSecret);
+      if (!secretBytes) {
+        console.error('[ZeroMesh] Invalid hostSecret for invite staging:', this.hostSecret);
+        return;
+      }
       const token = this.wasmMod.WasmCryptoSession.compute_hmac_hex(secretBytes, inviteUuid);
       const invite = {
         do_id: this.roomId,

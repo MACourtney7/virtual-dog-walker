@@ -215,24 +215,30 @@ export class ParticleSystem {
       }
     };
 
-    const x = num(config.x, 0);
-    const y = num(config.y, 0);
-    const vx = num(config.vx, 0);
-    const vy = num(config.vy, 0);
-    const gravity = num(config.gravity, 180);
+    // Guard all property access against hostile getters / proxies.
+    let x, y, vx, vy, gravity, radius, life, color;
+    try {
+      x = num(config.x, 0);
+      y = num(config.y, 0);
+      vx = num(config.vx, 0);
+      vy = num(config.vy, 0);
+      gravity = num(config.gravity, 180);
 
-    // `radius` is an alias for `size`
-    const sizeSource = config.size !== undefined ? config.size : config.radius;
-    const radius = Math.max(0, num(sizeSource, 2));
+      // `radius` is an alias for `size`
+      const sizeSource = config.size !== undefined ? config.size : config.radius;
+      radius = Math.max(0, num(sizeSource, 2));
 
-    let life = num(config.life, 0.5);
-    if (!(life > 0)) {
-      life = 0.5;
+      life = num(config.life, 0.5);
+      if (!(life > 0)) {
+        life = 0.5;
+      }
+
+      color = typeof config.color === 'string' && config.color
+        ? config.color
+        : '#ffffff';
+    } catch (_err) {
+      return null;
     }
-
-    const color = typeof config.color === 'string' && config.color
-      ? config.color
-      : '#ffffff';
 
     const particle = new Particle(x, y, vx, vy, color, radius, life, gravity);
     this.particles.push(particle);

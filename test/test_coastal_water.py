@@ -231,6 +231,31 @@ console.log(JSON.stringify({{ results }}));
         # Negative clamps to 0.
         self.assertEqual(by_label["negative"]["returned"], 0)
 
+    def test_emit_hostile_getter_returns_null(self):
+        script = f"""
+{_particles_import()}
+const ps = new ParticleSystem();
+const hostile = {{}};
+Object.defineProperty(hostile, 'x', {{
+  get() {{ throw new Error('hostile-x'); }},
+  enumerable: true,
+  configurable: true
+}});
+let threw = false;
+let result = 'unset';
+try {{
+  result = ps.emit(hostile);
+}} catch (e) {{
+  threw = true;
+}}
+const count = Array.isArray(ps.particles) ? ps.particles.length : -1;
+console.log(JSON.stringify({{ threw, isNull: result === null, count }}));
+"""
+        out = _run_node_module(script)
+        self.assertFalse(out["threw"])
+        self.assertTrue(out["isNull"])
+        self.assertEqual(out["count"], 0)
+
     def test_emit_repairs_corrupted_particles_array(self):
         script = f"""
 {_particles_import()}

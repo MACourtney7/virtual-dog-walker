@@ -422,6 +422,23 @@ export class ZeroMeshNetworkManager {
   }
 
   /**
+   * Convert a hex string to a Uint8Array.
+   * Returns a 32-byte zero array on invalid input so callers never crash.
+   */
+  hexToBytes(hex) {
+    if (!hex || typeof hex !== 'string') return new Uint8Array(32);
+    const clean = hex.trim();
+    if (clean.length % 2 !== 0) return new Uint8Array(32);
+    const bytes = new Uint8Array(clean.length / 2);
+    for (let i = 0; i < bytes.length; i++) {
+      const byteVal = parseInt(clean.substring(i * 2, i * 2 + 2), 16);
+      if (isNaN(byteVal)) return new Uint8Array(32);
+      bytes[i] = byteVal;
+    }
+    return bytes;
+  }
+
+  /**
    * Normalize a secret (hex string or byte array) to a lowercase hex string.
    * Returns null when the input is empty/invalid.
    */
@@ -954,6 +971,22 @@ export class ZeroMeshNetworkManager {
     const wireDataChannel = (channel) => {
       dc = channel;
       try { dc.binaryType = 'arraybuffer'; } catch (_) {}
+
+      // Hook outbound tx callbacks immediately so any frames the Wasm engine
+      // emits before the channel opens are buffered (not dropped).
+      try {
+        wasmEngine.set_outbound_tx((text) => {
+          sendOrQueue(text);
+        });
+      } catch (_) {}
+      try {
+        if (typeof wasmEngine.set_outbound_binary_tx === 'function') {
+          wasmEngine.set_outbound_binary_tx((bytes) => {
+            sendOrQueue(bytes);
+          });
+        }
+      } catch (_) {}
+
       dc.onopen = () => {
         try { wasmEngine.mark_open(); } catch (_) {}
         // Flush buffered outbound messages in FIFO order.
@@ -987,18 +1020,6 @@ export class ZeroMeshNetworkManager {
           try { wasmEngine.inject_incoming_binary(new Uint8Array(ev.data)); } catch (_) {}
         }
       };
-      try {
-        wasmEngine.set_outbound_tx((text) => {
-          sendOrQueue(text);
-        });
-      } catch (_) {}
-      try {
-        if (typeof wasmEngine.set_outbound_binary_tx === 'function') {
-          wasmEngine.set_outbound_binary_tx((bytes) => {
-            sendOrQueue(bytes);
-          });
-        }
-      } catch (_) {}
     };
 
     if (isOfferer === true) {
@@ -1071,7 +1092,8 @@ export class ZeroMeshNetworkManager {
       const sdpOffer = await bridge.createOfferSdp();
       const inviteUuid = `inv-${this.peerId}-${Date.now().toString(36)}`;
 
-      const token = this.wasmMod.WasmCryptoSession.compute_hmac_hex(this.hostSecret, inviteUuid);
+      const secretBytes = this.hexToBytes(this.hostSecret);
+      const token = this.wasmMod.WasmCryptoSession.compute_hmac_hex(secretBytes, inviteUuid);
       const invite = {
         do_id: this.roomId,
         invite_uuid: inviteUuid,
@@ -1141,10 +1163,7 @@ export class ZeroMeshNetworkManager {
             this.pendingEngine = null;
             this.pendingBridge = null;
 
-            // Replenish slot in dead drop pool for the next joiner
-            await this._stageNewInvite(secretHex);
-
-            // Greet newly connected joiner
+            // Greet newly connected joiner immediately before awaiting next invite ICE gathering
             this.sendTo(drop.joiner_peer_id, Protocol.createHello(
               this.peerId,
               this.localMeta.name,
@@ -1152,6 +1171,9 @@ export class ZeroMeshNetworkManager {
               this.localMeta.coatName,
               this.localMeta
             ));
+
+            // Replenish slot in dead drop pool for the next joiner
+            await this._stageNewInvite(secretHex);
           }
         } catch (err) {
           console.warn('[ZeroMesh] Error processing incoming drop on host WS:', err);

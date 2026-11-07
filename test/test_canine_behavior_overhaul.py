@@ -537,7 +537,7 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
 
         class Dog:
             def __init__(self):
-                self.state = "SITTING"
+                self.state = "ROAMING"
                 self.stateTimer = 0.0
                 self.owner = None
                 self.happiness = 100

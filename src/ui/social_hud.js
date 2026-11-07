@@ -688,6 +688,10 @@ export class SocialHUD {
     if (status === WSStatus.CONNECTED || status === NetStatus.CONNECTED_PEER || status === NetStatus.HOSTING) {
       const isCommons = !this.net.roomId ||
         this.net.roomId === 'the-commons' ||
+        this.net.roomId === 'clifton-commons' ||
+        this.net.roomId === 'the-downs' ||
+        this.net.roomId === 'the-woodland' ||
+        this.net.roomId === 'the-beach' ||
         this.net.roomId === 'clifton-field' ||
         (Array.isArray(PUBLIC_ZONE_IDS) && PUBLIC_ZONE_IDS.includes(this.net.roomId)) ||
         Boolean(getZoneConfig(this.net.roomId));

@@ -19,6 +19,7 @@ BIOMES_JS = os.path.join(ROOT_DIR, "src", "world", "zone_biomes.js")
 FIELD_JS = os.path.join(ROOT_DIR, "src", "world", "field.js")
 MAIN_JS = os.path.join(ROOT_DIR, "src", "main.js")
 NET_JS = os.path.join(ROOT_DIR, "src", "net", "zero_mesh_network.js")
+NETWORK_MGR_JS = os.path.join(ROOT_DIR, "src", "net", "network.js")
 HUD_JS = os.path.join(ROOT_DIR, "src", "ui", "social_hud.js")
 
 
@@ -286,7 +287,7 @@ class TestNetworkSwitchRoomSync(unittest.TestCase):
     """H4: NetworkManager.switchRoom must update this.roomId before delegating."""
 
     def setUp(self):
-        with open(NET_JS, "r", encoding="utf-8") as f:
+        with open(NETWORK_MGR_JS, "r", encoding="utf-8") as f:
             self.net_code = f.read()
 
     def test_switch_room_sets_room_id_before_delegate(self):

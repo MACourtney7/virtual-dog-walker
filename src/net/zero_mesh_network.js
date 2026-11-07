@@ -515,6 +515,9 @@ export class ZeroMeshNetworkManager {
           terminalErr.status = resp.status;
           this._state = 'error';
           this._logPhase('error', { status: resp.status });
+          if (typeof NetStatus !== 'undefined' && NetStatus && NetStatus.ERROR !== undefined && typeof this.setStatus === 'function') {
+            this.setStatus(NetStatus.ERROR);
+          }
           throw terminalErr;
         }
         if (!resp.ok) throw new Error(`match ${resp.status}`);
@@ -923,20 +926,28 @@ export class ZeroMeshNetworkManager {
     // is still 'connecting' are buffered here and flushed on 'open' so that
     // initial mesh frames (HELLO, NPC snapshot, etc.) are never dropped.
     const pending = [];
+    const cloneMessage = (msg) => {
+      if (typeof msg === 'string') return msg;
+      if (msg instanceof Uint8Array) return msg.slice();
+      if (msg instanceof ArrayBuffer) return msg.slice(0);
+      if (ArrayBuffer.isView(msg)) return new Uint8Array(msg.buffer.slice(msg.byteOffset, msg.byteOffset + msg.byteLength));
+      return msg;
+    };
     const sendOrQueue = (data) => {
       if (!dc) {
-        pending.push(data);
+        pending.push(cloneMessage(data));
         return;
       }
       if (dc.readyState === 'open') {
         try {
           dc.send(data);
-        } catch (e) {
-          // If send fails (e.g. channel closing), retain for a later flush.
-          pending.push(data);
+        } catch (err) {
+          // No future flush trigger exists for an open channel, so do not
+          // enqueue; surface the failure instead.
+          console.error('[MeshRTC] Outbound send error on open DataChannel:', err);
         }
       } else {
-        pending.push(data);
+        pending.push(cloneMessage(data));
       }
     };
 

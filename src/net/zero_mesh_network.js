@@ -155,6 +155,8 @@ export class ZeroMeshNetworkManager {
     this._roomSecret = null;
     this._debug = Boolean(options.debug || (typeof window !== 'undefined' && window.__ZERO_MESH_DEBUG));
     this._lifecycleTimers = new Set();
+    this._isAborted = false;
+    this._demoting = false;
 
     // Cancellation + host lease heartbeat
     this._lifecycleAbortController = null;
@@ -237,6 +239,7 @@ export class ZeroMeshNetworkManager {
   }
 
   _abortLifecycle() {
+    this._isAborted = true;
     if (this._lifecycleAbortController) {
       try { this._lifecycleAbortController.abort(); } catch (_) {}
       this._lifecycleAbortController = null;
@@ -262,20 +265,62 @@ export class ZeroMeshNetworkManager {
   async _sendHostHeartbeat() {
     if (!this.isHost || !this.peerId) return;
     const doId = this._doId();
+    const signal = this._lifecycleAbortController ? this._lifecycleAbortController.signal : null;
     try {
-      const resp = await fetch(`${this.workerOrigin}/match/${encodeURIComponent(doId)}`, {
-        headers: { 'X-Peer-Id': this.peerId }
-      });
+      const fetchOpts = { headers: { 'X-Peer-Id': this.peerId } };
+      if (signal) fetchOpts.signal = signal;
+      const resp = await fetch(`${this.workerOrigin}/match/${encodeURIComponent(doId)}`, fetchOpts);
       if (resp && resp.ok) {
         try {
           const body = await resp.json();
           if (body && body.room_secret && !this.hostSecret) {
             this.hostSecret = this._normalizeSecretHex(body.room_secret) || this.hostSecret;
           }
+          // Host lease lost or superseded: demote immediately.
+          if (body && body.status && body.status !== 'host') {
+            console.warn('[ZeroMesh] Host lease lost or superseded. Demoting to joiner.');
+            this.isHost = false;
+            this._stopHostHeartbeat();
+            if (this.hostWs) {
+              try { this.hostWs.close(); } catch (_) {}
+              this.hostWs = null;
+            }
+            this._demoteToJoiner();
+          }
         } catch (_) {}
       }
     } catch (err) {
+      if (err && err.name === 'AbortError') return;
       if (this._debug) console.warn('[ZeroMesh] Host heartbeat error:', err);
+    }
+  }
+
+  async _demoteToJoiner() {
+    if (this._demoting) return;
+    this._demoting = true;
+    try {
+      this._abortLifecycle();
+      this._lifecycleAbortController = (typeof AbortController !== 'undefined')
+        ? new AbortController()
+        : null;
+      const negotiation = await this._negotiateIdentity();
+      const hostSecretHex = this.hostSecret;
+      if (negotiation.role === 'joiner' || negotiation.role === 'waiting') {
+        let invite = negotiation.invite;
+        if (!invite) {
+          invite = await this._fetchInviteForJoiner();
+        }
+        if (invite) {
+          await this._joinWithInvite(invite, hostSecretHex);
+        } else {
+          this._pollForInvite(hostSecretHex);
+        }
+      }
+    } catch (err) {
+      if (err && err.name === 'AbortError') return;
+      console.warn('[ZeroMesh] Demotion re-negotiation failed:', err);
+    } finally {
+      this._demoting = false;
     }
   }
 
@@ -406,6 +451,7 @@ export class ZeroMeshNetworkManager {
 
   async connect(roomId) {
     if (roomId) this.roomId = roomId;
+    this._isAborted = false;
     this.setStatus(NetStatus.CONNECTING);
     if (!this.peerId) {
       this.peerId = this.generatePeerId();
@@ -628,6 +674,16 @@ export class ZeroMeshNetworkManager {
         throw new Error(`[ZeroMesh] Unhandled negotiation role: ${role}`);
       }
     } catch (err) {
+      const aborted = err && (
+        err.name === 'AbortError' ||
+        this._isAborted ||
+        (this._lifecycleAbortController && this._lifecycleAbortController.signal && this._lifecycleAbortController.signal.aborted)
+      );
+      if (aborted) {
+        console.log('[ZeroMesh] Lifecycle aborted. Skipping simulation fallback.');
+        this._logPhase('aborted', { error: String(err && err.message || err) });
+        return;
+      }
       console.error('[ZeroMesh] Live connection failed, falling back to simulated mesh:', err);
       this._logPhase('fallback', { error: String(err && err.message || err) });
       await this._connectSimulatedMesh();
@@ -1242,6 +1298,7 @@ export class ZeroMeshNetworkManager {
 
   stop() {
     if (this.syncInterval) clearInterval(this.syncInterval);
+    this.isHost = false;
     this._abortLifecycle();
     this._stopHostHeartbeat();
     this.stopNpcSpawner();

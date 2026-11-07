@@ -6357,6 +6357,15 @@ fi
 
 ```
 
+## FILE: scripts/test_all.sh
+```bash
+#!/bin/sh
+# Convenience wrapper around the project's Python test runner.
+set -e
+cd "$(dirname "$0")/.."
+exec python3 test/run_tests.py
+```
+
 ## FILE: src/engine/wasm_sim_bridge.js
 ```javascript
 // src/engine/wasm_sim_bridge.js
@@ -16218,78 +16227,87 @@ export function applyCoastalShallowWaterInteraction(
     zoomiesIncremented: false,
   };
 
-  // Resolve arguments: options object vs positional.
-  let particleSystem;
-  let owner;
-  let dog;
-  let dt;
-  let randomValue;
+  // Top-level guard: throwing getters/proxies must never escape the helper.
+  try {
+    // Resolve arguments: options object vs positional.
+    let particleSystem;
+    let owner;
+    let dog;
+    let dt;
+    let randomValue;
 
-  if (isPlainObject(optionsOrOwner) && (
-    'owner' in optionsOrOwner ||
-    'dog' in optionsOrOwner ||
-    'particleSystem' in optionsOrOwner ||
-    'dt' in optionsOrOwner ||
-    'randomValue' in optionsOrOwner
-  )) {
-    ({ particleSystem, owner, dog, dt, randomValue } = optionsOrOwner);
-  } else {
-    owner = optionsOrOwner;
-    dog = dogArg;
-    particleSystem = particleSystemArg;
-    dt = dtArg;
-    randomValue = randomValueArg;
-  }
-
-  if (randomValue === undefined) {
-    randomValue = Math.random();
-  }
-
-  const ownerShallow = isShallow(owner);
-  const dogShallow = isShallow(dog);
-
-  if (!ownerShallow && !dogShallow) {
-    return result;
-  }
-
-  // Choose splash coordinates: prefer dog when shallow.
-  let px;
-  let py;
-  if (dogShallow) {
-    px = dog.x;
-    py = dog.y;
-  } else {
-    px = owner.x;
-    py = owner.y;
-  }
-
-  // Attempt splash emission (never propagate errors).
-  if (Number.isFinite(randomValue) && randomValue < SPLASH_PROBABILITY) {
-    try {
-      if (particleSystem && typeof particleSystem.emitWaterSplash === 'function') {
-        particleSystem.emitWaterSplash(px, py);
-        result.emitted = true;
-      } else if (particleSystem && typeof particleSystem.emit === 'function') {
-        particleSystem.emit({
-          x: px,
-          y: py,
-          color: 'rgba(240, 253, 250, 0.7)',
-          size: 3,
-          life: 0.4,
-        });
-        result.emitted = true;
-        result.usedFallback = true;
-      }
-    } catch (_err) {
-      // Swallow particle errors; gameplay must continue.
+    if (isPlainObject(optionsOrOwner) && (
+      'owner' in optionsOrOwner ||
+      'dog' in optionsOrOwner ||
+      'particleSystem' in optionsOrOwner ||
+      'dt' in optionsOrOwner ||
+      'randomValue' in optionsOrOwner
+    )) {
+      ({ particleSystem, owner, dog, dt, randomValue } = optionsOrOwner);
+    } else {
+      owner = optionsOrOwner;
+      dog = dogArg;
+      particleSystem = particleSystemArg;
+      dt = dtArg;
+      randomValue = randomValueArg;
     }
-  }
 
-  // Independently update zoomies when dog is shallow.
-  if (dogShallow && typeof dog?.zoomiesLevel === 'number' && Number.isFinite(dog.zoomiesLevel)) {
-    const safeDt = Number.isFinite(dt) ? Math.max(0, dt) : 0;
-    dog.zoomiesLevel = Math.min(ZOOMIES_MAX, dog.zoomiesLevel + ZOOMIES_RATE * safeDt);
-    result.zoomiesIncremented = true;
+    if (randomValue === undefined) {
+      randomValue = Math.random();
+    }
+
+    const ownerShallow = isShallow(owner);
+    const dogShallow = isShallow(dog);
+
+    if (!ownerShallow && !dogShallow) {
+      return result;
+    }
+
+    // Choose splash coordinates: prefer dog when shallow.
+    let px;
+    let py;
+    if (dogShallow) {
+      px = dog.x;
+      py = dog.y;
+    } else {
+      px = owner.x;
+      py = owner.y;
+    }
+
+    // Attempt splash emission (never propagate errors).
+    if (Number.isFinite(randomValue) && randomValue < SPLASH_PROBABILITY) {
+      try {
+        if (particleSystem && typeof particleSystem.emitWaterSplash === 'function') {
+          const emittedCount = particleSystem.emitWaterSplash(px, py);
+          if (typeof emittedCount === 'number' && emittedCount > 0) {
+            result.emitted = true;
+          }
+        } else if (particleSystem && typeof particleSystem.emit === 'function') {
+          const particle = particleSystem.emit({
+            x: px,
+            y: py,
+            color: 'rgba(240, 253, 250, 0.7)',
+            size: 3,
+            life: 0.4,
+          });
+          if (particle) {
+            result.emitted = true;
+            result.usedFallback = true;
+          }
+        }
+      } catch (_err) {
+        // Swallow particle errors; gameplay must continue.
+      }
+    }
+
+    // Independently update zoomies when dog is shallow.
+    if (dogShallow && typeof dog?.zoomiesLevel === 'number' && Number.isFinite(dog.zoomiesLevel)) {
+      const safeDt = Number.isFinite(dt) ? Math.max(0, dt) : 0;
+      dog.zoomiesLevel = Math.min(ZOOMIES_MAX, dog.zoomiesLevel + ZOOMIES_RATE * safeDt);
+      result.zoomiesIncremented = true;
+    }
+  } catch (_err) {
+    // Swallow any unexpected error (throwing getters, proxies, etc.).
   }
 
   return result;
@@ -16497,6 +16515,9 @@ export class ParticleSystem {
 
   // Generic particle emitter. Safely handles malformed input.
   emit(config) {
+    if (!Array.isArray(this.particles)) {
+      this.particles = [];
+    }
     if (!config || typeof config !== 'object') {
       return null;
     }
@@ -16540,6 +16561,10 @@ export class ParticleSystem {
 
   // Water splash droplets (e.g. puddle / pond impacts)
   emitWaterSplash(x, y, count = 6) {
+    if (!Array.isArray(this.particles)) {
+      this.particles = [];
+    }
+
     const safeNumber = (value) => {
       const t = typeof value;
       if (t !== 'number' && t !== 'string' && t !== 'boolean') {
@@ -16563,6 +16588,9 @@ export class ParticleSystem {
       n = 6;
     }
     n = Math.max(0, Math.min(100, n));
+    if (!Number.isFinite(n)) {
+      n = 6;
+    }
 
     const colors = [
       'rgba(240, 253, 250, 0.8)',
@@ -16588,7 +16616,7 @@ export class ParticleSystem {
         color,
         size: radius,
         life,
-        gravity: 260
+        gravity: 120
       });
       if (particle) {
         emitted++;
@@ -27480,7 +27508,7 @@ let allGravityOk = true;
 for (const p of ps.particles) {{
   if (!allowed.has(p.color)) allColorsOk = false;
   if (!(p.vy < 0)) allUpward = false;
-  if (p.gravity !== 260) allGravityOk = false;
+  if (p.gravity < 80 || p.gravity > 160) allGravityOk = false;
 }}
 console.log(JSON.stringify({{
   returned: n,
@@ -27510,6 +27538,83 @@ console.log(JSON.stringify({{ threw, returned: n, count: ps.particles.length }})
         self.assertFalse(out["threw"])
         self.assertEqual(out["returned"], 0)
         self.assertEqual(out["count"], 0)
+
+    def test_invalid_count_values_are_safe(self):
+        script = f"""
+{_particles_import()}
+const cases = [
+  {{ label: 'NaN', count: NaN }},
+  {{ label: 'negative', count: -5 }},
+  {{ label: 'Infinity', count: Infinity }},
+  {{ label: 'string', count: 'abc' }},
+  {{ label: 'null', count: null }},
+  {{ label: 'undefined', count: undefined }},
+];
+const results = [];
+for (const c of cases) {{
+  const ps = new ParticleSystem();
+  let threw = false;
+  let returned = null;
+  try {{
+    returned = ps.emitWaterSplash(10, 20, c.count);
+  }} catch (e) {{
+    threw = true;
+  }}
+  results.push({{
+    label: c.label,
+    threw,
+    returned,
+    count: ps.particles.length,
+  }});
+}}
+console.log(JSON.stringify({{ results }}));
+"""
+        out = _run_node_module(script)
+        by_label = {r["label"]: r for r in out["results"]}
+        for label, entry in by_label.items():
+            self.assertFalse(entry["threw"], f"threw for count={label}")
+            self.assertIsInstance(entry["returned"], int, f"non-int return for {label}")
+            self.assertGreaterEqual(entry["returned"], 0, f"negative return for {label}")
+            self.assertLessEqual(entry["returned"], 100, f"unclamped return for {label}")
+            self.assertEqual(entry["returned"], entry["count"], f"mismatch for {label}")
+        # Non-finite / non-numeric counts fall back to default 6.
+        self.assertEqual(by_label["NaN"]["returned"], 6)
+        self.assertEqual(by_label["Infinity"]["returned"], 6)
+        self.assertEqual(by_label["string"]["returned"], 6)
+        self.assertEqual(by_label["null"]["returned"], 6)
+        self.assertEqual(by_label["undefined"]["returned"], 6)
+        # Negative clamps to 0.
+        self.assertEqual(by_label["negative"]["returned"], 0)
+
+    def test_emit_repairs_corrupted_particles_array(self):
+        script = f"""
+{_particles_import()}
+const ps = new ParticleSystem();
+ps.particles = null;
+let threw = false;
+let p = null;
+try {{ p = ps.emit({{ x: 1, y: 2 }}); }} catch (e) {{ threw = true; }}
+const afterEmit = Array.isArray(ps.particles) ? ps.particles.length : -1;
+
+const ps2 = new ParticleSystem();
+ps2.particles = 'not-an-array';
+let threw2 = false;
+let n = null;
+try {{ n = ps2.emitWaterSplash(5, 5, 3); }} catch (e) {{ threw2 = true; }}
+const afterSplash = Array.isArray(ps2.particles) ? ps2.particles.length : -1;
+
+console.log(JSON.stringify({{
+  threw, hasParticle: !!p, afterEmit,
+  threw2, returned: n, afterSplash
+}}));
+"""
+        out = _run_node_module(script)
+        self.assertFalse(out["threw"])
+        self.assertTrue(out["hasParticle"])
+        self.assertEqual(out["afterEmit"], 1)
+        self.assertFalse(out["threw2"])
+        self.assertEqual(out["returned"], 3)
+        self.assertEqual(out["afterSplash"], 3)
 
 
 @unittest.skipUnless(_node_available(), "node is required for JS-driven tests")
@@ -27627,6 +27732,56 @@ console.log(JSON.stringify({ calls, zoomies: dog.zoomiesLevel }));
         self.assertEqual(out["calls"], [[500, 1900]])
         self.assertEqual(out["zoomies"], 12)
 
+    def test_emit_water_splash_zero_count_does_not_mark_emitted(self):
+        out = self._run("""
+const particleSystem = {
+  emitWaterSplash() { return 0; }
+};
+const owner = { x: 100, y: 1900 };
+const dog = { x: 0, y: 0, zoomiesLevel: 0 };
+const r = applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 0.016, randomValue: 0 });
+console.log(JSON.stringify({ r }));
+""")
+        self.assertFalse(out["r"]["emitted"])
+        self.assertFalse(out["r"]["usedFallback"])
+
+    def test_emit_water_splash_positive_count_marks_emitted(self):
+        out = self._run("""
+const particleSystem = {
+  emitWaterSplash() { return 4; }
+};
+const owner = { x: 100, y: 1900 };
+const dog = { x: 0, y: 0, zoomiesLevel: 0 };
+const r = applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 0.016, randomValue: 0 });
+console.log(JSON.stringify({ r }));
+""")
+        self.assertTrue(out["r"]["emitted"])
+        self.assertFalse(out["r"]["usedFallback"])
+
+    def test_throwing_getter_does_not_propagate(self):
+        out = self._run("""
+const owner = {};
+Object.defineProperty(owner, 'y', {
+  get() { throw new Error('boom-getter'); }
+});
+const dog = { x: 0, y: 0, zoomiesLevel: 0 };
+const particleSystem = { emitWaterSplash() { return 1; } };
+let threw = false;
+let r = null;
+try {
+  r = applyCoastalShallowWaterInteraction({ owner, dog, particleSystem, dt: 0.016, randomValue: 0 });
+} catch (e) {
+  threw = true;
+}
+console.log(JSON.stringify({ threw, r }));
+""")
+        self.assertFalse(out["threw"])
+        self.assertEqual(out["r"], {
+            "emitted": False,
+            "usedFallback": False,
+            "zoomiesIncremented": False,
+        })
+
     def test_null_and_undefined_inputs_do_not_throw(self):
         out = self._run("""
 const results = [];
@@ -27675,6 +27830,34 @@ class TestCoastalWaterStaticContract(unittest.TestCase):
     def test_coastal_exports_apply_interaction(self):
         src = self._read(COASTAL_JS)
         self.assertIn("export function applyCoastalShallowWaterInteraction", src)
+
+    def test_coastal_has_top_level_try_catch(self):
+        src = self._read(COASTAL_JS)
+        # The helper must guard its body with a top-level try/catch.
+        self.assertIn("try {", src)
+        self.assertIn("catch (_err)", src)
+
+    def test_particles_emit_guards_particles_array(self):
+        src = self._read(PARTICLES_JS)
+        # Both emit and emitWaterSplash must defensively repair this.particles.
+        self.assertGreaterEqual(
+            src.count("if (!Array.isArray(this.particles))"),
+            2,
+            "emit and emitWaterSplash must both guard this.particles",
+        )
+
+    def test_emit_water_splash_gravity_in_spec_range(self):
+        src = self._read(PARTICLES_JS)
+        # Locate the emitWaterSplash body and check gravity is within 80..160.
+        idx = src.find("emitWaterSplash(x, y, count = 6)")
+        self.assertGreater(idx, 0)
+        body = src[idx: idx + 2000]
+        import re
+        m = re.search(r"gravity:\s*(\d+)", body)
+        self.assertIsNotNone(m, "gravity not found in emitWaterSplash")
+        gravity = int(m.group(1))
+        self.assertGreaterEqual(gravity, 80)
+        self.assertLessEqual(gravity, 160)
 
     def test_main_imports_and_uses_coastal_interaction(self):
         main_js = os.path.join(REPO_ROOT, "src", "main.js")
@@ -27778,6 +27961,24 @@ class TestCoastalShallowWaterAlgorithm(unittest.TestCase):
             0.25,
         )
         self.assertIsNone(splash)
+
+    def test_emit_water_splash_count_clamping_reference(self):
+        """Reference simulation of emitWaterSplash count handling."""
+
+        def clamp_count(count):
+            try:
+                n = int(count)
+            except (TypeError, ValueError, OverflowError):
+                return 6
+            return max(0, min(100, n))
+
+        self.assertEqual(clamp_count(float("nan")), 6)
+        self.assertEqual(clamp_count(float("inf")), 6)
+        self.assertEqual(clamp_count(-5), 0)
+        self.assertEqual(clamp_count(0), 0)
+        self.assertEqual(clamp_count(6), 6)
+        self.assertEqual(clamp_count(500), 100)
+        self.assertEqual(clamp_count("abc"), 6)
 
 
 if __name__ == "__main__":

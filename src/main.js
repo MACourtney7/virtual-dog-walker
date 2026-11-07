@@ -42,6 +42,11 @@ export class CliftonDownGame {
 
     this.camera.follow(this.owner);
 
+    // Zone Warping State
+    this.currentZoneId = 'clifton-commons';
+    this.warpCooldown = 0;
+    this.warpFadeAlpha = 0;
+
     // Ambient Park NPCs (Networked & Solo Pool)
     // Replaced legacy: this.npcs = []; this.field.getParkWaypoints('ladies_mile'); this.field.getParkWaypoints('sea_walls'); this.field.getParkWaypoints('durdham_down');
     this.npcs = new Map();
@@ -659,6 +664,43 @@ export class CliftonDownGame {
     }
   }
 
+  warpToZone(targetZoneId, targetX, targetY) {
+    this.currentZoneId = targetZoneId;
+    this.warpCooldown = 2.5;
+    this.warpFadeAlpha = 1.0;
+
+    if (this.field && typeof this.field.loadZone === 'function') {
+      this.field.loadZone(targetZoneId);
+    }
+    syncWorldObstacles(this.field);
+
+    this.owner.x = targetX;
+    this.owner.y = targetY;
+    this.dog.x = targetX - 30;
+    this.dog.y = targetY + 20;
+
+    this.dog.isStray = false;
+    this.dog.isLost = false;
+    if (this.navArrow) this.navArrow.clearTarget();
+
+    if (this.ball && typeof this.ball.retrieveByOwner === 'function') {
+      this.ball.retrieveByOwner();
+    }
+
+    this.remotePlayers.clear();
+    this.npcs.clear();
+
+    if (this.hud) {
+      const title = (this.field && this.field.zoneConfig && this.field.zoneConfig.title) || targetZoneId;
+      this.hud.setZoneTitle(title);
+      this.hud.showToast('Entered ' + title);
+    }
+
+    if (this.net && typeof this.net.switchRoom === 'function') {
+      this.net.switchRoom(this.field.zoneId);
+    }
+  }
+
   toggleLeash() {
     this.owner.isLeashed = !this.owner.isLeashed;
     if (this.touchControls && typeof this.touchControls.setLeashed === 'function') {
@@ -934,6 +976,32 @@ export class CliftonDownGame {
   }
 
   update(dt) {
+    // Zone Warp Cooldown & Crossfade Fade
+    if (this.warpCooldown > 0) this.warpCooldown = Math.max(0, this.warpCooldown - dt);
+    if (this.warpFadeAlpha > 0) this.warpFadeAlpha = Math.max(0, this.warpFadeAlpha - dt * 1.5);
+
+    // Check warp gates
+    if (this.warpCooldown <= 0 && this.field && typeof this.field.checkWarpGate === 'function') {
+      const gate = this.field.checkWarpGate(this.owner.x, this.owner.y);
+      if (gate) {
+        this.warpToZone(gate.targetZoneId, gate.targetX, gate.targetY);
+      }
+    }
+
+    // Coastal shallow water interaction
+    if (this.field && this.field.zoneConfig && this.field.zoneConfig.biome === 'coastal') {
+      if (this.owner.y > 1820 || this.dog.y > 1820) {
+        if (this.field.particleSystem && Math.random() < 0.25) {
+          const px = this.dog.y > 1820 ? this.dog.x : this.owner.x;
+          const py = this.dog.y > 1820 ? this.dog.y : this.owner.y;
+          this.field.particleSystem.emit({ x: px, y: py, color: 'rgba(240, 253, 250, 0.7)', size: 3, life: 0.4 });
+        }
+        if (this.dog.y > 1820 && typeof this.dog.zoomiesLevel === 'number') {
+          this.dog.zoomiesLevel = Math.min(100, this.dog.zoomiesLevel + 12 * dt);
+        }
+      }
+    }
+
     // 0. Update Environment System & Audio Diurnal Sync
     if (this.environment) {
       this.environment.update(dt, this.weatherClient ? this.weatherClient.getWeather() : null);
@@ -1220,6 +1288,14 @@ export class CliftonDownGame {
     // Screen-Space HUD: Directional Navigation Arrow
     if (this.navArrow && this.ctx && this.camera && this.owner) {
       this.navArrow.draw(this.ctx, this.camera, this.owner.x, this.owner.y);
+    }
+
+    // Zone Warp Crossfade Overlay
+    if (this.warpFadeAlpha > 0.01 && this.canvas) {
+      this.ctx.save();
+      this.ctx.fillStyle = `rgba(11, 17, 23, ${this.warpFadeAlpha * 0.75})`;
+      this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      this.ctx.restore();
     }
 
     this.ctx.restore();

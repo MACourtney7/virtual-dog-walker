@@ -27,7 +27,7 @@ export class SocialHUD {
         <div class="hud-panel">
           <div class="hud-pill">
             <span style="font-size: 1.2rem;">🌳</span>
-            <span style="font-weight: 700; color: #f8fafc;">The Downs</span>
+            <span id="hud-title" class="hud-title" style="font-weight: 700; color: #f8fafc;">🌳 The Downs</span>
             <span class="hud-pill-badge" id="hud-mode-badge">Solo</span>
           </div>
           <div class="hud-pill" id="hud-player-count">
@@ -667,6 +667,13 @@ export class SocialHUD {
     }
   }
 
+  setZoneTitle(title) {
+    const el = document.getElementById('hud-title') || document.querySelector('.hud-title');
+    if (el && title) {
+      el.textContent = title;
+    }
+  }
+
   updatePlayerCount(count) {
     const pill = document.getElementById('hud-player-count');
     if (pill) {
@@ -679,7 +686,13 @@ export class SocialHUD {
     const label = document.getElementById('btn-room-label');
 
     if (status === WSStatus.CONNECTED || status === NetStatus.CONNECTED_PEER || status === NetStatus.HOSTING) {
-      const isCommons = !this.net.roomId || this.net.roomId === 'the-commons' || this.net.roomId === 'clifton-commons' || this.net.roomId === 'clifton-field';
+      const isCommons = !this.net.roomId ||
+        this.net.roomId === 'the-commons' ||
+        this.net.roomId === 'clifton-commons' ||
+        this.net.roomId === 'the-downs' ||
+        this.net.roomId === 'the-woodland' ||
+        this.net.roomId === 'the-beach' ||
+        this.net.roomId === 'clifton-field';
       if (badge) {
         if (isCommons) {
           badge.textContent = 'Online';

@@ -16535,24 +16535,30 @@ export class ParticleSystem {
       }
     };
 
-    const x = num(config.x, 0);
-    const y = num(config.y, 0);
-    const vx = num(config.vx, 0);
-    const vy = num(config.vy, 0);
-    const gravity = num(config.gravity, 180);
+    // Guard all property access against hostile getters / proxies.
+    let x, y, vx, vy, gravity, radius, life, color;
+    try {
+      x = num(config.x, 0);
+      y = num(config.y, 0);
+      vx = num(config.vx, 0);
+      vy = num(config.vy, 0);
+      gravity = num(config.gravity, 180);
 
-    // `radius` is an alias for `size`
-    const sizeSource = config.size !== undefined ? config.size : config.radius;
-    const radius = Math.max(0, num(sizeSource, 2));
+      // `radius` is an alias for `size`
+      const sizeSource = config.size !== undefined ? config.size : config.radius;
+      radius = Math.max(0, num(sizeSource, 2));
 
-    let life = num(config.life, 0.5);
-    if (!(life > 0)) {
-      life = 0.5;
+      life = num(config.life, 0.5);
+      if (!(life > 0)) {
+        life = 0.5;
+      }
+
+      color = typeof config.color === 'string' && config.color
+        ? config.color
+        : '#ffffff';
+    } catch (_err) {
+      return null;
     }
-
-    const color = typeof config.color === 'string' && config.color
-      ? config.color
-      : '#ffffff';
 
     const particle = new Particle(x, y, vx, vy, color, radius, life, gravity);
     this.particles.push(particle);
@@ -27585,6 +27591,31 @@ console.log(JSON.stringify({{ results }}));
         self.assertEqual(by_label["undefined"]["returned"], 6)
         # Negative clamps to 0.
         self.assertEqual(by_label["negative"]["returned"], 0)
+
+    def test_emit_hostile_getter_returns_null(self):
+        script = f"""
+{_particles_import()}
+const ps = new ParticleSystem();
+const hostile = {{}};
+Object.defineProperty(hostile, 'x', {{
+  get() {{ throw new Error('hostile-x'); }},
+  enumerable: true,
+  configurable: true
+}});
+let threw = false;
+let result = 'unset';
+try {{
+  result = ps.emit(hostile);
+}} catch (e) {{
+  threw = true;
+}}
+const count = Array.isArray(ps.particles) ? ps.particles.length : -1;
+console.log(JSON.stringify({{ threw, isNull: result === null, count }}));
+"""
+        out = _run_node_module(script)
+        self.assertFalse(out["threw"])
+        self.assertTrue(out["isNull"])
+        self.assertEqual(out["count"], 0)
 
     def test_emit_repairs_corrupted_particles_array(self):
         script = f"""

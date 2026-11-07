@@ -339,6 +339,133 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         self.assertTrue(dog.sniff_follow_allowed(1000 + 14000))
         self.assertTrue(dog.sniff_follow_allowed(1000 + 20000))
 
+    def test_active_states_not_interrupted_by_idle_rest(self):
+        """Active/interactive states must never be overridden to LYING_DOWN by ambient rest."""
+        active_states = {
+            "FETCHING", "ZOOMIES", "BARKING", "POOPING", "LOST",
+            "RECALLED", "PLAY_BOW", "ROLLING", "LYING_DOWN",
+        }
+
+        class Owner:
+            def __init__(self):
+                self.vx = 0.0
+                self.vy = 0.0
+                self.isLeashed = False
+
+        class Dog:
+            def __init__(self, state):
+                self.state = state
+                self.idleRestTimer = 20.0  # already past the 15s threshold
+                self.owner = Owner()
+
+            def transitionTo(self, new_state):
+                if self.state == new_state:
+                    return
+                self.state = new_state
+
+            def update_resting(self, dt):
+                owner_speed = (self.owner.vx ** 2 + self.owner.vy ** 2) ** 0.5
+                if (self.owner and not self.owner.isLeashed
+                        and owner_speed < 5 and self.state not in active_states):
+                    self.idleRestTimer += dt
+                    if self.idleRestTimer > 15:
+                        self.transitionTo("LYING_DOWN")
+                elif owner_speed > 5:
+                    self.idleRestTimer = 0
+                    if self.state in ("LYING_DOWN", "ROLLING"):
+                        self.transitionTo("ROAMING")
+                elif self.state in active_states:
+                    self.idleRestTimer = 0
+
+        for state in ("FETCHING", "ZOOMIES", "RECALLED"):
+            dog = Dog(state)
+            dog.update_resting(0.5)
+            self.assertEqual(dog.state, state,
+                             f"{state} must not be overridden to LYING_DOWN")
+            self.assertEqual(dog.idleRestTimer, 0,
+                             f"{state} must reset idleRestTimer")
+
+        # Ambient-capable state still transitions
+        dog = Dog("ROAMING")
+        dog.update_resting(0.5)
+        self.assertEqual(dog.state, "LYING_DOWN")
+
+    def test_whistle_and_zoomies_resets_idle_rest_timer(self):
+        """whistleRecall() and triggerZoomies() must reset idleRestTimer to 0."""
+        class Owner:
+            def __init__(self):
+                self.vx = 0.0
+                self.vy = 0.0
+                self.isLeashed = False
+                self.x = 0.0
+                self.y = 0.0
+                self.angle = 0.0
+
+        class Dog:
+            def __init__(self):
+                self.state = "ROAMING"
+                self.idleRestTimer = 20.0
+                self.owner = Owner()
+                self.x = 0.0
+                self.y = 0.0
+                self.vx = 0.0
+                self.vy = 0.0
+                self.angle = 0.0
+                self.sprintSpeed = 290
+                self.isLost = False
+                self.ownerStillTimer = 0
+                self.strayCheckTimer = 0
+                self.emoteBubble = None
+                self.emoteTimer = 0
+                self.wagSpeed = 8
+                self.isRecalledToHeel = False
+                self.recallHeelTimer = 0
+                self.socialTargetDog = None
+                self.isReturningToOwner = False
+                self.isPullingLeash = False
+                self.hasBall = False
+                self.targetBall = None
+                self.zoomiesTimer = 0
+                self.zoomiesPhase = 0
+                self.zoomiesCenter = {"x": 0.0, "y": 0.0}
+
+            def dropStick(self):
+                pass
+
+            def whistleRecall(self):
+                self.state = "RECALLED"
+                self.isLost = False
+                self.ownerStillTimer = 0
+                self.strayCheckTimer = 0
+                self.isRecalledToHeel = False
+                self.recallHeelTimer = 10.0
+                self.idleRestTimer = 0
+                self.socialTargetDog = None
+                self.isReturningToOwner = False
+                self.isPullingLeash = False
+                self.dropStick()
+
+            def triggerZoomies(self):
+                if self.owner and self.owner.isLeashed:
+                    return False
+                if self.state in ("LOST", "POOPING"):
+                    return False
+                self.dropStick()
+                self.idleRestTimer = 0
+                self.state = "ZOOMIES"
+                self.zoomiesTimer = 4.2
+                self.zoomiesPhase = 0
+                self.zoomiesCenter = {"x": self.x, "y": self.y}
+                return True
+
+        dog = Dog()
+        dog.whistleRecall()
+        self.assertEqual(dog.idleRestTimer, 0)
+
+        dog2 = Dog()
+        dog2.triggerZoomies()
+        self.assertEqual(dog2.idleRestTimer, 0)
+
     def test_releash_proximity_gate_behavioral(self):
         class Owner:
             def __init__(self):

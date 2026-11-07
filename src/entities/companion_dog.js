@@ -245,12 +245,17 @@ export class CompanionDog {
         }
       }
     }
+    // Lock rolling duration so callers cannot overwrite it with random roaming timers
+    if (newState === DogState.ROLLING) {
+      this.stateTimer = 2.5;
+    }
   }
 
   triggerZoomies() {
     if (this.owner && this.owner.isLeashed) return false;
     if (this.state === DogState.LOST || this.state === DogState.POOPING) return false;
     this.dropStick();
+    this.idleRestTimer = 0;
     this.state = DogState.ZOOMIES;
     this.zoomiesTimer = 4.2;
     this.zoomiesPhase = 0;
@@ -353,6 +358,7 @@ export class CompanionDog {
     this.wagSpeed = 18;
     this.isRecalledToHeel = false;
     this.recallHeelTimer = 10.0; // 10 seconds of close heel following
+    this.idleRestTimer = 0;
     this.socialTargetDog = null;
     this.isReturningToOwner = false;
     this.isPullingLeash = false;
@@ -382,6 +388,7 @@ export class CompanionDog {
 
   pet() {
     this.happiness = Math.min(100, this.happiness + 20);
+    this.idleRestTimer = 0;
     this.wagSpeed = 18;
     this.emoteBubble = '❤️';
     this.emoteTimer = 2.2;
@@ -412,6 +419,7 @@ export class CompanionDog {
       return;
     }
     this.dropStick();
+    this.idleRestTimer = 0;
     this.targetBall = ball;
     this.state = DogState.FETCHING;
     this.wagSpeed = 15;
@@ -488,11 +496,22 @@ export class CompanionDog {
     }
 
     // Ambient resting transitions: lie down after 15s of continuous owner stillness (off-leash).
-    // Tracked continuously regardless of transient roaming/sitting/sniffing state.
+    // Only ambient resting-capable states may enter LYING_DOWN; active/interactive states are excluded.
+    const activeStates = new Set([
+      DogState.FETCHING,
+      DogState.ZOOMIES,
+      DogState.BARKING,
+      DogState.POOPING,
+      DogState.LOST,
+      DogState.RECALLED,
+      DogState.PLAY_BOW,
+      DogState.ROLLING,
+      DogState.LYING_DOWN
+    ]);
     const ownerSpeed = Math.hypot(this.owner?.vx || 0, this.owner?.vy || 0);
-    if (this.owner && !this.owner.isLeashed && ownerSpeed < 5) {
+    if (this.owner && !this.owner.isLeashed && ownerSpeed < 5 && !activeStates.has(this.state)) {
       this.idleRestTimer += dt;
-      if (this.idleRestTimer > 15 && this.state !== DogState.LYING_DOWN && this.state !== DogState.ROLLING) {
+      if (this.idleRestTimer > 15) {
         this.transitionTo(DogState.LYING_DOWN);
         this.restStartAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       }
@@ -501,6 +520,9 @@ export class CompanionDog {
       if (this.state === DogState.LYING_DOWN || this.state === DogState.ROLLING) {
         this.transitionTo(DogState.ROAMING);
       }
+    } else if (activeStates.has(this.state)) {
+      // Reset rest timer during active interactions
+      this.idleRestTimer = 0;
     }
 
     // Walking time accumulation for Dog Poop Event
@@ -1401,8 +1423,10 @@ export class CompanionDog {
       } else {
         this.vx *= 0.5;
         this.vy *= 0.5;
-        // Reached node: record cooldown timestamp
-        this.lastSniffFollowAt = now;
+        // Reached node: record cooldown timestamp once on arrival
+        if (this.targetScent) {
+          this.lastSniffFollowAt = now;
+        }
         // Seek next connected scent if available (exclude own scents and already-visited nodes)
         if (field && typeof field.getNearbyScents === 'function') {
           const nearby = field.getNearbyScents(this.x, this.y, 65).filter(s =>

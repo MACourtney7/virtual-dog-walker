@@ -504,11 +504,24 @@ export class ZeroMeshNetworkManager {
       try {
         const fetchOpts = { headers: { 'X-Peer-Id': this.peerId } };
         if (signal) fetchOpts.signal = signal;
-        const resp = await fetch(`${this.workerOrigin}/match/${encodeURIComponent(doId)}`, fetchOpts);
+        const matchUrl = new URL(`${this.workerOrigin}/match/${encodeURIComponent(doId)}`);
+        matchUrl.searchParams.set('peer_id', this.peerId);
+        const resp = await fetch(matchUrl.toString(), fetchOpts);
+        if (resp.status === 404 || resp.status === 401) {
+          // Terminal: the room/endpoint does not exist or we are unauthorized.
+          // Do not retry; surface a terminal failure state.
+          const terminalErr = new Error(`[ZeroMesh] /match terminal status ${resp.status}`);
+          terminalErr.name = 'TerminalMatchError';
+          terminalErr.status = resp.status;
+          this._state = 'error';
+          this._logPhase('error', { status: resp.status });
+          throw terminalErr;
+        }
         if (!resp.ok) throw new Error(`match ${resp.status}`);
         body = await resp.json();
       } catch (err) {
         if (err && err.name === 'AbortError') throw err;
+        if (err && err.name === 'TerminalMatchError') throw err;
         if (this._debug) console.warn('[ZeroMesh] /match error:', err);
         body = null;
       }
@@ -869,7 +882,11 @@ export class ZeroMeshNetworkManager {
     }
     this.setStatus(NetStatus.CONNECTED_PEER);
     this.isHost = false;
-    this._setupHostSocket(hostSecretHex);
+    // Joiners must NOT open a host socket; doing so collides with the real
+    // host's WebSocket lease and can trigger spurious demotions.
+    if (this.isHost) {
+      this._setupHostSocket(hostSecretHex);
+    }
   }
 
   _attachBrowserWebRtc(wasmEngine, isOfferer, iceServers) {
@@ -905,15 +922,48 @@ export class ZeroMeshNetworkManager {
     };
 
     let dc = null;
+    // Per-DataChannel outbound FIFO queue. Messages produced while the channel
+    // is still 'connecting' are buffered here and flushed on 'open' so that
+    // initial mesh frames (HELLO, NPC snapshot, etc.) are never dropped.
+    const pending = [];
+    const sendOrQueue = (data) => {
+      if (!dc) {
+        pending.push(data);
+        return;
+      }
+      if (dc.readyState === 'open') {
+        try {
+          dc.send(data);
+        } catch (e) {
+          // If send fails (e.g. channel closing), retain for a later flush.
+          pending.push(data);
+        }
+      } else {
+        pending.push(data);
+      }
+    };
 
     const wireDataChannel = (channel) => {
       dc = channel;
       try { dc.binaryType = 'arraybuffer'; } catch (_) {}
       dc.onopen = () => {
         try { wasmEngine.mark_open(); } catch (_) {}
+        // Flush buffered outbound messages in FIFO order.
+        while (pending.length > 0) {
+          const msg = pending.shift();
+          try {
+            dc.send(msg);
+          } catch (e) {
+            console.warn('[ZeroMesh] Failed flushing queued DataChannel message:', e);
+          }
+        }
       };
       dc.onclose = () => {
+        pending.length = 0;
         try { wasmEngine.mark_closed(); } catch (_) {}
+      };
+      dc.onerror = () => {
+        pending.length = 0;
       };
       dc.onmessage = (ev) => {
         if (typeof ev.data === 'string') {
@@ -924,17 +974,13 @@ export class ZeroMeshNetworkManager {
       };
       try {
         wasmEngine.set_outbound_tx((text) => {
-          if (dc && dc.readyState === 'open') {
-            dc.send(text);
-          }
+          sendOrQueue(text);
         });
       } catch (_) {}
       try {
         if (typeof wasmEngine.set_outbound_binary_tx === 'function') {
           wasmEngine.set_outbound_binary_tx((bytes) => {
-            if (dc && dc.readyState === 'open') {
-              dc.send(bytes);
-            }
+            sendOrQueue(bytes);
           });
         }
       } catch (_) {}

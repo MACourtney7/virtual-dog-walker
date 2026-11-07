@@ -300,6 +300,7 @@ export class ZeroMeshNetworkManager {
     this._demoting = true;
     try {
       this._abortLifecycle();
+      this._isAborted = false;
       this._lifecycleAbortController = (typeof AbortController !== 'undefined')
         ? new AbortController()
         : null;
@@ -576,9 +577,19 @@ export class ZeroMeshNetworkManager {
     }
 
     const privKey = this.generateSecret();
-    this.cryptoSession = (typeof this.wasmMod.WasmCryptoSession.from_private_key === 'function')
-      ? this.wasmMod.WasmCryptoSession.from_private_key(privKey)
-      : new this.wasmMod.WasmCryptoSession();
+    // Fail-fast: never silently fall back to a fresh session, which would
+    // produce a scalar mismatch between the crypto session and the mesh.
+    if (typeof this.wasmMod.WasmCryptoSession.from_private_key !== 'function') {
+      throw new Error('[ZeroMesh] WasmCryptoSession.from_private_key is unavailable; cannot construct crypto session.');
+    }
+    try {
+      this.cryptoSession = this.wasmMod.WasmCryptoSession.from_private_key(privKey);
+    } catch (err) {
+      throw new Error(`[ZeroMesh] Failed to construct crypto session from private key: ${err && err.message ? err.message : err}`);
+    }
+    if (!this.cryptoSession) {
+      throw new Error('[ZeroMesh] Crypto session construction returned null/undefined.');
+    }
     this.gameMesh = new this.wasmMod.WasmMeshTopology(assignedPeerId, privKey);
     this.proximityMesh = new this.wasmMod.WasmMeshTopology(`prox-${assignedPeerId}`, this.generateSecret());
 
@@ -663,7 +674,9 @@ export class ZeroMeshNetworkManager {
         this.setStatus(NetStatus.CONNECTING);
         this.isHost = false;
         const invite = await this._fetchInviteForJoiner();
-        if (invite) {
+        if (invite && invite.__takeover) {
+          await this._takeOverAsHost(invite.roomSecret, hostSecretHex);
+        } else if (invite) {
           // Re-enter joiner flow with the fetched invite.
           await this._joinWithInvite(invite, hostSecretHex);
         } else {
@@ -707,6 +720,11 @@ export class ZeroMeshNetworkManager {
         const resp = await fetch(`${this.workerOrigin}/invite/${encodeURIComponent(doId)}`, fetchOpts);
         if (resp.ok) {
           const body = await resp.json();
+          if (body && body.status === 'host') {
+            // Previous host lease expired and this client was elected as host.
+            // Signal takeover to the caller via a sentinel object.
+            return { __takeover: true, roomSecret: body.room_secret || null };
+          }
           if (body && body.invite) return body.invite;
           if (body && body.invite_uuid) return body;
         }
@@ -739,6 +757,10 @@ export class ZeroMeshNetworkManager {
       }
       if (signal && signal.aborted) return;
       const invite = await this._fetchInviteForJoiner();
+      if (invite && invite.__takeover) {
+        await this._takeOverAsHost(invite.roomSecret, hostSecretHex);
+        return;
+      }
       if (invite) {
         try {
           await this._joinWithInvite(invite, hostSecretHex);
@@ -748,6 +770,22 @@ export class ZeroMeshNetworkManager {
         return;
       }
     }
+  }
+
+  async _takeOverAsHost(roomSecret, hostSecretHex) {
+    console.log('[ZeroMesh] Previous host expired. Taking over as Host.');
+    const normalized = this._normalizeSecretHex(roomSecret) || this._normalizeSecretHex(hostSecretHex);
+    if (normalized) {
+      this.hostSecret = normalized;
+      this._roomSecret = normalized;
+    }
+    this.isHost = true;
+    this._role = 'host';
+    this._logPhase('host', { peerId: this.peerId, takeover: true });
+    this.setStatus(NetStatus.HOSTING);
+    this._setupHostSocket(this.hostSecret);
+    this._startHostHeartbeat();
+    this.initNpcSpawner();
   }
 
   async _joinWithInvite(invite, hostSecretHex) {

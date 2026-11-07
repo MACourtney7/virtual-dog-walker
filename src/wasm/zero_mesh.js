@@ -30,14 +30,43 @@ export class WasmCryptoSession {
     /**
      * Computes HMAC-SHA256 hex string token for invite authentication.
      *
-     * Accepts either raw secret bytes or a 64-character hex string encoding of the
-     * secret. When `secret` is exactly 64 ASCII hex digits, it is decoded to raw
-     * bytes before computing the HMAC so both representations yield identical tokens.
-     * @param {Uint8Array | number[]} secret
+     * Accepts either a 32-byte Uint8Array/number array or a 64-character hex string.
+     * @param {any} secret
      * @param {string} invite_uuid
      * @returns {string}
      */
     static compute_hmac_hex(secret, invite_uuid) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(invite_uuid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.wasmcryptosession_compute_hmac_hex(secret, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * Native-friendly HMAC-SHA256 hex token helper accepting raw secret bytes.
+     *
+     * Mirrors the semantics of [`WasmCryptoSession::compute_hmac_hex`] for the raw-bytes
+     * case: a 64-byte ASCII-hex secret is decoded to raw bytes before computing the HMAC,
+     * otherwise the bytes are used verbatim. This allows native tests to exercise the
+     * HMAC path without constructing a `JsValue`.
+     * @param {Uint8Array | number[]} secret
+     * @param {string} invite_uuid
+     * @returns {string}
+     */
+    static compute_hmac_hex_bytes(secret, invite_uuid) {
         let deferred4_0;
         let deferred4_1;
         try {
@@ -52,7 +81,7 @@ export class WasmCryptoSession {
                 if (ptr0) { wasm.__wbindgen_free(ptr0, len0 * 1, 1); }
                 throw e;
             }
-            const ret = wasm.wasmcryptosession_compute_hmac_hex(ptr0, len0, ptr1, len1);
+            const ret = wasm.wasmcryptosession_compute_hmac_hex_bytes(ptr0, len0, ptr1, len1);
             var ptr3 = ret[0];
             var len3 = ret[1];
             if (ret[3]) {
@@ -859,6 +888,14 @@ function __wbg_get_imports() {
             const ret = arg0 === undefined;
             return ret;
         },
+        __wbg___wbindgen_string_get_7ce8eee7fd327545: function(arg0, arg1) {
+            const obj = arg1;
+            const ret = typeof(obj) === 'string' ? obj : undefined;
+            var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32((arg0 >>> 0) + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32((arg0 >>> 0) + 4 * 0, ptr1, true);
+        },
         __wbg___wbindgen_throw_4c88d8bf264fd984: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
@@ -1047,6 +1084,14 @@ function getArrayU8FromWasm0(ptr, len) {
     return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
 }
 
+let cachedDataViewMemory0 = null;
+function getDataViewMemory0() {
+    if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)) {
+        cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
+    }
+    return cachedDataViewMemory0;
+}
+
 function getStringFromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return decodeText(getUint8ArrayMemory0().subarray(ptr, ptr + len));
@@ -1185,6 +1230,7 @@ function __wbg_finalize_init(instance, module) {
     wasmInstance = instance;
     wasm = instance.exports;
     wasmModule = module;
+    cachedDataViewMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
     return wasm;

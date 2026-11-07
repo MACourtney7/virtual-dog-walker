@@ -15,11 +15,18 @@ export class WasmCryptoSession {
     /**
      * Computes HMAC-SHA256 hex string token for invite authentication.
      *
-     * Accepts either raw secret bytes or a 64-character hex string encoding of the
-     * secret. When `secret` is exactly 64 ASCII hex digits, it is decoded to raw
-     * bytes before computing the HMAC so both representations yield identical tokens.
+     * Accepts either a 32-byte Uint8Array/number array or a 64-character hex string.
      */
-    static compute_hmac_hex(secret: Uint8Array | number[], invite_uuid: string): string;
+    static compute_hmac_hex(secret: any, invite_uuid: string): string;
+    /**
+     * Native-friendly HMAC-SHA256 hex token helper accepting raw secret bytes.
+     *
+     * Mirrors the semantics of [`WasmCryptoSession::compute_hmac_hex`] for the raw-bytes
+     * case: a 64-byte ASCII-hex secret is decoded to raw bytes before computing the HMAC,
+     * otherwise the bytes are used verbatim. This allows native tests to exercise the
+     * HMAC path without constructing a `JsValue`.
+     */
+    static compute_hmac_hex_bytes(secret: Uint8Array | number[], invite_uuid: string): string;
     /**
      * Returns the 32-byte Ed25519 public verifying key bytes.
      */
@@ -252,7 +259,8 @@ export interface InitOutput {
     readonly __wbg_wasmmeshtopology_free: (a: number, b: number) => void;
     readonly __wbg_wasmwebrtcengine_free: (a: number, b: number) => void;
     readonly wasmcryptosession_burn_all: (a: number) => void;
-    readonly wasmcryptosession_compute_hmac_hex: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly wasmcryptosession_compute_hmac_hex: (a: any, b: number, c: number) => [number, number, number, number];
+    readonly wasmcryptosession_compute_hmac_hex_bytes: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly wasmcryptosession_ed25519_public_key_bytes: (a: number) => [number, number];
     readonly wasmcryptosession_from_private_key: (a: number, b: number) => [number, number, number];
     readonly wasmcryptosession_has_peer_session: (a: number, b: number, c: number) => number;
@@ -304,13 +312,13 @@ export interface InitOutput {
     readonly wasmwebrtcengine_state: (a: number) => [number, number];
     readonly wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___wasm_bindgen_70557cdeb3a4b157___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_70557cdeb3a4b157___JsError___true_: (a: number, b: number, c: any) => [number, number];
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_destroy_closure: (a: number, b: number) => void;
-    readonly __wbindgen_malloc: (a: number, b: number) => number;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
-    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_start: () => void;
 }

@@ -117,6 +117,14 @@ jobs:
           path: zero_chat
           token: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Checkout zero_network sibling
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.repository_owner }}/zero-network
+          path: zero_network
+          token: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Install Rust toolchain
         if: steps.check_creds.outputs.has_token == 'true'
         uses: dtolnay/rust-toolchain@stable
@@ -126,6 +134,19 @@ jobs:
       - name: Install wasm-bindgen-cli
         if: steps.check_creds.outputs.has_token == 'true'
         run: cargo install -q wasm-bindgen-cli --version 0.2.130
+
+      - name: Install worker-build
+        if: steps.check_creds.outputs.has_token == 'true'
+        run: cargo install -q worker-build --version "^0.7"
+
+      - name: Deploy Cloudflare Worker & Durable Object
+        if: steps.check_creds.outputs.has_token == 'true'
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: 'zero_network'
+          command: 'deploy'
 
       - name: Set up Node.js
         if: steps.check_creds.outputs.has_token == 'true'
@@ -6270,6 +6291,7 @@ DIST_DIR="${PROJECT_ROOT}/dist"
 
 echo "=== Building Cloudflare Pages Distribution ==="
 
+# Sync ZeroChatWidget from zero_chat (idempotent; also done by build_wasm.sh).
 echo "Syncing ZeroChatWidget from zero_chat..."
 ZERO_CHAT_DIR="${PROJECT_ROOT}/../zero_chat"
 if [[ -f "${ZERO_CHAT_DIR}/zero_client/widget/zero_chat_widget.js" && -f "${ZERO_CHAT_DIR}/zero_client/widget/zero_chat_widget.css" ]]; then
@@ -6281,6 +6303,18 @@ fi
 
 bash "${SCRIPT_DIR}/build_wasm.sh"
 
+# Verify wasm outputs exist before copying into dist.
+for wasm_file in \
+    "${PROJECT_ROOT}/src/wasm/zero_mesh.js" \
+    "${PROJECT_ROOT}/src/wasm/zero_mesh_bg.wasm" \
+    "${PROJECT_ROOT}/src/wasm_core/dog_walker_core.js" \
+    "${PROJECT_ROOT}/src/wasm_core/dog_walker_core_bg.wasm"; do
+    if [[ ! -f "${wasm_file}" ]]; then
+        echo "Error: expected wasm artifact missing: ${wasm_file}" >&2
+        exit 1
+    fi
+done
+
 rm -rf "${DIST_DIR}"
 mkdir -p "${DIST_DIR}"
 
@@ -6291,6 +6325,14 @@ cp -r "${PROJECT_ROOT}/src" "${DIST_DIR}/"
 # Prune non-runtime files that might exist inside src/
 find "${DIST_DIR}" -type f \( -name "*.py" -o -name "*.md" -o -name "*.rs" -o -name "Cargo.toml" -o -name "Cargo.lock" \) -delete
 find "${DIST_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+
+# Verify dist mirrors source for critical runtime files.
+if [[ -f "${PROJECT_ROOT}/src/net/zero_mesh_network.js" ]]; then
+    if ! cmp -s "${PROJECT_ROOT}/src/net/zero_mesh_network.js" "${DIST_DIR}/src/net/zero_mesh_network.js"; then
+        echo "Error: dist/src/net/zero_mesh_network.js does not match src/net/zero_mesh_network.js" >&2
+        exit 1
+    fi
+fi
 
 echo "✅ Distribution built successfully in ${DIST_DIR}"
 ```
@@ -6307,6 +6349,11 @@ OUT_DIR_MESH="${PROJECT_ROOT}/src/wasm"
 OUT_DIR_CORE="${PROJECT_ROOT}/src/wasm_core"
 
 echo "=== Building zero_mesh WebAssembly Package ==="
+if [[ ! -f "${ZERO_PROTOCOL_DIR}/crates/zero_mesh/Cargo.toml" ]]; then
+    echo "Error: zero_protocol crate not found at ${ZERO_PROTOCOL_DIR}/crates/zero_mesh/Cargo.toml" >&2
+    echo "Expected zero_protocol to be checked out as a sibling of virtual_dog_walker." >&2
+    exit 1
+fi
 echo "Building crate from ${ZERO_PROTOCOL_DIR}/crates/zero_mesh..."
 cargo build --manifest-path "${ZERO_PROTOCOL_DIR}/crates/zero_mesh/Cargo.toml" --target wasm32-unknown-unknown --release
 
@@ -6322,6 +6369,10 @@ if command -v wasm-bindgen >/dev/null 2>&1; then
     wasm-bindgen --target web --out-dir "${OUT_DIR_MESH}" "${WASM_TARGET_MESH}"
 else
     echo "Error: wasm-bindgen CLI not found in PATH." >&2
+    exit 1
+fi
+if [[ ! -f "${OUT_DIR_MESH}/zero_mesh.js" || ! -f "${OUT_DIR_MESH}/zero_mesh_bg.wasm" ]]; then
+    echo "Error: wasm-bindgen did not produce expected zero_mesh outputs in ${OUT_DIR_MESH}" >&2
     exit 1
 fi
 echo "✅ zero_mesh Wasm bundle built into ${OUT_DIR_MESH}"
@@ -6342,6 +6393,10 @@ if command -v wasm-bindgen >/dev/null 2>&1; then
     wasm-bindgen --target web --out-dir "${OUT_DIR_CORE}" "${WASM_TARGET_CORE}"
 else
     echo "Error: wasm-bindgen CLI not found in PATH." >&2
+    exit 1
+fi
+if [[ ! -f "${OUT_DIR_CORE}/dog_walker_core.js" || ! -f "${OUT_DIR_CORE}/dog_walker_core_bg.wasm" ]]; then
+    echo "Error: wasm-bindgen did not produce expected dog_walker_core outputs in ${OUT_DIR_CORE}" >&2
     exit 1
 fi
 echo "✅ dog_walker_core Wasm bundle built into ${OUT_DIR_CORE}"
@@ -13627,6 +13682,21 @@ export class ZeroMeshNetworkManager {
   }
 
   /**
+   * Convert a 64-character hex string to a 32-byte Uint8Array.
+   * Returns null on invalid input so callers can fail fast.
+   */
+  hexToBytes(hex) {
+    if (!hex || typeof hex !== 'string') return null;
+    const clean = hex.trim();
+    if (!/^[0-9a-fA-F]{64}$/.test(clean)) return null;
+    const bytes = new Uint8Array(32);
+    for (let i = 0; i < 32; i++) {
+      bytes[i] = parseInt(clean.substring(i * 2, i * 2 + 2), 16);
+    }
+    return bytes;
+  }
+
+  /**
    * Normalize a secret (hex string or byte array) to a lowercase hex string.
    * Returns null when the input is empty/invalid.
    */
@@ -14156,12 +14226,28 @@ export class ZeroMeshNetworkManager {
       }
     };
 
+    // Hook outbound tx callbacks immediately at engine creation so any frames
+    // the Wasm engine emits before the DataChannel exists are buffered (not dropped).
+    try {
+      wasmEngine.set_outbound_tx((text) => {
+        sendOrQueue(text);
+      });
+    } catch (_) {}
+    try {
+      if (typeof wasmEngine.set_outbound_binary_tx === 'function') {
+        wasmEngine.set_outbound_binary_tx((bytes) => {
+          sendOrQueue(bytes);
+        });
+      }
+    } catch (_) {}
+
     const wireDataChannel = (channel) => {
       dc = channel;
       try { dc.binaryType = 'arraybuffer'; } catch (_) {}
+
+      let opened = false;
       dc.onopen = () => {
-        try { wasmEngine.mark_open(); } catch (_) {}
-        // Flush buffered outbound messages in FIFO order.
+        // Flush buffered outbound messages in FIFO order first.
         while (pending.length > 0) {
           const msg = pending.shift();
           try {
@@ -14176,6 +14262,10 @@ export class ZeroMeshNetworkManager {
               e
             );
           }
+        }
+        if (!opened) {
+          opened = true;
+          try { wasmEngine.mark_open(); } catch (_) {}
         }
       };
       dc.onclose = () => {
@@ -14192,18 +14282,6 @@ export class ZeroMeshNetworkManager {
           try { wasmEngine.inject_incoming_binary(new Uint8Array(ev.data)); } catch (_) {}
         }
       };
-      try {
-        wasmEngine.set_outbound_tx((text) => {
-          sendOrQueue(text);
-        });
-      } catch (_) {}
-      try {
-        if (typeof wasmEngine.set_outbound_binary_tx === 'function') {
-          wasmEngine.set_outbound_binary_tx((bytes) => {
-            sendOrQueue(bytes);
-          });
-        }
-      } catch (_) {}
     };
 
     if (isOfferer === true) {
@@ -14276,7 +14354,12 @@ export class ZeroMeshNetworkManager {
       const sdpOffer = await bridge.createOfferSdp();
       const inviteUuid = `inv-${this.peerId}-${Date.now().toString(36)}`;
 
-      const token = this.wasmMod.WasmCryptoSession.compute_hmac_hex(this.hostSecret, inviteUuid);
+      const secretBytes = this.hexToBytes(this.hostSecret);
+      if (!secretBytes) {
+        console.error('[ZeroMesh] Invalid hostSecret for invite staging:', this.hostSecret);
+        return;
+      }
+      const token = this.wasmMod.WasmCryptoSession.compute_hmac_hex(secretBytes, inviteUuid);
       const invite = {
         do_id: this.roomId,
         invite_uuid: inviteUuid,
@@ -14346,10 +14429,7 @@ export class ZeroMeshNetworkManager {
             this.pendingEngine = null;
             this.pendingBridge = null;
 
-            // Replenish slot in dead drop pool for the next joiner
-            await this._stageNewInvite(secretHex);
-
-            // Greet newly connected joiner
+            // Greet newly connected joiner immediately before awaiting next invite ICE gathering
             this.sendTo(drop.joiner_peer_id, Protocol.createHello(
               this.peerId,
               this.localMeta.name,
@@ -14357,6 +14437,9 @@ export class ZeroMeshNetworkManager {
               this.localMeta.coatName,
               this.localMeta
             ));
+
+            // Replenish slot in dead drop pool for the next joiner
+            await this._stageNewInvite(secretHex);
           }
         } catch (err) {
           console.warn('[ZeroMesh] Error processing incoming drop on host WS:', err);
@@ -21276,12 +21359,30 @@ export class WasmCryptoSession {
     burn_all(): void;
     /**
      * Computes HMAC-SHA256 hex string token for invite authentication.
+     *
+     * Accepts either a 32-byte Uint8Array/number array or a 64-character hex string.
      */
-    static compute_hmac_hex(secret: Uint8Array | number[], invite_uuid: string): string;
+    static compute_hmac_hex(secret: any, invite_uuid: string): string;
+    /**
+     * Native-friendly HMAC-SHA256 hex token helper accepting raw secret bytes.
+     *
+     * Mirrors the semantics of [`WasmCryptoSession::compute_hmac_hex`] for the raw-bytes
+     * case: a 64-byte ASCII-hex secret is decoded to raw bytes before computing the HMAC,
+     * otherwise the bytes are used verbatim. This allows native tests to exercise the
+     * HMAC path without constructing a `JsValue`.
+     */
+    static compute_hmac_hex_bytes(secret: Uint8Array | number[], invite_uuid: string): string;
     /**
      * Returns the 32-byte Ed25519 public verifying key bytes.
      */
     ed25519_public_key_bytes(): Uint8Array;
+    /**
+     * Creates a `WasmCryptoSession` from an explicit 32-byte X25519 private key scalar.
+     *
+     * The X25519 public key is derived from the supplied scalar. A fresh Ed25519
+     * signing keypair is generated for message authentication.
+     */
+    static from_private_key(bytes: Uint8Array | number[]): WasmCryptoSession;
     /**
      * Checks if a session crypto entry exists for `peer_id`.
      */
@@ -21300,6 +21401,10 @@ export class WasmCryptoSession {
      * ed25519_public and frame has signature, decrypts ciphertext, and returns plaintext bytes.
      */
     open_from_peer(peer_id: string, sealed_frame_json: string): Uint8Array;
+    /**
+     * Returns the 32-byte X25519 private key scalar.
+     */
+    private_key_bytes(): Uint8Array;
     /**
      * Registers a peer session by deriving the pairwise X25519 shared secret
      * and storing the optional Ed25519 public key for signature verification.
@@ -21328,7 +21433,7 @@ export class WasmCryptoSession {
      */
     verify_peer_signature(peer_id: string, data: Uint8Array | number[], sig: Uint8Array | number[]): boolean;
     /**
-     * Returns the 32-byte X25519 public key bytes.
+     * Returns the 32-byte X25519 public key bytes matching the private scalar.
      */
     x25519_public_key_bytes(): Uint8Array;
 }
@@ -21391,6 +21496,11 @@ export class WasmMeshTopology {
      * Transmits application state or binary event payload directly to a target peer.
      */
     send_direct_state(target_peer_id: string, topic: string, payload: Uint8Array | number[]): string;
+    /**
+     * Updates the local peer identifier while preserving all registered peers
+     * and vector clocks (unification-016).
+     */
+    set_local_peer_id(new_peer_id: string): void;
     /**
      * Registers a callback `(sender_id: string, text: string) => void` for incoming chat messages.
      */
@@ -21494,12 +21604,15 @@ export interface InitOutput {
     readonly __wbg_wasmmeshtopology_free: (a: number, b: number) => void;
     readonly __wbg_wasmwebrtcengine_free: (a: number, b: number) => void;
     readonly wasmcryptosession_burn_all: (a: number) => void;
-    readonly wasmcryptosession_compute_hmac_hex: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+    readonly wasmcryptosession_compute_hmac_hex: (a: any, b: number, c: number) => [number, number, number, number];
+    readonly wasmcryptosession_compute_hmac_hex_bytes: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly wasmcryptosession_ed25519_public_key_bytes: (a: number) => [number, number];
+    readonly wasmcryptosession_from_private_key: (a: number, b: number) => [number, number, number];
     readonly wasmcryptosession_has_peer_session: (a: number, b: number, c: number) => number;
     readonly wasmcryptosession_new: () => [number, number, number];
     readonly wasmcryptosession_open_drop_sdp: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
     readonly wasmcryptosession_open_from_peer: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly wasmcryptosession_private_key_bytes: (a: number) => [number, number];
     readonly wasmcryptosession_register_peer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
     readonly wasmcryptosession_remove_peer: (a: number, b: number, c: number) => void;
     readonly wasmcryptosession_seal_drop_sdp: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
@@ -21520,6 +21633,7 @@ export interface InitOutput {
     readonly wasmmeshtopology_register_peer: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly wasmmeshtopology_remove_peer: (a: number, b: number, c: number) => [number, number];
     readonly wasmmeshtopology_send_direct_state: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly wasmmeshtopology_set_local_peer_id: (a: number, b: number, c: number) => void;
     readonly wasmmeshtopology_set_on_message: (a: number, b: any) => void;
     readonly wasmmeshtopology_set_on_peer_joined: (a: number, b: any) => void;
     readonly wasmmeshtopology_set_on_peer_left: (a: number, b: any) => void;
@@ -21543,13 +21657,13 @@ export interface InitOutput {
     readonly wasmwebrtcengine_state: (a: number) => [number, number];
     readonly wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
     readonly wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___wasm_bindgen_70557cdeb3a4b157___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_70557cdeb3a4b157___JsError___true_: (a: number, b: number, c: any) => [number, number];
+    readonly __wbindgen_malloc: (a: number, b: number) => number;
+    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
     readonly __wbindgen_exn_store: (a: number) => void;
     readonly __externref_table_alloc: () => number;
     readonly __wbindgen_externrefs: WebAssembly.Table;
     readonly __wbindgen_destroy_closure: (a: number, b: number) => void;
-    readonly __wbindgen_malloc: (a: number, b: number) => number;
-    readonly __wbindgen_free: (a: number, b: number, c: number) => void;
-    readonly __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
     readonly __externref_table_dealloc: (a: number) => void;
     readonly __wbindgen_start: () => void;
 }
@@ -21586,6 +21700,12 @@ export default function __wbg_init (module_or_path?: { module_or_path: InitInput
  * authenticated frame sealing/opening, and blind dead-drop SDP encryption to JavaScript.
  */
 export class WasmCryptoSession {
+    static __wrap(ptr) {
+        const obj = Object.create(WasmCryptoSession.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmCryptoSessionFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -21604,11 +21724,44 @@ export class WasmCryptoSession {
     }
     /**
      * Computes HMAC-SHA256 hex string token for invite authentication.
-     * @param {Uint8Array | number[]} secret
+     *
+     * Accepts either a 32-byte Uint8Array/number array or a 64-character hex string.
+     * @param {any} secret
      * @param {string} invite_uuid
      * @returns {string}
      */
     static compute_hmac_hex(secret, invite_uuid) {
+        let deferred3_0;
+        let deferred3_1;
+        try {
+            const ptr0 = passStringToWasm0(invite_uuid, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.wasmcryptosession_compute_hmac_hex(secret, ptr0, len0);
+            var ptr2 = ret[0];
+            var len2 = ret[1];
+            if (ret[3]) {
+                ptr2 = 0; len2 = 0;
+                throw takeFromExternrefTable0(ret[2]);
+            }
+            deferred3_0 = ptr2;
+            deferred3_1 = len2;
+            return getStringFromWasm0(ptr2, len2);
+        } finally {
+            wasm.__wbindgen_free(deferred3_0, deferred3_1, 1);
+        }
+    }
+    /**
+     * Native-friendly HMAC-SHA256 hex token helper accepting raw secret bytes.
+     *
+     * Mirrors the semantics of [`WasmCryptoSession::compute_hmac_hex`] for the raw-bytes
+     * case: a 64-byte ASCII-hex secret is decoded to raw bytes before computing the HMAC,
+     * otherwise the bytes are used verbatim. This allows native tests to exercise the
+     * HMAC path without constructing a `JsValue`.
+     * @param {Uint8Array | number[]} secret
+     * @param {string} invite_uuid
+     * @returns {string}
+     */
+    static compute_hmac_hex_bytes(secret, invite_uuid) {
         let deferred4_0;
         let deferred4_1;
         try {
@@ -21623,7 +21776,7 @@ export class WasmCryptoSession {
                 if (ptr0) { wasm.__wbindgen_free(ptr0, len0 * 1, 1); }
                 throw e;
             }
-            const ret = wasm.wasmcryptosession_compute_hmac_hex(ptr0, len0, ptr1, len1);
+            const ret = wasm.wasmcryptosession_compute_hmac_hex_bytes(ptr0, len0, ptr1, len1);
             var ptr3 = ret[0];
             var len3 = ret[1];
             if (ret[3]) {
@@ -21646,6 +21799,23 @@ export class WasmCryptoSession {
         var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         return v1;
+    }
+    /**
+     * Creates a `WasmCryptoSession` from an explicit 32-byte X25519 private key scalar.
+     *
+     * The X25519 public key is derived from the supplied scalar. A fresh Ed25519
+     * signing keypair is generated for message authentication.
+     * @param {Uint8Array | number[]} bytes
+     * @returns {WasmCryptoSession}
+     */
+    static from_private_key(bytes) {
+        const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmcryptosession_from_private_key(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return WasmCryptoSession.__wrap(ret[0]);
     }
     /**
      * Checks if a session crypto entry exists for `peer_id`.
@@ -21740,6 +21910,16 @@ export class WasmCryptoSession {
         var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         return v3;
+    }
+    /**
+     * Returns the 32-byte X25519 private key scalar.
+     * @returns {Uint8Array}
+     */
+    private_key_bytes() {
+        const ret = wasm.wasmcryptosession_private_key_bytes(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
     }
     /**
      * Registers a peer session by deriving the pairwise X25519 shared secret
@@ -21899,7 +22079,7 @@ export class WasmCryptoSession {
         return ret[0] !== 0;
     }
     /**
-     * Returns the 32-byte X25519 public key bytes.
+     * Returns the 32-byte X25519 public key bytes matching the private scalar.
      * @returns {Uint8Array}
      */
     x25519_public_key_bytes() {
@@ -22163,6 +22343,16 @@ export class WasmMeshTopology {
         }
     }
     /**
+     * Updates the local peer identifier while preserving all registered peers
+     * and vector clocks (unification-016).
+     * @param {string} new_peer_id
+     */
+    set_local_peer_id(new_peer_id) {
+        const ptr0 = passStringToWasm0(new_peer_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.wasmmeshtopology_set_local_peer_id(this.__wbg_ptr, ptr0, len0);
+    }
+    /**
      * Registers a callback `(sender_id: string, text: string) => void` for incoming chat messages.
      * @param {Function} callback
      */
@@ -22393,6 +22583,14 @@ function __wbg_get_imports() {
             const ret = arg0 === undefined;
             return ret;
         },
+        __wbg___wbindgen_string_get_7ce8eee7fd327545: function(arg0, arg1) {
+            const obj = arg1;
+            const ret = typeof(obj) === 'string' ? obj : undefined;
+            var ptr1 = isLikeNone(ret) ? 0 : passStringToWasm0(ret, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            var len1 = WASM_VECTOR_LEN;
+            getDataViewMemory0().setInt32((arg0 >>> 0) + 4 * 1, len1, true);
+            getDataViewMemory0().setInt32((arg0 >>> 0) + 4 * 0, ptr1, true);
+        },
         __wbg___wbindgen_throw_4c88d8bf264fd984: function(arg0, arg1) {
             throw new Error(getStringFromWasm0(arg0, arg1));
         },
@@ -22510,7 +22708,7 @@ function __wbg_get_imports() {
             return ret;
         },
         __wbindgen_generic_0000000000000001: function(arg0, arg1) {
-            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 165, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
+            // Cast intrinsic for `Closure(Closure { owned: true, function: Function { arguments: [Externref], shim_idx: 166, ret: Result(Unit), inner_ret: Some(Result(Unit)) }, mutable: true }) -> Externref`.
             const ret = makeMutClosure(arg0, arg1, wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___wasm_bindgen_70557cdeb3a4b157___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_70557cdeb3a4b157___JsError___true_);
             return ret;
         },
@@ -22579,6 +22777,14 @@ const CLOSURE_DTORS = (typeof FinalizationRegistry === 'undefined')
 function getArrayU8FromWasm0(ptr, len) {
     ptr = ptr >>> 0;
     return getUint8ArrayMemory0().subarray(ptr / 1, ptr / 1 + len);
+}
+
+let cachedDataViewMemory0 = null;
+function getDataViewMemory0() {
+    if (cachedDataViewMemory0 === null || cachedDataViewMemory0.buffer.detached === true || (cachedDataViewMemory0.buffer.detached === undefined && cachedDataViewMemory0.buffer !== wasm.memory.buffer)) {
+        cachedDataViewMemory0 = new DataView(wasm.memory.buffer);
+    }
+    return cachedDataViewMemory0;
 }
 
 function getStringFromWasm0(ptr, len) {
@@ -22719,6 +22925,7 @@ function __wbg_finalize_init(instance, module) {
     wasmInstance = instance;
     wasm = instance.exports;
     wasmModule = module;
+    cachedDataViewMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();
     return wasm;
@@ -22829,12 +23036,15 @@ export const __wbg_wasmcryptosession_free: (a: number, b: number) => void;
 export const __wbg_wasmmeshtopology_free: (a: number, b: number) => void;
 export const __wbg_wasmwebrtcengine_free: (a: number, b: number) => void;
 export const wasmcryptosession_burn_all: (a: number) => void;
-export const wasmcryptosession_compute_hmac_hex: (a: number, b: number, c: number, d: number) => [number, number, number, number];
+export const wasmcryptosession_compute_hmac_hex: (a: any, b: number, c: number) => [number, number, number, number];
+export const wasmcryptosession_compute_hmac_hex_bytes: (a: number, b: number, c: number, d: number) => [number, number, number, number];
 export const wasmcryptosession_ed25519_public_key_bytes: (a: number) => [number, number];
+export const wasmcryptosession_from_private_key: (a: number, b: number) => [number, number, number];
 export const wasmcryptosession_has_peer_session: (a: number, b: number, c: number) => number;
 export const wasmcryptosession_new: () => [number, number, number];
 export const wasmcryptosession_open_drop_sdp: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
 export const wasmcryptosession_open_from_peer: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+export const wasmcryptosession_private_key_bytes: (a: number) => [number, number];
 export const wasmcryptosession_register_peer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
 export const wasmcryptosession_remove_peer: (a: number, b: number, c: number) => void;
 export const wasmcryptosession_seal_drop_sdp: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
@@ -22855,6 +23065,7 @@ export const wasmmeshtopology_peer_count: (a: number) => number;
 export const wasmmeshtopology_register_peer: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
 export const wasmmeshtopology_remove_peer: (a: number, b: number, c: number) => [number, number];
 export const wasmmeshtopology_send_direct_state: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+export const wasmmeshtopology_set_local_peer_id: (a: number, b: number, c: number) => void;
 export const wasmmeshtopology_set_on_message: (a: number, b: any) => void;
 export const wasmmeshtopology_set_on_peer_joined: (a: number, b: any) => void;
 export const wasmmeshtopology_set_on_peer_left: (a: number, b: any) => void;
@@ -22878,13 +23089,13 @@ export const wasmwebrtcengine_set_outbound_tx: (a: number, b: any) => void;
 export const wasmwebrtcengine_state: (a: number) => [number, number];
 export const wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined___js_sys_15096c727a086988___Function_fn_wasm_bindgen_70557cdeb3a4b157___JsValue_____wasm_bindgen_70557cdeb3a4b157___sys__Undefined_______true_: (a: number, b: number, c: any, d: any) => void;
 export const wasm_bindgen_70557cdeb3a4b157___convert__closures_____invoke___wasm_bindgen_70557cdeb3a4b157___JsValue__core_ed718c3d60ebd546___result__Result_____wasm_bindgen_70557cdeb3a4b157___JsError___true_: (a: number, b: number, c: any) => [number, number];
+export const __wbindgen_malloc: (a: number, b: number) => number;
+export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
+export const __wbindgen_free: (a: number, b: number, c: number) => void;
 export const __wbindgen_exn_store: (a: number) => void;
 export const __externref_table_alloc: () => number;
 export const __wbindgen_externrefs: WebAssembly.Table;
 export const __wbindgen_destroy_closure: (a: number, b: number) => void;
-export const __wbindgen_malloc: (a: number, b: number) => number;
-export const __wbindgen_free: (a: number, b: number, c: number) => void;
-export const __wbindgen_realloc: (a: number, b: number, c: number, d: number) => number;
 export const __externref_table_dealloc: (a: number) => void;
 export const __wbindgen_start: () => void;
 ```

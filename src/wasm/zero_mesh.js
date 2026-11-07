@@ -5,6 +5,12 @@
  * authenticated frame sealing/opening, and blind dead-drop SDP encryption to JavaScript.
  */
 export class WasmCryptoSession {
+    static __wrap(ptr) {
+        const obj = Object.create(WasmCryptoSession.prototype);
+        obj.__wbg_ptr = ptr;
+        WasmCryptoSessionFinalization.register(obj, obj.__wbg_ptr, obj);
+        return obj;
+    }
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
         this.__wbg_ptr = 0;
@@ -65,6 +71,23 @@ export class WasmCryptoSession {
         var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         return v1;
+    }
+    /**
+     * Creates a `WasmCryptoSession` from an explicit 32-byte X25519 private key scalar.
+     *
+     * The X25519 public key is derived from the supplied scalar. A fresh Ed25519
+     * signing keypair is generated for message authentication.
+     * @param {Uint8Array | number[]} bytes
+     * @returns {WasmCryptoSession}
+     */
+    static from_private_key(bytes) {
+        const ptr0 = passArray8ToWasm0(bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.wasmcryptosession_from_private_key(ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return WasmCryptoSession.__wrap(ret[0]);
     }
     /**
      * Checks if a session crypto entry exists for `peer_id`.
@@ -159,6 +182,16 @@ export class WasmCryptoSession {
         var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
         wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
         return v3;
+    }
+    /**
+     * Returns the 32-byte X25519 private key scalar.
+     * @returns {Uint8Array}
+     */
+    private_key_bytes() {
+        const ret = wasm.wasmcryptosession_private_key_bytes(this.__wbg_ptr);
+        var v1 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v1;
     }
     /**
      * Registers a peer session by deriving the pairwise X25519 shared secret
@@ -318,7 +351,7 @@ export class WasmCryptoSession {
         return ret[0] !== 0;
     }
     /**
-     * Returns the 32-byte X25519 public key bytes.
+     * Returns the 32-byte X25519 public key bytes matching the private scalar.
      * @returns {Uint8Array}
      */
     x25519_public_key_bytes() {
@@ -580,6 +613,16 @@ export class WasmMeshTopology {
         } finally {
             wasm.__wbindgen_free(deferred5_0, deferred5_1, 1);
         }
+    }
+    /**
+     * Updates the local peer identifier while preserving all registered peers
+     * and vector clocks (unification-016).
+     * @param {string} new_peer_id
+     */
+    set_local_peer_id(new_peer_id) {
+        const ptr0 = passStringToWasm0(new_peer_id, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.wasmmeshtopology_set_local_peer_id(this.__wbg_ptr, ptr0, len0);
     }
     /**
      * Registers a callback `(sender_id: string, text: string) => void` for incoming chat messages.

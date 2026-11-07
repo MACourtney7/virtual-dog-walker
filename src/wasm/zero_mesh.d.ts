@@ -21,6 +21,13 @@ export class WasmCryptoSession {
      */
     ed25519_public_key_bytes(): Uint8Array;
     /**
+     * Creates a `WasmCryptoSession` from an explicit 32-byte X25519 private key scalar.
+     *
+     * The X25519 public key is derived from the supplied scalar. A fresh Ed25519
+     * signing keypair is generated for message authentication.
+     */
+    static from_private_key(bytes: Uint8Array | number[]): WasmCryptoSession;
+    /**
      * Checks if a session crypto entry exists for `peer_id`.
      */
     has_peer_session(peer_id: string): boolean;
@@ -38,6 +45,10 @@ export class WasmCryptoSession {
      * ed25519_public and frame has signature, decrypts ciphertext, and returns plaintext bytes.
      */
     open_from_peer(peer_id: string, sealed_frame_json: string): Uint8Array;
+    /**
+     * Returns the 32-byte X25519 private key scalar.
+     */
+    private_key_bytes(): Uint8Array;
     /**
      * Registers a peer session by deriving the pairwise X25519 shared secret
      * and storing the optional Ed25519 public key for signature verification.
@@ -66,7 +77,7 @@ export class WasmCryptoSession {
      */
     verify_peer_signature(peer_id: string, data: Uint8Array | number[], sig: Uint8Array | number[]): boolean;
     /**
-     * Returns the 32-byte X25519 public key bytes.
+     * Returns the 32-byte X25519 public key bytes matching the private scalar.
      */
     x25519_public_key_bytes(): Uint8Array;
 }
@@ -129,6 +140,11 @@ export class WasmMeshTopology {
      * Transmits application state or binary event payload directly to a target peer.
      */
     send_direct_state(target_peer_id: string, topic: string, payload: Uint8Array | number[]): string;
+    /**
+     * Updates the local peer identifier while preserving all registered peers
+     * and vector clocks (unification-016).
+     */
+    set_local_peer_id(new_peer_id: string): void;
     /**
      * Registers a callback `(sender_id: string, text: string) => void` for incoming chat messages.
      */
@@ -234,10 +250,12 @@ export interface InitOutput {
     readonly wasmcryptosession_burn_all: (a: number) => void;
     readonly wasmcryptosession_compute_hmac_hex: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly wasmcryptosession_ed25519_public_key_bytes: (a: number) => [number, number];
+    readonly wasmcryptosession_from_private_key: (a: number, b: number) => [number, number, number];
     readonly wasmcryptosession_has_peer_session: (a: number, b: number, c: number) => number;
     readonly wasmcryptosession_new: () => [number, number, number];
     readonly wasmcryptosession_open_drop_sdp: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
     readonly wasmcryptosession_open_from_peer: (a: number, b: number, c: number, d: number, e: number) => [number, number, number, number];
+    readonly wasmcryptosession_private_key_bytes: (a: number) => [number, number];
     readonly wasmcryptosession_register_peer: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number];
     readonly wasmcryptosession_remove_peer: (a: number, b: number, c: number) => void;
     readonly wasmcryptosession_seal_drop_sdp: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number) => [number, number, number, number];
@@ -258,6 +276,7 @@ export interface InitOutput {
     readonly wasmmeshtopology_register_peer: (a: number, b: number, c: number, d: number, e: number, f: number) => [number, number];
     readonly wasmmeshtopology_remove_peer: (a: number, b: number, c: number) => [number, number];
     readonly wasmmeshtopology_send_direct_state: (a: number, b: number, c: number, d: number, e: number, f: number, g: number) => [number, number, number, number];
+    readonly wasmmeshtopology_set_local_peer_id: (a: number, b: number, c: number) => void;
     readonly wasmmeshtopology_set_on_message: (a: number, b: any) => void;
     readonly wasmmeshtopology_set_on_peer_joined: (a: number, b: any) => void;
     readonly wasmmeshtopology_set_on_peer_left: (a: number, b: any) => void;

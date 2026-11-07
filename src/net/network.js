@@ -648,6 +648,22 @@ export class NetworkManager {
     }
   }
 
+  async switchRoom(newRoomId) {
+    if (!newRoomId || newRoomId === this.roomId) return;
+    if (this.adapter && typeof this.adapter.switchRoom === 'function') {
+      return await this.adapter.switchRoom(newRoomId);
+    }
+    if (typeof this.disconnect === 'function') {
+      this.disconnect();
+    } else if (this.adapter && typeof this.adapter.stop === 'function') {
+      this.adapter.stop();
+    }
+    this.roomId = newRoomId;
+    if (this.adapter && typeof this.adapter.connect === 'function') {
+      return await this.adapter.connect(newRoomId);
+    }
+  }
+
   updateServerClock(serverTime) {
     if (this.adapter && typeof this.adapter.updateServerClock === 'function') {
       return this.adapter.updateServerClock(serverTime);

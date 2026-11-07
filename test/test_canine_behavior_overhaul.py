@@ -43,8 +43,9 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
             base = min(0.90, max(0.08, (dist - 220) / 260))
             return min(1, max(0, base * (0.45 + 0.11 * obedience)))
 
-        self.assertAlmostEqual(catch_up_prob_raw(400, 2.5), 0.90 * (0.45 + 0.275), places=6)
-        self.assertAlmostEqual(catch_up_prob_raw(400, 3.7), 0.90 * (0.45 + 0.407), places=6)
+        base_400 = (400 - 220) / 260  # 0.6923...
+        self.assertAlmostEqual(catch_up_prob_raw(400, 2.5), base_400 * (0.45 + 0.275), places=6)
+        self.assertAlmostEqual(catch_up_prob_raw(400, 3.7), base_400 * (0.45 + 0.407), places=6)
         # High obedience saturates the final probability at 1.0
         self.assertEqual(catch_up_prob_raw(400, 10.0), 1.0)
         # Fractional obedience is monotonic between integer values
@@ -235,7 +236,8 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
 
     # MEDIUM-2: zoomies collision-aware source contract
     def test_zoomies_collision_aware_source_contract(self):
-        idx = self.dog_src.find("updateZoomies(dt, field)")
+        # Match the method definition, not the call site in update()
+        idx = self.dog_src.find("updateZoomies(dt, field) {")
         self.assertNotEqual(idx, -1)
         window = self.dog_src[idx:idx + 2000]
         self.assertIn("resolveFieldCollision", window)
@@ -244,12 +246,13 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
 
     # MEDIUM-1: visitedScents updated on arrival
     def test_visited_scents_updated_on_arrival(self):
+        # Python dicts are unhashable; use a list to mirror the JS WeakSet semantics
         class Dog:
             def __init__(self):
                 self.lastSniffFollowAt = 0
                 self.lastReachedScent = None
                 self.targetScent = {"x": 0.0, "y": 0.0, "life": 1.0}
-                self.visitedScents = set()
+                self.visitedScents = []
                 self.x = 0.0
                 self.y = 0.0
 
@@ -261,7 +264,8 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
                     if self.targetScent and self.lastReachedScent is not self.targetScent:
                         self.lastReachedScent = self.targetScent
                         self.lastSniffFollowAt = now
-                        self.visitedScents.add(self.targetScent)
+                        if self.targetScent not in self.visitedScents:
+                            self.visitedScents.append(self.targetScent)
 
         dog = Dog()
         dog.tick(1000)

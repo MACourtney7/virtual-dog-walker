@@ -12,15 +12,22 @@ const WOODLAND_CLEARING = { x: 1550, y: 1100, radius: 40 };
 const WOODLAND_KEEPOUT = [
   { x: 3090, y: 1200 },
   { x: 110, y: 1900 },
-  { x: 220, y: 1200 },
+  { x: 3000, y: 1200 },
   { x: 220, y: 1900 },
 ];
 
 const COASTAL_KEEPOUT = [
   { x: 1600, y: 110 },
   { x: 110, y: 1200 },
-  { x: 1600, y: 2180 },
+  { x: 1600, y: 200 },
   { x: 220, y: 1200 },
+];
+
+const DOWNS_KEEPOUT = [
+  { x: 110, y: 1200 },
+  { x: 1600, y: 2290 },
+  { x: 220, y: 1200 },
+  { x: 1600, y: 2180 },
 ];
 
 const KEEPOUT_RADIUS = 80;
@@ -46,9 +53,9 @@ function dist2(ax, ay, bx, by) {
   return dx * dx + dy * dy;
 }
 
-function isClearOfKeepouts(x, y, keepouts) {
+function isClearOfKeepouts(x, y, keepouts, radius = KEEPOUT_RADIUS) {
   for (const k of keepouts) {
-    if (dist2(x, y, k.x, k.y) < KEEPOUT_RADIUS * KEEPOUT_RADIUS) return false;
+    if (dist2(x, y, k.x, k.y) < radius * radius) return false;
   }
   return true;
 }
@@ -85,6 +92,8 @@ export function initBiomeScenery(field, biome) {
   if (typeof field.initScenery === 'function') {
     field.initScenery();
   }
+  // Ensure biome landmarks do not leak back into parkland.
+  field.landmarks = field.waterTower ? [field.waterTower] : [];
 }
 
 function initWoodlandScenery(field) {
@@ -107,15 +116,17 @@ function initWoodlandScenery(field) {
   field.landmarks = [];
   field.sticks = [];
 
-  field.landmarks.push({
-    id: 'woodland-clearing',
-    name: 'Ancient Woodland Clearing',
-    x: WOODLAND_CLEARING.x,
-    y: WOODLAND_CLEARING.y,
-    radius: 40,
-    depthY: 1120,
-    isLandmark: true,
-  });
+  if (isClearOfKeepouts(WOODLAND_CLEARING.x, WOODLAND_CLEARING.y, WOODLAND_KEEPOUT, 80)) {
+    field.landmarks.push({
+      id: 'woodland-clearing',
+      name: 'Ancient Woodland Clearing',
+      x: WOODLAND_CLEARING.x,
+      y: WOODLAND_CLEARING.y,
+      radius: 40,
+      depthY: 1120,
+      isLandmark: true,
+    });
+  }
 
   const rng = makeRng(0x5eed1234);
   const width = field.width || 3200;
@@ -130,7 +141,7 @@ function initWoodlandScenery(field) {
     const x = margin + rng() * (width - margin * 2);
     const y = margin + rng() * (height - margin * 2);
     if (isInsideClearing(x, y)) continue;
-    if (!isClearOfKeepouts(x, y, WOODLAND_KEEPOUT)) continue;
+    if (!isClearOfKeepouts(x, y, WOODLAND_KEEPOUT, 80)) continue;
     // Avoid overlapping other trees.
     let tooClose = false;
     for (const t of field.trees) {
@@ -161,6 +172,7 @@ function initWoodlandScenery(field) {
     { x: 2500, y: 1800 },
   ];
   benchSpots.forEach((spot, i) => {
+    if (!isClearOfKeepouts(spot.x, spot.y, WOODLAND_KEEPOUT, 80)) return;
     field.benches.push({
       id: `bench-woodland-${i}`,
       x: spot.x,
@@ -178,6 +190,7 @@ function initWoodlandScenery(field) {
     { x: 2700, y: 2000 },
   ];
   binSpots.forEach((spot, i) => {
+    if (!isClearOfKeepouts(spot.x, spot.y, WOODLAND_KEEPOUT, 80)) return;
     field.bins.push({
       id: `bin-woodland-${i}`,
       x: spot.x,
@@ -195,6 +208,7 @@ function initWoodlandScenery(field) {
     { x: 2000, y: 2100 },
   ];
   rockSpots.forEach((spot, i) => {
+    if (!isClearOfKeepouts(spot.x, spot.y, WOODLAND_KEEPOUT, 80)) return;
     field.rockOutcrops.push({
       id: `rock-woodland-${i}`,
       x: spot.x,
@@ -205,11 +219,15 @@ function initWoodlandScenery(field) {
   });
 
   // 14+ fallen woodland sticks.
-  for (let i = 0; i < 16; i += 1) {
+  let stickCount = 0;
+  let stickAttempts = 0;
+  while (stickCount < 16 && stickAttempts < 500) {
+    stickAttempts += 1;
     const x = margin + rng() * (width - margin * 2);
     const y = margin + rng() * (height - margin * 2);
+    if (!isClearOfKeepouts(x, y, WOODLAND_KEEPOUT, 80)) continue;
     field.sticks.push({
-      id: `stick-woodland-${i}`,
+      id: `stick-woodland-${stickCount}`,
       x,
       y,
       angle: rng() * Math.PI * 2,
@@ -217,6 +235,7 @@ function initWoodlandScenery(field) {
       radius: 10,
       isStick: true,
     });
+    stickCount += 1;
   }
 }
 
@@ -240,24 +259,28 @@ function initCoastalScenery(field) {
   field.sticks = [];
   field.landmarks = [];
 
-  field.landmarks.push({
-    id: 'shipwreck-ribs',
-    name: 'Weathered Timber Shipwreck Ribs',
-    x: 2350,
-    y: 1450,
-    radius: 36,
-    depthY: 1470,
-    isLandmark: true,
-  });
-  field.landmarks.push({
-    id: 'dune-lookout',
-    name: 'Coastal Dune Lookout Post',
-    x: 900,
-    y: 340,
-    radius: 32,
-    depthY: 360,
-    isLandmark: true,
-  });
+  if (isClearOfKeepouts(2350, 1450, COASTAL_KEEPOUT, 80)) {
+    field.landmarks.push({
+      id: 'shipwreck-ribs',
+      name: 'Weathered Timber Shipwreck Ribs',
+      x: 2350,
+      y: 1450,
+      radius: 36,
+      depthY: 1470,
+      isLandmark: true,
+    });
+  }
+  if (isClearOfKeepouts(900, 340, COASTAL_KEEPOUT, 80)) {
+    field.landmarks.push({
+      id: 'dune-lookout',
+      name: 'Coastal Dune Lookout Post',
+      x: 900,
+      y: 340,
+      radius: 32,
+      depthY: 360,
+      isLandmark: true,
+    });
+  }
 
   // Upper dunes (y < 420): 3 benches along boardwalk.
   const benchSpots = [
@@ -266,6 +289,7 @@ function initCoastalScenery(field) {
     { x: 1900, y: 260 },
   ];
   benchSpots.forEach((spot, i) => {
+    if (!isClearOfKeepouts(spot.x, spot.y, COASTAL_KEEPOUT, 80)) return;
     field.benches.push({
       id: `bench-coastal-${i}`,
       x: spot.x,
@@ -282,6 +306,7 @@ function initCoastalScenery(field) {
     { x: 2200, y: 200 },
   ];
   binSpots.forEach((spot, i) => {
+    if (!isClearOfKeepouts(spot.x, spot.y, COASTAL_KEEPOUT, 80)) return;
     field.bins.push({
       id: `bin-coastal-${i}`,
       x: spot.x,
@@ -297,6 +322,7 @@ function initCoastalScenery(field) {
     { x: 2400, y: 260 },
   ];
   rockSpots.forEach((spot, i) => {
+    if (!isClearOfKeepouts(spot.x, spot.y, COASTAL_KEEPOUT, 80)) return;
     field.rockOutcrops.push({
       id: `rock-coastal-${i}`,
       x: spot.x,
@@ -312,7 +338,7 @@ function initCoastalScenery(field) {
   for (let i = 0; i < 10; i += 1) {
     const x = 200 + rng() * (width - 400);
     const y = 1550 + rng() * 230;
-    if (!isClearOfKeepouts(x, y, COASTAL_KEEPOUT)) {
+    if (!isClearOfKeepouts(x, y, COASTAL_KEEPOUT, 80)) {
       // Nudge away from keepouts deterministically.
       continue;
     }

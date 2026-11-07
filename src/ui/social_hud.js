@@ -3,6 +3,7 @@ import { Protocol } from '../net/protocol.js';
 import { TouchControls } from './touch_controls.js';
 import { WSStatus } from '../net/network.js';
 import { NetStatus } from '../net/network.js';
+import { PUBLIC_ZONE_IDS, getZoneConfig } from '../world/zones.js';
 
 export class SocialHUD {
   constructor(networkManager, localOwner, localDog, coatPresets) {
@@ -26,7 +27,6 @@ export class SocialHUD {
       this.hudOverlay.innerHTML = `
         <div class="hud-panel">
           <div class="hud-pill">
-            <span style="font-size: 1.2rem;">🌳</span>
             <span id="hud-title" class="hud-title" style="font-weight: 700; color: #f8fafc;">🌳 The Downs</span>
             <span class="hud-pill-badge" id="hud-mode-badge">Solo</span>
           </div>
@@ -688,11 +688,9 @@ export class SocialHUD {
     if (status === WSStatus.CONNECTED || status === NetStatus.CONNECTED_PEER || status === NetStatus.HOSTING) {
       const isCommons = !this.net.roomId ||
         this.net.roomId === 'the-commons' ||
-        this.net.roomId === 'clifton-commons' ||
-        this.net.roomId === 'the-downs' ||
-        this.net.roomId === 'the-woodland' ||
-        this.net.roomId === 'the-beach' ||
-        this.net.roomId === 'clifton-field';
+        this.net.roomId === 'clifton-field' ||
+        (Array.isArray(PUBLIC_ZONE_IDS) && PUBLIC_ZONE_IDS.includes(this.net.roomId)) ||
+        Boolean(getZoneConfig(this.net.roomId));
       if (badge) {
         if (isCommons) {
           badge.textContent = 'Online';

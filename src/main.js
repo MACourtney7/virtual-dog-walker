@@ -665,13 +665,13 @@ export class CliftonDownGame {
   }
 
   warpToZone(targetZoneId, targetX, targetY) {
-    this.currentZoneId = targetZoneId;
     this.warpCooldown = 2.5;
     this.warpFadeAlpha = 1.0;
 
     if (this.field && typeof this.field.loadZone === 'function') {
       this.field.loadZone(targetZoneId);
     }
+    this.currentZoneId = (this.field && this.field.zoneId) || targetZoneId;
     syncWorldObstacles(this.field);
 
     this.owner.x = targetX;
@@ -1290,9 +1290,10 @@ export class CliftonDownGame {
       this.navArrow.draw(this.ctx, this.camera, this.owner.x, this.owner.y);
     }
 
-    // Zone Warp Crossfade Overlay
-    if (this.warpFadeAlpha > 0.01 && this.canvas) {
+    // Zone Warp Crossfade Overlay (screen-space, reset transform)
+    if (this.warpFadeAlpha > 0.01 && this.canvas && this.ctx) {
       this.ctx.save();
+      this.ctx.setTransform(1, 0, 0, 1, 0, 0);
       this.ctx.fillStyle = `rgba(11, 17, 23, ${this.warpFadeAlpha * 0.75})`;
       this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
       this.ctx.restore();

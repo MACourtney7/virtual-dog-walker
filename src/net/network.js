@@ -650,6 +650,7 @@ export class NetworkManager {
 
   async switchRoom(newRoomId) {
     if (!newRoomId || newRoomId === this.roomId) return;
+    this.roomId = newRoomId;
     if (this.adapter && typeof this.adapter.switchRoom === 'function') {
       return await this.adapter.switchRoom(newRoomId);
     }

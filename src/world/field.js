@@ -496,7 +496,7 @@ export class Field {
       depthY: 485,
       isLandmark: true
     };
-    this.landmarks = [this.waterTower];
+    this.landmarks = this.waterTower ? [this.waterTower] : [];
 
     // 3. West Zone: Sea Walls Rocky Limestone Outcrops (x: 100-500, y: 800-1600)
     this.rockOutcrops = [

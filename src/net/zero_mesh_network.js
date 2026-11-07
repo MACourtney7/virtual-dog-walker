@@ -881,12 +881,9 @@ export class ZeroMeshNetworkManager {
       this.activeBridges.set(invite.host_peer_id || 'host', bridge);
     }
     this.setStatus(NetStatus.CONNECTED_PEER);
-    this.isHost = false;
     // Joiners must NOT open a host socket; doing so collides with the real
     // host's WebSocket lease and can trigger spurious demotions.
-    if (this.isHost) {
-      this._setupHostSocket(hostSecretHex);
-    }
+    this.isHost = false;
   }
 
   _attachBrowserWebRtc(wasmEngine, isOfferer, iceServers) {
@@ -954,7 +951,14 @@ export class ZeroMeshNetworkManager {
           try {
             dc.send(msg);
           } catch (e) {
-            console.warn('[ZeroMesh] Failed flushing queued DataChannel message:', e);
+            const kind = typeof msg === 'string' ? 'text' : 'binary';
+            const size = typeof msg === 'string'
+              ? msg.length
+              : (msg && typeof msg.byteLength === 'number' ? msg.byteLength : 'unknown');
+            console.warn(
+              `[ZeroMesh] Failed flushing queued DataChannel message (kind=${kind}, size=${size}):`,
+              e
+            );
           }
         }
       };

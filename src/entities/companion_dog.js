@@ -17,11 +17,7 @@ export const DogState = {
   LOST: 'LOST',
   POOPING: 'POOPING',
   ZOOMIES: 'ZOOMIES',
-  SNIFFING: 'SNIFFING',
-  SNIFFING_TRAIL: 'SNIFFING_TRAIL',
-  GREETING: 'GREETING',
-  CHASING: 'CHASING',
-  STRAY: 'STRAY'
+  SNIFFING_TRAIL: 'SNIFFING_TRAIL'
 };
 
 function lerpAngle(a, b, t) {
@@ -39,7 +35,9 @@ const ACTIVE_REST_BLOCKED_STATES = new Set([
   DogState.RECALLED,
   DogState.PLAY_BOW,
   DogState.ROLLING,
-  DogState.LYING_DOWN
+  DogState.LYING_DOWN,
+  DogState.SNIFFING_TRAIL,
+  DogState.SOCIAL_GREET
 ]);
 
 export const CoatPreset = {
@@ -509,7 +507,7 @@ export class CompanionDog {
     if (this.owner && !isLeashed && this.state !== DogState.LOST) {
       const distToOwnerAudio = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
       this._whineCooldown -= dt;
-      if ((distToOwnerAudio > 220 || this.isReturningToOwner) && this._whineCooldown <= 0 && this.audio && typeof this.audio.playWhine === 'function') {
+      if ((distToOwnerAudio > 220 || this.isReturningToOwner || this.returnTrotActive) && this._whineCooldown <= 0 && this.audio && typeof this.audio.playWhine === 'function') {
         this.audio.playWhine();
         this._whineCooldown = 1.5;
       }
@@ -677,10 +675,9 @@ export class CompanionDog {
         this.wagSpeed = 20;
         this.stateTimer -= dt;
         if (this.stateTimer <= 0) {
-          this.transitionTo(DogState.SITTING);
-          if (this.state === DogState.SITTING) {
-            this.stateTimer = 2.0 + Math.random() * 2.0;
-          }
+          // Directly enter SITTING to avoid re-evaluating the rolling-entry RNG
+          this.state = DogState.SITTING;
+          this.stateTimer = 2.0 + Math.random() * 2.0;
         }
         break;
 
@@ -1024,14 +1021,18 @@ export class CompanionDog {
     const distToOwner = Math.hypot(fromOwnerX, fromOwnerY);
 
     // Distance-scaled catch-up: probabilistic return-trot when the dog drifts far from owner
-    this.catchUpTimer += dt;
-    if (this.catchUpTimer >= 1.2 && distToOwner > 220) {
-      const base = Math.min(0.90, Math.max(0.08, (distToOwner - 220) / 260));
-      const obedience = Number(this.personality?.obedience ?? 4);
-      const p = Math.min(1, Math.max(0, base * (0.45 + 0.11 * obedience)));
-      if (Math.random() < p) {
-        this.returnTrotActive = true;
+    if (distToOwner > 220) {
+      this.catchUpTimer += dt;
+      if (this.catchUpTimer >= 1.2) {
+        const base = Math.min(0.90, Math.max(0.08, (distToOwner - 220) / 260));
+        const obedience = Number(this.personality?.obedience ?? 4);
+        const p = Math.min(1, Math.max(0, base * (0.45 + 0.11 * obedience)));
+        if (Math.random() < p) {
+          this.returnTrotActive = true;
+        }
+        this.catchUpTimer = 0;
       }
+    } else {
       this.catchUpTimer = 0;
     }
 

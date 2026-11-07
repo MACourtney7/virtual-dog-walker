@@ -178,6 +178,54 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         lying.update_resting(0.5)
         self.assertEqual(lying.state, "ROAMING")
 
+    def test_active_rest_blocked_states_include_sniffing_and_social(self):
+        """ACTIVE_REST_BLOCKED_STATES must include SNIFFING_TRAIL and SOCIAL_GREET."""
+        idx = self.dog_src.find("const ACTIVE_REST_BLOCKED_STATES = new Set([")
+        self.assertNotEqual(idx, -1)
+        window = self.dog_src[idx:idx + 600]
+        self.assertIn("DogState.SNIFFING_TRAIL", window)
+        self.assertIn("DogState.SOCIAL_GREET", window)
+
+    def test_rolling_completion_never_loops_rolling(self):
+        """ROLLING completion must directly enter SITTING with a positive timer, never re-roll."""
+        class Dog:
+            def __init__(self):
+                self.state = "ROLLING"
+                self.stateTimer = 0.05
+                self.happiness = 100
+                self.currentZone = {"sunny": True}
+                self.wagSpeed = 20
+
+            def update_rolling(self, dt):
+                self.stateTimer -= dt
+                if self.stateTimer <= 0:
+                    # Direct assignment (no transitionTo) prevents re-roll RNG
+                    self.state = "SITTING"
+                    self.stateTimer = 2.0 + 1.0  # deterministic stand-in for Math.random()
+
+        dog = Dog()
+        dog.update_rolling(0.1)
+        self.assertEqual(dog.state, "SITTING")
+        self.assertGreater(dog.stateTimer, 0)
+        # Source must not route ROLLING completion through transitionTo(SITTING)
+        idx = self.dog_src.find("case DogState.ROLLING:")
+        self.assertNotEqual(idx, -1)
+        window = self.dog_src[idx:idx + 500]
+        self.assertIn("this.state = DogState.SITTING;", window)
+        self.assertNotIn("this.transitionTo(DogState.SITTING)", window)
+
+    def test_whine_trigger_includes_return_trot_active(self):
+        """Whine audio trigger must include this.returnTrotActive."""
+        self.assertIn("this.isReturningToOwner || this.returnTrotActive", self.dog_src)
+
+    def test_catch_up_timer_gated_by_distance(self):
+        """catchUpTimer must only accumulate when distToOwner > 220."""
+        idx = self.dog_src.find("if (distToOwner > 220) {")
+        self.assertNotEqual(idx, -1)
+        window = self.dog_src[idx:idx + 500]
+        self.assertIn("this.catchUpTimer += dt;", window)
+        self.assertIn("this.catchUpTimer = 0;", window)
+
     def test_rolling_completion_transitions_to_sitting_with_timer(self):
         class Dog:
             def __init__(self):
@@ -496,6 +544,7 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         active_states = {
             "FETCHING", "ZOOMIES", "BARKING", "POOPING", "LOST",
             "RECALLED", "PLAY_BOW", "ROLLING", "LYING_DOWN",
+            "SNIFFING_TRAIL", "SOCIAL_GREET",
         }
 
         class Owner:
@@ -529,7 +578,7 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
                 elif self.state in active_states:
                     self.idleRestTimer = 0
 
-        for state in ("FETCHING", "ZOOMIES", "RECALLED"):
+        for state in ("FETCHING", "ZOOMIES", "RECALLED", "SNIFFING_TRAIL", "SOCIAL_GREET"):
             dog = Dog(state)
             dog.update_resting(0.5)
             self.assertEqual(dog.state, state,

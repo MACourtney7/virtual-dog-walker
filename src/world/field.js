@@ -796,9 +796,14 @@ export class Field {
   }
 
   addPoopPile(poopPile) {
-    if (poopPile) {
-      this.poopPiles.push(poopPile);
-    }
+    if (!poopPile) return null;
+    // Dedupe by id or overlapping position (±6px) to guarantee a single pile per drop.
+    const dup = this.poopPiles.find(p =>
+      p && (p.id === poopPile.id || Math.hypot(p.x - poopPile.x, p.y - poopPile.y) <= 6)
+    );
+    if (dup) return dup;
+    this.poopPiles.push(poopPile);
+    return poopPile;
   }
 
   removePoopPile(id) {
@@ -820,6 +825,25 @@ export class Field {
       }
     }
     return nearest ? { ...nearest, dist: minDist } : null;
+  }
+
+  /**
+   * Pick up the poop pile at (x, y) and purge any overlapping ghost piles within 6px.
+   * Returns the removed target pile, or null if none was within PICKUP_RADIUS.
+   *
+   * @param {number} x
+   * @param {number} y
+   * @returns {object|null}
+   */
+  pickupPoop(x, y) {
+    const PICKUP_RADIUS = 38;
+    const target = this.poopPiles.find(p => Math.hypot(p.x - x, p.y - y) <= PICKUP_RADIUS);
+    if (!target) return null;
+    // Purge ghosts (including target) within 6px of (x, y)
+    this.poopPiles = this.poopPiles.filter(p =>
+      Math.hypot(p.x - x, p.y - y) > 6
+    );
+    return target;
   }
 
   getNearestPoopPile(x, y, maxRange = Infinity) {

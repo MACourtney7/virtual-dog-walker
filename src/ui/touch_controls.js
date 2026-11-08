@@ -16,7 +16,6 @@ export class TouchControls {
 
     this.contextualAction = null;
     this.currentGait = 'STAND';
-    this._lastTriggerAt = 0;
 
     this.overlay = null;
     this.pacePad = null;
@@ -89,11 +88,24 @@ export class TouchControls {
 
   bindEvents() {
     // Action Buttons
+    // Deduplication is strictly PER-BUTTON: each button tracks its own
+    // pointerHandled flag and lastTrigger timestamp so activations on one
+    // button never swallow activations on another.
     const bindButton = (id, callback) => {
       const btn = document.getElementById(id);
       if (!btn) return;
 
-      const trigger = (e) => {
+      let pointerHandled = false;
+      let lastTrigger = 0;
+
+      const invoke = () => {
+        this.vibrate(25);
+        if (typeof callback === 'function') {
+          callback();
+        }
+      };
+
+      const onPointer = (e) => {
         if (btn.classList.contains('is-disabled') || btn.hasAttribute('disabled')) {
           e.preventDefault();
           e.stopPropagation();
@@ -102,30 +114,44 @@ export class TouchControls {
         e.preventDefault();
         e.stopPropagation();
 
-        // Debounce: touchstart + pointerdown + click can all fire for a single
-        // physical press. Ignore duplicate triggers within 200ms.
+        pointerHandled = true;
+
         const now = Date.now();
-        if (now - this._lastTriggerAt < 200) {
+        if (now - lastTrigger < 200) {
           return;
         }
-        this._lastTriggerAt = now;
-
-        this.vibrate(25);
-        if (typeof callback === 'function') {
-          callback();
-        }
+        lastTrigger = now;
+        invoke();
       };
 
-      btn.addEventListener('touchstart', trigger, { passive: false });
+      btn.addEventListener('touchstart', onPointer, { passive: false });
       btn.addEventListener('pointerdown', (e) => {
         // Pointer events fire for both mouse and touch; skip if touch already handled
         if (e.pointerType === 'touch') return;
-        trigger(e);
+        onPointer(e);
       });
       btn.addEventListener('click', (e) => {
-        // Prevent duplicate trigger if touch/pointer fired
+        // Suppress the synthetic click that follows a pointer/touch activation
+        if (pointerHandled) {
+          pointerHandled = false;
+          return;
+        }
         if (e.detail === 0) return;
-        trigger(e);
+
+        if (btn.classList.contains('is-disabled') || btn.hasAttribute('disabled')) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+
+        const now = Date.now();
+        if (now - lastTrigger < 200) {
+          return;
+        }
+        lastTrigger = now;
+        invoke();
       });
     };
 

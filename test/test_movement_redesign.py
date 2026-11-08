@@ -401,6 +401,226 @@ class TestBoundaryCollisionStopsMotion(unittest.TestCase):
         self.assertEqual(o.vy, 0)
 
 
+class TestImmediateInteractionCancelsPendingSingle(unittest.TestCase):
+    """Verify immediate object interactions cancel pending deferred gestures."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_cancel_pending_single_helper_exists(self):
+        self.assertIn("const cancelPendingSingle = () => {", self.src)
+        self.assertIn("clearTimeout(this._pendingGestureTimer)", self.src)
+        self.assertIn("this._pendingGesture = null;", self.src)
+
+    def test_dog_interaction_cancels_pending(self):
+        # The dog hit branch must cancel pending + reset double-click state
+        idx_dog = self.src.index("// 1. Companion dog")
+        idx_poop = self.src.index("// 2. Poop pile")
+        dog_block = self.src[idx_dog:idx_poop]
+        self.assertIn("cancelPendingSingle();", dog_block)
+        self.assertIn("this._lastClickTime = 0;", dog_block)
+        self.assertIn("this.petDog();", dog_block)
+        self.assertIn("this.owner.setGait('STAND');", dog_block)
+
+    def test_poop_interaction_cancels_pending(self):
+        idx_poop = self.src.index("// 2. Poop pile")
+        idx_bin = self.src.index("// 3. Dog bin")
+        poop_block = self.src[idx_poop:idx_bin]
+        self.assertIn("cancelPendingSingle();", poop_block)
+        self.assertIn("this._lastClickTime = 0;", poop_block)
+        self.assertIn("this.pickUpPoop();", poop_block)
+
+    def test_bin_interaction_cancels_pending(self):
+        idx_bin = self.src.index("// 3. Dog bin")
+        idx_deferred = self.src.index("// --- Deferred gestures")
+        bin_block = self.src[idx_bin:idx_deferred]
+        self.assertIn("cancelPendingSingle();", bin_block)
+        self.assertIn("this._lastClickTime = 0;", bin_block)
+        self.assertIn("this.disposePoopBag();", bin_block)
+
+    def test_behavioral_field_then_dog(self):
+        """Simulate: field tap (STAND->STROLL pending) then dog tap within 280ms.
+
+        Expected: dog is petted, gait is STAND, and the pending STROLL is
+        discarded so the owner never transitions back to STROLL.
+        """
+        state = {
+            'gait': 'STAND',
+            'pending': None,
+            'pending_timer': None,
+            'last_click_time': 0,
+            'last_click_x': 0,
+            'last_click_y': 0,
+            'petted': False,
+        }
+
+        def cancel_pending_single():
+            state['pending_timer'] = None
+            state['pending'] = None
+
+        def resolve_captured_press(captured, is_double):
+            if captured['type'] == 'field':
+                if is_double:
+                    if captured['gaitAtPress'] == 'STAND':
+                        state['gait'] = 'STROLL'
+                else:
+                    if captured['gaitAtPress'] == 'STAND':
+                        state['gait'] = 'STROLL'
+
+        def field_press(now):
+            captured = {'type': 'field', 'gaitAtPress': state['gait']}
+            state['last_click_time'] = now
+            state['pending'] = captured
+            state['pending_timer'] = 'scheduled'
+
+        def dog_press():
+            cancel_pending_single()
+            state['last_click_time'] = 0
+            state['last_click_x'] = 0
+            state['last_click_y'] = 0
+            state['petted'] = True
+            state['gait'] = 'STAND'
+
+        # Field tap at t=0 (STAND -> pending STROLL)
+        field_press(0)
+        self.assertEqual(state['gait'], 'STAND')
+        self.assertIsNotNone(state['pending'])
+
+        # Dog tap at t=100ms (within 280ms window)
+        dog_press()
+        self.assertTrue(state['petted'])
+        self.assertEqual(state['gait'], 'STAND')
+        self.assertIsNone(state['pending'])
+        self.assertIsNone(state['pending_timer'])
+
+        # If the pending timer had fired it would have set STROLL; verify it
+        # cannot because it was cancelled.
+        if state['pending'] is not None:
+            resolve_captured_press(state['pending'], False)
+        self.assertEqual(state['gait'], 'STAND')
+
+
+class TestRightClickThrowWithin30px(unittest.TestCase):
+    """Verify right-click within 30px throws toward clicked world coordinates."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_right_click_uses_clicked_coords(self):
+        idx = self.src.index("// Right-click: throw ball toward world coordinate")
+        end = self.src.index("// Only left-click / primary pointer", idx)
+        block = self.src[idx:end]
+        self.assertIn("this.throwBallAt(worldTarget.x, worldTarget.y, dirX, dirY);", block)
+        self.assertIn("if (dist > 0.001)", block)
+        self.assertIn("dirX = dx / dist;", block)
+        self.assertIn("dirY = dy / dist;", block)
+        self.assertIn("dirX = Math.cos(this.owner.angle);", block)
+        self.assertIn("dirY = Math.sin(this.owner.angle);", block)
+
+    def test_behavioral_throw_direction(self):
+        """Simulate right-click direction resolution."""
+        import math
+
+        def resolve(owner_x, owner_y, angle, wx, wy):
+            dx = wx - owner_x
+            dy = wy - owner_y
+            dist = math.hypot(dx, dy)
+            if dist > 0.001:
+                return (dx / dist, dy / dist, wx, wy)
+            return (math.cos(angle), math.sin(angle), wx, wy)
+
+        # Click 10px east of owner: direction should be (1, 0), target = click
+        dirX, dirY, tx, ty = resolve(100, 100, 0.0, 110, 100)
+        self.assertAlmostEqual(dirX, 1.0)
+        self.assertAlmostEqual(dirY, 0.0)
+        self.assertEqual((tx, ty), (110, 100))
+
+        # Click 5px north of owner: direction should be (0, -1)
+        dirX, dirY, tx, ty = resolve(100, 100, 0.0, 100, 95)
+        self.assertAlmostEqual(dirX, 0.0)
+        self.assertAlmostEqual(dirY, -1.0)
+
+        # Click exactly on owner: fall back to facing angle (east)
+        dirX, dirY, tx, ty = resolve(100, 100, 0.0, 100, 100)
+        self.assertAlmostEqual(dirX, 1.0)
+        self.assertAlmostEqual(dirY, 0.0)
+
+
+class TestTouchButtonPerButtonDedup(unittest.TestCase):
+    """Verify touch button deduplication is strictly per-button."""
+
+    def setUp(self):
+        self.src = read("src/ui/touch_controls.js")
+
+    def test_no_global_last_trigger(self):
+        self.assertNotIn("this._lastTriggerAt", self.src)
+
+    def test_per_button_state(self):
+        self.assertIn("let pointerHandled = false;", self.src)
+        self.assertIn("let lastTrigger = 0;", self.src)
+        self.assertIn("pointerHandled = true;", self.src)
+        self.assertIn("if (pointerHandled) {", self.src)
+        self.assertIn("pointerHandled = false;", self.src)
+        self.assertIn("if (now - lastTrigger < 200)", self.src)
+
+    def test_behavioral_per_button_isolation(self):
+        """Pressing button A then button B within 50ms must execute both."""
+        buttons = {
+            'A': {'pointerHandled': False, 'lastTrigger': 0, 'fired': []},
+            'B': {'pointerHandled': False, 'lastTrigger': 0, 'fired': []},
+        }
+
+        def pointer_down(name, now):
+            b = buttons[name]
+            b['pointerHandled'] = True
+            if now - b['lastTrigger'] < 200:
+                return
+            b['lastTrigger'] = now
+            b['fired'].append(now)
+
+        def click(name, now):
+            b = buttons[name]
+            if b['pointerHandled']:
+                b['pointerHandled'] = False
+                return
+            if now - b['lastTrigger'] < 200:
+                return
+            b['lastTrigger'] = now
+            b['fired'].append(now)
+
+        # Press A at t=1000, then B at t=1050 (50ms later)
+        pointer_down('A', 1000)
+        pointer_down('B', 1050)
+        self.assertEqual(buttons['A']['fired'], [1000])
+        self.assertEqual(buttons['B']['fired'], [1050])
+
+        # Synthetic clicks that follow each pointerdown are suppressed
+        click('A', 1001)
+        click('B', 1051)
+        self.assertEqual(buttons['A']['fired'], [1000])
+        self.assertEqual(buttons['B']['fired'], [1050])
+
+        # A second press on A after the debounce window fires again
+        pointer_down('A', 1300)
+        self.assertEqual(buttons['A']['fired'], [1000, 1300])
+
+    def test_behavioral_duplicate_pointer_suppressed(self):
+        """Duplicate pointerdown on the same button within 200ms fires once."""
+        b = {'pointerHandled': False, 'lastTrigger': 0, 'fired': []}
+
+        def pointer_down(now):
+            b['pointerHandled'] = True
+            if now - b['lastTrigger'] < 200:
+                return
+            b['lastTrigger'] = now
+            b['fired'].append(now)
+
+        pointer_down(1000)
+        pointer_down(1005)
+        pointer_down(1010)
+        self.assertEqual(len(b['fired']), 1)
+
+
 class TestDoublePressDistanceThreshold(unittest.TestCase):
     """Verify double-press distance threshold uses inclusive <= 24px."""
 

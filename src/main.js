@@ -560,6 +560,16 @@ export class CliftonDownGame {
     const DOUBLE_CLICK_MS = 280;
     const DOUBLE_CLICK_PX = 24;
 
+    // Cancel any pending deferred single gesture (used when an immediate
+    // object interaction supersedes the deferred field gesture).
+    const cancelPendingSingle = () => {
+      if (this._pendingGestureTimer) {
+        clearTimeout(this._pendingGestureTimer);
+        this._pendingGestureTimer = null;
+      }
+      this._pendingGesture = null;
+    };
+
     // Resolve a captured press (hit type + heading captured at press time).
     const resolveCapturedPress = (captured, isDouble) => {
       if (!captured) return;
@@ -608,16 +618,16 @@ export class CliftonDownGame {
         const dx = worldTarget.x - this.owner.x;
         const dy = worldTarget.y - this.owner.y;
         const dist = Math.hypot(dx, dy);
-        if (dist > 30) {
-          const dirX = dx / dist;
-          const dirY = dy / dist;
-          this.throwBallAt(worldTarget.x, worldTarget.y, dirX, dirY);
+        let dirX, dirY;
+        if (dist > 0.001) {
+          dirX = dx / dist;
+          dirY = dy / dist;
         } else {
-          // Fallback: throw along current facing so right-click is never dropped
-          const dirX = Math.cos(this.owner.angle);
-          const dirY = Math.sin(this.owner.angle);
-          this.throwBallAt(this.owner.x + dirX * 320, this.owner.y + dirY * 320, dirX, dirY);
+          // Degenerate: click landed on the owner; throw along current facing
+          dirX = Math.cos(this.owner.angle);
+          dirY = Math.sin(this.owner.angle);
         }
+        this.throwBallAt(worldTarget.x, worldTarget.y, dirX, dirY);
         return;
       }
 
@@ -630,6 +640,12 @@ export class CliftonDownGame {
       const dogScreen = this.camera.worldToScreen(this.dog.x, this.dog.y);
       const distToDog = Math.hypot(e.clientX - dogScreen.x, e.clientY - dogScreen.y);
       if (distToDog < 48) {
+        // Immediate interaction supersedes any pending deferred field gesture
+        // and resets double-click state so the next field tap is a fresh single.
+        cancelPendingSingle();
+        this._lastClickTime = 0;
+        this._lastClickX = 0;
+        this._lastClickY = 0;
         this.petDog();
         this.owner.setGait('STAND');
         return;
@@ -640,6 +656,10 @@ export class CliftonDownGame {
         const poopScreen = this.camera.worldToScreen(this.activePoopPileNearPlayer.x, this.activePoopPileNearPlayer.y);
         const distToPoopScreen = Math.hypot(e.clientX - poopScreen.x, e.clientY - poopScreen.y);
         if (distToPoopScreen < 40) {
+          cancelPendingSingle();
+          this._lastClickTime = 0;
+          this._lastClickX = 0;
+          this._lastClickY = 0;
           this.pickUpPoop();
           return;
         }
@@ -650,6 +670,10 @@ export class CliftonDownGame {
         const binScreen = this.camera.worldToScreen(this.activeBinNearPlayer.x, this.activeBinNearPlayer.y);
         const distToBinScreen = Math.hypot(e.clientX - binScreen.x, e.clientY - binScreen.y);
         if (distToBinScreen < 44) {
+          cancelPendingSingle();
+          this._lastClickTime = 0;
+          this._lastClickX = 0;
+          this._lastClickY = 0;
           this.disposePoopBag();
           return;
         }

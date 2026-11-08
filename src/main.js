@@ -1,7 +1,7 @@
 // Clifton Down: Social Dog Walking Sandbox - Main Orchestrator
 
 import { Field, Camera } from './world/field.js';
-import { Owner } from './entities/owner.js';
+import { Owner, Gait } from './entities/owner.js';
 import { CompanionDog, CoatPreset, DogState } from './entities/companion_dog.js';
 import { TennisBall } from './entities/toy.js';
 import { NetworkManager, NetStatus } from './net/network.js';
@@ -18,6 +18,16 @@ import { weatherClient, WeatherType } from './systems/weather.js';
 import { environmentSystem, TimeOfDay } from './world/environment.js';
 import { initWasmSim, syncWorldObstacles } from './engine/wasm_sim_bridge.js';
 import { applyCoastalShallowWaterInteraction } from './systems/coastalWater.js';
+
+// Fallback gait order for step-down resolution when Owner lacks a helper.
+const GAIT_ORDER = ['STAND', 'STROLL', 'WALK', 'JOG'];
+
+// Resolve the next-lower gait from the given gait string.
+function stepDownGaitName(gait) {
+  const idx = GAIT_ORDER.indexOf(gait);
+  if (idx <= 0) return GAIT_ORDER[0];
+  return GAIT_ORDER[idx - 1];
+}
 
 export class CliftonDownGame {
   constructor() {
@@ -649,6 +659,52 @@ export class CliftonDownGame {
       // Only left-click / primary pointer
       if (e.button !== undefined && e.button !== 0) return;
 
+      // --- Avatar click → brake gesture (REQ-004) ---
+      // Detect clicks on the player avatar body and resolve as a brake gesture.
+      // This is an ADDITION: non-avatar clicks fall through to existing handling.
+      {
+        const avatarWorld = this.camera.screenToWorld(e.clientX, e.clientY);
+        const hitRadius = (Owner && typeof Owner.PLAYER_HIT_RADIUS === 'number')
+          ? Owner.PLAYER_HIT_RADIUS
+          : 26;
+        const distSq = (avatarWorld.x - this.owner.x) ** 2 + (avatarWorld.y - this.owner.y) ** 2;
+        const onPlayer = distSq < (hitRadius * hitRadius) ||
+          (typeof this.owner.isPointOnPlayer === 'function' &&
+            this.owner.isPointOnPlayer(avatarWorld.x, avatarWorld.y));
+
+        if (onPlayer) {
+          if (this.owner.gait !== 'STAND') {
+            const nowMs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+            const lastAvatarClickTime = this._lastAvatarClickTime || 0;
+            let mode;
+            if (lastAvatarClickTime > 0 && (nowMs - lastAvatarClickTime) <= 300) {
+              mode = 'immediate';
+              this._lastAvatarClickTime = 0;
+            } else {
+              mode = 'step';
+              this._lastAvatarClickTime = nowMs;
+            }
+            // Cancel any pending deferred field gesture so it doesn't fire later.
+            cancelPendingSingle();
+            this._lastClickTime = 0;
+            this._lastClickX = 0;
+            this._lastClickY = 0;
+
+            if (mode === 'immediate') {
+              this.owner.setGait('STAND');
+            } else {
+              if (typeof this.owner.stepDownGait === 'function') {
+                this.owner.stepDownGait();
+              } else {
+                this.owner.setGait(stepDownGaitName(this.owner.gait));
+              }
+            }
+          }
+          // Clicking a STAND avatar: no brake, no gait change.
+          return;
+        }
+      }
+
       // --- Immediate hits (no double-click delay) ---
 
       // 1. Companion dog
@@ -1237,11 +1293,15 @@ export class CliftonDownGame {
       this.touchControls.setCurrentGait(this.owner.gait);
     }
 
-    // Grass footstep sound (cadence scales with gait)
+    // Grass footstep sound (cadence scales linearly with gait speed over [75, 185])
     if (this.owner.isMoving && this.owner.gait !== 'STAND') {
-      const footstepInterval = this.owner.gait === 'JOG' ? 200
-        : this.owner.gait === 'WALK' ? 300
-        : 460; // STROLL
+      const gaitSpeeds = (Owner && Owner.GAIT_SPEEDS) ? Owner.GAIT_SPEEDS : null;
+      const speed = gaitSpeeds && gaitSpeeds[this.owner.gait] !== undefined
+        ? gaitSpeeds[this.owner.gait]
+        : (this.owner.getCurrentSpeed ? this.owner.getCurrentSpeed() : 100);
+      // Map speed [75, 185] -> interval [460ms, 200ms] (linear, clamped)
+      const t = Math.max(0, Math.min(1, (speed - 75) / (185 - 75)));
+      const footstepInterval = 460 - t * (460 - 200);
       if (timestampNow() - this.lastFootstepTime > footstepInterval) {
         this.lastFootstepTime = timestampNow();
         sound.playFootstep();

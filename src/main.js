@@ -19,16 +19,6 @@ import { environmentSystem, TimeOfDay } from './world/environment.js';
 import { initWasmSim, syncWorldObstacles } from './engine/wasm_sim_bridge.js';
 import { applyCoastalShallowWaterInteraction } from './systems/coastalWater.js';
 
-// Fallback gait order for step-down resolution when Owner lacks a helper.
-const GAIT_ORDER = ['STAND', 'STROLL', 'WALK', 'JOG'];
-
-// Resolve the next-lower gait from the given gait string.
-function stepDownGaitName(gait) {
-  const idx = GAIT_ORDER.indexOf(gait);
-  if (idx <= 0) return GAIT_ORDER[0];
-  return GAIT_ORDER[idx - 1];
-}
-
 export class CliftonDownGame {
   constructor() {
     this.canvas = document.getElementById('game-canvas');

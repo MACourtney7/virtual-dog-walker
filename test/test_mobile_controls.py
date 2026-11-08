@@ -188,16 +188,20 @@ class MockJoystick:
 
 
 class TestPaceControls(unittest.TestCase):
-    """Verify discrete pace controls replace the legacy analog joystick."""
+    """Verify discrete pace controls replace the legacy analog joystick.
+
+    Ticket unification-021 removes the on-screen pace buttons; the gait badge
+    remains as the sole pace indicator.
+    """
 
     def test_pace_controls_source_contract(self):
         with open("src/ui/touch_controls.js", "r", encoding="utf-8") as f:
             code = f.read()
 
-        self.assertIn("onPaceDown", code)
-        self.assertIn("onPaceUp", code)
-        self.assertIn("btn-touch-pace-down", code)
-        self.assertIn("btn-touch-pace-up", code)
+        # Pace buttons removed in unification-021
+        self.assertNotIn("btn-touch-pace-down", code)
+        self.assertNotIn("btn-touch-pace-up", code)
+        # Gait badge and setter preserved
         self.assertIn("touch-gait-badge", code)
         self.assertIn("setCurrentGait", code)
 

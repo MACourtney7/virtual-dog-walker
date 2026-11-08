@@ -13,9 +13,9 @@ const GAIT_ORDER = [Gait.STAND, Gait.STROLL, Gait.WALK, Gait.JOG];
 
 const GAIT_SPEEDS = Object.freeze({
   [Gait.STAND]: 0,
-  [Gait.STROLL]: 100,
-  [Gait.WALK]: 185,
-  [Gait.JOG]: 265
+  [Gait.STROLL]: 75,
+  [Gait.WALK]: 100,
+  [Gait.JOG]: 185
 });
 
 // Max turn rate (radians/sec) per gait
@@ -29,6 +29,9 @@ const GAIT_TURN_RATES = Object.freeze({
 const STEP_OFF_TURN_RATE = (300 * Math.PI) / 180; // 300 deg/s
 const STEP_OFF_ALIGN_TOLERANCE = (5 * Math.PI) / 180; // ~5 deg
 const STEP_OFF_MAX_DURATION = 0.5; // seconds
+
+// Player body hit-test radius (px)
+const PLAYER_HIT_RADIUS = 26;
 
 const JOG_DURATION = 2.0;
 const JOG_COOLDOWN = 2.0;
@@ -107,6 +110,10 @@ export class Owner {
     // Heading-only update. Gait transitions are the caller's responsibility
     // (e.g. main.js explicitly promotes STAND -> STROLL on a field press).
     this.targetHeading = radians;
+    // Turn-on-the-spot: while STAND, snap the facing angle immediately.
+    if (this.gait === Gait.STAND) {
+      this.angle = radians;
+    }
   }
 
   setGait(nextGait, options = {}) {
@@ -212,23 +219,34 @@ export class Owner {
     // Match the rendered ground halo ellipse geometry (see drawGroundHalo)
     const centerX = this.x;
     const centerY = this.y + 12;
-    const Rx = 22;
-    const Ry = 12.1;
+    const baseX = 22;
+    const baseY = 12.1;
 
+    // Translate world point into owner's local frame (rotate by -angle)
     const dx = worldX - centerX;
     const dy = worldY - centerY;
+    const cosA = Math.cos(-this.angle);
+    const sinA = Math.sin(-this.angle);
+    const localX = dx * cosA - dy * sinA;
+    const localY = dx * sinA + dy * cosA;
 
     // Normalized elliptical distance
-    const normDist = Math.hypot(dx / Rx, dy / Ry);
-    if (normDist < 0.7 || normDist > 1.35) return false;
+    const normDist = Math.sqrt((localX / baseX) ** 2 + (localY / baseY) ** 2);
+    if (normDist < 0.7 || normDist > 3.5) return false;
 
-    // Normalized angle in ellipse space
-    const normAngle = Math.atan2(dy / Ry, dx / Rx);
-    const rearHeading = this.angle + Math.PI;
-    const delta = Math.abs(angleDelta(rearHeading, normAngle));
+    // Bearing of local point from +x axis, normalized to [0, 2π)
+    let bearing = Math.atan2(localY, localX);
+    if (bearing < 0) bearing += Math.PI * 2;
 
-    const halfSpan = (110 * Math.PI) / 180 / 2; // ~55 deg each side
-    return delta <= halfSpan;
+    const start = (125 * Math.PI) / 180;
+    const end = (235 * Math.PI) / 180;
+    return bearing >= start && bearing <= end;
+  }
+
+  isPointOnPlayer(worldX, worldY) {
+    const dx = worldX - this.x;
+    const dy = worldY - this.y;
+    return (dx * dx + dy * dy) < (PLAYER_HIT_RADIUS * PLAYER_HIT_RADIUS);
   }
 
   setChat(text, duration = 4.0) {
@@ -293,12 +311,23 @@ export class Owner {
       this.vy = Math.sin(this.angle) * speed;
       this.isMoving = true;
       // Cadence scales with gait speed
-      const cadence = 4.0 + (speed / 265) * 8.0;
+      const cadence = 4.0 + (speed / 185) * 8.0;
       this.walkPhase += dt * cadence;
     } else {
       this.vx = 0;
       this.vy = 0;
       this.isMoving = false;
+    }
+
+    // Step-off alignment gate: hold position until facing target heading.
+    if (this.stepOffActive) {
+      const alignErr = Math.abs(angleDelta(this.angle, this.targetHeading));
+      if (alignErr > STEP_OFF_ALIGN_TOLERANCE) {
+        this.vx = 0;
+        this.vy = 0;
+      } else {
+        this.stepOffActive = false;
+      }
     }
     // Keep isMoving boolean in sync with gait for Protocol.createSyncState & rendering
     this.isMoving = this.gait !== Gait.STAND;
@@ -685,19 +714,37 @@ export class Owner {
       }
     }
 
-    // Rear brake arc (hidden in STAND)
+    // Enlarged rear brake sector (hidden in STAND)
     if (this.gait !== Gait.STAND) {
-      const rearAngle = angle + Math.PI;
-      const halfSpan = (110 * Math.PI) / 180 / 2;
+      const baseX = radius;         // 22
+      const baseY = radius * 0.55;  // 12.1
+      const outerScale = 3.5;
+      const startAngle = angle + (125 * Math.PI) / 180;
+      const endAngle = angle + (235 * Math.PI) / 180;
+
+      // Filled wedge from origin across the full sector
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.20)';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      const steps = 24;
+      for (let i = 0; i <= steps; i++) {
+        const t = startAngle + (i / steps) * (endAngle - startAngle);
+        const px = cx + Math.cos(t) * baseX * outerScale;
+        const py = cy + Math.sin(t) * baseY * outerScale;
+        if (i === 0) ctx.lineTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+
+      // Contour arc at the outer ring of the sector
       ctx.strokeStyle = 'rgba(239, 68, 68, 0.55)';
       ctx.lineWidth = 3;
       ctx.beginPath();
-      // Ellipse arc: use parametric sampling for the foreshortened ellipse
-      const steps = 16;
       for (let i = 0; i <= steps; i++) {
-        const t = rearAngle - halfSpan + (i / steps) * (halfSpan * 2);
-        const px = cx + Math.cos(t) * radius;
-        const py = cy + Math.sin(t) * radius * 0.55;
+        const t = startAngle + (i / steps) * (endAngle - startAngle);
+        const px = cx + Math.cos(t) * baseX * outerScale;
+        const py = cy + Math.sin(t) * baseY * outerScale;
         if (i === 0) ctx.moveTo(px, py);
         else ctx.lineTo(px, py);
       }
@@ -1102,3 +1149,8 @@ export class Owner {
     ctx.restore();
   }
 }
+
+// Static exports for test/tooling access
+Owner.GAIT_SPEEDS = GAIT_SPEEDS;
+Owner.PLAYER_HIT_RADIUS = PLAYER_HIT_RADIUS;
+Owner.STEP_OFF_ALIGN_TOLERANCE = STEP_OFF_ALIGN_TOLERANCE;

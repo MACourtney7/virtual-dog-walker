@@ -1168,7 +1168,29 @@ export class Field {
     const clampedX = Math.max(minX, Math.min(maxX, nx));
     const clampedY = Math.max(minY, Math.min(maxY, ny));
     if (clampedX !== nx || clampedY !== ny) {
-      kind = 'boundary';
+      // Boundary anti-stuck: if the heading points back into the playable
+      // area (dot(heading, inwardNormal) > 0), do not flag as boundary so
+      // the owner is not forced to STAND while escaping the wall.
+      let escaping = false;
+      if (typeof targetHeading === 'number' && isFinite(targetHeading)) {
+        const hx = Math.cos(targetHeading);
+        const hy = Math.sin(targetHeading);
+        // Inward normal components (pointing away from the wall into playable area)
+        let nX = 0;
+        let nY = 0;
+        if (clampedX !== nx) {
+          // Clamped on X axis: inward normal points toward world centre on X
+          nX = nx < clampedX ? 1 : -1;
+        }
+        if (clampedY !== ny) {
+          nY = ny < clampedY ? 1 : -1;
+        }
+        const dot = hx * nX + hy * nY;
+        if (dot > 0) escaping = true;
+      }
+      if (!escaping) {
+        kind = 'boundary';
+      }
     }
     nx = clampedX;
     ny = clampedY;

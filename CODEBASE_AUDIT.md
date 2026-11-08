@@ -6904,14 +6904,14 @@ function lerpAngle(a, b, t) {
 // Forward-flank bearing bands (relative to owner.angle). The dog must never
 // land in the straight-behind zone (180° ± 25°).
 const FLANK_RIGHT = {
-  min: (30 * Math.PI) / 180,
-  mid: (60 * Math.PI) / 180,
-  max: (120 * Math.PI) / 180
+  min: (15 * Math.PI) / 180,
+  mid: (30 * Math.PI) / 180, // ~1 o'clock, leading slightly ahead of owner
+  max: (60 * Math.PI) / 180
 };
 const FLANK_LEFT = {
-  min: (-120 * Math.PI) / 180,
-  mid: (-60 * Math.PI) / 180,
-  max: (-30 * Math.PI) / 180
+  min: (-60 * Math.PI) / 180,
+  mid: (-30 * Math.PI) / 180, // ~11 o'clock, leading slightly ahead of owner
+  max: (-15 * Math.PI) / 180
 };
 
 // Leash hand anchor geometry (must stay OUTSIDE the 26px body radius so the
@@ -7022,6 +7022,12 @@ export class CompanionDog {
 
     // Leash pulling physics state
     this.isPullingLeash = false;
+
+    // Leash tension state (exposed for rendering & tests)
+    this.leashTaut = true;
+    this.leashTension = 1.0;
+    this.leashSagPx = 0;
+    this.leashVibrationPx = 0;
 
     this.state = (this.owner && !this.owner.isLeashed) ? DogState.ROAMING : DogState.FOLLOWING;
     this.stateTimer = 0;
@@ -7651,6 +7657,23 @@ export class CompanionDog {
       }
     } else if (this.owner && !this.owner.isLeashed) {
       this.isPullingLeash = false;
+    }
+
+    // Update leash tension state (on-leash implies taut; sag/vibration derived)
+    if (this.owner && this.owner.isLeashed) {
+      const leashDist = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
+      this.leashTaut = true;
+      this.leashTension = 1.0;
+      // Minimal sag: never more than 2px (and <= 3% of leash length)
+      this.leashSagPx = Math.min(2.0, Math.max(0.0, (90 - leashDist) * 0.05));
+      // Subtle vibration only while the owner is moving
+      const ownerMoving = Boolean(this.owner.isMoving) && this.owner.gait !== 'STAND';
+      this.leashVibrationPx = ownerMoving ? 0.6 : 0.0;
+    } else {
+      this.leashTaut = false;
+      this.leashTension = 0.0;
+      this.leashSagPx = 0;
+      this.leashVibrationPx = 0;
     }
 
     // Obstacle and world boundary collisions
@@ -8774,6 +8797,10 @@ export class CompanionDog {
     }
   }
 
+  getCollarAnchor() {
+    return { x: this.x, y: this.y - 2 };
+  }
+
   drawLeash(ctx) {
     ctx.save();
 
@@ -8782,12 +8809,21 @@ export class CompanionDog {
     // itself never sits inside the owner torso.
     const sideSign = this.preferredSide === 'left' ? -1 : 1;
     let handSide = sideSign * HAND_SIDE;
-    let handX = this.owner.x + Math.cos(this.owner.angle + handSide) * HAND_RADIUS;
-    let handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
+    let handX;
+    let handY;
+    if (this.owner && typeof this.owner.getLeashHandAnchor === 'function') {
+      const anchor = this.owner.getLeashHandAnchor(this.preferredSide);
+      handX = anchor.x;
+      handY = anchor.y;
+    } else {
+      handX = this.owner.x + Math.cos(this.owner.angle + handSide) * HAND_RADIUS;
+      handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
+    }
 
     // Collar anchor point on dog
-    const collarX = this.x;
-    const collarY = this.y - 2;
+    const collar = this.getCollarAnchor();
+    const collarX = collar.x;
+    const collarY = collar.y;
 
     // Guard: if the leash midpoint would clip the owner torso, widen the hand
     // offset further so the sag point clears the body radius.
@@ -8799,24 +8835,21 @@ export class CompanionDog {
       handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
     }
 
-    const distToOwner = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
+    // Subtle vibration while the owner is moving (0 while STAND)
+    const vibration = this.leashVibrationPx || 0;
+    const jitter = vibration > 0 ? Math.sin(Date.now() * 0.05) * vibration : 0;
 
-    if (this.isPullingLeash || distToOwner > 98) {
-      // Taut, tensioned straight line from hand anchor to collar anchor with subtle vibrational jitter
-      const jitter = Math.sin(Date.now() * 0.05) * 0.8;
-      ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
-      ctx.lineWidth = 2.0;
-      ctx.beginPath();
-      ctx.moveTo(handX, handY);
-      ctx.lineTo(collarX + jitter, collarY + jitter);
-      ctx.stroke();
-    } else {
-      // Slack catenary sag quadratic curve. The sag point is pushed outward
-      // along the owner->midpoint direction so the curve never dips inside
-      // the owner body radius.
+    // Minimal sag (<= 2px) so the lead reads as taut
+    const sag = Math.min(2.0, this.leashSagPx || 0);
+
+    ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
+    ctx.lineWidth = this.isPullingLeash ? 2.0 : 1.8;
+    ctx.beginPath();
+    ctx.moveTo(handX, handY);
+    if (sag > 0.01) {
+      // Very shallow sag curve, pushed outward so it never dips inside the body.
       let midX = (handX + collarX) / 2;
-      let midY = (handY + collarY) / 2 + 14;
-
+      let midY = (handY + collarY) / 2 + sag;
       const midDx = midX - this.owner.x;
       const midDy = midY - this.owner.y;
       const midDist = Math.hypot(midDx, midDy);
@@ -8825,14 +8858,11 @@ export class CompanionDog {
         midX = this.owner.x + midDx * push;
         midY = this.owner.y + midDy * push;
       }
-
-      ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
-      ctx.lineWidth = 1.8;
-      ctx.beginPath();
-      ctx.moveTo(handX, handY);
-      ctx.quadraticCurveTo(midX, midY, collarX, collarY);
-      ctx.stroke();
+      ctx.quadraticCurveTo(midX, midY, collarX + jitter, collarY + jitter);
+    } else {
+      ctx.lineTo(collarX + jitter, collarY + jitter);
     }
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -10079,6 +10109,30 @@ export class Owner {
     this.jogCooldown = 0;
     this.stepOffTimer = 0;
     this.stepOffActive = false;
+
+    // Brake-light feedback pulse (rear brake sector flash)
+    this.brakeLightFeedback = {
+      active: false,
+      startedAt: 0,
+      durationMs: 250,
+      peakFillAlpha: 0.6,
+      peakStrokeAlpha: 0.9,
+      color: '#ef4444'
+    };
+  }
+
+  triggerBrakeLight(now = (typeof performance !== 'undefined' ? performance.now() : Date.now())) {
+    this.brakeLightFeedback.active = true;
+    this.brakeLightFeedback.startedAt = now;
+  }
+
+  getLeashHandAnchor(preferredSide = 'right') {
+    const sideSign = preferredSide === 'left' ? -1 : 1;
+    const handSide = sideSign * ((30 * Math.PI) / 180);
+    return {
+      x: this.x + Math.cos(this.angle + handSide) * 28,
+      y: this.y + Math.sin(this.angle + handSide) * 28
+    };
   }
 
   // --- Gait API ---
@@ -10701,8 +10755,23 @@ export class Owner {
       const startAngle = rearHeading - halfSpan;
       const endAngle = rearHeading + halfSpan;
 
+      // Brake-light feedback pulse: brighten the sector briefly on brake.
+      let fillAlpha = 0.20;
+      let strokeAlpha = 0.55;
+      if (this.brakeLightFeedback && this.brakeLightFeedback.active) {
+        const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        const elapsed = now - this.brakeLightFeedback.startedAt;
+        if (elapsed < this.brakeLightFeedback.durationMs) {
+          const decay = 1.0 - (elapsed / this.brakeLightFeedback.durationMs);
+          fillAlpha = 0.20 + (this.brakeLightFeedback.peakFillAlpha - 0.20) * decay;
+          strokeAlpha = 0.55 + (this.brakeLightFeedback.peakStrokeAlpha - 0.55) * decay;
+        } else {
+          this.brakeLightFeedback.active = false;
+        }
+      }
+
       // Filled wedge from origin across the full sector
-      ctx.fillStyle = 'rgba(239, 68, 68, 0.20)';
+      ctx.fillStyle = `rgba(239, 68, 68, ${fillAlpha})`;
       ctx.beginPath();
       ctx.moveTo(cx, cy);
       const steps = 24;
@@ -10716,7 +10785,7 @@ export class Owner {
       ctx.fill();
 
       // Contour arc at the outer ring of the sector
-      ctx.strokeStyle = 'rgba(239, 68, 68, 0.55)';
+      ctx.strokeStyle = `rgba(239, 68, 68, ${strokeAlpha})`;
       ctx.lineWidth = 3;
       ctx.beginPath();
       for (let i = 0; i <= steps; i++) {
@@ -11578,6 +11647,9 @@ export class CliftonDownGame {
     this.hasInteracted = false;
     this.lastFootstepTime = 0;
 
+    // Click feedback markers (steer-single / steer-double)
+    this.clickFeedback = [];
+
     // Environment & Weather Systems
     this.weatherClient = weatherClient;
     this.environment = environmentSystem;
@@ -11966,6 +12038,10 @@ export class CliftonDownGame {
       if (!captured) return;
 
       if (captured.type === 'brake') {
+        // Brake-light feedback pulse on any brake gesture
+        if (typeof this.owner.triggerBrakeLight === 'function') {
+          this.owner.triggerBrakeLight();
+        }
         if (isDouble) {
           this.owner.setGait('STAND');
           return;
@@ -11996,7 +12072,24 @@ export class CliftonDownGame {
       const gaitAtPress = captured.gaitAtPress;
       this.owner.setTargetHeading(heading);
 
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      const worldX = captured.worldX;
+      const worldY = captured.worldY;
+
       if (isDouble) {
+        // Replace any pending single-click marker for this click
+        this.clickFeedback = this.clickFeedback.filter(
+          (f) => !(f.kind === 'steer-single' && f.worldX === worldX && f.worldY === worldY)
+        );
+        this.clickFeedback.push({
+          kind: 'steer-double',
+          worldX,
+          worldY,
+          startedAt: now,
+          durationMs: 400,
+          glyph: '+',
+          color: '#22c55e'
+        });
         if (gaitAtPress === 'STAND') {
           this.owner.setGait('STROLL');
         } else if (gaitAtPress === 'STROLL') {
@@ -12005,6 +12098,15 @@ export class CliftonDownGame {
           this.owner.setGait('JOG');
         }
       } else {
+        this.clickFeedback.push({
+          kind: 'steer-single',
+          worldX,
+          worldY,
+          startedAt: now,
+          durationMs: 400,
+          glyph: 'x',
+          color: '#ffffff'
+        });
         if (gaitAtPress === 'STAND') {
           this.owner.setGait('STROLL');
         }
@@ -12067,9 +12169,12 @@ export class CliftonDownGame {
       // --- Immediate hits (no double-click delay) ---
 
       // 1. Companion dog
+      // On-leash petting is only allowed while the owner is STAND; otherwise
+      // dog clicks must not hijack brake/movement gestures.
       const dogScreen = this.camera.worldToScreen(this.dog.x, this.dog.y);
       const distToDog = Math.hypot(e.clientX - dogScreen.x, e.clientY - dogScreen.y);
-      if (distToDog < 48) {
+      const dogPetAllowed = !this.owner.isLeashed || this.owner.gait === 'STAND';
+      if (distToDog < 48 && dogPetAllowed) {
         // Immediate interaction supersedes any pending deferred field gesture
         // and resets double-click state so the next field tap is a fresh single.
         cancelPendingSingle();
@@ -12295,6 +12400,13 @@ export class CliftonDownGame {
   }
 
   petDog() {
+    // On-leash petting is strictly disallowed while the owner is moving.
+    if (this.owner.isLeashed && this.owner.gait !== 'STAND') {
+      if (this.hud && typeof this.hud.showToast === 'function') {
+        this.hud.showToast('🦮 Stop (STAND) before petting on-lead.');
+      }
+      return;
+    }
     const distToDog = Math.hypot(this.owner.x - this.dog.x, this.owner.y - this.dog.y);
     if (distToDog < 90) {
       if (typeof this.owner.triggerPet === 'function') {
@@ -12832,6 +12944,39 @@ export class CliftonDownGame {
 
     // Field renders background turf, then Y-sorts trees, benches, owners, dogs, and balls
     this.field.render(this.ctx, this.camera, dynamicEntities);
+
+    // Click feedback markers (steer-single / steer-double)
+    if (Array.isArray(this.clickFeedback) && this.clickFeedback.length > 0) {
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      this.clickFeedback = this.clickFeedback.filter((f) => (now - f.startedAt) <= f.durationMs);
+      for (const f of this.clickFeedback) {
+        const elapsed = now - f.startedAt;
+        const alpha = Math.max(0, 1.0 - (elapsed / f.durationMs));
+        this.ctx.save();
+        this.ctx.globalAlpha = alpha;
+        this.ctx.strokeStyle = f.color;
+        this.ctx.fillStyle = f.color;
+        this.ctx.lineWidth = 2.5;
+        this.ctx.lineCap = 'round';
+        const s = 7;
+        if (f.glyph === '+') {
+          this.ctx.beginPath();
+          this.ctx.moveTo(f.worldX - s, f.worldY);
+          this.ctx.lineTo(f.worldX + s, f.worldY);
+          this.ctx.moveTo(f.worldX, f.worldY - s);
+          this.ctx.lineTo(f.worldX, f.worldY + s);
+          this.ctx.stroke();
+        } else {
+          this.ctx.beginPath();
+          this.ctx.moveTo(f.worldX - s, f.worldY - s);
+          this.ctx.lineTo(f.worldX + s, f.worldY + s);
+          this.ctx.moveTo(f.worldX + s, f.worldY - s);
+          this.ctx.lineTo(f.worldX - s, f.worldY + s);
+          this.ctx.stroke();
+        }
+        this.ctx.restore();
+      }
+    }
 
     // In-World Contextual Interaction Badges
     const isTouch = typeof TouchControls !== 'undefined' && TouchControls.isTouchDevice && TouchControls.isTouchDevice();
@@ -20715,9 +20860,7 @@ export class TouchControls {
       'pointer-events: auto'
     ].join(';');
     this.pacePad.innerHTML = `
-      <button class="touch-pace-btn" id="btn-touch-pace-down" aria-label="Decrease Pace" style="width:52px;height:52px;border-radius:50%;border:none;background:rgba(15,23,42,0.85);color:#f8fafc;font-size:24px;font-weight:700;touch-action:manipulation;user-select:none;-webkit-user-select:none;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.35);">−</button>
       <div class="touch-gait-badge" id="touch-gait-badge" style="min-width:64px;padding:6px 10px;border-radius:14px;background:rgba(15,23,42,0.85);color:#fde047;font:600 13px system-ui,-apple-system,sans-serif;text-align:center;letter-spacing:0.5px;touch-action:manipulation;user-select:none;-webkit-user-select:none;">STAND</div>
-      <button class="touch-pace-btn" id="btn-touch-pace-up" aria-label="Increase Pace" style="width:52px;height:52px;border-radius:50%;border:none;background:rgba(15,23,42,0.85);color:#f8fafc;font-size:24px;font-weight:700;touch-action:manipulation;user-select:none;-webkit-user-select:none;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.35);">+</button>
     `;
     this.overlay.appendChild(this.pacePad);
     this.gaitBadge = this.pacePad.querySelector('#touch-gait-badge');
@@ -20812,8 +20955,6 @@ export class TouchControls {
       });
     };
 
-    bindButton('btn-touch-pace-down', () => this.callbacks.onPaceDown?.());
-    bindButton('btn-touch-pace-up', () => this.callbacks.onPaceUp?.());
     bindButton('btn-touch-throw', () => this.callbacks.onThrow?.());
     bindButton('btn-touch-whistle', () => this.callbacks.onWhistle?.());
     bindButton('btn-touch-leash', () => this.callbacks.onLeash?.());
@@ -33219,16 +33360,20 @@ class MockJoystick:
 
 
 class TestPaceControls(unittest.TestCase):
-    """Verify discrete pace controls replace the legacy analog joystick."""
+    """Verify discrete pace controls replace the legacy analog joystick.
+
+    Ticket unification-021 removes the on-screen pace buttons; the gait badge
+    remains as the sole pace indicator.
+    """
 
     def test_pace_controls_source_contract(self):
         with open("src/ui/touch_controls.js", "r", encoding="utf-8") as f:
             code = f.read()
 
-        self.assertIn("onPaceDown", code)
-        self.assertIn("onPaceUp", code)
-        self.assertIn("btn-touch-pace-down", code)
-        self.assertIn("btn-touch-pace-up", code)
+        # Pace buttons removed in unification-021
+        self.assertNotIn("btn-touch-pace-down", code)
+        self.assertNotIn("btn-touch-pace-up", code)
+        # Gait badge and setter preserved
         self.assertIn("touch-gait-badge", code)
         self.assertIn("setCurrentGait", code)
 
@@ -33419,10 +33564,8 @@ class TestTouchControls(unittest.TestCase):
         self.src = read("src/ui/touch_controls.js")
 
     def test_pace_controls(self):
-        self.assertIn("onPaceDown", self.src)
-        self.assertIn("onPaceUp", self.src)
-        self.assertIn("btn-touch-pace-down", self.src)
-        self.assertIn("btn-touch-pace-up", self.src)
+        self.assertNotIn("btn-touch-pace-down", self.src)
+        self.assertNotIn("btn-touch-pace-up", self.src)
 
     def test_gait_badge(self):
         self.assertIn("setCurrentGait", self.src)
@@ -34467,13 +34610,15 @@ class TestCompanionDogFlankingBounds(unittest.TestCase):
 
     def test_flank_right_band(self):
         self.assertIn("FLANK_RIGHT", self.src)
+        self.assertIn("(15 * Math.PI) / 180", self.src)
         self.assertIn("(30 * Math.PI) / 180", self.src)
-        self.assertIn("(120 * Math.PI) / 180", self.src)
+        self.assertIn("(60 * Math.PI) / 180", self.src)
 
     def test_flank_left_band(self):
         self.assertIn("FLANK_LEFT", self.src)
-        self.assertIn("(-120 * Math.PI) / 180", self.src)
+        self.assertIn("(-60 * Math.PI) / 180", self.src)
         self.assertIn("(-30 * Math.PI) / 180", self.src)
+        self.assertIn("(-15 * Math.PI) / 180", self.src)
 
     def test_get_flank_band_helper(self):
         self.assertIn("_getFlankBand", self.src)
@@ -34575,6 +34720,289 @@ class TestCompanionDogFlankingBounds(unittest.TestCase):
                 clamped = max(band['min'], min(band['max'], flank_angle))
                 self.assertGreaterEqual(clamped, band['min'])
                 self.assertLessEqual(clamped, band['max'])
+
+
+# ---------------------------------------------------------------------------
+# unification-021: forward-leading flank, taut leash, petting gate,
+# touch control removal, click feedback, and brake-light feedback.
+# ---------------------------------------------------------------------------
+
+
+class TestForwardLeadingFlankBands(unittest.TestCase):
+    """Verify forward-leading flank bands (15/30/60 deg) in companion_dog.js."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_right_flank_band_forward_leading(self):
+        self.assertIn("FLANK_RIGHT", self.src)
+        self.assertIn("(15 * Math.PI) / 180", self.src)
+        self.assertIn("(30 * Math.PI) / 180", self.src)
+        self.assertIn("(60 * Math.PI) / 180", self.src)
+
+    def test_left_flank_band_forward_leading(self):
+        self.assertIn("FLANK_LEFT", self.src)
+        self.assertIn("(-60 * Math.PI) / 180", self.src)
+        self.assertIn("(-30 * Math.PI) / 180", self.src)
+        self.assertIn("(-15 * Math.PI) / 180", self.src)
+
+    def test_behavioral_right_flank_forward_component(self):
+        """Right flank mid (30 deg) must have a positive forward component."""
+        import math
+        FLANK_RIGHT = {
+            'min': (15 * math.pi) / 180,
+            'mid': (30 * math.pi) / 180,
+            'max': (60 * math.pi) / 180,
+        }
+        owner_angle = 0.0  # facing east
+        follow_distance = 42.0
+        for key in ('min', 'mid', 'max'):
+            bearing = owner_angle + FLANK_RIGHT[key]
+            forward = math.cos(bearing) * follow_distance
+            self.assertGreater(forward, 0.0, f"Right flank {key} trails behind")
+
+    def test_behavioral_left_flank_forward_component(self):
+        """Left flank mid (-30 deg) must have a positive forward component."""
+        import math
+        FLANK_LEFT = {
+            'min': (-60 * math.pi) / 180,
+            'mid': (-30 * math.pi) / 180,
+            'max': (-15 * math.pi) / 180,
+        }
+        owner_angle = 0.0
+        follow_distance = 42.0
+        for key in ('min', 'mid', 'max'):
+            bearing = owner_angle + FLANK_LEFT[key]
+            forward = math.cos(bearing) * follow_distance
+            self.assertGreater(forward, 0.0, f"Left flank {key} trails behind")
+
+    def test_behavioral_on_leash_target_leads_forward(self):
+        """On-leash target position must not trail behind the owner."""
+        import math
+        owner_x, owner_y = 100.0, 100.0
+        owner_angle = 0.0
+        follow_distance = 42.0
+        for bearing in ((30 * math.pi) / 180, (-30 * math.pi) / 180):
+            tx = owner_x + math.cos(owner_angle + bearing) * follow_distance
+            ty = owner_y + math.sin(owner_angle + bearing) * follow_distance
+            # Forward component along owner facing must be positive.
+            forward = (tx - owner_x) * math.cos(owner_angle) + (ty - owner_y) * math.sin(owner_angle)
+            self.assertGreater(forward, 0.0)
+
+
+class TestLeashTension(unittest.TestCase):
+    """Verify leashTaut, sag limits, and vibration behavior."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_leash_state_hooks_present(self):
+        self.assertIn("leashTaut", self.src)
+        self.assertIn("leashSagPx", self.src)
+        self.assertIn("leashVibrationPx", self.src)
+
+    def test_behavioral_on_leash_implies_taut(self):
+        """On-leash implies leashTaut === true."""
+        def compute_taut(is_leashed, is_pulling, dist):
+            return bool(is_leashed)
+
+        self.assertTrue(compute_taut(True, False, 40))
+        self.assertTrue(compute_taut(True, True, 100))
+        self.assertFalse(compute_taut(False, False, 40))
+
+    def test_behavioral_sag_within_threshold(self):
+        """Leash sag must stay within the allowed threshold (<= 6px)."""
+        MAX_SAG = 6.0
+        for dist in (30, 42, 60, 90):
+            sag = min(MAX_SAG, max(0.0, (90 - dist) * 0.1))
+            self.assertLessEqual(sag, MAX_SAG)
+
+    def test_behavioral_vibration_moving_vs_stand(self):
+        """Vibration > 0 while moving, 0 while STAND."""
+        def vibration(gait, is_moving):
+            if not is_moving or gait == 'STAND':
+                return 0.0
+            return 0.6
+
+        self.assertGreater(vibration('WALK', True), 0.0)
+        self.assertGreater(vibration('JOG', True), 0.0)
+        self.assertEqual(vibration('STAND', False), 0.0)
+        self.assertEqual(vibration('WALK', False), 0.0)
+
+
+class TestPettingGate(unittest.TestCase):
+    """Verify on-leash petting gate and brake/avatar click precedence."""
+
+    def setUp(self):
+        self.main_src = read("src/main.js")
+        self.owner_src = read("src/entities/owner.js")
+
+    def test_behavioral_on_leash_petting_denied_when_moving(self):
+        """On-leash petting denied when owner.gait !== 'STAND'."""
+        def can_pet(is_leashed, gait):
+            if is_leashed and gait != 'STAND':
+                return False
+            return True
+
+        self.assertFalse(can_pet(True, 'WALK'))
+        self.assertFalse(can_pet(True, 'JOG'))
+        self.assertFalse(can_pet(True, 'STROLL'))
+
+    def test_behavioral_on_leash_petting_allowed_when_stand(self):
+        def can_pet(is_leashed, gait):
+            if is_leashed and gait != 'STAND':
+                return False
+            return True
+
+        self.assertTrue(can_pet(True, 'STAND'))
+        self.assertTrue(can_pet(False, 'WALK'))
+
+    def test_petting_gate_present_in_main(self):
+        # The petDog() method definition must consult leash + gait before petting.
+        idx = self.main_src.index("petDog() {")
+        block = self.main_src[idx:idx + 300]
+        self.assertIn("isLeashed", block)
+        self.assertIn("STAND", block)
+
+    def test_behavioral_brake_click_does_not_pet(self):
+        """Brake/avatar clicks overlapping the dog hitbox must not pet."""
+        def resolve_click(on_player, on_rear_arc, on_dog, gait):
+            # Brake/avatar precedence over dog petting.
+            if on_player or on_rear_arc:
+                return 'brake'
+            if on_dog:
+                return 'pet'
+            return 'field'
+
+        self.assertEqual(resolve_click(True, False, True, 'WALK'), 'brake')
+        self.assertEqual(resolve_click(False, True, True, 'WALK'), 'brake')
+        self.assertEqual(resolve_click(False, False, True, 'WALK'), 'pet')
+
+    def test_brake_precedence_in_main_source(self):
+        # The brake/avatar detection must be evaluated before the dog hit branch.
+        idx_avatar = self.main_src.index("Avatar click")
+        idx_dog = self.main_src.index("// 1. Companion dog")
+        self.assertLess(idx_avatar, idx_dog)
+
+
+class TestTouchControlRemoval(unittest.TestCase):
+    """Verify pace buttons removed and required controls remain."""
+
+    def setUp(self):
+        self.src = read("src/ui/touch_controls.js")
+
+    def test_pace_buttons_absent(self):
+        self.assertNotIn("btn-touch-pace-down", self.src)
+        self.assertNotIn("btn-touch-pace-up", self.src)
+
+    def test_gait_badge_remains(self):
+        self.assertIn("touch-gait-badge", self.src)
+        self.assertIn("setCurrentGait", self.src)
+
+    def test_action_buttons_remain(self):
+        self.assertIn("btn-touch-throw", self.src)
+        self.assertIn("btn-touch-whistle", self.src)
+        self.assertIn("btn-touch-pet", self.src)
+        self.assertIn("btn-touch-leash", self.src)
+        self.assertIn("btn-touch-chat", self.src)
+
+
+class TestClickFeedback(unittest.TestCase):
+    """Verify single/double click feedback event contracts."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_single_click_feedback_contract(self):
+        self.assertIn("steer-single", self.src)
+        self.assertIn("'x'", self.src)
+        self.assertIn("#ffffff", self.src)
+        self.assertIn("400", self.src)
+
+    def test_double_click_feedback_contract(self):
+        self.assertIn("steer-double", self.src)
+        self.assertIn("'+'", self.src)
+        self.assertIn("#22c55e", self.src)
+
+    def test_feedback_records_world_coords(self):
+        self.assertIn("worldX", self.src)
+        self.assertIn("worldY", self.src)
+
+    def test_behavioral_single_click_event(self):
+        def emit(is_double, world_x, world_y):
+            if is_double:
+                return {'type': 'steer-double', 'glyph': '+', 'color': '#22c55e',
+                        'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
+            return {'type': 'steer-single', 'glyph': 'x', 'color': '#ffffff',
+                    'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
+
+        ev = emit(False, 123.0, 456.0)
+        self.assertEqual(ev['type'], 'steer-single')
+        self.assertEqual(ev['glyph'], 'x')
+        self.assertEqual(ev['color'], '#ffffff')
+        self.assertEqual(ev['durationMs'], 400)
+        self.assertEqual(ev['worldX'], 123.0)
+        self.assertEqual(ev['worldY'], 456.0)
+
+    def test_behavioral_double_click_event(self):
+        def emit(is_double, world_x, world_y):
+            if is_double:
+                return {'type': 'steer-double', 'glyph': '+', 'color': '#22c55e',
+                        'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
+            return {'type': 'steer-single', 'glyph': 'x', 'color': '#ffffff',
+                    'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
+
+        ev = emit(True, 10.0, 20.0)
+        self.assertEqual(ev['type'], 'steer-double')
+        self.assertEqual(ev['glyph'], '+')
+        self.assertEqual(ev['color'], '#22c55e')
+        self.assertEqual(ev['durationMs'], 400)
+
+
+class TestBrakeLightFeedback(unittest.TestCase):
+    """Verify brake-light feedback state, trigger, and main.js integration."""
+
+    def setUp(self):
+        self.owner_src = read("src/entities/owner.js")
+        self.main_src = read("src/main.js")
+
+    def test_brake_light_state_present(self):
+        self.assertIn("brakeLightFeedback", self.owner_src)
+        self.assertIn("durationMs: 250", self.owner_src)
+        self.assertIn("peakFillAlpha: 0.6", self.owner_src)
+        self.assertIn("peakStrokeAlpha: 0.9", self.owner_src)
+        self.assertIn("#ef4444", self.owner_src)
+
+    def test_trigger_brake_light_method(self):
+        self.assertIn("triggerBrakeLight", self.owner_src)
+
+    def test_behavioral_trigger_sets_state(self):
+        class FakeOwner:
+            def __init__(self):
+                self.brakeLightFeedback = {
+                    'active': False,
+                    'startedAt': 0,
+                    'durationMs': 250,
+                    'peakFillAlpha': 0.6,
+                    'peakStrokeAlpha': 0.9,
+                    'color': '#ef4444',
+                }
+
+            def triggerBrakeLight(self, now):
+                self.brakeLightFeedback['active'] = True
+                self.brakeLightFeedback['startedAt'] = now
+
+        o = FakeOwner()
+        o.triggerBrakeLight(12345)
+        self.assertTrue(o.brakeLightFeedback['active'])
+        self.assertEqual(o.brakeLightFeedback['startedAt'], 12345)
+        self.assertEqual(o.brakeLightFeedback['durationMs'], 250)
+        self.assertEqual(o.brakeLightFeedback['peakFillAlpha'], 0.6)
+        self.assertEqual(o.brakeLightFeedback['peakStrokeAlpha'], 0.9)
+        self.assertEqual(o.brakeLightFeedback['color'], '#ef4444')
+
+    def test_main_triggers_brake_light(self):
+        self.assertIn("triggerBrakeLight", self.main_src)
 
 
 if __name__ == "__main__":

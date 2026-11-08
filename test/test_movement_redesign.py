@@ -114,10 +114,8 @@ class TestTouchControls(unittest.TestCase):
         self.src = read("src/ui/touch_controls.js")
 
     def test_pace_controls(self):
-        self.assertIn("onPaceDown", self.src)
-        self.assertIn("onPaceUp", self.src)
-        self.assertIn("btn-touch-pace-down", self.src)
-        self.assertIn("btn-touch-pace-up", self.src)
+        self.assertNotIn("btn-touch-pace-down", self.src)
+        self.assertNotIn("btn-touch-pace-up", self.src)
 
     def test_gait_badge(self):
         self.assertIn("setCurrentGait", self.src)
@@ -1162,13 +1160,15 @@ class TestCompanionDogFlankingBounds(unittest.TestCase):
 
     def test_flank_right_band(self):
         self.assertIn("FLANK_RIGHT", self.src)
+        self.assertIn("(15 * Math.PI) / 180", self.src)
         self.assertIn("(30 * Math.PI) / 180", self.src)
-        self.assertIn("(120 * Math.PI) / 180", self.src)
+        self.assertIn("(60 * Math.PI) / 180", self.src)
 
     def test_flank_left_band(self):
         self.assertIn("FLANK_LEFT", self.src)
-        self.assertIn("(-120 * Math.PI) / 180", self.src)
+        self.assertIn("(-60 * Math.PI) / 180", self.src)
         self.assertIn("(-30 * Math.PI) / 180", self.src)
+        self.assertIn("(-15 * Math.PI) / 180", self.src)
 
     def test_get_flank_band_helper(self):
         self.assertIn("_getFlankBand", self.src)
@@ -1408,10 +1408,9 @@ class TestPettingGate(unittest.TestCase):
         self.assertTrue(can_pet(False, 'WALK'))
 
     def test_petting_gate_present_in_main(self):
-        # The petDog() path must consult leash + gait before petting.
-        idx = self.main_src.index("petDog()")
-        end = self.main_src.index("pickUpPoop()", idx)
-        block = self.main_src[idx:end]
+        # The petDog() method definition must consult leash + gait before petting.
+        idx = self.main_src.index("petDog() {")
+        block = self.main_src[idx:idx + 300]
         self.assertIn("isLeashed", block)
         self.assertIn("STAND", block)
 

@@ -785,7 +785,7 @@ export class CliftonDownGame {
     // Turning ON leash – strict proximity gate (<= 68px)
     const dist = Math.hypot(this.dog.x - this.owner.x, this.dog.y - this.owner.y);
     if (dist > 68) {
-      this.hud.showToast("🦮 Too far to clip lead! Walk closer or whistle [H] to recall first.");
+      this.hud.showToast("🦮 Too far to clip lead! Walk closer or whistle to recall first.");
       return;
     }
 
@@ -869,7 +869,7 @@ export class CliftonDownGame {
     }
     this.hasPoopBag = true;
     this.activePoopPileNearPlayer = null;
-    this.hud.showToast('💩 Cleaned up waste! Dispose in bin [E]');
+    this.hud.showToast('💩 Cleaned up waste! Dispose in a bin.');
     if (this.hud && typeof this.hud.updateInventory === 'function') {
       this.hud.updateInventory(true);
     }

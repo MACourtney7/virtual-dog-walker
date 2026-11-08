@@ -300,17 +300,26 @@ class TestFootstepCadence(unittest.TestCase):
 
 
 class TestTouchButtonDebounce(unittest.TestCase):
-    """Verify touch buttons debounce duplicate triggers within 200ms."""
+    """Verify touch buttons debounce duplicate triggers within 200ms.
+
+    Ticket unification-019 replaced the global `_lastTriggerAt` debounce with
+    strictly per-button state (`pointerHandled` + `lastTrigger`) so activations
+    on one button never swallow activations on another.
+    """
 
     def setUp(self):
         self.src = read("src/ui/touch_controls.js")
 
-    def test_debounce_guard_present(self):
-        self.assertIn("_lastTriggerAt", self.src)
-        self.assertIn("now - this._lastTriggerAt < 200", self.src)
+    def test_no_global_debounce(self):
+        # Global debounce must be gone; per-button state replaces it.
+        self.assertNotIn("_lastTriggerAt", self.src)
+
+    def test_per_button_debounce_guard_present(self):
+        self.assertIn("let lastTrigger = 0;", self.src)
+        self.assertIn("if (now - lastTrigger < 200)", self.src)
 
     def test_debounce_behavioral(self):
-        """Simulate the debounce guard: duplicate triggers within 200ms are ignored."""
+        """Simulate the per-button debounce guard: duplicate triggers within 200ms are ignored."""
         last_trigger = [0]
         fired = []
 

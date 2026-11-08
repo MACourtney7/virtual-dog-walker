@@ -28,14 +28,14 @@ function lerpAngle(a, b, t) {
 // Forward-flank bearing bands (relative to owner.angle). The dog must never
 // land in the straight-behind zone (180° ± 25°).
 const FLANK_RIGHT = {
-  min: (30 * Math.PI) / 180,
-  mid: (60 * Math.PI) / 180,
-  max: (120 * Math.PI) / 180
+  min: (15 * Math.PI) / 180,
+  mid: (30 * Math.PI) / 180, // ~1 o'clock, leading slightly ahead of owner
+  max: (60 * Math.PI) / 180
 };
 const FLANK_LEFT = {
-  min: (-120 * Math.PI) / 180,
-  mid: (-60 * Math.PI) / 180,
-  max: (-30 * Math.PI) / 180
+  min: (-60 * Math.PI) / 180,
+  mid: (-30 * Math.PI) / 180, // ~11 o'clock, leading slightly ahead of owner
+  max: (-15 * Math.PI) / 180
 };
 
 // Leash hand anchor geometry (must stay OUTSIDE the 26px body radius so the
@@ -146,6 +146,12 @@ export class CompanionDog {
 
     // Leash pulling physics state
     this.isPullingLeash = false;
+
+    // Leash tension state (exposed for rendering & tests)
+    this.leashTaut = Boolean(this.owner && this.owner.isLeashed);
+    this.leashTension = 1.0;
+    this.leashSagPx = 0;
+    this.leashVibrationPx = 0;
 
     this.state = (this.owner && !this.owner.isLeashed) ? DogState.ROAMING : DogState.FOLLOWING;
     this.stateTimer = 0;
@@ -775,6 +781,26 @@ export class CompanionDog {
       }
     } else if (this.owner && !this.owner.isLeashed) {
       this.isPullingLeash = false;
+    }
+
+    // Update leash tension state (on-leash implies taut; sag/vibration derived)
+    if (this.owner && this.owner.isLeashed) {
+      // Keep the owner's leash hand on the same side as the dog's flank.
+      this.owner.leashHandSide = this.preferredSide;
+      const leashDist = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
+      this.leashTaut = true;
+      this.leashTension = 1.0;
+      // Minimal sag: never more than 2px (and <= 3% of leash length)
+      const sagCap = Math.min(2.0, leashDist * 0.03);
+      this.leashSagPx = Math.min(sagCap, Math.max(0.0, (90 - leashDist) * 0.05));
+      // Subtle vibration only while the owner is moving
+      const isMoving = Boolean(this.owner && this.owner.gait !== 'STAND');
+      this.leashVibrationPx = isMoving ? 0.8 : 0;
+    } else {
+      this.leashTaut = false;
+      this.leashTension = 0.0;
+      this.leashSagPx = 0;
+      this.leashVibrationPx = 0;
     }
 
     // Obstacle and world boundary collisions
@@ -1898,20 +1924,38 @@ export class CompanionDog {
     }
   }
 
+  getCollarAnchor() {
+    return { x: this.x, y: this.y - 2 };
+  }
+
   drawLeash(ctx) {
     ctx.save();
+
+    // Keep the owner's leash hand on the same side as the dog's flank.
+    if (this.owner) {
+      this.owner.leashHandSide = this.preferredSide;
+    }
 
     // Hand anchor on the flank side the dog is currently on (matches flank band).
     // HAND_RADIUS (28) is strictly outside PLAYER_HIT_RADIUS (26) so the anchor
     // itself never sits inside the owner torso.
     const sideSign = this.preferredSide === 'left' ? -1 : 1;
     let handSide = sideSign * HAND_SIDE;
-    let handX = this.owner.x + Math.cos(this.owner.angle + handSide) * HAND_RADIUS;
-    let handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
+    let handX;
+    let handY;
+    if (this.owner && typeof this.owner.getLeashHandAnchor === 'function') {
+      const anchor = this.owner.getLeashHandAnchor(this.preferredSide);
+      handX = anchor.x;
+      handY = anchor.y;
+    } else {
+      handX = this.owner.x + Math.cos(this.owner.angle + handSide) * HAND_RADIUS;
+      handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
+    }
 
     // Collar anchor point on dog
-    const collarX = this.x;
-    const collarY = this.y - 2;
+    const collar = this.getCollarAnchor();
+    const collarX = collar.x;
+    const collarY = collar.y;
 
     // Guard: if the leash midpoint would clip the owner torso, widen the hand
     // offset further so the sag point clears the body radius.
@@ -1923,24 +1967,35 @@ export class CompanionDog {
       handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
     }
 
-    const distToOwner = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
+    // Perpendicular vibration while the owner is moving (0 while STAND).
+    // The jitter is applied strictly along the leash line's normal so the
+    // lead never appears to stretch or shorten. `this.leashVibrationPx` is
+    // the amplitude (owned by update()); it must NOT be overwritten here.
+    const isMoving = Boolean(this.owner) && this.owner.gait !== 'STAND';
+    const jitter = isMoving ? Math.sin(Date.now() * 0.05) * this.leashVibrationPx : 0;
 
-    if (this.isPullingLeash || distToOwner > 98) {
-      // Taut, tensioned straight line from hand anchor to collar anchor with subtle vibrational jitter
-      const jitter = Math.sin(Date.now() * 0.05) * 0.8;
-      ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
-      ctx.lineWidth = 2.0;
-      ctx.beginPath();
-      ctx.moveTo(handX, handY);
-      ctx.lineTo(collarX + jitter, collarY + jitter);
-      ctx.stroke();
-    } else {
-      // Slack catenary sag quadratic curve. The sag point is pushed outward
-      // along the owner->midpoint direction so the curve never dips inside
-      // the owner body radius.
-      let midX = (handX + collarX) / 2;
-      let midY = (handY + collarY) / 2 + 14;
+    const leashDx = collarX - handX;
+    const leashDy = collarY - handY;
+    const leashLen = Math.hypot(leashDx, leashDy) || 1;
+    const ux = leashDx / leashLen;
+    const uy = leashDy / leashLen;
+    const perpX = -uy;
+    const perpY = ux;
+    const jitterX = perpX * jitter;
+    const jitterY = perpY * jitter;
 
+    // Minimal sag (<= 2px and <= 3% of leash length) so the lead reads as taut
+    const sagCap = Math.min(2.0, leashLen * 0.03);
+    const sag = Math.min(sagCap, this.leashSagPx || 0);
+
+    ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
+    ctx.lineWidth = this.isPullingLeash ? 2.0 : 1.8;
+    ctx.beginPath();
+    ctx.moveTo(handX, handY);
+    if (sag > 0.01) {
+      // Very shallow sag curve, pushed outward so it never dips inside the body.
+      let midX = (handX + collarX) / 2 + jitterX;
+      let midY = (handY + collarY) / 2 + sag + jitterY;
       const midDx = midX - this.owner.x;
       const midDy = midY - this.owner.y;
       const midDist = Math.hypot(midDx, midDy);
@@ -1949,14 +2004,11 @@ export class CompanionDog {
         midX = this.owner.x + midDx * push;
         midY = this.owner.y + midDy * push;
       }
-
-      ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
-      ctx.lineWidth = 1.8;
-      ctx.beginPath();
-      ctx.moveTo(handX, handY);
-      ctx.quadraticCurveTo(midX, midY, collarX, collarY);
-      ctx.stroke();
+      ctx.quadraticCurveTo(midX, midY, collarX + jitterX, collarY + jitterY);
+    } else {
+      ctx.lineTo(collarX + jitterX, collarY + jitterY);
     }
+    ctx.stroke();
     ctx.restore();
   }
 

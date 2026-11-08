@@ -58,9 +58,7 @@ export class TouchControls {
       'pointer-events: auto'
     ].join(';');
     this.pacePad.innerHTML = `
-      <button class="touch-pace-btn" id="btn-touch-pace-down" aria-label="Decrease Pace" style="width:52px;height:52px;border-radius:50%;border:none;background:rgba(15,23,42,0.85);color:#f8fafc;font-size:24px;font-weight:700;touch-action:manipulation;user-select:none;-webkit-user-select:none;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.35);">−</button>
       <div class="touch-gait-badge" id="touch-gait-badge" style="min-width:64px;padding:6px 10px;border-radius:14px;background:rgba(15,23,42,0.85);color:#fde047;font:600 13px system-ui,-apple-system,sans-serif;text-align:center;letter-spacing:0.5px;touch-action:manipulation;user-select:none;-webkit-user-select:none;">STAND</div>
-      <button class="touch-pace-btn" id="btn-touch-pace-up" aria-label="Increase Pace" style="width:52px;height:52px;border-radius:50%;border:none;background:rgba(15,23,42,0.85);color:#f8fafc;font-size:24px;font-weight:700;touch-action:manipulation;user-select:none;-webkit-user-select:none;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.35);">+</button>
     `;
     this.overlay.appendChild(this.pacePad);
     this.gaitBadge = this.pacePad.querySelector('#touch-gait-badge');
@@ -155,8 +153,6 @@ export class TouchControls {
       });
     };
 
-    bindButton('btn-touch-pace-down', () => this.callbacks.onPaceDown?.());
-    bindButton('btn-touch-pace-up', () => this.callbacks.onPaceUp?.());
     bindButton('btn-touch-throw', () => this.callbacks.onThrow?.());
     bindButton('btn-touch-whistle', () => this.callbacks.onWhistle?.());
     bindButton('btn-touch-leash', () => this.callbacks.onLeash?.());

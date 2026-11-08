@@ -580,7 +580,8 @@ export class CliftonDownGame {
       if (captured.type === 'brake') {
         // Brake-light feedback pulse on any brake gesture
         if (typeof this.owner.triggerBrakeLight === 'function') {
-          this.owner.triggerBrakeLight();
+          const brakeNow = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+          this.owner.triggerBrakeLight(brakeNow);
         }
         if (isDouble) {
           this.owner.setGait('STAND');
@@ -1492,6 +1493,11 @@ export class CliftonDownGame {
       for (const f of this.clickFeedback) {
         const elapsed = now - f.startedAt;
         const alpha = Math.max(0, 1.0 - (elapsed / f.durationMs));
+        // Project world coordinates through the camera transform so the
+        // feedback glyph lands on the correct screen pixel.
+        const pt = this.camera.worldToScreen(f.worldX, f.worldY);
+        const sx = pt.x;
+        const sy = pt.y;
         this.ctx.save();
         this.ctx.globalAlpha = alpha;
         this.ctx.strokeStyle = f.color;
@@ -1501,17 +1507,17 @@ export class CliftonDownGame {
         const s = 7;
         if (f.glyph === '+') {
           this.ctx.beginPath();
-          this.ctx.moveTo(f.worldX - s, f.worldY);
-          this.ctx.lineTo(f.worldX + s, f.worldY);
-          this.ctx.moveTo(f.worldX, f.worldY - s);
-          this.ctx.lineTo(f.worldX, f.worldY + s);
+          this.ctx.moveTo(sx - s, sy);
+          this.ctx.lineTo(sx + s, sy);
+          this.ctx.moveTo(sx, sy - s);
+          this.ctx.lineTo(sx, sy + s);
           this.ctx.stroke();
         } else {
           this.ctx.beginPath();
-          this.ctx.moveTo(f.worldX - s, f.worldY - s);
-          this.ctx.lineTo(f.worldX + s, f.worldY + s);
-          this.ctx.moveTo(f.worldX + s, f.worldY - s);
-          this.ctx.lineTo(f.worldX - s, f.worldY + s);
+          this.ctx.moveTo(sx - s, sy - s);
+          this.ctx.lineTo(sx + s, sy + s);
+          this.ctx.moveTo(sx + s, sy - s);
+          this.ctx.lineTo(sx - s, sy + s);
           this.ctx.stroke();
         }
         this.ctx.restore();

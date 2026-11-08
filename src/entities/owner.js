@@ -75,6 +75,7 @@ export class Owner {
     this.isBending = false;
     this.bendTimer = 0;
     this.isLeashed = true;
+    this.leashHandSide = 'right';
 
     // Chat / Emote bubble
     this.chatText = null;
@@ -114,8 +115,10 @@ export class Owner {
     this.brakeLightFeedback.startedAt = now;
   }
 
-  getLeashHandAnchor(preferredSide = 'right') {
-    const sideSign = preferredSide === 'left' ? -1 : 1;
+  getLeashHandAnchor(preferredSide = this.leashHandSide || 'right') {
+    const side = preferredSide === 'left' ? 'left' : 'right';
+    this.leashHandSide = side;
+    const sideSign = side === 'left' ? -1 : 1;
     const handSide = sideSign * ((30 * Math.PI) / 180);
     return {
       x: this.x + Math.cos(this.angle + handSide) * 28,

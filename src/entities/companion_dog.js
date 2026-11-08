@@ -785,11 +785,14 @@ export class CompanionDog {
 
     // Update leash tension state (on-leash implies taut; sag/vibration derived)
     if (this.owner && this.owner.isLeashed) {
+      // Keep the owner's leash hand on the same side as the dog's flank.
+      this.owner.leashHandSide = this.preferredSide;
       const leashDist = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
       this.leashTaut = true;
       this.leashTension = 1.0;
       // Minimal sag: never more than 2px (and <= 3% of leash length)
-      this.leashSagPx = Math.min(2.0, Math.max(0.0, (90 - leashDist) * 0.05));
+      const sagCap = Math.min(2.0, leashDist * 0.03);
+      this.leashSagPx = Math.min(sagCap, Math.max(0.0, (90 - leashDist) * 0.05));
       // Subtle vibration only while the owner is moving
       const ownerMoving = Boolean(this.owner.isMoving) && this.owner.gait !== 'STAND';
       this.leashVibrationPx = ownerMoving ? 0.6 : 0.0;
@@ -1928,6 +1931,11 @@ export class CompanionDog {
   drawLeash(ctx) {
     ctx.save();
 
+    // Keep the owner's leash hand on the same side as the dog's flank.
+    if (this.owner) {
+      this.owner.leashHandSide = this.preferredSide;
+    }
+
     // Hand anchor on the flank side the dog is currently on (matches flank band).
     // HAND_RADIUS (28) is strictly outside PLAYER_HIT_RADIUS (26) so the anchor
     // itself never sits inside the owner torso.
@@ -1959,12 +1967,26 @@ export class CompanionDog {
       handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
     }
 
-    // Subtle vibration while the owner is moving (0 while STAND)
-    const vibration = this.leashVibrationPx || 0;
-    const jitter = vibration > 0 ? Math.sin(Date.now() * 0.05) * vibration : 0;
+    // Perpendicular vibration while the owner is moving (0 while STAND).
+    // The jitter is applied strictly along the leash line's normal so the
+    // lead never appears to stretch or shorten.
+    const isMoving = Boolean(this.owner) && this.owner.gait !== 'STAND';
+    this.leashVibrationPx = isMoving ? Math.sin(Date.now() * 0.05) * 1.2 : 0;
 
-    // Minimal sag (<= 2px) so the lead reads as taut
-    const sag = Math.min(2.0, this.leashSagPx || 0);
+    const leashDx = collarX - handX;
+    const leashDy = collarY - handY;
+    const leashLen = Math.hypot(leashDx, leashDy) || 1;
+    const ux = leashDx / leashLen;
+    const uy = leashDy / leashLen;
+    const perpX = -uy;
+    const perpY = ux;
+    const vib = this.leashVibrationPx;
+    const jitterX = perpX * vib;
+    const jitterY = perpY * vib;
+
+    // Minimal sag (<= 2px and <= 3% of leash length) so the lead reads as taut
+    const sagCap = Math.min(2.0, leashLen * 0.03);
+    const sag = Math.min(sagCap, this.leashSagPx || 0);
 
     ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
     ctx.lineWidth = this.isPullingLeash ? 2.0 : 1.8;
@@ -1972,8 +1994,8 @@ export class CompanionDog {
     ctx.moveTo(handX, handY);
     if (sag > 0.01) {
       // Very shallow sag curve, pushed outward so it never dips inside the body.
-      let midX = (handX + collarX) / 2;
-      let midY = (handY + collarY) / 2 + sag;
+      let midX = (handX + collarX) / 2 + jitterX;
+      let midY = (handY + collarY) / 2 + sag + jitterY;
       const midDx = midX - this.owner.x;
       const midDy = midY - this.owner.y;
       const midDist = Math.hypot(midDx, midDy);
@@ -1982,9 +2004,9 @@ export class CompanionDog {
         midX = this.owner.x + midDx * push;
         midY = this.owner.y + midDy * push;
       }
-      ctx.quadraticCurveTo(midX, midY, collarX + jitter, collarY + jitter);
+      ctx.quadraticCurveTo(midX, midY, collarX + jitterX, collarY + jitterY);
     } else {
-      ctx.lineTo(collarX + jitter, collarY + jitter);
+      ctx.lineTo(collarX + jitterX, collarY + jitterY);
     }
     ctx.stroke();
     ctx.restore();

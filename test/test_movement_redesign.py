@@ -1361,11 +1361,12 @@ class TestLeashTension(unittest.TestCase):
         self.assertFalse(compute_taut(False, False, 40))
 
     def test_behavioral_sag_within_threshold(self):
-        """Leash sag must stay within the allowed threshold (<= 6px)."""
-        MAX_SAG = 6.0
+        """Leash sag must be <= 2.0px AND <= 3% of leash length."""
         for dist in (30, 42, 60, 90):
-            sag = min(MAX_SAG, max(0.0, (90 - dist) * 0.1))
-            self.assertLessEqual(sag, MAX_SAG)
+            sag_cap = min(2.0, dist * 0.03)
+            sag = min(sag_cap, max(0.0, (90 - dist) * 0.05))
+            self.assertLessEqual(sag, 2.0)
+            self.assertLessEqual(sag, dist * 0.03)
 
     def test_behavioral_vibration_moving_vs_stand(self):
         """Vibration > 0 while moving, 0 while STAND."""
@@ -1378,6 +1379,69 @@ class TestLeashTension(unittest.TestCase):
         self.assertGreater(vibration('JOG', True), 0.0)
         self.assertEqual(vibration('STAND', False), 0.0)
         self.assertEqual(vibration('WALK', False), 0.0)
+
+    def test_vibration_applied_perpendicular(self):
+        """Vibration must be applied along the leash line's normal."""
+        self.assertIn("const perpX = -uy;", self.src)
+        self.assertIn("const perpY = ux;", self.src)
+        self.assertIn("const jitterX = perpX * vib;", self.src)
+        self.assertIn("const jitterY = perpY * vib;", self.src)
+        self.assertIn("Math.sin(Date.now() * 0.05) * 1.2", self.src)
+
+    def test_behavioral_perpendicular_vibration(self):
+        """Perpendicular offset must be orthogonal to the leash direction."""
+        import math
+        hand_x, hand_y = 100.0, 100.0
+        collar_x, collar_y = 130.0, 140.0
+        dx = collar_x - hand_x
+        dy = collar_y - hand_y
+        length = math.hypot(dx, dy)
+        ux, uy = dx / length, dy / length
+        perp_x, perp_y = -uy, ux
+        # Dot product of unit direction and perpendicular must be ~0.
+        self.assertAlmostEqual(ux * perp_x + uy * perp_y, 0.0, places=9)
+        # Perpendicular must be a unit vector.
+        self.assertAlmostEqual(math.hypot(perp_x, perp_y), 1.0, places=9)
+
+
+class TestLeashHandSide(unittest.TestCase):
+    """Verify owner.leashHandSide is defined and synced with the active flank."""
+
+    def setUp(self):
+        self.owner_src = read("src/entities/owner.js")
+        self.dog_src = read("src/entities/companion_dog.js")
+
+    def test_owner_defines_leash_hand_side(self):
+        self.assertIn("this.leashHandSide = 'right';", self.owner_src)
+
+    def test_get_leash_hand_anchor_syncs_side(self):
+        self.assertIn("getLeashHandAnchor(preferredSide = this.leashHandSide || 'right')", self.owner_src)
+        self.assertIn("this.leashHandSide = side;", self.owner_src)
+
+    def test_dog_syncs_owner_hand_side(self):
+        self.assertIn("this.owner.leashHandSide = this.preferredSide;", self.dog_src)
+
+    def test_behavioral_hand_side_matches_flank(self):
+        """Simulate the sync: owner.leashHandSide must equal dog.preferredSide."""
+        class FakeOwner:
+            def __init__(self):
+                self.leashHandSide = 'right'
+
+        class FakeDog:
+            def __init__(self, owner, side):
+                self.owner = owner
+                self.preferredSide = side
+
+            def sync(self):
+                self.owner.leashHandSide = self.preferredSide
+
+        owner = FakeOwner()
+        dog = FakeDog(owner, 'left')
+        dog.sync()
+        self.assertEqual(owner.leashHandSide, 'left')
+        dog.preferredSide = 'right'
+        dog.sync()
+        self.assertEqual(owner.leashHandSide, 'right')
 
 
 class TestPettingGate(unittest.TestCase):
@@ -1478,6 +1542,15 @@ class TestClickFeedback(unittest.TestCase):
         self.assertIn("worldX", self.src)
         self.assertIn("worldY", self.src)
 
+    def test_feedback_projected_through_camera(self):
+        """Click feedback must be projected to screen space via worldToScreen."""
+        self.assertIn("this.camera.worldToScreen(f.worldX, f.worldY)", self.src)
+        self.assertIn("const sx = pt.x;", self.src)
+        self.assertIn("const sy = pt.y;", self.src)
+        # Glyph drawing must use the projected screen coordinates.
+        self.assertIn("this.ctx.moveTo(sx - s, sy - s);", self.src)
+        self.assertIn("this.ctx.moveTo(sx - s, sy);", self.src)
+
     def test_behavioral_single_click_event(self):
         def emit(is_double, world_x, world_y):
             if is_double:
@@ -1553,6 +1626,11 @@ class TestBrakeLightFeedback(unittest.TestCase):
 
     def test_main_triggers_brake_light(self):
         self.assertIn("triggerBrakeLight", self.main_src)
+
+    def test_main_passes_now_to_brake_light(self):
+        """triggerBrakeLight must be called with an explicit timestamp."""
+        self.assertIn("this.owner.triggerBrakeLight(brakeNow)", self.main_src)
+        self.assertIn("const brakeNow = (typeof performance !== 'undefined' ? performance.now() : Date.now());", self.main_src)
 
 
 if __name__ == "__main__":

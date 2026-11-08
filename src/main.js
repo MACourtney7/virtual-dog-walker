@@ -1361,14 +1361,14 @@ export class CliftonDownGame {
         this.ctx,
         this.activePoopPileNearPlayer.x,
         this.activePoopPileNearPlayer.y - 18,
-        isTouch ? 'Tap 💩 to pick up' : 'Click to pick up waste'
+        isTouch ? 'Tap 💩 or [E] to pick up' : 'Click to pick up waste'
       );
     } else if (this.activeBinNearPlayer && this.hasPoopBag) {
       this.drawInteractionPrompt(
         this.ctx,
         this.activeBinNearPlayer.x,
         this.activeBinNearPlayer.y - 28,
-        isTouch ? 'Tap 🗑️ to dispose' : 'Click to dispose in bin'
+        isTouch ? 'Tap 🗑️ or [E] to dispose' : 'Click to dispose in bin'
       );
     }
 

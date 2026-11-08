@@ -239,8 +239,9 @@ class TestContextualTouchActions(unittest.TestCase):
         with open("src/main.js", "r", encoding="utf-8") as f:
             code = f.read()
 
-        self.assertIn("Tap 💩 or [E] to pick up", code)
-        self.assertIn("Tap 🗑️ or [E] to dispose", code)
+        self.assertIn("Tap 💩 to pick up", code)
+        self.assertIn("Tap 🗑️ to dispose", code)
+        self.assertNotIn("[E]", code)
         self.assertIn("this.touchControls.setContextualAction('pickup');", code)
         self.assertIn("this.touchControls.setContextualAction('dispose');", code)
         self.assertIn("this.touchControls.setContextualAction(null);", code)

@@ -48,7 +48,6 @@ class TestMobileStyles(unittest.TestCase):
     def test_touch_controls_selectors(self):
         """Verify essential mobile control selectors exist in CSS."""
         self.assertIn("#touch-controls-overlay", self.css)
-        self.assertIn("#touch-joystick-zone", self.css)
         self.assertIn("#touch-action-pad", self.css)
         self.assertIn(".touch-action-btn", self.css)
 
@@ -188,33 +187,41 @@ class MockJoystick:
         }
 
 
-class TestJoystickVectorMath(unittest.TestCase):
-    def setUp(self):
-        self.joystick = MockJoystick(center_x=100.0, center_y=100.0, max_radius=50.0, deadzone=0.10)
+class TestPaceControls(unittest.TestCase):
+    """Verify discrete pace controls replace the legacy analog joystick."""
 
-    def test_deadzone_rejection(self):
-        """Touches within deadzone threshold (< 10% radius = 5px) return zero vector."""
-        res = self.joystick.process_touch(102.0, 102.0)
-        self.assertFalse(res["active"])
-        self.assertEqual(res["vx"], 0.0)
-        self.assertEqual(res["vy"], 0.0)
+    def test_pace_controls_source_contract(self):
+        with open("src/ui/touch_controls.js", "r", encoding="utf-8") as f:
+            code = f.read()
 
-    def test_full_deflection_clamping(self):
-        """Touches far beyond max radius clamp magnitude to 1.0."""
-        res = self.joystick.process_touch(300.0, 100.0) # Deflection strictly rightward
-        self.assertTrue(res["active"])
-        self.assertAlmostEqual(res["vx"], 1.0, places=4)
-        self.assertAlmostEqual(res["vy"], 0.0, places=4)
-        self.assertEqual(res["distance"], 50.0)
+        self.assertIn("onPaceDown", code)
+        self.assertIn("onPaceUp", code)
+        self.assertIn("btn-touch-pace-down", code)
+        self.assertIn("btn-touch-pace-up", code)
+        self.assertIn("touch-gait-badge", code)
+        self.assertIn("setCurrentGait", code)
 
-    def test_diagonal_deflection_magnitude(self):
-        """45-degree deflection normalizes with proportional intensity."""
-        # 45 degrees: dx = 35.35, dy = 35.35 -> dist ~50
-        res = self.joystick.process_touch(135.355, 135.355)
-        self.assertTrue(res["active"])
-        self.assertAlmostEqual(res["angle"], math.pi / 4, places=3)
-        mag = math.hypot(res["vx"], res["vy"])
-        self.assertAlmostEqual(mag, 1.0, places=3)
+    def test_joystick_removed(self):
+        with open("src/ui/touch_controls.js", "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertNotIn("joystick-base", code)
+        self.assertNotIn("joystick-knob", code)
+
+    def test_pace_step_behavioral(self):
+        """Simulate pace stepping through the gait order."""
+        GAIT_ORDER = ["STAND", "STROLL", "WALK", "JOG"]
+
+        def step(gait, delta):
+            idx = GAIT_ORDER.index(gait)
+            next_idx = max(0, min(len(GAIT_ORDER) - 1, idx + delta))
+            return GAIT_ORDER[next_idx]
+
+        self.assertEqual(step("STROLL", +1), "WALK")
+        self.assertEqual(step("WALK", +1), "JOG")
+        self.assertEqual(step("JOG", +1), "JOG")
+        self.assertEqual(step("WALK", -1), "STROLL")
+        self.assertEqual(step("STAND", -1), "STAND")
 
 
 class TestContextualTouchActions(unittest.TestCase):

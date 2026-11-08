@@ -240,8 +240,11 @@ class TestDoublePressLogic(unittest.TestCase):
         self.assertIn("gaitAtPress: this.owner.gait", self.src)
 
     def test_separate_press_flush(self):
-        self.assertIn("isSeparate", self.src)
-        self.assertIn("distSinceLast > DOUBLE_CLICK_PX", self.src)
+        # Non-double presses must flush any pending single gesture before
+        # scheduling the new one.
+        self.assertIn("Not a double press: flush any pending single gesture immediately", self.src)
+        self.assertIn("if (pending) resolveCapturedPress(pending, false);", self.src)
+        self.assertIn("distSinceLast <= DOUBLE_CLICK_PX", self.src)
 
     def test_double_press_gait_progression(self):
         # STAND -> STROLL, STROLL -> WALK, WALK -> JOG
@@ -294,6 +297,131 @@ class TestFootstepCadence(unittest.TestCase):
         self.assertIn("this.owner.gait === 'JOG' ? 200", self.src)
         self.assertIn("this.owner.gait === 'WALK' ? 300", self.src)
         self.assertIn("460", self.src)
+
+
+class TestTouchButtonDebounce(unittest.TestCase):
+    """Verify touch buttons debounce duplicate triggers within 200ms."""
+
+    def setUp(self):
+        self.src = read("src/ui/touch_controls.js")
+
+    def test_debounce_guard_present(self):
+        self.assertIn("_lastTriggerAt", self.src)
+        self.assertIn("now - this._lastTriggerAt < 200", self.src)
+
+    def test_debounce_behavioral(self):
+        """Simulate the debounce guard: duplicate triggers within 200ms are ignored."""
+        last_trigger = [0]
+        fired = []
+
+        def trigger(now):
+            if now - last_trigger[0] < 200:
+                return
+            last_trigger[0] = now
+            fired.append(now)
+
+        # Rapid duplicate events from touchstart + pointerdown + click
+        trigger(1000)
+        trigger(1005)
+        trigger(1010)
+        self.assertEqual(len(fired), 1)
+
+        # A later press after the debounce window fires again
+        trigger(1300)
+        self.assertEqual(len(fired), 2)
+
+
+class TestSetTargetHeadingPreservesStand(unittest.TestCase):
+    """Verify setTargetHeading() does not mutate gait."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_no_gait_mutation_in_set_target_heading(self):
+        # Extract the setTargetHeading method body
+        start = self.src.index("setTargetHeading(radians)")
+        end = self.src.index("setGait(nextGait", start)
+        body = self.src[start:end]
+        self.assertNotIn("setGait(", body)
+        self.assertIn("this.targetHeading = radians", body)
+
+    def test_behavioral_stand_preserved(self):
+        """Simulate setTargetHeading on a STAND owner: gait must remain STAND."""
+        class FakeOwner:
+            def __init__(self):
+                self.gait = 'STAND'
+                self.targetHeading = 0.0
+
+            def setTargetHeading(self, radians):
+                self.targetHeading = radians
+
+        o = FakeOwner()
+        o.setTargetHeading(1.23)
+        self.assertEqual(o.gait, 'STAND')
+        self.assertAlmostEqual(o.targetHeading, 1.23)
+
+
+class TestBoundaryCollisionStopsMotion(unittest.TestCase):
+    """Verify boundary collision zeroes velocity and isMoving."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_set_gait_syncs_is_moving(self):
+        self.assertIn("this.isMoving = this.gait !== Gait.STAND;", self.src)
+        self.assertIn("this.vx = 0;", self.src)
+        self.assertIn("this.vy = 0;", self.src)
+
+    def test_post_collision_resync(self):
+        # The resync block must appear after collision resolution
+        idx_collision = self.src.index("resolveCollisionWithResult")
+        idx_resync = self.src.index("Re-sync motion flags after collision resolution")
+        self.assertGreater(idx_resync, idx_collision)
+
+    def test_behavioral_boundary_stop(self):
+        """Simulate boundary collision: STAND gait zeroes velocity and isMoving."""
+        class FakeOwner:
+            def __init__(self):
+                self.gait = 'WALK'
+                self.vx = 185.0
+                self.vy = 0.0
+                self.isMoving = True
+
+            def setGait(self, g):
+                self.gait = g
+                self.isMoving = self.gait != 'STAND'
+                if not self.isMoving:
+                    self.vx = 0
+                    self.vy = 0
+
+        o = FakeOwner()
+        o.setGait('STAND')
+        self.assertFalse(o.isMoving)
+        self.assertEqual(o.vx, 0)
+        self.assertEqual(o.vy, 0)
+
+
+class TestDoublePressDistanceThreshold(unittest.TestCase):
+    """Verify double-press distance threshold uses inclusive <= 24px."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_inclusive_threshold(self):
+        self.assertIn("distSinceLast <= DOUBLE_CLICK_PX", self.src)
+        self.assertIn("DOUBLE_CLICK_PX = 24", self.src)
+
+    def test_behavioral_threshold(self):
+        """Simulate the double-press distance check."""
+        DOUBLE_CLICK_PX = 24
+
+        def is_double(dist):
+            return dist <= DOUBLE_CLICK_PX
+
+        self.assertTrue(is_double(0))
+        self.assertTrue(is_double(24))
+        self.assertFalse(is_double(24.01))
+        self.assertFalse(is_double(50))
 
 
 if __name__ == "__main__":

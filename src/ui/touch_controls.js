@@ -16,6 +16,7 @@ export class TouchControls {
 
     this.contextualAction = null;
     this.currentGait = 'STAND';
+    this._lastTriggerAt = 0;
 
     this.overlay = null;
     this.pacePad = null;
@@ -100,6 +101,15 @@ export class TouchControls {
         }
         e.preventDefault();
         e.stopPropagation();
+
+        // Debounce: touchstart + pointerdown + click can all fire for a single
+        // physical press. Ignore duplicate triggers within 200ms.
+        const now = Date.now();
+        if (now - this._lastTriggerAt < 200) {
+          return;
+        }
+        this._lastTriggerAt = now;
+
         this.vibrate(25);
         if (typeof callback === 'function') {
           callback();

@@ -1,4 +1,4 @@
-// Human Owner Player Avatar - 8-Way Directional Movement, 3D Procedural Silhouette, Customization & Interaction Controller
+// Human Owner Player Avatar - Cruise-and-Helm Player Locomotion, Continuous Heading Steering, Ground Halo & Directional 2.5D Silhouette
 import { resolveFieldCollision } from '../engine/wasm_sim_bridge.js';
 
 // Gait model constants
@@ -104,10 +104,9 @@ export class Owner {
 
   setTargetHeading(radians) {
     if (typeof radians !== 'number' || !isFinite(radians)) return;
+    // Heading-only update. Gait transitions are the caller's responsibility
+    // (e.g. main.js explicitly promotes STAND -> STROLL on a field press).
     this.targetHeading = radians;
-    if (this.gait === Gait.STAND) {
-      this.setGait(Gait.STROLL);
-    }
   }
 
   setGait(nextGait, options = {}) {
@@ -146,6 +145,14 @@ export class Owner {
       this.targetHeading = this.angle;
       this.stepOffActive = false;
       this.stepOffTimer = 0;
+    }
+
+    // Keep isMoving and velocity in sync immediately so no stale motion
+    // survives a gait change (e.g. boundary collision forcing STAND).
+    this.isMoving = this.gait !== Gait.STAND;
+    if (!this.isMoving) {
+      this.vx = 0;
+      this.vy = 0;
     }
   }
 
@@ -312,6 +319,14 @@ export class Owner {
       }
     } else if (field) {
       resolveFieldCollision(this, this.radius, field);
+    }
+
+    // Re-sync motion flags after collision resolution so a boundary stop
+    // never leaves stale velocity or isMoving state behind.
+    this.isMoving = this.gait !== Gait.STAND;
+    if (!this.isMoving) {
+      this.vx = 0;
+      this.vy = 0;
     }
 
     this.depthY = this.y + 12;

@@ -674,8 +674,7 @@ export class CliftonDownGame {
       const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       const dtSinceLast = now - this._lastClickTime;
       const distSinceLast = Math.hypot(e.clientX - this._lastClickX, e.clientY - this._lastClickY);
-      const isDouble = dtSinceLast < DOUBLE_CLICK_MS && distSinceLast < DOUBLE_CLICK_PX;
-      const isSeparate = dtSinceLast < DOUBLE_CLICK_MS && distSinceLast > DOUBLE_CLICK_PX;
+      const isDouble = dtSinceLast < DOUBLE_CLICK_MS && distSinceLast <= DOUBLE_CLICK_PX;
 
       this._lastClickTime = now;
       this._lastClickX = e.clientX;
@@ -690,16 +689,14 @@ export class CliftonDownGame {
         this._pendingGesture = null;
         resolveCapturedPress(captured, true);
       } else {
-        // Flush any pending single press immediately if this is a separate press
-        if (isSeparate && this._pendingGestureTimer) {
+        // Not a double press: flush any pending single gesture immediately
+        // BEFORE scheduling this new one.
+        if (this._pendingGestureTimer) {
           clearTimeout(this._pendingGestureTimer);
           this._pendingGestureTimer = null;
           const pending = this._pendingGesture;
           this._pendingGesture = null;
           if (pending) resolveCapturedPress(pending, false);
-        } else if (this._pendingGestureTimer) {
-          clearTimeout(this._pendingGestureTimer);
-          this._pendingGestureTimer = null;
         }
 
         this._pendingGesture = captured;

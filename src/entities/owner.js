@@ -222,25 +222,20 @@ export class Owner {
     const Rx = 22;
     const Ry = 12.1;
 
-    // Translate world point into owner's local frame (rotate by -angle)
     const dx = worldX - centerX;
     const dy = worldY - centerY;
-    const cosA = Math.cos(-this.angle);
-    const sinA = Math.sin(-this.angle);
-    const localX = dx * cosA - dy * sinA;
-    const localY = dx * sinA + dy * cosA;
 
     // Normalized elliptical distance
-    const normDist = Math.sqrt((localX / Rx) ** 2 + (localY / Ry) ** 2);
-    if (normDist < 0.7 || normDist > 3.5) return false;
+    const normDist = Math.hypot(dx / Rx, dy / Ry);
+    if (normDist < 0.7 || normDist > 1.35) return false;
 
-    // Bearing of local point from +x axis, normalized to [0, 2π)
-    let bearing = Math.atan2(localY, localX);
-    if (bearing < 0) bearing += Math.PI * 2;
+    // Normalized angle in ellipse space
+    const normAngle = Math.atan2(dy / Ry, dx / Rx);
+    const rearHeading = this.angle + Math.PI;
+    const delta = Math.abs(angleDelta(rearHeading, normAngle));
 
-    const start = (125 * Math.PI) / 180;
-    const end = (235 * Math.PI) / 180;
-    return bearing >= start && bearing <= end;
+    const halfSpan = (110 * Math.PI) / 180 / 2; // ~55 deg each side
+    return delta <= halfSpan;
   }
 
   isPointOnPlayer(worldX, worldY) {

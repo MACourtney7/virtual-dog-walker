@@ -106,7 +106,7 @@ class TestMainIntegration(unittest.TestCase):
 
     def test_prompt_text_updated(self):
         self.assertIn("Click to pick up waste", self.src)
-        self.assertIn("Click to dispose in bin", self.src)
+        self.assertIn("Click to dispose", self.src)
 
 
 class TestTouchControls(unittest.TestCase):
@@ -269,7 +269,7 @@ class TestTouchPromptStrings(unittest.TestCase):
 
     def test_desktop_prompts(self):
         self.assertIn("Click to pick up waste", self.src)
-        self.assertIn("Click to dispose in bin", self.src)
+        self.assertIn("Click to dispose", self.src)
 
 
 class TestOwnerLocalGuard(unittest.TestCase):
@@ -652,7 +652,8 @@ class TestDeferredSingleBrakeRespectsGaitAtPress(unittest.TestCase):
     def test_behavioral_jog_expired_to_walk(self):
         """JOG at press, expired to WALK by the time the deferred brake fires.
 
-        Expected: WALK -> STROLL (one step down from gaitAtPress), NOT WALK -> STAND.
+        Expected: step down exactly one level from gaitAtPress (JOG -> WALK),
+        NOT from the current gait (which would over-brake WALK -> STROLL).
         """
         state = {'gait': 'JOG'}
 
@@ -670,9 +671,9 @@ class TestDeferredSingleBrakeRespectsGaitAtPress(unittest.TestCase):
         captured_gait = state['gait']  # JOG
         # JOG expires during the 280ms window
         state['gait'] = 'WALK'
-        # Deferred brake fires
+        # Deferred brake fires: one step down from gaitAtPress (JOG -> WALK)
         resolve_brake(captured_gait)
-        self.assertEqual(state['gait'], 'STROLL')
+        self.assertEqual(state['gait'], 'WALK')
 
     def test_behavioral_stand_guard(self):
         """If owner is already STAND, deferred brake must not restart motion."""

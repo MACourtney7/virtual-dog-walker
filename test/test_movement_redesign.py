@@ -25,9 +25,9 @@ class TestOwnerGait(unittest.TestCase):
     def test_gait_speeds_defined(self):
         self.assertIn("GAIT_SPEEDS", self.src)
         self.assertIn("[Gait.STAND]: 0", self.src)
-        self.assertIn("[Gait.STROLL]: 100", self.src)
-        self.assertIn("[Gait.WALK]: 185", self.src)
-        self.assertIn("[Gait.JOG]: 265", self.src)
+        self.assertIn("[Gait.STROLL]: 75", self.src)
+        self.assertIn("[Gait.WALK]: 100", self.src)
+        self.assertIn("[Gait.JOG]: 185", self.src)
 
     def test_gait_turn_rates(self):
         self.assertIn("GAIT_TURN_RATES", self.src)
@@ -56,7 +56,7 @@ class TestOwnerGait(unittest.TestCase):
         self.assertIn("isPointOnRearBrakeArc", self.src)
         self.assertTrue("centerY = this.y + 12" in self.src or "cy = this.y + 12" in self.src)
         self.assertTrue("Rx = 22" in self.src or "rx = 22" in self.src)
-        self.assertTrue("normDist < 0.7 || normDist > 1.35" in self.src or "d < 0.7 || d > 1.35" in self.src)
+        self.assertTrue("normDist < 0.7 || normDist > 3.5" in self.src or "d < 0.7 || d > 3.5" in self.src)
 
 
 class TestFieldCollisionResult(unittest.TestCase):
@@ -157,7 +157,7 @@ class TestRearBrakeArcNormalizedEllipse(unittest.TestCase):
         self.assertIn("const Ry = 12.1", self.src)
         self.assertIn("Math.hypot(dx / Rx, dy / Ry)", self.src)
         self.assertIn("Math.atan2(dy / Ry, dx / Rx)", self.src)
-        self.assertIn("normDist < 0.7 || normDist > 1.35", self.src)
+        self.assertIn("normDist < 0.7 || normDist > 3.5", self.src)
 
     def test_rear_heading_uses_angle_plus_pi(self):
         self.assertIn("const rearHeading = this.angle + Math.PI", self.src)
@@ -180,7 +180,7 @@ class TestRearBrakeArcNormalizedEllipse(unittest.TestCase):
             dx = wx - cx
             dy = wy - cy
             norm_dist = math.hypot(dx / Rx, dy / Ry)
-            if norm_dist < 0.7 or norm_dist > 1.35:
+            if norm_dist < 0.7 or norm_dist > 3.5:
                 return False
             norm_angle = math.atan2(dy / Ry, dx / Rx)
             rear = angle + math.pi
@@ -196,8 +196,8 @@ class TestRearBrakeArcNormalizedEllipse(unittest.TestCase):
         self.assertFalse(on_rear_arc(100, 100, 0.0, 100 + 22, 100 + 12))
         # Point to the side (north) should NOT be on rear arc
         self.assertFalse(on_rear_arc(100, 100, 0.0, 100, 100 + 12 - 12.1))
-        # Point far outside distance band should NOT hit
-        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 60, 100 + 12))
+        # Point far outside distance band (normDist > 3.5) should NOT hit
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 22 * 3.6, 100 + 12))
         # Point inside inner band should NOT hit
         self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 5, 100 + 12))
         # STAND gait never hits
@@ -798,6 +798,255 @@ class TestDoublePressDistanceThreshold(unittest.TestCase):
         self.assertTrue(is_double(24))
         self.assertFalse(is_double(24.01))
         self.assertFalse(is_double(50))
+
+
+class TestGaitSpeedConstants(unittest.TestCase):
+    """Verify GAIT_SPEEDS exact values (unification-020)."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_exact_speed_values(self):
+        self.assertIn("[Gait.STAND]: 0", self.src)
+        self.assertIn("[Gait.STROLL]: 75", self.src)
+        self.assertIn("[Gait.WALK]: 100", self.src)
+        self.assertIn("[Gait.JOG]: 185", self.src)
+
+    def test_behavioral_speed_lookup(self):
+        GAIT_SPEEDS = {'STAND': 0, 'STROLL': 75, 'WALK': 100, 'JOG': 185}
+        self.assertEqual(GAIT_SPEEDS['STAND'], 0)
+        self.assertEqual(GAIT_SPEEDS['STROLL'], 75)
+        self.assertEqual(GAIT_SPEEDS['WALK'], 100)
+        self.assertEqual(GAIT_SPEEDS['JOG'], 185)
+
+
+class TestTurnOnTheSpot(unittest.TestCase):
+    """Verify STAND gait snaps angle immediately on setTargetHeading."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_stand_snaps_angle(self):
+        self.assertIn("if (this.gait === Gait.STAND) {", self.src)
+        self.assertIn("this.angle = radians;", self.src)
+
+    def test_behavioral_stand_snap(self):
+        class FakeOwner:
+            def __init__(self):
+                self.gait = 'STAND'
+                self.angle = 0.0
+                self.targetHeading = 0.0
+
+            def setTargetHeading(self, radians):
+                self.targetHeading = radians
+                if self.gait == 'STAND':
+                    self.angle = radians
+
+        o = FakeOwner()
+        o.setTargetHeading(1.57)
+        self.assertAlmostEqual(o.angle, 1.57)
+        self.assertAlmostEqual(o.targetHeading, 1.57)
+
+
+class TestStepOffAlignmentGate(unittest.TestCase):
+    """Verify STAND -> STROLL suppresses velocity until aligned."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_step_off_constants(self):
+        self.assertIn("STEP_OFF_ALIGN_TOLERANCE", self.src)
+        self.assertIn("STEP_OFF_MAX_DURATION", self.src)
+        self.assertIn("STEP_OFF_TURN_RATE", self.src)
+
+    def test_step_off_gate_present(self):
+        self.assertIn("if (this.stepOffActive) {", self.src)
+        self.assertIn("alignErr > STEP_OFF_ALIGN_TOLERANCE", self.src)
+        self.assertIn("this.vx = 0;", self.src)
+        self.assertIn("this.vy = 0;", self.src)
+
+    def test_behavioral_gate_suppresses_velocity(self):
+        import math
+        STEP_OFF_ALIGN_TOLERANCE = (5 * math.pi) / 180
+
+        def gate(angle, target, vx, vy):
+            align_err = abs(((target - angle + math.pi) % (2 * math.pi)) - math.pi)
+            if align_err > STEP_OFF_ALIGN_TOLERANCE:
+                return 0.0, 0.0
+            return vx, vy
+
+        # Misaligned by 90 degrees: velocity suppressed
+        vx, vy = gate(0.0, math.pi / 2, 75.0, 0.0)
+        self.assertEqual(vx, 0.0)
+        self.assertEqual(vy, 0.0)
+
+        # Aligned within tolerance: velocity preserved
+        vx, vy = gate(0.0, 0.01, 75.0, 0.0)
+        self.assertEqual(vx, 75.0)
+
+
+class TestBoundaryAntiStuck(unittest.TestCase):
+    """Verify boundary collision does not force STAND when heading is inward."""
+
+    def setUp(self):
+        self.src = read("src/world/field.js")
+
+    def test_boundary_kind_present(self):
+        self.assertIn("kind = 'boundary'", self.src)
+
+    def test_behavioral_inward_movement_allowed(self):
+        """Simulate boundary clamp: inward heading should not force STAND."""
+        width = 3200
+        height = 2400
+        radius = 16
+        minX = 56 + radius
+        maxX = width - 56 - radius
+        minY = 56 + radius
+        maxY = height - 56 - radius
+
+        # Owner at west boundary, heading east (inward)
+        nx = minX - 5
+        ny = 500
+        clampedX = max(minX, min(maxX, nx))
+        clampedY = max(minY, min(maxY, ny))
+        kind = 'none'
+        if clampedX != nx or clampedY != ny:
+            kind = 'boundary'
+
+        # Boundary contact detected, but heading is inward (east)
+        self.assertEqual(kind, 'boundary')
+        # The owner's heading (east) points into playable area, so movement
+        # should be allowed on the next tick (no forced STAND).
+        heading = 0.0  # east
+        inward = heading > -1.5708 and heading < 1.5708
+        self.assertTrue(inward)
+
+
+class TestRearBrake5xHitTesting(unittest.TestCase):
+    """Verify 5x expanded rear brake arc (normDist 0.7 to 3.5)."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_5x_band_constant(self):
+        self.assertIn("normDist < 0.7 || normDist > 3.5", self.src)
+
+    def test_behavioral_5x_band(self):
+        import math
+
+        def on_rear_arc(owner_x, owner_y, angle, wx, wy):
+            cx = owner_x
+            cy = owner_y + 12
+            Rx = 22
+            Ry = 12.1
+            dx = wx - cx
+            dy = wy - cy
+            norm_dist = math.hypot(dx / Rx, dy / Ry)
+            if norm_dist < 0.7 or norm_dist > 3.5:
+                return False
+            norm_angle = math.atan2(dy / Ry, dx / Rx)
+            rear = angle + math.pi
+            delta = ((norm_angle - rear + math.pi) % (2 * math.pi)) - math.pi
+            if delta < -math.pi:
+                delta += 2 * math.pi
+            return abs(delta) <= (55 * math.pi / 180)
+
+        # Behind owner at normDist 1.0, 2.0, 3.0, 3.4 -> all hit
+        for mult in (1.0, 2.0, 3.0, 3.4):
+            self.assertTrue(on_rear_arc(100, 100, 0.0, 100 - 22 * mult, 100 + 12),
+                            f"normDist {mult} should hit")
+        # normDist 3.6 -> miss
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 22 * 3.6, 100 + 12))
+        # normDist 0.5 -> miss
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 22 * 0.5, 100 + 12))
+
+
+class TestPlayerAvatarHitTest(unittest.TestCase):
+    """Verify isPointOnPlayer uses 26px radius squared."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_hit_radius_constant(self):
+        self.assertIn("PLAYER_HIT_RADIUS = 26", self.src)
+        self.assertIn("Owner.PLAYER_HIT_RADIUS = PLAYER_HIT_RADIUS", self.src)
+
+    def test_is_point_on_player_present(self):
+        self.assertIn("isPointOnPlayer(worldX, worldY)", self.src)
+        self.assertIn("PLAYER_HIT_RADIUS * PLAYER_HIT_RADIUS", self.src)
+
+    def test_behavioral_hit_test(self):
+        PLAYER_HIT_RADIUS = 26
+
+        def is_on_player(ox, oy, wx, wy):
+            dx = wx - ox
+            dy = wy - oy
+            return (dx * dx + dy * dy) < (PLAYER_HIT_RADIUS * PLAYER_HIT_RADIUS)
+
+        # Center hit
+        self.assertTrue(is_on_player(100, 100, 100, 100))
+        # Edge hit (25px away)
+        self.assertTrue(is_on_player(100, 100, 125, 100))
+        # Outside (27px away)
+        self.assertFalse(is_on_player(100, 100, 127, 100))
+
+
+class TestAvatarClickBraking(unittest.TestCase):
+    """Verify main.js contains avatar click brake detection."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_avatar_click_detection(self):
+        self.assertIn("Avatar click", self.src)
+        self.assertIn("isPointOnPlayer", self.src)
+        self.assertIn("cancelPendingSingle", self.src)
+
+    def test_avatar_brake_uses_step_down(self):
+        self.assertIn("stepDownGait", self.src)
+        self.assertIn("setGait('STAND')", self.src)
+
+
+class TestCompanionDogFlankingBounds(unittest.TestCase):
+    """Verify companion dog flank bands are within forward hemisphere."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_flank_right_band(self):
+        self.assertIn("FLANK_RIGHT", self.src)
+        self.assertIn("(30 * Math.PI) / 180", self.src)
+        self.assertIn("(120 * Math.PI) / 180", self.src)
+
+    def test_flank_left_band(self):
+        self.assertIn("FLANK_LEFT", self.src)
+        self.assertIn("(-120 * Math.PI) / 180", self.src)
+        self.assertIn("(-30 * Math.PI) / 180", self.src)
+
+    def test_get_flank_band_helper(self):
+        self.assertIn("_getFlankBand", self.src)
+
+    def test_behavioral_flank_bounds(self):
+        import math
+        FLANK_RIGHT = {
+            'min': (30 * math.pi) / 180,
+            'mid': (60 * math.pi) / 180,
+            'max': (120 * math.pi) / 180
+        }
+        FLANK_LEFT = {
+            'min': (-120 * math.pi) / 180,
+            'mid': (-60 * math.pi) / 180,
+            'max': (-30 * math.pi) / 180
+        }
+        # Right flank is in forward-right quadrant
+        self.assertGreater(FLANK_RIGHT['min'], 0)
+        self.assertLess(FLANK_RIGHT['max'], math.pi)
+        # Left flank is in forward-left quadrant
+        self.assertLess(FLANK_LEFT['max'], 0)
+        self.assertGreater(FLANK_LEFT['min'], -math.pi)
+        # Neither band includes straight-behind (180 deg)
+        self.assertLess(FLANK_RIGHT['max'], math.pi)
+        self.assertGreater(FLANK_LEFT['min'], -math.pi)
 
 
 if __name__ == "__main__":

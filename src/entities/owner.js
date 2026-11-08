@@ -13,9 +13,9 @@ const GAIT_ORDER = [Gait.STAND, Gait.STROLL, Gait.WALK, Gait.JOG];
 
 const GAIT_SPEEDS = Object.freeze({
   [Gait.STAND]: 0,
-  [Gait.STROLL]: 100,
-  [Gait.WALK]: 185,
-  [Gait.JOG]: 265
+  [Gait.STROLL]: 75,
+  [Gait.WALK]: 100,
+  [Gait.JOG]: 185
 });
 
 // Max turn rate (radians/sec) per gait
@@ -227,7 +227,7 @@ export class Owner {
 
     // Normalized elliptical distance
     const normDist = Math.hypot(dx / Rx, dy / Ry);
-    if (normDist < 0.7 || normDist > 1.35) return false;
+    if (normDist < 0.7 || normDist > 3.5) return false;
 
     // Normalized angle in ellipse space
     const normAngle = Math.atan2(dy / Ry, dx / Rx);

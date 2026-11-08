@@ -54,9 +54,9 @@ class TestOwnerGait(unittest.TestCase):
 
     def test_rear_brake_arc_uses_ellipse(self):
         self.assertIn("isPointOnRearBrakeArc", self.src)
-        self.assertIn("const cy = this.y + 12", self.src)
-        self.assertIn("const rx = 22", self.src)
-        self.assertIn("d < 0.7 || d > 1.35", self.src)
+        self.assertTrue("centerY = this.y + 12" in self.src or "cy = this.y + 12" in self.src)
+        self.assertTrue("Rx = 22" in self.src or "rx = 22" in self.src)
+        self.assertTrue("normDist < 0.7 || normDist > 1.35" in self.src or "d < 0.7 || d > 1.35" in self.src)
 
 
 class TestFieldCollisionResult(unittest.TestCase):
@@ -98,9 +98,11 @@ class TestMainIntegration(unittest.TestCase):
         self.assertIn("e.preventDefault()", self.src)
 
     def test_collision_result_integration(self):
-        self.assertIn("resolveCollisionWithResult", self.src)
-        self.assertIn("res.kind === 'boundary'", self.src)
-        self.assertIn("res.kind === 'obstacle'", self.src)
+        # Owner update handles collision result integration
+        owner_src = read("src/entities/owner.js")
+        self.assertIn("resolveCollisionWithResult", owner_src)
+        self.assertIn("res.kind === 'boundary'", owner_src)
+        self.assertIn("res.kind === 'obstacle'", owner_src)
 
     def test_prompt_text_updated(self):
         self.assertIn("Click to pick up waste", self.src)

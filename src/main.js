@@ -1,7 +1,7 @@
 // Clifton Down: Social Dog Walking Sandbox - Main Orchestrator
 
 import { Field, Camera } from './world/field.js';
-import { Owner } from './entities/owner.js';
+import { Owner, Gait } from './entities/owner.js';
 import { CompanionDog, CoatPreset, DogState } from './entities/companion_dog.js';
 import { TennisBall } from './entities/toy.js';
 import { NetworkManager, NetStatus } from './net/network.js';
@@ -649,6 +649,30 @@ export class CliftonDownGame {
       // Only left-click / primary pointer
       if (e.button !== undefined && e.button !== 0) return;
 
+      // --- Avatar click → brake gesture (REQ-004) ---
+      // Detect clicks on the player avatar body. A standing avatar is an
+      // explicit no-op for locomotion. A moving avatar is routed through the
+      // deferred `captured.type = 'brake'` path below so single/double click
+      // semantics are handled uniformly by resolveCapturedPress().
+      const avatarWorld = this.camera.screenToWorld(e.clientX, e.clientY);
+      const hitRadius = (Owner && typeof Owner.PLAYER_HIT_RADIUS === 'number')
+        ? Owner.PLAYER_HIT_RADIUS
+        : 26;
+      const avatarDistSq = (avatarWorld.x - this.owner.x) ** 2 + (avatarWorld.y - this.owner.y) ** 2;
+      const onPlayer = avatarDistSq < (hitRadius * hitRadius) ||
+        (typeof this.owner.isPointOnPlayer === 'function' &&
+          this.owner.isPointOnPlayer(avatarWorld.x, avatarWorld.y));
+
+      if (onPlayer && this.owner.gait === 'STAND') {
+        // Standing avatar: no brake, no gait change. Cancel any pending
+        // deferred gesture so it cannot fire later.
+        cancelPendingSingle();
+        this._lastClickTime = 0;
+        this._lastClickX = 0;
+        this._lastClickY = 0;
+        return;
+      }
+
       // --- Immediate hits (no double-click delay) ---
 
       // 1. Companion dog
@@ -698,9 +722,11 @@ export class CliftonDownGame {
       // Capture hit type + heading AT PRESS TIME so the owner's later movement
       // does not change what the press meant.
       const worldTarget = this.camera.screenToWorld(e.clientX, e.clientY);
-      const isBrake = this.owner.gait !== 'STAND' &&
-        typeof this.owner.isPointOnRearBrakeArc === 'function' &&
-        this.owner.isPointOnRearBrakeArc(worldTarget.x, worldTarget.y);
+      const isBrake = this.owner.gait !== 'STAND' && (
+        onPlayer ||
+        (typeof this.owner.isPointOnRearBrakeArc === 'function' &&
+          this.owner.isPointOnRearBrakeArc(worldTarget.x, worldTarget.y))
+      );
 
       const captured = {
         type: isBrake ? 'brake' : 'field',

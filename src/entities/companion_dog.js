@@ -25,6 +25,25 @@ function lerpAngle(a, b, t) {
   return a + d * Math.min(1, Math.max(0, t));
 }
 
+// Forward-flank bearing bands (relative to owner.angle). The dog must never
+// land in the straight-behind zone (180° ± 25°).
+const FLANK_RIGHT = {
+  min: (30 * Math.PI) / 180,
+  mid: (60 * Math.PI) / 180,
+  max: (120 * Math.PI) / 180
+};
+const FLANK_LEFT = {
+  min: (-120 * Math.PI) / 180,
+  mid: (-60 * Math.PI) / 180,
+  max: (-30 * Math.PI) / 180
+};
+
+// Leash hand anchor geometry (must stay OUTSIDE the 26px body radius so the
+// leash never clips the owner torso).
+const HAND_RADIUS = 28;
+const HAND_SIDE = (60 * Math.PI) / 180;
+const PLAYER_HIT_RADIUS = 26;
+
 // States that must never be interrupted by ambient resting (LYING_DOWN) transitions.
 const ACTIVE_REST_BLOCKED_STATES = new Set([
   DogState.FETCHING,
@@ -131,9 +150,11 @@ export class CompanionDog {
     this.state = (this.owner && !this.owner.isLeashed) ? DogState.ROAMING : DogState.FOLLOWING;
     this.stateTimer = 0;
 
-    // Follow offset relative to owner (on-leash close heel follow between 35px and 45px)
+    // Follow offset relative to owner (forward flank, never straight behind)
     this.followDistance = 42;
-    this.followAngleOffset = Math.PI * 0.75; // trots slightly behind and to the side
+    this.followAngleOffset = FLANK_RIGHT.mid; // forward-right flank by default
+    this.preferredSide = 'right'; // 'right' | 'left'
+    this.flankAngle = FLANK_RIGHT.mid; // smoothed flank bearing relative to owner.angle
 
     // Ear spring physics (secondary damper system)
     this.leftEar = { angle: 0, vel: 0 };
@@ -912,19 +933,62 @@ export class CompanionDog {
     return false;
   }
 
-  // Resolve owner gait into dog tuning parameters
+  // Resolve the current flank band based on preferred side.
+  _getFlankBand() {
+    return this.preferredSide === 'left' ? FLANK_LEFT : FLANK_RIGHT;
+  }
+
+  // Resolve the smoothed flank bearing (relative to owner.angle), clamped to the band.
+  _resolveFlankAngle(dt) {
+    const band = this._getFlankBand();
+    const target = band.mid;
+    // Exponential smoothing toward the target flank bearing.
+    const smooth = Math.min(1, dt * 6);
+    this.flankAngle += (target - this.flankAngle) * smooth;
+    // Clamp into the band so the dog never lands straight behind.
+    return Math.max(band.min, Math.min(band.max, this.flankAngle));
+  }
+
+  // Resolve owner gait into dog tuning parameters.
+  // Follow distance scales strictly with gait speed (STAND < STROLL < WALK < JOG).
   _getGaitTuning() {
     const gait = (this.owner && this.owner.gait) ? this.owner.gait : 'STAND';
+    const speeds = (typeof window !== 'undefined' && window.Owner && window.Owner.GAIT_SPEEDS)
+      ? window.Owner.GAIT_SPEEDS
+      : null;
+    const speedFor = (g, fallback) => (speeds && speeds[g] !== undefined) ? speeds[g] : fallback;
+
+    // distance = base + k * speed, with base chosen so STAND gives the at-heel gap.
+    // Follow distance is strictly monotonic with gait speed:
+    // STAND (0) < STROLL (75) < WALK (100) < JOG (185).
+    const base = 30;
+    const k = 0.065;
+
     switch (gait) {
       case 'STAND':
-        return { followDistance: 30, speedScale: 0.0, sniffChance: 0.0, roamSuppressed: true };
+        return { followDistance: base, speedScale: 0.0, sniffChance: 0.0, roamSuppressed: true };
       case 'STROLL':
-        return { followDistance: 46, speedScale: 0.55, sniffChance: 0.35, roamSuppressed: false };
+        return {
+          followDistance: base + k * speedFor('STROLL', 75),
+          speedScale: 0.55,
+          sniffChance: 0.35,
+          roamSuppressed: false
+        };
       case 'JOG':
-        return { followDistance: 34, speedScale: 1.35, sniffChance: 0.05, roamSuppressed: false };
+        return {
+          followDistance: base + k * speedFor('JOG', 185),
+          speedScale: 1.35,
+          sniffChance: 0.05,
+          roamSuppressed: false
+        };
       case 'WALK':
       default:
-        return { followDistance: 42, speedScale: 1.0, sniffChance: 0.08, roamSuppressed: false };
+        return {
+          followDistance: base + k * speedFor('WALK', 100),
+          speedScale: 1.0,
+          sniffChance: 0.08,
+          roamSuppressed: false
+        };
     }
   }
 
@@ -944,9 +1008,11 @@ export class CompanionDog {
       return;
     }
 
-    // Desired position: slightly offset from owner
-    const targetX = this.owner.x + Math.cos(this.owner.angle + this.followAngleOffset) * this.followDistance;
-    const targetY = this.owner.y + Math.sin(this.owner.angle + this.followAngleOffset) * this.followDistance;
+    // Desired position: forward flank offset from owner (never straight behind)
+    const flankAngle = this._resolveFlankAngle(dt);
+    this.followAngleOffset = flankAngle;
+    const targetX = this.owner.x + Math.cos(this.owner.angle + flankAngle) * this.followDistance;
+    const targetY = this.owner.y + Math.sin(this.owner.angle + flankAngle) * this.followDistance;
 
     const dx = targetX - this.x;
     const dy = targetY - this.y;
@@ -1248,8 +1314,10 @@ export class CompanionDog {
     if (this.isRecalledToHeel) {
       // Executes tight close heel following (followDistance = 35)
       this.followDistance = 35;
-      const targetX = this.owner.x + Math.cos(this.owner.angle + this.followAngleOffset) * this.followDistance;
-      const targetY = this.owner.y + Math.sin(this.owner.angle + this.followAngleOffset) * this.followDistance;
+      const flankAngle = this._resolveFlankAngle(dt);
+      this.followAngleOffset = flankAngle;
+      const targetX = this.owner.x + Math.cos(this.owner.angle + flankAngle) * this.followDistance;
+      const targetY = this.owner.y + Math.sin(this.owner.angle + flankAngle) * this.followDistance;
 
       const dx = targetX - this.x;
       const dy = targetY - this.y;
@@ -1832,13 +1900,28 @@ export class CompanionDog {
 
   drawLeash(ctx) {
     ctx.save();
-    // Hand anchor point on owner
-    const handX = this.owner.x + Math.cos(this.owner.angle + Math.PI / 2) * 11;
-    const handY = this.owner.y + Math.sin(this.owner.angle + Math.PI / 2) * 11;
+
+    // Hand anchor on the flank side the dog is currently on (matches flank band).
+    // HAND_RADIUS (28) is strictly outside PLAYER_HIT_RADIUS (26) so the anchor
+    // itself never sits inside the owner torso.
+    const sideSign = this.preferredSide === 'left' ? -1 : 1;
+    let handSide = sideSign * HAND_SIDE;
+    let handX = this.owner.x + Math.cos(this.owner.angle + handSide) * HAND_RADIUS;
+    let handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
 
     // Collar anchor point on dog
     const collarX = this.x;
     const collarY = this.y - 2;
+
+    // Guard: if the leash midpoint would clip the owner torso, widen the hand
+    // offset further so the sag point clears the body radius.
+    const midX0 = (handX + collarX) / 2;
+    const midY0 = (handY + collarY) / 2;
+    if (Math.hypot(midX0 - this.owner.x, midY0 - this.owner.y) <= PLAYER_HIT_RADIUS) {
+      handSide = sideSign * (HAND_SIDE + (10 * Math.PI) / 180);
+      handX = this.owner.x + Math.cos(this.owner.angle + handSide) * HAND_RADIUS;
+      handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
+    }
 
     const distToOwner = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
 
@@ -1852,9 +1935,20 @@ export class CompanionDog {
       ctx.lineTo(collarX + jitter, collarY + jitter);
       ctx.stroke();
     } else {
-      // Slack catenary sag quadratic curve
-      const midX = (handX + collarX) / 2;
-      const midY = (handY + collarY) / 2 + 14;
+      // Slack catenary sag quadratic curve. The sag point is pushed outward
+      // along the owner->midpoint direction so the curve never dips inside
+      // the owner body radius.
+      let midX = (handX + collarX) / 2;
+      let midY = (handY + collarY) / 2 + 14;
+
+      const midDx = midX - this.owner.x;
+      const midDy = midY - this.owner.y;
+      const midDist = Math.hypot(midDx, midDy);
+      if (midDist < PLAYER_HIT_RADIUS + 2 && midDist > 0.001) {
+        const push = (PLAYER_HIT_RADIUS + 2) / midDist;
+        midX = this.owner.x + midDx * push;
+        midY = this.owner.y + midDy * push;
+      }
 
       ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
       ctx.lineWidth = 1.8;

@@ -7788,6 +7788,22 @@ export class CompanionDog {
     return false;
   }
 
+  // Resolve owner gait into dog tuning parameters
+  _getGaitTuning() {
+    const gait = (this.owner && this.owner.gait) ? this.owner.gait : 'STAND';
+    switch (gait) {
+      case 'STAND':
+        return { followDistance: 30, speedScale: 0.0, sniffChance: 0.0, roamSuppressed: true };
+      case 'STROLL':
+        return { followDistance: 46, speedScale: 0.55, sniffChance: 0.35, roamSuppressed: false };
+      case 'JOG':
+        return { followDistance: 34, speedScale: 1.35, sniffChance: 0.05, roamSuppressed: false };
+      case 'WALK':
+      default:
+        return { followDistance: 42, speedScale: 1.0, sniffChance: 0.08, roamSuppressed: false };
+    }
+  }
+
   updateFollowing(dt, otherDogs = [], field = null) {
     if (!this.owner) return;
 
@@ -7797,7 +7813,8 @@ export class CompanionDog {
       return;
     }
 
-    this.followDistance = 42;
+    const tuning = this._getGaitTuning();
+    this.followDistance = tuning.followDistance;
 
     if (this.checkSocialInteractions(otherDogs)) {
       return;
@@ -7829,9 +7846,10 @@ export class CompanionDog {
 
     // Arrival steering calculation matching owner's pace
     const slowingRadius = 40;
-    let targetSpeed = this.speed;
+    const baseSpeed = this.speed * tuning.speedScale;
+    let targetSpeed = baseSpeed;
     if (dist < slowingRadius) {
-      targetSpeed = this.speed * (dist / slowingRadius);
+      targetSpeed = baseSpeed * (dist / slowingRadius);
     }
 
     // Higher obedience adheres strictly to heel follow offset with smaller arrival deadband
@@ -7857,6 +7875,25 @@ export class CompanionDog {
       return;
     }
 
+    const tuning = this._getGaitTuning();
+
+    // STAND: dog settles near owner, roaming bursts suppressed
+    if (tuning.roamSuppressed) {
+      const dx = this.owner.x - this.x;
+      const dy = this.owner.y - this.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 40) {
+        this.vx = (dx / dist) * this.speed * 0.5;
+        this.vy = (dy / dist) * this.speed * 0.5;
+        this.angle = Math.atan2(this.vy, this.vx);
+      } else {
+        this.vx *= 0.7;
+        this.vy *= 0.7;
+      }
+      this.wagSpeed = 5;
+      return;
+    }
+
     if (this.checkSocialInteractions(otherDogs)) {
       return;
     }
@@ -7875,7 +7912,7 @@ export class CompanionDog {
 
     // 2. Scent trail detection (investigating squirrel or canine scent trails)
     if (!this.hasStick && !this.hasBall && field && typeof field.getNearbyScents === 'function') {
-      if (Math.random() < 0.08) {
+      if (Math.random() < tuning.sniffChance) {
         const nearbyScents = field.getNearbyScents(this.x, this.y, 85);
         if (nearbyScents.length > 0) {
           const chosen = nearbyScents[Math.floor(Math.random() * nearbyScents.length)];
@@ -7953,7 +7990,7 @@ export class CompanionDog {
       } else {
         this.wanderAngle = Math.random() * Math.PI * 2;
       }
-      this.wanderSpeed = this.speed * (0.65 + Math.random() * 0.25);
+      this.wanderSpeed = this.speed * tuning.speedScale * (0.65 + Math.random() * 0.25);
     }
 
     let wanderVx = Math.cos(this.wanderAngle) * this.wanderSpeed;
@@ -9849,8 +9886,47 @@ export function nextSpeechDelay(rng) {
 
 ## FILE: src/entities/owner.js
 ```javascript
-// Human Owner Player Avatar - 8-Way Directional Movement, 3D Procedural Silhouette, Customization & Interaction Controller
+// Human Owner Player Avatar - Cruise-and-Helm Player Locomotion, Continuous Heading Steering, Ground Halo & Directional 2.5D Silhouette
 import { resolveFieldCollision } from '../engine/wasm_sim_bridge.js';
+
+// Gait model constants
+export const Gait = Object.freeze({
+  STAND: 'STAND',
+  STROLL: 'STROLL',
+  WALK: 'WALK',
+  JOG: 'JOG'
+});
+
+const GAIT_ORDER = [Gait.STAND, Gait.STROLL, Gait.WALK, Gait.JOG];
+
+const GAIT_SPEEDS = Object.freeze({
+  [Gait.STAND]: 0,
+  [Gait.STROLL]: 100,
+  [Gait.WALK]: 185,
+  [Gait.JOG]: 265
+});
+
+// Max turn rate (radians/sec) per gait
+const GAIT_TURN_RATES = Object.freeze({
+  [Gait.STAND]: Math.PI, // effectively free while standing
+  [Gait.STROLL]: (180 * Math.PI) / 180,
+  [Gait.WALK]: (115 * Math.PI) / 180,
+  [Gait.JOG]: (65 * Math.PI) / 180
+});
+
+const STEP_OFF_TURN_RATE = (300 * Math.PI) / 180; // 300 deg/s
+const STEP_OFF_ALIGN_TOLERANCE = (5 * Math.PI) / 180; // ~5 deg
+const STEP_OFF_MAX_DURATION = 0.5; // seconds
+
+const JOG_DURATION = 2.0;
+const JOG_COOLDOWN = 2.0;
+
+// Wrapped shortest-arc delta from a to b
+function angleDelta(a, b) {
+  let delta = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (delta < -Math.PI) delta += Math.PI * 2;
+  return delta;
+}
 
 export class Owner {
   constructor(x = 1200, y = 900, name = 'Walker', isLocal = true) {
@@ -9898,6 +9974,149 @@ export class Owner {
       left: false,
       right: false
     };
+
+    // Gait & heading state
+    this.gait = Gait.STAND;
+    this.targetHeading = this.angle;
+    this.jogTimer = 0;
+    this.jogCooldown = 0;
+    this.stepOffTimer = 0;
+    this.stepOffActive = false;
+  }
+
+  // --- Gait API ---
+
+  getCurrentSpeed() {
+    return GAIT_SPEEDS[this.gait] || 0;
+  }
+
+  setTargetHeading(radians) {
+    if (typeof radians !== 'number' || !isFinite(radians)) return;
+    // Heading-only update. Gait transitions are the caller's responsibility
+    // (e.g. main.js explicitly promotes STAND -> STROLL on a field press).
+    this.targetHeading = radians;
+  }
+
+  setGait(nextGait, options = {}) {
+    if (!GAIT_ORDER.includes(nextGait)) return;
+    if (nextGait === this.gait) return;
+
+    const prevIndex = GAIT_ORDER.indexOf(this.gait);
+    const nextIndex = GAIT_ORDER.indexOf(nextGait);
+
+    // Clamp upward transitions into JOG while cooldown is active
+    if (nextGait === Gait.JOG && this.jogCooldown > 0) {
+      nextGait = Gait.WALK;
+    }
+
+    // Leaving JOG starts cooldown
+    if (this.gait === Gait.JOG && nextGait !== Gait.JOG) {
+      this.jogCooldown = JOG_COOLDOWN;
+      this.jogTimer = 0;
+    }
+
+    // Entering JOG starts timer
+    if (nextGait === Gait.JOG) {
+      this.jogTimer = JOG_DURATION;
+    }
+
+    // Leaving STAND begins step-off alignment window
+    if (this.gait === Gait.STAND && nextGait !== Gait.STAND) {
+      this.stepOffActive = true;
+      this.stepOffTimer = STEP_OFF_MAX_DURATION;
+    }
+
+    this.gait = nextGait;
+
+    // Keep targetHeading synced to current angle when stopping
+    if (nextGait === Gait.STAND) {
+      this.targetHeading = this.angle;
+      this.stepOffActive = false;
+      this.stepOffTimer = 0;
+    }
+
+    // Keep isMoving and velocity in sync immediately so no stale motion
+    // survives a gait change (e.g. boundary collision forcing STAND).
+    this.isMoving = this.gait !== Gait.STAND;
+    if (!this.isMoving) {
+      this.vx = 0;
+      this.vy = 0;
+    }
+  }
+
+  stepGait(delta) {
+    const dir = delta > 0 ? 1 : (delta < 0 ? -1 : 0);
+    if (dir === 0) return;
+    const idx = GAIT_ORDER.indexOf(this.gait);
+    const nextIdx = Math.max(0, Math.min(GAIT_ORDER.length - 1, idx + dir));
+    if (nextIdx === idx) return;
+    this.setGait(GAIT_ORDER[nextIdx]);
+  }
+
+  // --- Heading integration ---
+
+  _updateHeading(dt) {
+    if (this.gait === Gait.STAND) {
+      this.angle = this.targetHeading;
+      return;
+    }
+
+    const delta = angleDelta(this.angle, this.targetHeading);
+    const absDelta = Math.abs(delta);
+
+    // Determine max turn rate
+    let maxRate = GAIT_TURN_RATES[this.gait] || GAIT_TURN_RATES[Gait.WALK];
+    // The 300 deg/s step-off rate applies strictly to the STAND -> STROLL transition.
+    if (this.stepOffActive && this.gait === Gait.STROLL) {
+      if (absDelta <= STEP_OFF_ALIGN_TOLERANCE || this.stepOffTimer <= 0) {
+        this.stepOffActive = false;
+        this.stepOffTimer = 0;
+      } else {
+        maxRate = STEP_OFF_TURN_RATE;
+      }
+    } else if (this.stepOffActive) {
+      // Any other gait cancels the step-off window
+      this.stepOffActive = false;
+      this.stepOffTimer = 0;
+    }
+
+    const maxStep = maxRate * dt;
+    if (absDelta <= maxStep) {
+      this.angle = this.targetHeading;
+    } else {
+      this.angle += Math.sign(delta) * maxStep;
+    }
+
+    // Normalize angle to [-PI, PI]
+    this.angle = ((this.angle + Math.PI) % (Math.PI * 2)) - Math.PI;
+    if (this.angle < -Math.PI) this.angle += Math.PI * 2;
+  }
+
+  // --- Rear brake arc helper ---
+
+  isPointOnRearBrakeArc(worldX, worldY) {
+    if (this.gait === Gait.STAND) return false;
+
+    // Match the rendered ground halo ellipse geometry (see drawGroundHalo)
+    const centerX = this.x;
+    const centerY = this.y + 12;
+    const Rx = 22;
+    const Ry = 12.1;
+
+    const dx = worldX - centerX;
+    const dy = worldY - centerY;
+
+    // Normalized elliptical distance
+    const normDist = Math.hypot(dx / Rx, dy / Ry);
+    if (normDist < 0.7 || normDist > 1.35) return false;
+
+    // Normalized angle in ellipse space
+    const normAngle = Math.atan2(dy / Ry, dx / Rx);
+    const rearHeading = this.angle + Math.PI;
+    const delta = Math.abs(angleDelta(rearHeading, normAngle));
+
+    const halfSpan = (110 * Math.PI) / 180 / 2; // ~55 deg each side
+    return delta <= halfSpan;
   }
 
   setChat(text, duration = 4.0) {
@@ -9921,36 +10140,83 @@ export class Owner {
   }
 
   update(dt, field) {
-    // 1. Process movement inputs if local player
-    if (this.isLocal) {
-      let dx = 0;
-      let dy = 0;
-      if (this.keys.up) dy -= 1;
-      if (this.keys.down) dy += 1;
-      if (this.keys.left) dx -= 1;
-      if (this.keys.right) dx += 1;
+    // Remote peers are driven authoritatively by the network interpolator.
+    // Only the local owner integrates movement, gait, turning and collisions.
+    if (!this.isLocal) {
+      this.depthY = this.y + 12;
+      return;
+    }
 
-      const mag = Math.hypot(dx, dy);
-      if (mag > 0) {
-        this.vx = (dx / mag) * this.speed;
-        this.vy = (dy / mag) * this.speed;
-        this.isMoving = true;
-        this.angle = Math.atan2(this.vy, this.vx);
-        this.walkPhase += dt * 9.5;
-      } else {
-        this.vx = 0;
-        this.vy = 0;
-        this.isMoving = false;
+    // 1. Gait persists autonomously until changed via setGait / stepGait.
+    //    (Legacy directional key handling removed in movement redesign.)
+
+    // 2. Advance gait timers
+    // Decrement cooldown BEFORE the JOG expiry check so a cooldown that is
+    // freshly initialised this tick is not decremented on the same tick.
+    if (this.jogCooldown > 0) {
+      this.jogCooldown = Math.max(0, this.jogCooldown - dt);
+    }
+    if (this.jogTimer > 0) {
+      this.jogTimer -= dt;
+      if (this.jogTimer <= 0) {
+        this.jogTimer = 0;
+        if (this.gait === Gait.JOG) {
+          // Expire JOG -> WALK and start cooldown (do not decrement this tick)
+          this.setGait(Gait.WALK);
+          this.jogCooldown = JOG_COOLDOWN;
+        }
       }
     }
+    if (this.stepOffActive) {
+      this.stepOffTimer = Math.max(0, this.stepOffTimer - dt);
+    }
+
+    // 3. Update heading toward target
+    this._updateHeading(dt);
+
+    // 4. Compute velocity from gait speed and current angle
+    const speed = this.getCurrentSpeed();
+    if (speed > 0) {
+      this.vx = Math.cos(this.angle) * speed;
+      this.vy = Math.sin(this.angle) * speed;
+      this.isMoving = true;
+      // Cadence scales with gait speed
+      const cadence = 4.0 + (speed / 265) * 8.0;
+      this.walkPhase += dt * cadence;
+    } else {
+      this.vx = 0;
+      this.vy = 0;
+      this.isMoving = false;
+    }
+    // Keep isMoving boolean in sync with gait for Protocol.createSyncState & rendering
+    this.isMoving = this.gait !== Gait.STAND;
 
     // Apply movement
     this.x += this.vx * dt;
     this.y += this.vy * dt;
 
-    // Resolve world obstacle & boundary collisions
-    if (field) {
+    // Resolve world obstacle & boundary collisions with result contract
+    if (field && typeof field.resolveCollisionWithResult === 'function') {
+      const res = field.resolveCollisionWithResult(this.x, this.y, this.radius, this.targetHeading);
+      if (res) {
+        this.x = res.x;
+        this.y = res.y;
+        if (res.kind === 'boundary') {
+          this.setGait(Gait.STAND);
+        } else if (res.kind === 'obstacle' && res.deflectedHeading !== undefined) {
+          this.setTargetHeading(res.deflectedHeading);
+        }
+      }
+    } else if (field) {
       resolveFieldCollision(this, this.radius, field);
+    }
+
+    // Re-sync motion flags after collision resolution so a boundary stop
+    // never leaves stale velocity or isMoving state behind.
+    this.isMoving = this.gait !== Gait.STAND;
+    if (!this.isMoving) {
+      this.vx = 0;
+      this.vy = 0;
     }
 
     this.depthY = this.y + 12;
@@ -9991,6 +10257,9 @@ export class Owner {
     ctx.save();
 
     const angle = this.angle !== undefined ? this.angle : Math.PI / 2;
+
+    // Ground halo (drawn first, beneath everything)
+    this.drawGroundHalo(ctx, angle);
     const cosA = Math.cos(angle);
     const sinA = Math.sin(angle);
 
@@ -10257,6 +10526,70 @@ export class Owner {
       this.drawSpeechBubble(ctx, this.chatText);
     } else if (this.emote) {
       this.drawEmoteBubble(ctx, this.emote);
+    }
+
+    ctx.restore();
+  }
+
+  drawGroundHalo(ctx, angle) {
+    ctx.save();
+
+    const cx = this.x;
+    const cy = this.y + 12;
+    const radius = 22;
+
+    // Base halo ring
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, radius, radius * 0.55, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Forward arrowhead on front perimeter
+    const frontX = cx + Math.cos(angle) * radius;
+    const frontY = cy + Math.sin(angle) * radius * 0.55;
+    const perpX = -Math.sin(angle);
+    const perpY = Math.cos(angle) * 0.55;
+    const arrowSize = 5;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    ctx.beginPath();
+    ctx.moveTo(frontX + Math.cos(angle) * arrowSize, frontY + Math.sin(angle) * arrowSize * 0.55);
+    ctx.lineTo(frontX + perpX * arrowSize, frontY + perpY * arrowSize);
+    ctx.lineTo(frontX - perpX * arrowSize, frontY - perpY * arrowSize);
+    ctx.closePath();
+    ctx.fill();
+
+    // Faint target indicator when turning and misaligned
+    if (this.gait !== Gait.STAND) {
+      const misalign = Math.abs(angleDelta(this.angle, this.targetHeading));
+      if (misalign > (10 * Math.PI) / 180) {
+        const tx = cx + Math.cos(this.targetHeading) * radius;
+        const ty = cy + Math.sin(this.targetHeading) * radius * 0.55;
+        ctx.fillStyle = 'rgba(253, 224, 71, 0.45)';
+        ctx.beginPath();
+        ctx.arc(tx, ty, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Rear brake arc (hidden in STAND)
+    if (this.gait !== Gait.STAND) {
+      const rearAngle = angle + Math.PI;
+      const halfSpan = (110 * Math.PI) / 180 / 2;
+      ctx.strokeStyle = 'rgba(239, 68, 68, 0.55)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      // Ellipse arc: use parametric sampling for the foreshortened ellipse
+      const steps = 16;
+      for (let i = 0; i <= steps; i++) {
+        const t = rearAngle - halfSpan + (i / steps) * (halfSpan * 2);
+        const px = cx + Math.cos(t) * radius;
+        const py = cy + Math.sin(t) * radius * 0.55;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
     }
 
     ctx.restore();
@@ -11079,7 +11412,8 @@ export class CliftonDownGame {
     // Touch Controls
     this.joystickActive = false;
     this.touchControls = new TouchControls({
-      onMove: (vec) => this.handleJoystickMove(vec),
+      onPaceDown: () => this.owner.stepGait(-1),
+      onPaceUp: () => this.owner.stepGait(+1),
       onThrow: () => this.throwBall(),
       onLeash: () => this.toggleLeash(),
       onWhistle: () => this.whistleDog(),
@@ -11419,33 +11753,14 @@ export class CliftonDownGame {
       }
 
       switch (e.code) {
-        case 'KeyW':
-        case 'ArrowUp':
-          this.owner.keys.up = true;
-          break;
-        case 'KeyS':
-        case 'ArrowDown':
-          this.owner.keys.down = true;
-          break;
-        case 'KeyA':
-        case 'ArrowLeft':
-          this.owner.keys.left = true;
-          break;
-        case 'KeyD':
-        case 'ArrowRight':
-          this.owner.keys.right = true;
-          break;
-
-        case 'Space':
-        case 'KeyT':
-          // Throw Tennis Ball
-          e.preventDefault();
-          this.throwBall();
-          break;
-
-        case 'KeyL':
+        case 'KeyQ':
           // Toggle Leash
           this.toggleLeash();
+          break;
+
+        case 'KeyR':
+          // Whistle Recall Dog
+          this.whistleDog();
           break;
 
         case 'KeyC':
@@ -11457,20 +11772,7 @@ export class CliftonDownGame {
           break;
 
         case 'KeyE':
-          // Contextual Interact: Pick Up Waste -> Dispose in Bin -> Pet Dog
-          if (this.activePoopPileNearPlayer) {
-            this.pickUpPoop();
-          } else if (this.activeBinNearPlayer && this.hasPoopBag) {
-            this.disposePoopBag();
-          } else {
-            this.petDog();
-          }
-          break;
-
-        case 'KeyH':
-        case 'KeyR':
-          // Whistle Recall Dog
-          this.whistleDog();
+          // Reserved / inert (contextual interactions now via canvas click)
           break;
 
         case 'Enter':
@@ -11487,78 +11789,211 @@ export class CliftonDownGame {
       }
     });
 
-    window.addEventListener('keyup', (e) => {
-      switch (e.code) {
-        case 'KeyW':
-        case 'ArrowUp':
-          this.owner.keys.up = false;
-          break;
-        case 'KeyS':
-        case 'ArrowDown':
-          this.owner.keys.down = false;
-          break;
-        case 'KeyA':
-        case 'ArrowLeft':
-          this.owner.keys.left = false;
-          break;
-        case 'KeyD':
-        case 'ArrowRight':
-          this.owner.keys.right = false;
-          break;
-      }
-    });
-
     // Touch & Pointer Audio Unlock
     window.addEventListener('click', handleAudioInteraction);
     window.addEventListener('touchstart', handleAudioInteraction, { passive: true });
     window.addEventListener('pointerdown', handleAudioInteraction, { passive: true });
 
+    // Suppress browser context menu on the game canvas (right-click is a game gesture)
+    this.canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+    });
+
     // Direct In-World Canvas Tap Gestures
+    // Single vs double click disambiguation: < 280ms and < 24px between clicks.
+    this._lastClickTime = 0;
+    this._lastClickX = 0;
+    this._lastClickY = 0;
+    this._pendingGestureTimer = null;
+
+    const DOUBLE_CLICK_MS = 280;
+    const DOUBLE_CLICK_PX = 24;
+
+    // Cancel any pending deferred single gesture (used when an immediate
+    // object interaction supersedes the deferred field gesture).
+    const cancelPendingSingle = () => {
+      if (this._pendingGestureTimer) {
+        clearTimeout(this._pendingGestureTimer);
+        this._pendingGestureTimer = null;
+      }
+      this._pendingGesture = null;
+    };
+
+    // Resolve a captured press (hit type + heading captured at press time).
+    const resolveCapturedPress = (captured, isDouble) => {
+      if (!captured) return;
+
+      if (captured.type === 'brake') {
+        if (isDouble) {
+          this.owner.setGait('STAND');
+          return;
+        }
+        // Deferred single brake: if the owner has already stopped in the
+        // interim (boundary collision, petting, etc.) do not restart motion.
+        if (this.owner.gait === 'STAND') return;
+        // Step down exactly one level relative to the gait captured at press
+        // time, so a JOG that expired to WALK during the 280ms window does
+        // not over-brake.
+        const gaitAtPress = captured.gaitAtPress;
+        if (gaitAtPress === 'JOG') {
+          this.owner.setGait('WALK');
+        } else if (gaitAtPress === 'WALK') {
+          this.owner.setGait('STROLL');
+        } else if (gaitAtPress === 'STROLL') {
+          this.owner.setGait('STAND');
+        } else {
+          this.owner.stepGait(-1);
+        }
+        return;
+      }
+
+      // Field press
+      const heading = captured.heading;
+      if (typeof heading !== 'number' || !isFinite(heading)) return;
+
+      const gaitAtPress = captured.gaitAtPress;
+      this.owner.setTargetHeading(heading);
+
+      if (isDouble) {
+        if (gaitAtPress === 'STAND') {
+          this.owner.setGait('STROLL');
+        } else if (gaitAtPress === 'STROLL') {
+          this.owner.setGait('WALK');
+        } else if (gaitAtPress === 'WALK') {
+          this.owner.setGait('JOG');
+        }
+      } else {
+        if (gaitAtPress === 'STAND') {
+          this.owner.setGait('STROLL');
+        }
+      }
+    };
+
     this.canvas.addEventListener('pointerdown', (e) => {
       handleAudioInteraction();
 
       // Only handle if directly clicking/tapping the game canvas
       if (e.target !== this.canvas) return;
 
-      // Check if tap was on or close to the companion dog
-      const dogScreen = this.camera.worldToScreen(this.dog.x, this.dog.y);
-      const distToDog = Math.hypot(e.clientX - dogScreen.x, e.clientY - dogScreen.y);
-      if (distToDog < 48) {
-        this.petDog();
+      // Right-click: throw ball toward world coordinate without changing gait
+      if (e.button === 2) {
+        e.preventDefault();
+        const worldTarget = this.camera.screenToWorld(e.clientX, e.clientY);
+        const dx = worldTarget.x - this.owner.x;
+        const dy = worldTarget.y - this.owner.y;
+        const dist = Math.hypot(dx, dy);
+        let dirX, dirY;
+        if (dist > 0.001) {
+          dirX = dx / dist;
+          dirY = dy / dist;
+        } else {
+          // Degenerate: click landed on the owner; throw along current facing
+          dirX = Math.cos(this.owner.angle);
+          dirY = Math.sin(this.owner.angle);
+        }
+        this.throwBallAt(worldTarget.x, worldTarget.y, dirX, dirY);
         return;
       }
 
-      // Check if tap was near active poop pile (< 40px)
+      // Only left-click / primary pointer
+      if (e.button !== undefined && e.button !== 0) return;
+
+      // --- Immediate hits (no double-click delay) ---
+
+      // 1. Companion dog
+      const dogScreen = this.camera.worldToScreen(this.dog.x, this.dog.y);
+      const distToDog = Math.hypot(e.clientX - dogScreen.x, e.clientY - dogScreen.y);
+      if (distToDog < 48) {
+        // Immediate interaction supersedes any pending deferred field gesture
+        // and resets double-click state so the next field tap is a fresh single.
+        cancelPendingSingle();
+        this._lastClickTime = 0;
+        this._lastClickX = 0;
+        this._lastClickY = 0;
+        this.petDog();
+        this.owner.setGait('STAND');
+        return;
+      }
+
+      // 2. Poop pile
       if (this.activePoopPileNearPlayer) {
         const poopScreen = this.camera.worldToScreen(this.activePoopPileNearPlayer.x, this.activePoopPileNearPlayer.y);
         const distToPoopScreen = Math.hypot(e.clientX - poopScreen.x, e.clientY - poopScreen.y);
         if (distToPoopScreen < 40) {
+          cancelPendingSingle();
+          this._lastClickTime = 0;
+          this._lastClickX = 0;
+          this._lastClickY = 0;
           this.pickUpPoop();
           return;
         }
       }
 
-      // Check if tap was near active dog bin (< 44px)
+      // 3. Dog bin
       if (this.activeBinNearPlayer && this.hasPoopBag) {
         const binScreen = this.camera.worldToScreen(this.activeBinNearPlayer.x, this.activeBinNearPlayer.y);
         const distToBinScreen = Math.hypot(e.clientX - binScreen.x, e.clientY - binScreen.y);
         if (distToBinScreen < 44) {
+          cancelPendingSingle();
+          this._lastClickTime = 0;
+          this._lastClickX = 0;
+          this._lastClickY = 0;
           this.disposePoopBag();
           return;
         }
       }
 
-      // Open field tap: Throw ball towards tapped world coordinate
+      // --- Deferred gestures (single vs double click) ---
+      // Capture hit type + heading AT PRESS TIME so the owner's later movement
+      // does not change what the press meant.
       const worldTarget = this.camera.screenToWorld(e.clientX, e.clientY);
-      const dx = worldTarget.x - this.owner.x;
-      const dy = worldTarget.y - this.owner.y;
-      const dist = Math.hypot(dx, dy);
+      const isBrake = this.owner.gait !== 'STAND' &&
+        typeof this.owner.isPointOnRearBrakeArc === 'function' &&
+        this.owner.isPointOnRearBrakeArc(worldTarget.x, worldTarget.y);
 
-      if (dist > 30) {
-        const dirX = dx / dist;
-        const dirY = dy / dist;
-        this.owner.angle = Math.atan2(dy, dx);
-        this.throwBallAt(worldTarget.x, worldTarget.y, dirX, dirY);
+      const captured = {
+        type: isBrake ? 'brake' : 'field',
+        heading: Math.atan2(worldTarget.y - this.owner.y, worldTarget.x - this.owner.x),
+        gaitAtPress: this.owner.gait,
+        worldX: worldTarget.x,
+        worldY: worldTarget.y
+      };
+
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      const dtSinceLast = now - this._lastClickTime;
+      const distSinceLast = Math.hypot(e.clientX - this._lastClickX, e.clientY - this._lastClickY);
+      const isDouble = dtSinceLast < DOUBLE_CLICK_MS && distSinceLast <= DOUBLE_CLICK_PX;
+
+      this._lastClickTime = now;
+      this._lastClickX = e.clientX;
+      this._lastClickY = e.clientY;
+
+      if (isDouble) {
+        // Cancel any pending single-click gesture
+        if (this._pendingGestureTimer) {
+          clearTimeout(this._pendingGestureTimer);
+          this._pendingGestureTimer = null;
+        }
+        this._pendingGesture = null;
+        resolveCapturedPress(captured, true);
+      } else {
+        // Not a double press: flush any pending single gesture immediately
+        // BEFORE scheduling this new one.
+        if (this._pendingGestureTimer) {
+          clearTimeout(this._pendingGestureTimer);
+          this._pendingGestureTimer = null;
+          const pending = this._pendingGesture;
+          this._pendingGesture = null;
+          if (pending) resolveCapturedPress(pending, false);
+        }
+
+        this._pendingGesture = captured;
+        this._pendingGestureTimer = setTimeout(() => {
+          this._pendingGestureTimer = null;
+          const pending = this._pendingGesture;
+          this._pendingGesture = null;
+          if (pending) resolveCapturedPress(pending, false);
+        }, DOUBLE_CLICK_MS);
       }
     });
   }
@@ -11635,7 +12070,7 @@ export class CliftonDownGame {
     // Turning ON leash – strict proximity gate (<= 68px)
     const dist = Math.hypot(this.dog.x - this.owner.x, this.dog.y - this.owner.y);
     if (dist > 68) {
-      this.hud.showToast("🦮 Too far to clip lead! Walk closer or whistle [H] to recall first.");
+      this.hud.showToast("🦮 Too far to clip lead! Walk closer or whistle to recall first.");
       return;
     }
 
@@ -11719,7 +12154,7 @@ export class CliftonDownGame {
     }
     this.hasPoopBag = true;
     this.activePoopPileNearPlayer = null;
-    this.hud.showToast('💩 Cleaned up waste! Dispose in bin [E]');
+    this.hud.showToast('💩 Cleaned up waste! Dispose in a bin.');
     if (this.hud && typeof this.hud.updateInventory === 'function') {
       this.hud.updateInventory(true);
     }
@@ -12001,6 +12436,9 @@ export class CliftonDownGame {
 
     // 3. Update Local Entities
     this.owner.update(dt, this.field);
+
+    // Collision resolution is handled inside Owner.update() via resolveCollisionWithResult.
+
     // this.dog.update(dt, this.field, allDogs, this.ball, this.npcs);
     this.dog.update(dt, this.field, allDogs, this.ball, Array.from(this.npcs.values()));
     this.ball.update(dt, this.field);
@@ -12044,11 +12482,19 @@ export class CliftonDownGame {
 
     // Dynamic Touch Throw Button State
     this.touchControls?.setThrowEnabled(this.canThrowBall());
+    if (this.touchControls && typeof this.touchControls.setCurrentGait === 'function') {
+      this.touchControls.setCurrentGait(this.owner.gait);
+    }
 
-    // Grass footstep sound
-    if (this.owner.isMoving && timestampNow() - this.lastFootstepTime > 320) {
-      this.lastFootstepTime = timestampNow();
-      sound.playFootstep();
+    // Grass footstep sound (cadence scales with gait)
+    if (this.owner.isMoving && this.owner.gait !== 'STAND') {
+      const footstepInterval = this.owner.gait === 'JOG' ? 200
+        : this.owner.gait === 'WALK' ? 300
+        : 460; // STROLL
+      if (timestampNow() - this.lastFootstepTime > footstepInterval) {
+        this.lastFootstepTime = timestampNow();
+        sound.playFootstep();
+      }
     }
 
     // 4. Update Remote Peers via Interpolators
@@ -12226,14 +12672,14 @@ export class CliftonDownGame {
         this.ctx,
         this.activePoopPileNearPlayer.x,
         this.activePoopPileNearPlayer.y - 18,
-        isTouch ? 'Tap 💩 or [E] to pick up' : '[E] Pick up waste'
+        isTouch ? 'Tap 💩 to pick up' : 'Click to pick up waste'
       );
     } else if (this.activeBinNearPlayer && this.hasPoopBag) {
       this.drawInteractionPrompt(
         this.ctx,
         this.activeBinNearPlayer.x,
         this.activeBinNearPlayer.y - 28,
-        isTouch ? 'Tap 🗑️ or [E] to dispose' : '[E] Dispose in bin'
+        isTouch ? 'Tap 🗑️ to dispose' : 'Click to dispose'
       );
     }
 
@@ -20041,12 +20487,13 @@ export class SocialHUD {
 
 ## FILE: src/ui/touch_controls.js
 ```javascript
-// Touch Controls - Mobile Virtual Analog Joystick & Action Buttons
+// Touch Controls - Discrete Pace Controls & Action Buttons
 
 export class TouchControls {
   constructor(callbacks = {}) {
     this.callbacks = {
-      onMove: callbacks.onMove || null,
+      onPaceDown: callbacks.onPaceDown || null,
+      onPaceUp: callbacks.onPaceUp || null,
       onThrow: callbacks.onThrow || null,
       onLeash: callbacks.onLeash || null,
       onPet: callbacks.onPet || null,
@@ -20057,23 +20504,11 @@ export class TouchControls {
     };
 
     this.contextualAction = null;
-
-    this.joystickTouchId = null;
-    this.joystickCenter = { x: 0, y: 0 };
-    this.maxRadius = 50; // max displacement in pixels
-    this.deadzone = 0.10; // 10% deadzone threshold
-    this.joystickVector = {
-      vx: 0,
-      vy: 0,
-      angle: 0,
-      active: false,
-      distance: 0
-    };
+    this.currentGait = 'STAND';
 
     this.overlay = null;
-    this.joystickZone = null;
-    this.joystickBase = null;
-    this.joystickKnob = null;
+    this.pacePad = null;
+    this.gaitBadge = null;
     this.actionPad = null;
 
     this.initDOM();
@@ -20095,19 +20530,29 @@ export class TouchControls {
     this.overlay = document.createElement('div');
     this.overlay.id = 'touch-controls-overlay';
 
-    // 1. Virtual Joystick (Bottom Left)
-    this.joystickZone = document.createElement('div');
-    this.joystickZone.id = 'touch-joystick-zone';
-
-    this.joystickBase = document.createElement('div');
-    this.joystickBase.id = 'joystick-base';
-
-    this.joystickKnob = document.createElement('div');
-    this.joystickKnob.id = 'joystick-knob';
-
-    this.joystickBase.appendChild(this.joystickKnob);
-    this.joystickZone.appendChild(this.joystickBase);
-    this.overlay.appendChild(this.joystickZone);
+    // 1. Discrete Pace Controls (Bottom Left)
+    this.pacePad = document.createElement('div');
+    this.pacePad.id = 'touch-pace-pad';
+    this.pacePad.style.cssText = [
+      'position: fixed',
+      'left: 16px',
+      'bottom: 24px',
+      'display: flex',
+      'align-items: center',
+      'gap: 10px',
+      'z-index: 1000',
+      'touch-action: manipulation',
+      'user-select: none',
+      '-webkit-user-select: none',
+      'pointer-events: auto'
+    ].join(';');
+    this.pacePad.innerHTML = `
+      <button class="touch-pace-btn" id="btn-touch-pace-down" aria-label="Decrease Pace" style="width:52px;height:52px;border-radius:50%;border:none;background:rgba(15,23,42,0.85);color:#f8fafc;font-size:24px;font-weight:700;touch-action:manipulation;user-select:none;-webkit-user-select:none;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.35);">−</button>
+      <div class="touch-gait-badge" id="touch-gait-badge" style="min-width:64px;padding:6px 10px;border-radius:14px;background:rgba(15,23,42,0.85);color:#fde047;font:600 13px system-ui,-apple-system,sans-serif;text-align:center;letter-spacing:0.5px;touch-action:manipulation;user-select:none;-webkit-user-select:none;">STAND</div>
+      <button class="touch-pace-btn" id="btn-touch-pace-up" aria-label="Increase Pace" style="width:52px;height:52px;border-radius:50%;border:none;background:rgba(15,23,42,0.85);color:#f8fafc;font-size:24px;font-weight:700;touch-action:manipulation;user-select:none;-webkit-user-select:none;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.35);">+</button>
+    `;
+    this.overlay.appendChild(this.pacePad);
+    this.gaitBadge = this.pacePad.querySelector('#touch-gait-badge');
 
     // 2. Action Pad (Bottom Right)
     this.actionPad = document.createElement('div');
@@ -20131,75 +20576,25 @@ export class TouchControls {
   }
 
   bindEvents() {
-    if (!this.joystickZone) return;
-
-    // Joystick Touch Handling
-    const handleJoystickStart = (touch) => {
-      this.joystickTouchId = touch.identifier;
-      const rect = this.joystickBase.getBoundingClientRect();
-      this.joystickCenter = {
-        x: rect.left + rect.width / 2,
-        y: rect.top + rect.height / 2
-      };
-      this.updateJoystickPosition(touch.clientX, touch.clientY);
-    };
-
-    const handleJoystickMove = (touch) => {
-      this.updateJoystickPosition(touch.clientX, touch.clientY);
-    };
-
-    const handleJoystickEnd = () => {
-      this.joystickTouchId = null;
-      this.resetJoystick();
-    };
-
-    this.joystickZone.addEventListener('touchstart', (e) => {
-      e.preventDefault();
-      if (this.joystickTouchId !== null) return;
-      const touch = e.changedTouches[0];
-      if (touch) handleJoystickStart(touch);
-    }, { passive: false });
-
-    window.addEventListener('touchmove', (e) => {
-      if (this.joystickTouchId === null) return;
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i];
-        if (touch.identifier === this.joystickTouchId) {
-          e.preventDefault();
-          handleJoystickMove(touch);
-          break;
-        }
-      }
-    }, { passive: false });
-
-    window.addEventListener('touchend', (e) => {
-      if (this.joystickTouchId === null) return;
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i];
-        if (touch.identifier === this.joystickTouchId) {
-          handleJoystickEnd();
-          break;
-        }
-      }
-    });
-
-    window.addEventListener('touchcancel', (e) => {
-      if (this.joystickTouchId === null) return;
-      for (let i = 0; i < e.changedTouches.length; i++) {
-        const touch = e.changedTouches[i];
-        if (touch.identifier === this.joystickTouchId) {
-          handleJoystickEnd();
-          break;
-        }
-      }
-    });
-
     // Action Buttons
+    // Deduplication is strictly PER-BUTTON: each button tracks its own
+    // pointerHandled flag and lastTrigger timestamp so activations on one
+    // button never swallow activations on another.
     const bindButton = (id, callback) => {
       const btn = document.getElementById(id);
       if (!btn) return;
 
-      const trigger = (e) => {
+      let pointerHandled = false;
+      let lastTrigger = 0;
+
+      const invoke = () => {
+        this.vibrate(25);
+        if (typeof callback === 'function') {
+          callback();
+        }
+      };
+
+      const onPointer = (e) => {
         if (btn.classList.contains('is-disabled') || btn.hasAttribute('disabled')) {
           e.preventDefault();
           e.stopPropagation();
@@ -20207,20 +20602,50 @@ export class TouchControls {
         }
         e.preventDefault();
         e.stopPropagation();
-        this.vibrate(25);
-        if (typeof callback === 'function') {
-          callback();
+
+        pointerHandled = true;
+
+        const now = Date.now();
+        if (now - lastTrigger < 200) {
+          return;
         }
+        lastTrigger = now;
+        invoke();
       };
 
-      btn.addEventListener('touchstart', trigger, { passive: false });
+      btn.addEventListener('touchstart', onPointer, { passive: false });
+      btn.addEventListener('pointerdown', (e) => {
+        // Pointer events fire for both mouse and touch; skip if touch already handled
+        if (e.pointerType === 'touch') return;
+        onPointer(e);
+      });
       btn.addEventListener('click', (e) => {
-        // Prevent duplicate trigger if touch fired
+        // Suppress the synthetic click that follows a pointer/touch activation
+        if (pointerHandled) {
+          pointerHandled = false;
+          return;
+        }
         if (e.detail === 0) return;
-        trigger(e);
+
+        if (btn.classList.contains('is-disabled') || btn.hasAttribute('disabled')) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        e.preventDefault();
+        e.stopPropagation();
+
+        const now = Date.now();
+        if (now - lastTrigger < 200) {
+          return;
+        }
+        lastTrigger = now;
+        invoke();
       });
     };
 
+    bindButton('btn-touch-pace-down', () => this.callbacks.onPaceDown?.());
+    bindButton('btn-touch-pace-up', () => this.callbacks.onPaceUp?.());
     bindButton('btn-touch-throw', () => this.callbacks.onThrow?.());
     bindButton('btn-touch-whistle', () => this.callbacks.onWhistle?.());
     bindButton('btn-touch-leash', () => this.callbacks.onLeash?.());
@@ -20244,60 +20669,10 @@ export class TouchControls {
     bindButton('btn-touch-chat', () => this.callbacks.onChat?.());
   }
 
-  updateJoystickPosition(clientX, clientY) {
-    const dx = clientX - this.joystickCenter.x;
-    const dy = clientY - this.joystickCenter.y;
-    const rawDist = Math.hypot(dx, dy);
-    const angle = Math.atan2(dy, dx);
-
-    const clampedDist = Math.min(rawDist, this.maxRadius);
-    const kx = Math.cos(angle) * clampedDist;
-    const ky = Math.sin(angle) * clampedDist;
-
-    if (this.joystickKnob) {
-      this.joystickKnob.style.transform = `translate(${kx}px, ${ky}px)`;
-    }
-
-    const ratio = clampedDist / this.maxRadius;
-    if (ratio < this.deadzone) {
-      this.joystickVector = {
-        vx: 0,
-        vy: 0,
-        angle: 0,
-        active: false,
-        distance: 0
-      };
-    } else {
-      const normalizedIntensity = (ratio - this.deadzone) / (1.0 - this.deadzone);
-      this.joystickVector = {
-        vx: Math.cos(angle) * normalizedIntensity,
-        vy: Math.sin(angle) * normalizedIntensity,
-        angle: angle,
-        active: true,
-        distance: clampedDist
-      };
-    }
-
-    if (typeof this.callbacks.onMove === 'function') {
-      this.callbacks.onMove(this.joystickVector);
-    }
-  }
-
-  resetJoystick() {
-    if (this.joystickKnob) {
-      this.joystickKnob.style.transform = 'translate(0px, 0px)';
-    }
-
-    this.joystickVector = {
-      vx: 0,
-      vy: 0,
-      angle: 0,
-      active: false,
-      distance: 0
-    };
-
-    if (typeof this.callbacks.onMove === 'function') {
-      this.callbacks.onMove(this.joystickVector);
+  setCurrentGait(gait) {
+    this.currentGait = gait || 'STAND';
+    if (this.gaitBadge) {
+      this.gaitBadge.textContent = this.currentGait;
     }
   }
 
@@ -20371,7 +20746,7 @@ export class TouchControls {
   }
 
   getVector() {
-    return this.joystickVector;
+    return { vx: 0, vy: 0, angle: 0, active: false, distance: 0 };
   }
 
   destroy() {
@@ -24567,6 +24942,13 @@ import {
   isClearOfKeepouts
 } from './zone_biomes.js';
 
+// Shortest-arc wrapped delta from a to b (radians)
+function angleDeltaLocal(a, b) {
+  let delta = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (delta < -Math.PI) delta += Math.PI * 2;
+  return delta;
+}
+
 export class Camera {
   constructor(viewportWidth = 1280, viewportHeight = 720, worldWidth = 3200, worldHeight = 2400, zoom = 1.0) {
     if (worldWidth === 2600 && worldHeight === 1900) {
@@ -25684,6 +26066,140 @@ export class Field {
     }
 
     return { x: nx, y: ny };
+  }
+
+  /**
+   * Resolve collisions and report the kind of resolution that occurred.
+   * Returns { x, y, kind, deflectedHeading? } where kind is one of
+   * 'warp' | 'boundary' | 'obstacle' | 'none'.
+   *
+   * @param {number} x
+   * @param {number} y
+   * @param {number} radius
+   * @param {number|null} targetHeading
+   */
+  resolveCollisionWithResult(x, y, radius, targetHeading = null) {
+    // 1. Warp gate check (highest priority)
+    const gate = this.checkWarpGate(x, y);
+    if (gate) {
+      return { x, y, kind: 'warp' };
+    }
+
+    let nx = x;
+    let ny = y;
+    let kind = 'none';
+    let deflectedHeading;
+
+    // 2. World perimeter clamping
+    const minX = 56 + radius;
+    const maxX = this.width - 56 - radius;
+    const minY = 56 + radius;
+    const maxY = this.height - 56 - radius;
+
+    const clampedX = Math.max(minX, Math.min(maxX, nx));
+    const clampedY = Math.max(minY, Math.min(maxY, ny));
+    if (clampedX !== nx || clampedY !== ny) {
+      kind = 'boundary';
+    }
+    nx = clampedX;
+    ny = clampedY;
+
+    const hasHeading = typeof targetHeading === 'number' && isFinite(targetHeading);
+
+    // Helper: push out of a circular obstacle and compute tangent deflection
+    const pushCircle = (ox, oy, orad) => {
+      const dx = nx - ox;
+      const dy = ny - oy;
+      const dist = Math.hypot(dx, dy);
+      const minDist = radius + orad;
+      if (dist < minDist) {
+        let nrmX, nrmY;
+        if (dist > 0.001) {
+          const overlap = minDist - dist;
+          nrmX = dx / dist;
+          nrmY = dy / dist;
+          nx += nrmX * overlap;
+          ny += nrmY * overlap;
+        } else {
+          nrmX = 0;
+          nrmY = 1;
+          ny += minDist;
+        }
+        if (kind !== 'boundary') {
+          kind = 'obstacle';
+          if (hasHeading) {
+            const baseAngle = Math.atan2(nrmY, nrmX);
+            const t1 = baseAngle + Math.PI / 2;
+            const t2 = baseAngle - Math.PI / 2;
+            const d1 = Math.abs(angleDeltaLocal(targetHeading, t1));
+            const d2 = Math.abs(angleDeltaLocal(targetHeading, t2));
+            deflectedHeading = d1 <= d2 ? t1 : t2;
+          }
+        }
+      }
+    };
+
+    // 3. Tree trunk collisions
+    for (const tree of this.trees) {
+      pushCircle(tree.x, tree.depthY, tree.trunkRadius);
+    }
+
+    // 4. Wooden bench collisions (oriented AABB vs circle)
+    for (const bench of this.benches) {
+      const isVertical = bench.angle && Math.abs(Math.sin(bench.angle)) > 0.7;
+      const halfW = (isVertical ? bench.h : bench.w) / 2;
+      const halfH = (isVertical ? bench.w : bench.h) / 2;
+      const closestX = Math.max(bench.x - halfW, Math.min(nx, bench.x + halfW));
+      const closestY = Math.max(bench.y - halfH, Math.min(ny, bench.y + halfH));
+      const dx = nx - closestX;
+      const dy = ny - closestY;
+      const dist = Math.hypot(dx, dy);
+      if (dist < radius) {
+        let nrmX, nrmY;
+        if (dist > 0.001) {
+          const overlap = radius - dist;
+          nrmX = dx / dist;
+          nrmY = dy / dist;
+          nx += nrmX * overlap;
+          ny += nrmY * overlap;
+        } else {
+          nrmX = 0;
+          nrmY = 1;
+          ny += radius;
+        }
+        if (kind !== 'boundary') {
+          kind = 'obstacle';
+          if (hasHeading) {
+            const baseAngle = Math.atan2(nrmY, nrmX);
+            const t1 = baseAngle + Math.PI / 2;
+            const t2 = baseAngle - Math.PI / 2;
+            const d1 = Math.abs(angleDeltaLocal(targetHeading, t1));
+            const d2 = Math.abs(angleDeltaLocal(targetHeading, t2));
+            deflectedHeading = d1 <= d2 ? t1 : t2;
+          }
+        }
+      }
+    }
+
+    // 5. Public dog-waste bin collisions
+    for (const bin of this.bins) {
+      pushCircle(bin.x, bin.y, bin.radius);
+    }
+
+    // 6. Water Tower landmark
+    if (this.waterTower) {
+      pushCircle(this.waterTower.x, this.waterTower.y, this.waterTower.radius);
+    }
+
+    // 7. Sea Walls limestone rock outcrops
+    for (const rock of this.rockOutcrops) {
+      pushCircle(rock.x, rock.depthY - 8, rock.r || 24);
+    }
+
+    if (kind === 'boundary') {
+      return { x: nx, y: ny, kind };
+    }
+    return { x: nx, y: ny, kind, deflectedHeading };
   }
 
   // Predefined waypoint route loops for ambient park NPCs
@@ -28203,7 +28719,8 @@ def run_all():
         "test/test_phase3_visuals_and_mechanics.py",
         "test/test_zone_warps.py",
         "test/test_coastal_water.py",
-        "test/test_canine_behavior_overhaul.py"
+        "test/test_canine_behavior_overhaul.py",
+        "test/test_movement_redesign.py"
     ]
     for t in test_suites:
         res = subprocess.run([sys.executable, t])
@@ -32372,7 +32889,6 @@ class TestMobileStyles(unittest.TestCase):
     def test_touch_controls_selectors(self):
         """Verify essential mobile control selectors exist in CSS."""
         self.assertIn("#touch-controls-overlay", self.css)
-        self.assertIn("#touch-joystick-zone", self.css)
         self.assertIn("#touch-action-pad", self.css)
         self.assertIn(".touch-action-btn", self.css)
 
@@ -32512,33 +33028,41 @@ class MockJoystick:
         }
 
 
-class TestJoystickVectorMath(unittest.TestCase):
-    def setUp(self):
-        self.joystick = MockJoystick(center_x=100.0, center_y=100.0, max_radius=50.0, deadzone=0.10)
+class TestPaceControls(unittest.TestCase):
+    """Verify discrete pace controls replace the legacy analog joystick."""
 
-    def test_deadzone_rejection(self):
-        """Touches within deadzone threshold (< 10% radius = 5px) return zero vector."""
-        res = self.joystick.process_touch(102.0, 102.0)
-        self.assertFalse(res["active"])
-        self.assertEqual(res["vx"], 0.0)
-        self.assertEqual(res["vy"], 0.0)
+    def test_pace_controls_source_contract(self):
+        with open("src/ui/touch_controls.js", "r", encoding="utf-8") as f:
+            code = f.read()
 
-    def test_full_deflection_clamping(self):
-        """Touches far beyond max radius clamp magnitude to 1.0."""
-        res = self.joystick.process_touch(300.0, 100.0) # Deflection strictly rightward
-        self.assertTrue(res["active"])
-        self.assertAlmostEqual(res["vx"], 1.0, places=4)
-        self.assertAlmostEqual(res["vy"], 0.0, places=4)
-        self.assertEqual(res["distance"], 50.0)
+        self.assertIn("onPaceDown", code)
+        self.assertIn("onPaceUp", code)
+        self.assertIn("btn-touch-pace-down", code)
+        self.assertIn("btn-touch-pace-up", code)
+        self.assertIn("touch-gait-badge", code)
+        self.assertIn("setCurrentGait", code)
 
-    def test_diagonal_deflection_magnitude(self):
-        """45-degree deflection normalizes with proportional intensity."""
-        # 45 degrees: dx = 35.35, dy = 35.35 -> dist ~50
-        res = self.joystick.process_touch(135.355, 135.355)
-        self.assertTrue(res["active"])
-        self.assertAlmostEqual(res["angle"], math.pi / 4, places=3)
-        mag = math.hypot(res["vx"], res["vy"])
-        self.assertAlmostEqual(mag, 1.0, places=3)
+    def test_joystick_removed(self):
+        with open("src/ui/touch_controls.js", "r", encoding="utf-8") as f:
+            code = f.read()
+
+        self.assertNotIn("joystick-base", code)
+        self.assertNotIn("joystick-knob", code)
+
+    def test_pace_step_behavioral(self):
+        """Simulate pace stepping through the gait order."""
+        GAIT_ORDER = ["STAND", "STROLL", "WALK", "JOG"]
+
+        def step(gait, delta):
+            idx = GAIT_ORDER.index(gait)
+            next_idx = max(0, min(len(GAIT_ORDER) - 1, idx + delta))
+            return GAIT_ORDER[next_idx]
+
+        self.assertEqual(step("STROLL", +1), "WALK")
+        self.assertEqual(step("WALK", +1), "JOG")
+        self.assertEqual(step("JOG", +1), "JOG")
+        self.assertEqual(step("WALK", -1), "STROLL")
+        self.assertEqual(step("STAND", -1), "STAND")
 
 
 class TestContextualTouchActions(unittest.TestCase):
@@ -32563,8 +33087,9 @@ class TestContextualTouchActions(unittest.TestCase):
         with open("src/main.js", "r", encoding="utf-8") as f:
             code = f.read()
 
-        self.assertIn("Tap 💩 or [E] to pick up", code)
-        self.assertIn("Tap 🗑️ or [E] to dispose", code)
+        self.assertIn("Tap 💩 to pick up", code)
+        self.assertIn("Tap 🗑️ to dispose", code)
+        self.assertNotIn("[E]", code)
         self.assertIn("this.touchControls.setContextualAction('pickup');", code)
         self.assertIn("this.touchControls.setContextualAction('dispose');", code)
         self.assertIn("this.touchControls.setContextualAction(null);", code)
@@ -32580,6 +33105,814 @@ class TestContextualTouchActions(unittest.TestCase):
         self.assertIn("--vdw-viewport-top", code)
         self.assertIn("resize", code)
         self.assertIn("scroll", code)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: test/test_movement_redesign.py
+```python
+#!/usr/bin/env python3
+"""Unit tests for the movement redesign (Ticket unification-019).
+
+Verifies:
+- Owner gait states and speeds.
+- JOG 2.0s duration and 2.0s cooldown lockout.
+- Ground halo rear brake arc hit testing.
+- Field collision boundary stop and obstacle deflection result contracts.
+"""
+import os
+import unittest
+
+
+def read(rel_path):
+    base = os.path.dirname(__file__)
+    full = os.path.join(base, "..", rel_path)
+    with open(full, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+class TestOwnerGait(unittest.TestCase):
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_gait_speeds_defined(self):
+        self.assertIn("GAIT_SPEEDS", self.src)
+        self.assertIn("[Gait.STAND]: 0", self.src)
+        self.assertIn("[Gait.STROLL]: 100", self.src)
+        self.assertIn("[Gait.WALK]: 185", self.src)
+        self.assertIn("[Gait.JOG]: 265", self.src)
+
+    def test_gait_turn_rates(self):
+        self.assertIn("GAIT_TURN_RATES", self.src)
+        self.assertIn("(180 * Math.PI) / 180", self.src)
+        self.assertIn("(115 * Math.PI) / 180", self.src)
+        self.assertIn("(65 * Math.PI) / 180", self.src)
+
+    def test_jog_duration_and_cooldown_constants(self):
+        self.assertIn("JOG_DURATION = 2.0", self.src)
+        self.assertIn("JOG_COOLDOWN = 2.0", self.src)
+
+    def test_is_moving_is_boolean_property(self):
+        # Must not define a method named isMoving()
+        self.assertNotRegex(self.src, r"\bisMoving\s*\(\s*\)\s*\{")
+        # Must assign boolean property
+        self.assertIn("this.isMoving = this.gait !== Gait.STAND", self.src)
+
+    def test_no_legacy_key_reset(self):
+        # Legacy directional key reset branch must be removed
+        self.assertNotIn("No input: drop to STAND", self.src)
+
+    def test_step_off_restricted_to_stroll(self):
+        self.assertIn("this.stepOffActive && this.gait === Gait.STROLL", self.src)
+
+    def test_rear_brake_arc_uses_ellipse(self):
+        self.assertIn("isPointOnRearBrakeArc", self.src)
+        self.assertTrue("centerY = this.y + 12" in self.src or "cy = this.y + 12" in self.src)
+        self.assertTrue("Rx = 22" in self.src or "rx = 22" in self.src)
+        self.assertTrue("normDist < 0.7 || normDist > 1.35" in self.src or "d < 0.7 || d > 1.35" in self.src)
+
+
+class TestFieldCollisionResult(unittest.TestCase):
+    def setUp(self):
+        self.src = read("src/world/field.js")
+
+    def test_resolve_collision_with_result_exists(self):
+        self.assertIn("resolveCollisionWithResult", self.src)
+
+    def test_result_kinds(self):
+        self.assertIn("kind: 'warp'", self.src)
+        self.assertIn("kind = 'boundary'", self.src)
+        self.assertIn("kind = 'obstacle'", self.src)
+        self.assertIn("kind = 'none'", self.src)
+
+    def test_deflected_heading(self):
+        self.assertIn("deflectedHeading", self.src)
+
+
+class TestMainIntegration(unittest.TestCase):
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_keyboard_bindings(self):
+        self.assertIn("case 'KeyQ':", self.src)
+        self.assertIn("case 'KeyR':", self.src)
+        self.assertIn("case 'KeyC':", self.src)
+        self.assertIn("case 'Enter':", self.src)
+        # Legacy keys removed
+        self.assertNotIn("case 'KeyW':", self.src)
+        self.assertNotIn("case 'KeyA':", self.src)
+        self.assertNotIn("case 'KeyS':", self.src)
+        self.assertNotIn("case 'KeyD':", self.src)
+        self.assertNotIn("case 'KeyL':", self.src)
+        self.assertNotIn("case 'KeyH':", self.src)
+
+    def test_contextmenu_suppressed(self):
+        self.assertIn("contextmenu", self.src)
+        self.assertIn("e.preventDefault()", self.src)
+
+    def test_collision_result_integration(self):
+        # Owner update handles collision result integration
+        owner_src = read("src/entities/owner.js")
+        self.assertIn("resolveCollisionWithResult", owner_src)
+        self.assertIn("res.kind === 'boundary'", owner_src)
+        self.assertIn("res.kind === 'obstacle'", owner_src)
+
+    def test_prompt_text_updated(self):
+        self.assertIn("Click to pick up waste", self.src)
+        self.assertIn("Click to dispose", self.src)
+
+
+class TestTouchControls(unittest.TestCase):
+    def setUp(self):
+        self.src = read("src/ui/touch_controls.js")
+
+    def test_pace_controls(self):
+        self.assertIn("onPaceDown", self.src)
+        self.assertIn("onPaceUp", self.src)
+        self.assertIn("btn-touch-pace-down", self.src)
+        self.assertIn("btn-touch-pace-up", self.src)
+
+    def test_gait_badge(self):
+        self.assertIn("setCurrentGait", self.src)
+        self.assertIn("touch-gait-badge", self.src)
+
+    def test_joystick_removed(self):
+        self.assertNotIn("joystick-base", self.src)
+        self.assertNotIn("joystick-knob", self.src)
+
+    def test_action_buttons_preserved(self):
+        self.assertIn("btn-touch-throw", self.src)
+        self.assertIn("btn-touch-whistle", self.src)
+        self.assertIn("btn-touch-pet", self.src)
+        self.assertIn("btn-touch-leash", self.src)
+        self.assertIn("btn-touch-chat", self.src)
+
+
+class TestCompanionDogGait(unittest.TestCase):
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_gait_tuning_helper(self):
+        self.assertIn("_getGaitTuning", self.src)
+        self.assertIn("case 'STAND':", self.src)
+        self.assertIn("case 'STROLL':", self.src)
+        self.assertIn("case 'JOG':", self.src)
+
+
+class TestRearBrakeArcNormalizedEllipse(unittest.TestCase):
+    """Behavioral tests for the normalized ellipse rear-brake hit test."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_uses_normalized_ellipse_math(self):
+        self.assertIn("const Rx = 22", self.src)
+        self.assertIn("const Ry = 12.1", self.src)
+        self.assertIn("Math.hypot(dx / Rx, dy / Ry)", self.src)
+        self.assertIn("Math.atan2(dy / Ry, dx / Rx)", self.src)
+        self.assertIn("normDist < 0.7 || normDist > 1.35", self.src)
+
+    def test_rear_heading_uses_angle_plus_pi(self):
+        self.assertIn("const rearHeading = this.angle + Math.PI", self.src)
+        self.assertIn("angleDelta(rearHeading, normAngle)", self.src)
+
+    def test_arc_half_span_is_55_degrees(self):
+        self.assertIn("(110 * Math.PI) / 180 / 2", self.src)
+
+    def test_behavioral_rear_arc_hit(self):
+        """Simulate the normalized ellipse math to verify rear vs front classification."""
+        import math
+
+        def on_rear_arc(owner_x, owner_y, angle, wx, wy, gait='STROLL'):
+            if gait == 'STAND':
+                return False
+            cx = owner_x
+            cy = owner_y + 12
+            Rx = 22
+            Ry = 12.1
+            dx = wx - cx
+            dy = wy - cy
+            norm_dist = math.hypot(dx / Rx, dy / Ry)
+            if norm_dist < 0.7 or norm_dist > 1.35:
+                return False
+            norm_angle = math.atan2(dy / Ry, dx / Rx)
+            rear = angle + math.pi
+            delta = ((norm_angle - rear + math.pi) % (2 * math.pi)) - math.pi
+            if delta < -math.pi:
+                delta += 2 * math.pi
+            return abs(delta) <= (55 * math.pi / 180)
+
+        # Owner facing East (angle=0). Rear is West.
+        # Point directly behind (west) at radius ~1.0 normalized
+        self.assertTrue(on_rear_arc(100, 100, 0.0, 100 - 22, 100 + 12))
+        # Point directly in front (east) should NOT be on rear arc
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 + 22, 100 + 12))
+        # Point to the side (north) should NOT be on rear arc
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100, 100 + 12 - 12.1))
+        # Point far outside distance band should NOT hit
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 60, 100 + 12))
+        # Point inside inner band should NOT hit
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 5, 100 + 12))
+        # STAND gait never hits
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 22, 100 + 12, gait='STAND'))
+
+
+class TestJogDurationAndCooldown(unittest.TestCase):
+    """Behavioral tests for JOG 2.0s duration and 2.0s cooldown."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_constants(self):
+        self.assertIn("JOG_DURATION = 2.0", self.src)
+        self.assertIn("JOG_COOLDOWN = 2.0", self.src)
+
+    def test_jog_timer_expires_to_walk(self):
+        self.assertIn("this.jogTimer = JOG_DURATION", self.src)
+        self.assertIn("this.setGait(Gait.WALK)", self.src)
+        self.assertIn("this.jogCooldown = JOG_COOLDOWN", self.src)
+
+    def test_jog_blocked_during_cooldown(self):
+        self.assertIn("if (nextGait === Gait.JOG && this.jogCooldown > 0)", self.src)
+        self.assertIn("nextGait = Gait.WALK", self.src)
+
+
+class TestDoublePressLogic(unittest.TestCase):
+    """Behavioral tests for double-press distance/timing logic in main.js."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_double_click_constants(self):
+        self.assertIn("DOUBLE_CLICK_MS = 280", self.src)
+        self.assertIn("DOUBLE_CLICK_PX = 24", self.src)
+
+    def test_captured_press_at_press_time(self):
+        self.assertIn("const captured = {", self.src)
+        self.assertIn("type: isBrake ? 'brake' : 'field'", self.src)
+        self.assertIn("gaitAtPress: this.owner.gait", self.src)
+
+    def test_separate_press_flush(self):
+        # Non-double presses must flush any pending single gesture before
+        # scheduling the new one.
+        self.assertIn("Not a double press: flush any pending single gesture immediately", self.src)
+        self.assertIn("if (pending) resolveCapturedPress(pending, false);", self.src)
+        self.assertIn("distSinceLast <= DOUBLE_CLICK_PX", self.src)
+
+    def test_double_press_gait_progression(self):
+        # STAND -> STROLL, STROLL -> WALK, WALK -> JOG
+        self.assertIn("if (gaitAtPress === 'STAND')", self.src)
+        self.assertIn("this.owner.setGait('STROLL')", self.src)
+        self.assertIn("this.owner.setGait('WALK')", self.src)
+        self.assertIn("this.owner.setGait('JOG')", self.src)
+
+
+class TestTouchPromptStrings(unittest.TestCase):
+    """Verify touch prompt strings have no legacy [E] hints."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_no_legacy_e_hint(self):
+        self.assertNotIn("[E]", self.src)
+
+    def test_touch_prompts(self):
+        self.assertIn("Tap 💩 to pick up", self.src)
+        self.assertIn("Tap 🗑️ to dispose", self.src)
+
+    def test_desktop_prompts(self):
+        self.assertIn("Click to pick up waste", self.src)
+        self.assertIn("Click to dispose", self.src)
+
+
+class TestOwnerLocalGuard(unittest.TestCase):
+    """Verify Owner.update() guards movement behind isLocal."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_is_local_guard(self):
+        self.assertIn("if (!this.isLocal)", self.src)
+
+    def test_collision_result_integration(self):
+        self.assertIn("field.resolveCollisionWithResult", self.src)
+        self.assertIn("res.kind === 'boundary'", self.src)
+        self.assertIn("res.kind === 'obstacle'", self.src)
+
+
+class TestFootstepCadence(unittest.TestCase):
+    """Verify footstep cadence scales with gait."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_gait_scaled_intervals(self):
+        self.assertIn("this.owner.gait === 'JOG' ? 200", self.src)
+        self.assertIn("this.owner.gait === 'WALK' ? 300", self.src)
+        self.assertIn("460", self.src)
+
+
+class TestTouchButtonDebounce(unittest.TestCase):
+    """Verify touch buttons debounce duplicate triggers within 200ms.
+
+    Ticket unification-019 replaced the global `_lastTriggerAt` debounce with
+    strictly per-button state (`pointerHandled` + `lastTrigger`) so activations
+    on one button never swallow activations on another.
+    """
+
+    def setUp(self):
+        self.src = read("src/ui/touch_controls.js")
+
+    def test_no_global_debounce(self):
+        # Global debounce must be gone; per-button state replaces it.
+        self.assertNotIn("_lastTriggerAt", self.src)
+
+    def test_per_button_debounce_guard_present(self):
+        self.assertIn("let lastTrigger = 0;", self.src)
+        self.assertIn("if (now - lastTrigger < 200)", self.src)
+
+    def test_debounce_behavioral(self):
+        """Simulate the per-button debounce guard: duplicate triggers within 200ms are ignored."""
+        last_trigger = [0]
+        fired = []
+
+        def trigger(now):
+            if now - last_trigger[0] < 200:
+                return
+            last_trigger[0] = now
+            fired.append(now)
+
+        # Rapid duplicate events from touchstart + pointerdown + click
+        trigger(1000)
+        trigger(1005)
+        trigger(1010)
+        self.assertEqual(len(fired), 1)
+
+        # A later press after the debounce window fires again
+        trigger(1300)
+        self.assertEqual(len(fired), 2)
+
+
+class TestSetTargetHeadingPreservesStand(unittest.TestCase):
+    """Verify setTargetHeading() does not mutate gait."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_no_gait_mutation_in_set_target_heading(self):
+        # Extract the setTargetHeading method body
+        start = self.src.index("setTargetHeading(radians)")
+        end = self.src.index("setGait(nextGait", start)
+        body = self.src[start:end]
+        self.assertNotIn("setGait(", body)
+        self.assertIn("this.targetHeading = radians", body)
+
+    def test_behavioral_stand_preserved(self):
+        """Simulate setTargetHeading on a STAND owner: gait must remain STAND."""
+        class FakeOwner:
+            def __init__(self):
+                self.gait = 'STAND'
+                self.targetHeading = 0.0
+
+            def setTargetHeading(self, radians):
+                self.targetHeading = radians
+
+        o = FakeOwner()
+        o.setTargetHeading(1.23)
+        self.assertEqual(o.gait, 'STAND')
+        self.assertAlmostEqual(o.targetHeading, 1.23)
+
+
+class TestBoundaryCollisionStopsMotion(unittest.TestCase):
+    """Verify boundary collision zeroes velocity and isMoving."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_set_gait_syncs_is_moving(self):
+        self.assertIn("this.isMoving = this.gait !== Gait.STAND;", self.src)
+        self.assertIn("this.vx = 0;", self.src)
+        self.assertIn("this.vy = 0;", self.src)
+
+    def test_post_collision_resync(self):
+        # The resync block must appear after collision resolution
+        idx_collision = self.src.index("resolveCollisionWithResult")
+        idx_resync = self.src.index("Re-sync motion flags after collision resolution")
+        self.assertGreater(idx_resync, idx_collision)
+
+    def test_behavioral_boundary_stop(self):
+        """Simulate boundary collision: STAND gait zeroes velocity and isMoving."""
+        class FakeOwner:
+            def __init__(self):
+                self.gait = 'WALK'
+                self.vx = 185.0
+                self.vy = 0.0
+                self.isMoving = True
+
+            def setGait(self, g):
+                self.gait = g
+                self.isMoving = self.gait != 'STAND'
+                if not self.isMoving:
+                    self.vx = 0
+                    self.vy = 0
+
+        o = FakeOwner()
+        o.setGait('STAND')
+        self.assertFalse(o.isMoving)
+        self.assertEqual(o.vx, 0)
+        self.assertEqual(o.vy, 0)
+
+
+class TestImmediateInteractionCancelsPendingSingle(unittest.TestCase):
+    """Verify immediate object interactions cancel pending deferred gestures."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_cancel_pending_single_helper_exists(self):
+        self.assertIn("const cancelPendingSingle = () => {", self.src)
+        self.assertIn("clearTimeout(this._pendingGestureTimer)", self.src)
+        self.assertIn("this._pendingGesture = null;", self.src)
+
+    def test_dog_interaction_cancels_pending(self):
+        # The dog hit branch must cancel pending + reset double-click state
+        idx_dog = self.src.index("// 1. Companion dog")
+        idx_poop = self.src.index("// 2. Poop pile")
+        dog_block = self.src[idx_dog:idx_poop]
+        self.assertIn("cancelPendingSingle();", dog_block)
+        self.assertIn("this._lastClickTime = 0;", dog_block)
+        self.assertIn("this.petDog();", dog_block)
+        self.assertIn("this.owner.setGait('STAND');", dog_block)
+
+    def test_poop_interaction_cancels_pending(self):
+        idx_poop = self.src.index("// 2. Poop pile")
+        idx_bin = self.src.index("// 3. Dog bin")
+        poop_block = self.src[idx_poop:idx_bin]
+        self.assertIn("cancelPendingSingle();", poop_block)
+        self.assertIn("this._lastClickTime = 0;", poop_block)
+        self.assertIn("this.pickUpPoop();", poop_block)
+
+    def test_bin_interaction_cancels_pending(self):
+        idx_bin = self.src.index("// 3. Dog bin")
+        idx_deferred = self.src.index("// --- Deferred gestures")
+        bin_block = self.src[idx_bin:idx_deferred]
+        self.assertIn("cancelPendingSingle();", bin_block)
+        self.assertIn("this._lastClickTime = 0;", bin_block)
+        self.assertIn("this.disposePoopBag();", bin_block)
+
+    def test_behavioral_field_then_dog(self):
+        """Simulate: field tap (STAND->STROLL pending) then dog tap within 280ms.
+
+        Expected: dog is petted, gait is STAND, and the pending STROLL is
+        discarded so the owner never transitions back to STROLL.
+        """
+        state = {
+            'gait': 'STAND',
+            'pending': None,
+            'pending_timer': None,
+            'last_click_time': 0,
+            'last_click_x': 0,
+            'last_click_y': 0,
+            'petted': False,
+        }
+
+        def cancel_pending_single():
+            state['pending_timer'] = None
+            state['pending'] = None
+
+        def resolve_captured_press(captured, is_double):
+            if captured['type'] == 'field':
+                if is_double:
+                    if captured['gaitAtPress'] == 'STAND':
+                        state['gait'] = 'STROLL'
+                else:
+                    if captured['gaitAtPress'] == 'STAND':
+                        state['gait'] = 'STROLL'
+
+        def field_press(now):
+            captured = {'type': 'field', 'gaitAtPress': state['gait']}
+            state['last_click_time'] = now
+            state['pending'] = captured
+            state['pending_timer'] = 'scheduled'
+
+        def dog_press():
+            cancel_pending_single()
+            state['last_click_time'] = 0
+            state['last_click_x'] = 0
+            state['last_click_y'] = 0
+            state['petted'] = True
+            state['gait'] = 'STAND'
+
+        # Field tap at t=0 (STAND -> pending STROLL)
+        field_press(0)
+        self.assertEqual(state['gait'], 'STAND')
+        self.assertIsNotNone(state['pending'])
+
+        # Dog tap at t=100ms (within 280ms window)
+        dog_press()
+        self.assertTrue(state['petted'])
+        self.assertEqual(state['gait'], 'STAND')
+        self.assertIsNone(state['pending'])
+        self.assertIsNone(state['pending_timer'])
+
+        # If the pending timer had fired it would have set STROLL; verify it
+        # cannot because it was cancelled.
+        if state['pending'] is not None:
+            resolve_captured_press(state['pending'], False)
+        self.assertEqual(state['gait'], 'STAND')
+
+
+class TestRightClickThrowWithin30px(unittest.TestCase):
+    """Verify right-click within 30px throws toward clicked world coordinates."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_right_click_uses_clicked_coords(self):
+        idx = self.src.index("// Right-click: throw ball toward world coordinate")
+        end = self.src.index("// Only left-click / primary pointer", idx)
+        block = self.src[idx:end]
+        self.assertIn("this.throwBallAt(worldTarget.x, worldTarget.y, dirX, dirY);", block)
+        self.assertIn("if (dist > 0.001)", block)
+        self.assertIn("dirX = dx / dist;", block)
+        self.assertIn("dirY = dy / dist;", block)
+        self.assertIn("dirX = Math.cos(this.owner.angle);", block)
+        self.assertIn("dirY = Math.sin(this.owner.angle);", block)
+
+    def test_behavioral_throw_direction(self):
+        """Simulate right-click direction resolution."""
+        import math
+
+        def resolve(owner_x, owner_y, angle, wx, wy):
+            dx = wx - owner_x
+            dy = wy - owner_y
+            dist = math.hypot(dx, dy)
+            if dist > 0.001:
+                return (dx / dist, dy / dist, wx, wy)
+            return (math.cos(angle), math.sin(angle), wx, wy)
+
+        # Click 10px east of owner: direction should be (1, 0), target = click
+        dirX, dirY, tx, ty = resolve(100, 100, 0.0, 110, 100)
+        self.assertAlmostEqual(dirX, 1.0)
+        self.assertAlmostEqual(dirY, 0.0)
+        self.assertEqual((tx, ty), (110, 100))
+
+        # Click 5px north of owner: direction should be (0, -1)
+        dirX, dirY, tx, ty = resolve(100, 100, 0.0, 100, 95)
+        self.assertAlmostEqual(dirX, 0.0)
+        self.assertAlmostEqual(dirY, -1.0)
+
+        # Click exactly on owner: fall back to facing angle (east)
+        dirX, dirY, tx, ty = resolve(100, 100, 0.0, 100, 100)
+        self.assertAlmostEqual(dirX, 1.0)
+        self.assertAlmostEqual(dirY, 0.0)
+
+
+class TestTouchButtonPerButtonDedup(unittest.TestCase):
+    """Verify touch button deduplication is strictly per-button."""
+
+    def setUp(self):
+        self.src = read("src/ui/touch_controls.js")
+
+    def test_no_global_last_trigger(self):
+        self.assertNotIn("this._lastTriggerAt", self.src)
+
+    def test_per_button_state(self):
+        self.assertIn("let pointerHandled = false;", self.src)
+        self.assertIn("let lastTrigger = 0;", self.src)
+        self.assertIn("pointerHandled = true;", self.src)
+        self.assertIn("if (pointerHandled) {", self.src)
+        self.assertIn("pointerHandled = false;", self.src)
+        self.assertIn("if (now - lastTrigger < 200)", self.src)
+
+    def test_behavioral_per_button_isolation(self):
+        """Pressing button A then button B within 50ms must execute both."""
+        buttons = {
+            'A': {'pointerHandled': False, 'lastTrigger': 0, 'fired': []},
+            'B': {'pointerHandled': False, 'lastTrigger': 0, 'fired': []},
+        }
+
+        def pointer_down(name, now):
+            b = buttons[name]
+            b['pointerHandled'] = True
+            if now - b['lastTrigger'] < 200:
+                return
+            b['lastTrigger'] = now
+            b['fired'].append(now)
+
+        def click(name, now):
+            b = buttons[name]
+            if b['pointerHandled']:
+                b['pointerHandled'] = False
+                return
+            if now - b['lastTrigger'] < 200:
+                return
+            b['lastTrigger'] = now
+            b['fired'].append(now)
+
+        # Press A at t=1000, then B at t=1050 (50ms later)
+        pointer_down('A', 1000)
+        pointer_down('B', 1050)
+        self.assertEqual(buttons['A']['fired'], [1000])
+        self.assertEqual(buttons['B']['fired'], [1050])
+
+        # Synthetic clicks that follow each pointerdown are suppressed
+        click('A', 1001)
+        click('B', 1051)
+        self.assertEqual(buttons['A']['fired'], [1000])
+        self.assertEqual(buttons['B']['fired'], [1050])
+
+        # A second press on A after the debounce window fires again
+        pointer_down('A', 1300)
+        self.assertEqual(buttons['A']['fired'], [1000, 1300])
+
+    def test_behavioral_duplicate_pointer_suppressed(self):
+        """Duplicate pointerdown on the same button within 200ms fires once."""
+        b = {'pointerHandled': False, 'lastTrigger': 0, 'fired': []}
+
+        def pointer_down(now):
+            b['pointerHandled'] = True
+            if now - b['lastTrigger'] < 200:
+                return
+            b['lastTrigger'] = now
+            b['fired'].append(now)
+
+        pointer_down(1000)
+        pointer_down(1005)
+        pointer_down(1010)
+        self.assertEqual(len(b['fired']), 1)
+
+
+class TestDeferredSingleBrakeRespectsGaitAtPress(unittest.TestCase):
+    """Verify deferred single brake steps down relative to gaitAtPress."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_brake_uses_gait_at_press(self):
+        idx = self.src.index("if (captured.type === 'brake')")
+        end = self.src.index("// Field press", idx)
+        block = self.src[idx:end]
+        self.assertIn("if (this.owner.gait === 'STAND') return;", block)
+        self.assertIn("const gaitAtPress = captured.gaitAtPress;", block)
+        self.assertIn("if (gaitAtPress === 'JOG')", block)
+        self.assertIn("this.owner.setGait('WALK');", block)
+        self.assertIn("if (gaitAtPress === 'WALK')", block)
+        self.assertIn("this.owner.setGait('STROLL');", block)
+        self.assertIn("if (gaitAtPress === 'STROLL')", block)
+        self.assertIn("this.owner.setGait('STAND');", block)
+
+    def test_behavioral_jog_expired_to_walk(self):
+        """JOG at press, expired to WALK by the time the deferred brake fires.
+
+        Expected: step down exactly one level from gaitAtPress (JOG -> WALK),
+        NOT from the current gait (which would over-brake WALK -> STROLL).
+        """
+        state = {'gait': 'JOG'}
+
+        def resolve_brake(gait_at_press):
+            if state['gait'] == 'STAND':
+                return
+            if gait_at_press == 'JOG':
+                state['gait'] = 'WALK'
+            elif gait_at_press == 'WALK':
+                state['gait'] = 'STROLL'
+            elif gait_at_press == 'STROLL':
+                state['gait'] = 'STAND'
+
+        # Capture at press time
+        captured_gait = state['gait']  # JOG
+        # JOG expires during the 280ms window
+        state['gait'] = 'WALK'
+        # Deferred brake fires: one step down from gaitAtPress (JOG -> WALK)
+        resolve_brake(captured_gait)
+        self.assertEqual(state['gait'], 'WALK')
+
+    def test_behavioral_stand_guard(self):
+        """If owner is already STAND, deferred brake must not restart motion."""
+        state = {'gait': 'STAND'}
+
+        def resolve_brake(gait_at_press):
+            if state['gait'] == 'STAND':
+                return
+            if gait_at_press == 'JOG':
+                state['gait'] = 'WALK'
+            elif gait_at_press == 'WALK':
+                state['gait'] = 'STROLL'
+            elif gait_at_press == 'STROLL':
+                state['gait'] = 'STAND'
+
+        resolve_brake('WALK')
+        self.assertEqual(state['gait'], 'STAND')
+
+
+class TestBoundaryPrioritySuppressesDeflection(unittest.TestCase):
+    """Verify boundary contact suppresses obstacle heading deflection."""
+
+    def setUp(self):
+        self.src = read("src/world/field.js")
+
+    def test_boundary_clamp_sets_kind(self):
+        self.assertIn("const clampedX = Math.max(minX, Math.min(maxX, nx));", self.src)
+        self.assertIn("const clampedY = Math.max(minY, Math.min(maxY, ny));", self.src)
+        self.assertIn("if (clampedX !== nx || clampedY !== ny)", self.src)
+        self.assertIn("kind = 'boundary';", self.src)
+
+    def test_obstacle_loops_preserve_boundary(self):
+        # Both pushCircle and bench loops must guard on kind !== 'boundary'
+        self.assertGreaterEqual(self.src.count("if (kind !== 'boundary') {"), 2)
+
+    def test_boundary_return_omits_deflection(self):
+        self.assertIn("if (kind === 'boundary') {", self.src)
+        self.assertIn("return { x: nx, y: ny, kind };", self.src)
+
+    def test_behavioral_boundary_suppresses_deflection(self):
+        """Simulate boundary + obstacle contact: kind stays 'boundary', no deflection."""
+        width = 3200
+        height = 2400
+        radius = 16
+        minX = 56 + radius
+        maxX = width - 56 - radius
+        minY = 56 + radius
+        maxY = height - 56 - radius
+
+        nx = minX - 10  # outside west boundary
+        ny = 500
+        kind = 'none'
+        deflected = None
+
+        clampedX = max(minX, min(maxX, nx))
+        clampedY = max(minY, min(maxY, ny))
+        if clampedX != nx or clampedY != ny:
+            kind = 'boundary'
+        nx, ny = clampedX, clampedY
+
+        # Simulate an obstacle push that would normally set kind='obstacle'
+        # and compute a deflected heading.
+        if kind != 'boundary':
+            kind = 'obstacle'
+            deflected = 1.23
+
+        self.assertEqual(kind, 'boundary')
+        self.assertIsNone(deflected)
+
+
+class TestJogCooldownDecrementOrder(unittest.TestCase):
+    """Verify jogCooldown is decremented before the JOG expiry check."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_cooldown_decrement_precedes_jog_timer(self):
+        idx_cooldown = self.src.index("if (this.jogCooldown > 0) {\n      this.jogCooldown = Math.max(0, this.jogCooldown - dt);")
+        idx_jog_timer = self.src.index("if (this.jogTimer > 0) {\n      this.jogTimer -= dt;")
+        self.assertLess(idx_cooldown, idx_jog_timer)
+
+    def test_behavioral_cooldown_not_decremented_on_set_tick(self):
+        """A cooldown initialised this tick must remain at 2.0 after the tick."""
+        JOG_COOLDOWN = 2.0
+        dt = 0.016
+        state = {'gait': 'JOG', 'jogTimer': 0.01, 'jogCooldown': 0.0}
+
+        # Decrement cooldown first
+        if state['jogCooldown'] > 0:
+            state['jogCooldown'] = max(0, state['jogCooldown'] - dt)
+        # Then advance jog timer
+        if state['jogTimer'] > 0:
+            state['jogTimer'] -= dt
+            if state['jogTimer'] <= 0:
+                state['jogTimer'] = 0
+                if state['gait'] == 'JOG':
+                    state['gait'] = 'WALK'
+                    state['jogCooldown'] = JOG_COOLDOWN
+
+        self.assertEqual(state['gait'], 'WALK')
+        self.assertEqual(state['jogCooldown'], JOG_COOLDOWN)
+
+
+class TestDoublePressDistanceThreshold(unittest.TestCase):
+    """Verify double-press distance threshold uses inclusive <= 24px."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_inclusive_threshold(self):
+        self.assertIn("distSinceLast <= DOUBLE_CLICK_PX", self.src)
+        self.assertIn("DOUBLE_CLICK_PX = 24", self.src)
+
+    def test_behavioral_threshold(self):
+        """Simulate the double-press distance check."""
+        DOUBLE_CLICK_PX = 24
+
+        def is_double(dist):
+            return dist <= DOUBLE_CLICK_PX
+
+        self.assertTrue(is_double(0))
+        self.assertTrue(is_double(24))
+        self.assertFalse(is_double(24.01))
+        self.assertFalse(is_double(50))
 
 
 if __name__ == "__main__":

@@ -97,6 +97,30 @@ export class Owner {
     this.jogCooldown = 0;
     this.stepOffTimer = 0;
     this.stepOffActive = false;
+
+    // Brake-light feedback pulse (rear brake sector flash)
+    this.brakeLightFeedback = {
+      active: false,
+      startedAt: 0,
+      durationMs: 250,
+      peakFillAlpha: 0.6,
+      peakStrokeAlpha: 0.9,
+      color: '#ef4444'
+    };
+  }
+
+  triggerBrakeLight(now = (typeof performance !== 'undefined' ? performance.now() : Date.now())) {
+    this.brakeLightFeedback.active = true;
+    this.brakeLightFeedback.startedAt = now;
+  }
+
+  getLeashHandAnchor(preferredSide = 'right') {
+    const sideSign = preferredSide === 'left' ? -1 : 1;
+    const handSide = sideSign * ((30 * Math.PI) / 180);
+    return {
+      x: this.x + Math.cos(this.angle + handSide) * 28,
+      y: this.y + Math.sin(this.angle + handSide) * 28
+    };
   }
 
   // --- Gait API ---
@@ -719,8 +743,23 @@ export class Owner {
       const startAngle = rearHeading - halfSpan;
       const endAngle = rearHeading + halfSpan;
 
+      // Brake-light feedback pulse: brighten the sector briefly on brake.
+      let fillAlpha = 0.20;
+      let strokeAlpha = 0.55;
+      if (this.brakeLightFeedback && this.brakeLightFeedback.active) {
+        const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        const elapsed = now - this.brakeLightFeedback.startedAt;
+        if (elapsed < this.brakeLightFeedback.durationMs) {
+          const decay = 1.0 - (elapsed / this.brakeLightFeedback.durationMs);
+          fillAlpha = 0.20 + (this.brakeLightFeedback.peakFillAlpha - 0.20) * decay;
+          strokeAlpha = 0.55 + (this.brakeLightFeedback.peakStrokeAlpha - 0.55) * decay;
+        } else {
+          this.brakeLightFeedback.active = false;
+        }
+      }
+
       // Filled wedge from origin across the full sector
-      ctx.fillStyle = 'rgba(239, 68, 68, 0.20)';
+      ctx.fillStyle = `rgba(239, 68, 68, ${fillAlpha})`;
       ctx.beginPath();
       ctx.moveTo(cx, cy);
       const steps = 24;
@@ -734,7 +773,7 @@ export class Owner {
       ctx.fill();
 
       // Contour arc at the outer ring of the sector
-      ctx.strokeStyle = 'rgba(239, 68, 68, 0.55)';
+      ctx.strokeStyle = `rgba(239, 68, 68, ${strokeAlpha})`;
       ctx.lineWidth = 3;
       ctx.beginPath();
       for (let i = 0; i <= steps; i++) {

@@ -187,6 +187,9 @@ export class CliftonDownGame {
     this.hasInteracted = false;
     this.lastFootstepTime = 0;
 
+    // Click feedback markers (steer-single / steer-double)
+    this.clickFeedback = [];
+
     // Environment & Weather Systems
     this.weatherClient = weatherClient;
     this.environment = environmentSystem;
@@ -575,6 +578,10 @@ export class CliftonDownGame {
       if (!captured) return;
 
       if (captured.type === 'brake') {
+        // Brake-light feedback pulse on any brake gesture
+        if (typeof this.owner.triggerBrakeLight === 'function') {
+          this.owner.triggerBrakeLight();
+        }
         if (isDouble) {
           this.owner.setGait('STAND');
           return;
@@ -605,7 +612,24 @@ export class CliftonDownGame {
       const gaitAtPress = captured.gaitAtPress;
       this.owner.setTargetHeading(heading);
 
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      const worldX = captured.worldX;
+      const worldY = captured.worldY;
+
       if (isDouble) {
+        // Replace any pending single-click marker for this click
+        this.clickFeedback = this.clickFeedback.filter(
+          (f) => !(f.kind === 'steer-single' && f.worldX === worldX && f.worldY === worldY)
+        );
+        this.clickFeedback.push({
+          kind: 'steer-double',
+          worldX,
+          worldY,
+          startedAt: now,
+          durationMs: 400,
+          glyph: '+',
+          color: '#22c55e'
+        });
         if (gaitAtPress === 'STAND') {
           this.owner.setGait('STROLL');
         } else if (gaitAtPress === 'STROLL') {
@@ -614,6 +638,15 @@ export class CliftonDownGame {
           this.owner.setGait('JOG');
         }
       } else {
+        this.clickFeedback.push({
+          kind: 'steer-single',
+          worldX,
+          worldY,
+          startedAt: now,
+          durationMs: 400,
+          glyph: 'x',
+          color: '#ffffff'
+        });
         if (gaitAtPress === 'STAND') {
           this.owner.setGait('STROLL');
         }
@@ -676,9 +709,12 @@ export class CliftonDownGame {
       // --- Immediate hits (no double-click delay) ---
 
       // 1. Companion dog
+      // On-leash petting is only allowed while the owner is STAND; otherwise
+      // dog clicks must not hijack brake/movement gestures.
       const dogScreen = this.camera.worldToScreen(this.dog.x, this.dog.y);
       const distToDog = Math.hypot(e.clientX - dogScreen.x, e.clientY - dogScreen.y);
-      if (distToDog < 48) {
+      const dogPetAllowed = !this.owner.isLeashed || this.owner.gait === 'STAND';
+      if (distToDog < 48 && dogPetAllowed) {
         // Immediate interaction supersedes any pending deferred field gesture
         // and resets double-click state so the next field tap is a fresh single.
         cancelPendingSingle();
@@ -904,6 +940,13 @@ export class CliftonDownGame {
   }
 
   petDog() {
+    // On-leash petting is strictly disallowed while the owner is moving.
+    if (this.owner.isLeashed && this.owner.gait !== 'STAND') {
+      if (this.hud && typeof this.hud.showToast === 'function') {
+        this.hud.showToast('🦮 Stop (STAND) before petting on-lead.');
+      }
+      return;
+    }
     const distToDog = Math.hypot(this.owner.x - this.dog.x, this.owner.y - this.dog.y);
     if (distToDog < 90) {
       if (typeof this.owner.triggerPet === 'function') {
@@ -1441,6 +1484,39 @@ export class CliftonDownGame {
 
     // Field renders background turf, then Y-sorts trees, benches, owners, dogs, and balls
     this.field.render(this.ctx, this.camera, dynamicEntities);
+
+    // Click feedback markers (steer-single / steer-double)
+    if (Array.isArray(this.clickFeedback) && this.clickFeedback.length > 0) {
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      this.clickFeedback = this.clickFeedback.filter((f) => (now - f.startedAt) <= f.durationMs);
+      for (const f of this.clickFeedback) {
+        const elapsed = now - f.startedAt;
+        const alpha = Math.max(0, 1.0 - (elapsed / f.durationMs));
+        this.ctx.save();
+        this.ctx.globalAlpha = alpha;
+        this.ctx.strokeStyle = f.color;
+        this.ctx.fillStyle = f.color;
+        this.ctx.lineWidth = 2.5;
+        this.ctx.lineCap = 'round';
+        const s = 7;
+        if (f.glyph === '+') {
+          this.ctx.beginPath();
+          this.ctx.moveTo(f.worldX - s, f.worldY);
+          this.ctx.lineTo(f.worldX + s, f.worldY);
+          this.ctx.moveTo(f.worldX, f.worldY - s);
+          this.ctx.lineTo(f.worldX, f.worldY + s);
+          this.ctx.stroke();
+        } else {
+          this.ctx.beginPath();
+          this.ctx.moveTo(f.worldX - s, f.worldY - s);
+          this.ctx.lineTo(f.worldX + s, f.worldY + s);
+          this.ctx.moveTo(f.worldX + s, f.worldY - s);
+          this.ctx.lineTo(f.worldX - s, f.worldY + s);
+          this.ctx.stroke();
+        }
+        this.ctx.restore();
+      }
+    }
 
     // In-World Contextual Interaction Badges
     const isTouch = typeof TouchControls !== 'undefined' && TouchControls.isTouchDevice && TouchControls.isTouchDevice();

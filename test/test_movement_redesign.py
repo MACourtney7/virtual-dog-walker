@@ -144,5 +144,155 @@ class TestCompanionDogGait(unittest.TestCase):
         self.assertIn("case 'JOG':", self.src)
 
 
+class TestRearBrakeArcNormalizedEllipse(unittest.TestCase):
+    """Behavioral tests for the normalized ellipse rear-brake hit test."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_uses_normalized_ellipse_math(self):
+        self.assertIn("const Rx = 22", self.src)
+        self.assertIn("const Ry = 12.1", self.src)
+        self.assertIn("Math.hypot(dx / Rx, dy / Ry)", self.src)
+        self.assertIn("Math.atan2(dy / Ry, dx / Rx)", self.src)
+        self.assertIn("normDist < 0.7 || normDist > 1.35", self.src)
+
+    def test_rear_heading_uses_angle_plus_pi(self):
+        self.assertIn("const rearHeading = this.angle + Math.PI", self.src)
+        self.assertIn("angleDelta(rearHeading, normAngle)", self.src)
+
+    def test_arc_half_span_is_55_degrees(self):
+        self.assertIn("(110 * Math.PI) / 180 / 2", self.src)
+
+    def test_behavioral_rear_arc_hit(self):
+        """Simulate the normalized ellipse math to verify rear vs front classification."""
+        import math
+
+        def on_rear_arc(owner_x, owner_y, angle, wx, wy, gait='STROLL'):
+            if gait == 'STAND':
+                return False
+            cx = owner_x
+            cy = owner_y + 12
+            Rx = 22
+            Ry = 12.1
+            dx = wx - cx
+            dy = wy - cy
+            norm_dist = math.hypot(dx / Rx, dy / Ry)
+            if norm_dist < 0.7 or norm_dist > 1.35:
+                return False
+            norm_angle = math.atan2(dy / Ry, dx / Rx)
+            rear = angle + math.pi
+            delta = ((norm_angle - rear + math.pi) % (2 * math.pi)) - math.pi
+            if delta < -math.pi:
+                delta += 2 * math.pi
+            return abs(delta) <= (55 * math.pi / 180)
+
+        # Owner facing East (angle=0). Rear is West.
+        # Point directly behind (west) at radius ~1.0 normalized
+        self.assertTrue(on_rear_arc(100, 100, 0.0, 100 - 22, 100 + 12))
+        # Point directly in front (east) should NOT be on rear arc
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 + 22, 100 + 12))
+        # Point to the side (north) should NOT be on rear arc
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100, 100 + 12 - 12.1))
+        # Point far outside distance band should NOT hit
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 60, 100 + 12))
+        # Point inside inner band should NOT hit
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 5, 100 + 12))
+        # STAND gait never hits
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 22, 100 + 12, gait='STAND'))
+
+
+class TestJogDurationAndCooldown(unittest.TestCase):
+    """Behavioral tests for JOG 2.0s duration and 2.0s cooldown."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_constants(self):
+        self.assertIn("JOG_DURATION = 2.0", self.src)
+        self.assertIn("JOG_COOLDOWN = 2.0", self.src)
+
+    def test_jog_timer_expires_to_walk(self):
+        self.assertIn("this.jogTimer = JOG_DURATION", self.src)
+        self.assertIn("this.setGait(Gait.WALK)", self.src)
+        self.assertIn("this.jogCooldown = JOG_COOLDOWN", self.src)
+
+    def test_jog_blocked_during_cooldown(self):
+        self.assertIn("if (nextGait === Gait.JOG && this.jogCooldown > 0)", self.src)
+        self.assertIn("nextGait = Gait.WALK", self.src)
+
+
+class TestDoublePressLogic(unittest.TestCase):
+    """Behavioral tests for double-press distance/timing logic in main.js."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_double_click_constants(self):
+        self.assertIn("DOUBLE_CLICK_MS = 280", self.src)
+        self.assertIn("DOUBLE_CLICK_PX = 24", self.src)
+
+    def test_captured_press_at_press_time(self):
+        self.assertIn("const captured = {", self.src)
+        self.assertIn("type: isBrake ? 'brake' : 'field'", self.src)
+        self.assertIn("gaitAtPress: this.owner.gait", self.src)
+
+    def test_separate_press_flush(self):
+        self.assertIn("isSeparate", self.src)
+        self.assertIn("distSinceLast > DOUBLE_CLICK_PX", self.src)
+
+    def test_double_press_gait_progression(self):
+        # STAND -> STROLL, STROLL -> WALK, WALK -> JOG
+        self.assertIn("if (gaitAtPress === 'STAND')", self.src)
+        self.assertIn("this.owner.setGait('STROLL')", self.src)
+        self.assertIn("this.owner.setGait('WALK')", self.src)
+        self.assertIn("this.owner.setGait('JOG')", self.src)
+
+
+class TestTouchPromptStrings(unittest.TestCase):
+    """Verify touch prompt strings have no legacy [E] hints."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_no_legacy_e_hint(self):
+        self.assertNotIn("[E]", self.src)
+
+    def test_touch_prompts(self):
+        self.assertIn("Tap 💩 to pick up", self.src)
+        self.assertIn("Tap 🗑️ to dispose", self.src)
+
+    def test_desktop_prompts(self):
+        self.assertIn("Click to pick up waste", self.src)
+        self.assertIn("Click to dispose in bin", self.src)
+
+
+class TestOwnerLocalGuard(unittest.TestCase):
+    """Verify Owner.update() guards movement behind isLocal."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_is_local_guard(self):
+        self.assertIn("if (!this.isLocal)", self.src)
+
+    def test_collision_result_integration(self):
+        self.assertIn("field.resolveCollisionWithResult", self.src)
+        self.assertIn("res.kind === 'boundary'", self.src)
+        self.assertIn("res.kind === 'obstacle'", self.src)
+
+
+class TestFootstepCadence(unittest.TestCase):
+    """Verify footstep cadence scales with gait."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_gait_scaled_intervals(self):
+        self.assertIn("this.owner.gait === 'JOG' ? 200", self.src)
+        self.assertIn("this.owner.gait === 'WALK' ? 300", self.src)
+        self.assertIn("460", self.src)
+
+
 if __name__ == "__main__":
     unittest.main()

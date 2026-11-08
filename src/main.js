@@ -560,10 +560,11 @@ export class CliftonDownGame {
     const DOUBLE_CLICK_MS = 280;
     const DOUBLE_CLICK_PX = 24;
 
-    const executeGesture = (worldX, worldY, isDouble) => {
-      // 4. Moving & rear brake arc
-      if (this.owner.gait !== 'STAND' && typeof this.owner.isPointOnRearBrakeArc === 'function' &&
-          this.owner.isPointOnRearBrakeArc(worldX, worldY)) {
+    // Resolve a captured press (hit type + heading captured at press time).
+    const resolveCapturedPress = (captured, isDouble) => {
+      if (!captured) return;
+
+      if (captured.type === 'brake') {
         if (isDouble) {
           this.owner.setGait('STAND');
         } else {
@@ -572,19 +573,24 @@ export class CliftonDownGame {
         return;
       }
 
-      // 5. Open field: steer / step gait
-      const dx = worldX - this.owner.x;
-      const dy = worldY - this.owner.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > 4) {
-        const heading = Math.atan2(dy, dx);
-        const wasStand = this.owner.gait === 'STAND';
-        this.owner.setTargetHeading(heading);
-        if (wasStand) {
+      // Field press
+      const heading = captured.heading;
+      if (typeof heading !== 'number' || !isFinite(heading)) return;
+
+      const gaitAtPress = captured.gaitAtPress;
+      this.owner.setTargetHeading(heading);
+
+      if (isDouble) {
+        if (gaitAtPress === 'STAND') {
           this.owner.setGait('STROLL');
+        } else if (gaitAtPress === 'STROLL') {
+          this.owner.setGait('WALK');
+        } else if (gaitAtPress === 'WALK') {
+          this.owner.setGait('JOG');
         }
-        if (isDouble) {
-          this.owner.stepGait(+1);
+      } else {
+        if (gaitAtPress === 'STAND') {
+          this.owner.setGait('STROLL');
         }
       }
     };
@@ -606,6 +612,11 @@ export class CliftonDownGame {
           const dirX = dx / dist;
           const dirY = dy / dist;
           this.throwBallAt(worldTarget.x, worldTarget.y, dirX, dirY);
+        } else {
+          // Fallback: throw along current facing so right-click is never dropped
+          const dirX = Math.cos(this.owner.angle);
+          const dirY = Math.sin(this.owner.angle);
+          this.throwBallAt(this.owner.x + dirX * 320, this.owner.y + dirY * 320, dirX, dirY);
         }
         return;
       }
@@ -645,11 +656,26 @@ export class CliftonDownGame {
       }
 
       // --- Deferred gestures (single vs double click) ---
+      // Capture hit type + heading AT PRESS TIME so the owner's later movement
+      // does not change what the press meant.
       const worldTarget = this.camera.screenToWorld(e.clientX, e.clientY);
+      const isBrake = this.owner.gait !== 'STAND' &&
+        typeof this.owner.isPointOnRearBrakeArc === 'function' &&
+        this.owner.isPointOnRearBrakeArc(worldTarget.x, worldTarget.y);
+
+      const captured = {
+        type: isBrake ? 'brake' : 'field',
+        heading: Math.atan2(worldTarget.y - this.owner.y, worldTarget.x - this.owner.x),
+        gaitAtPress: this.owner.gait,
+        worldX: worldTarget.x,
+        worldY: worldTarget.y
+      };
+
       const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       const dtSinceLast = now - this._lastClickTime;
       const distSinceLast = Math.hypot(e.clientX - this._lastClickX, e.clientY - this._lastClickY);
       const isDouble = dtSinceLast < DOUBLE_CLICK_MS && distSinceLast < DOUBLE_CLICK_PX;
+      const isSeparate = dtSinceLast < DOUBLE_CLICK_MS && distSinceLast > DOUBLE_CLICK_PX;
 
       this._lastClickTime = now;
       this._lastClickX = e.clientX;
@@ -661,14 +687,27 @@ export class CliftonDownGame {
           clearTimeout(this._pendingGestureTimer);
           this._pendingGestureTimer = null;
         }
-        executeGesture(worldTarget.x, worldTarget.y, true);
+        this._pendingGesture = null;
+        resolveCapturedPress(captured, true);
       } else {
-        if (this._pendingGestureTimer) {
+        // Flush any pending single press immediately if this is a separate press
+        if (isSeparate && this._pendingGestureTimer) {
           clearTimeout(this._pendingGestureTimer);
+          this._pendingGestureTimer = null;
+          const pending = this._pendingGesture;
+          this._pendingGesture = null;
+          if (pending) resolveCapturedPress(pending, false);
+        } else if (this._pendingGestureTimer) {
+          clearTimeout(this._pendingGestureTimer);
+          this._pendingGestureTimer = null;
         }
+
+        this._pendingGesture = captured;
         this._pendingGestureTimer = setTimeout(() => {
           this._pendingGestureTimer = null;
-          executeGesture(worldTarget.x, worldTarget.y, false);
+          const pending = this._pendingGesture;
+          this._pendingGesture = null;
+          if (pending) resolveCapturedPress(pending, false);
         }, DOUBLE_CLICK_MS);
       }
     });
@@ -1113,25 +1152,7 @@ export class CliftonDownGame {
     // 3. Update Local Entities
     this.owner.update(dt, this.field);
 
-    // Collision resolution with result contract (boundary stop / obstacle deflection)
-    if (this.field && typeof this.field.resolveCollisionWithResult === 'function') {
-      const res = this.field.resolveCollisionWithResult(
-        this.owner.x,
-        this.owner.y,
-        this.owner.radius,
-        this.owner.targetHeading
-      );
-      if (res) {
-        this.owner.x = res.x;
-        this.owner.y = res.y;
-        this.owner.depthY = this.owner.y + 12;
-        if (res.kind === 'boundary') {
-          this.owner.setGait('STAND');
-        } else if (res.kind === 'obstacle' && res.deflectedHeading !== undefined) {
-          this.owner.setTargetHeading(res.deflectedHeading);
-        }
-      }
-    }
+    // Collision resolution is handled inside Owner.update() via resolveCollisionWithResult.
 
     // this.dog.update(dt, this.field, allDogs, this.ball, this.npcs);
     this.dog.update(dt, this.field, allDogs, this.ball, Array.from(this.npcs.values()));
@@ -1180,10 +1201,15 @@ export class CliftonDownGame {
       this.touchControls.setCurrentGait(this.owner.gait);
     }
 
-    // Grass footstep sound
-    if (this.owner.isMoving && timestampNow() - this.lastFootstepTime > 320) {
-      this.lastFootstepTime = timestampNow();
-      sound.playFootstep();
+    // Grass footstep sound (cadence scales with gait)
+    if (this.owner.isMoving && this.owner.gait !== 'STAND') {
+      const footstepInterval = this.owner.gait === 'JOG' ? 200
+        : this.owner.gait === 'WALK' ? 300
+        : 460; // STROLL
+      if (timestampNow() - this.lastFootstepTime > footstepInterval) {
+        this.lastFootstepTime = timestampNow();
+        sound.playFootstep();
+      }
     }
 
     // 4. Update Remote Peers via Interpolators
@@ -1361,14 +1387,14 @@ export class CliftonDownGame {
         this.ctx,
         this.activePoopPileNearPlayer.x,
         this.activePoopPileNearPlayer.y - 18,
-        isTouch ? 'Tap 💩 or [E] to pick up' : 'Click to pick up waste'
+        isTouch ? 'Tap 💩 to pick up' : 'Click to pick up waste'
       );
     } else if (this.activeBinNearPlayer && this.hasPoopBag) {
       this.drawInteractionPrompt(
         this.ctx,
         this.activeBinNearPlayer.x,
         this.activeBinNearPlayer.y - 28,
-        isTouch ? 'Tap 🗑️ or [E] to dispose' : 'Click to dispose in bin'
+        isTouch ? 'Tap 🗑️ to dispose' : 'Click to dispose in bin'
       );
     }
 

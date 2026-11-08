@@ -33,13 +33,6 @@ const STEP_OFF_MAX_DURATION = 0.5; // seconds
 const JOG_DURATION = 2.0;
 const JOG_COOLDOWN = 2.0;
 
-// Shortest-arc angle interpolation helper
-function lerpAngle(a, b, t) {
-  let delta = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
-  if (delta < -Math.PI) delta += Math.PI * 2;
-  return a + delta * t;
-}
-
 // Wrapped shortest-arc delta from a to b
 function angleDelta(a, b) {
   let delta = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
@@ -210,22 +203,22 @@ export class Owner {
     if (this.gait === Gait.STAND) return false;
 
     // Match the rendered ground halo ellipse geometry (see drawGroundHalo)
-    const cx = this.x;
-    const cy = this.y + 12;
-    const rx = 22;
-    const ry = 22 * 0.55; // 12.1
+    const centerX = this.x;
+    const centerY = this.y + 12;
+    const Rx = 22;
+    const Ry = 12.1;
 
-    const dx = worldX - cx;
-    const dy = worldY - cy;
+    const dx = worldX - centerX;
+    const dy = worldY - centerY;
 
     // Normalized elliptical distance
-    const d = Math.sqrt((dx / rx) * (dx / rx) + (dy / ry) * (dy / ry));
-    if (d < 0.7 || d > 1.35) return false;
+    const normDist = Math.hypot(dx / Rx, dy / Ry);
+    if (normDist < 0.7 || normDist > 1.35) return false;
 
-    // Angular check: point must fall within the rear arc around angle + PI
-    const pointAngle = Math.atan2(dy, dx);
-    const rearAngle = this.angle + Math.PI;
-    const delta = Math.abs(angleDelta(rearAngle, pointAngle));
+    // Normalized angle in ellipse space
+    const normAngle = Math.atan2(dy / Ry, dx / Rx);
+    const rearHeading = this.angle + Math.PI;
+    const delta = Math.abs(angleDelta(rearHeading, normAngle));
 
     const halfSpan = (110 * Math.PI) / 180 / 2; // ~55 deg each side
     return delta <= halfSpan;
@@ -252,6 +245,13 @@ export class Owner {
   }
 
   update(dt, field) {
+    // Remote peers are driven authoritatively by the network interpolator.
+    // Only the local owner integrates movement, gait, turning and collisions.
+    if (!this.isLocal) {
+      this.depthY = this.y + 12;
+      return;
+    }
+
     // 1. Gait persists autonomously until changed via setGait / stepGait.
     //    (Legacy directional key handling removed in movement redesign.)
 
@@ -298,8 +298,19 @@ export class Owner {
     this.x += this.vx * dt;
     this.y += this.vy * dt;
 
-    // Resolve world obstacle & boundary collisions
-    if (field) {
+    // Resolve world obstacle & boundary collisions with result contract
+    if (field && typeof field.resolveCollisionWithResult === 'function') {
+      const res = field.resolveCollisionWithResult(this.x, this.y, this.radius, this.targetHeading);
+      if (res) {
+        this.x = res.x;
+        this.y = res.y;
+        if (res.kind === 'boundary') {
+          this.setGait(Gait.STAND);
+        } else if (res.kind === 'obstacle' && res.deflectedHeading !== undefined) {
+          this.setTargetHeading(res.deflectedHeading);
+        }
+      }
+    } else if (field) {
       resolveFieldCollision(this, this.radius, field);
     }
 

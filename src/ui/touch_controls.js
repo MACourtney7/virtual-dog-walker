@@ -44,10 +44,23 @@ export class TouchControls {
     // 1. Discrete Pace Controls (Bottom Left)
     this.pacePad = document.createElement('div');
     this.pacePad.id = 'touch-pace-pad';
+    this.pacePad.style.cssText = [
+      'position: fixed',
+      'left: 16px',
+      'bottom: 24px',
+      'display: flex',
+      'align-items: center',
+      'gap: 10px',
+      'z-index: 1000',
+      'touch-action: manipulation',
+      'user-select: none',
+      '-webkit-user-select: none',
+      'pointer-events: auto'
+    ].join(';');
     this.pacePad.innerHTML = `
-      <button class="touch-pace-btn" id="btn-touch-pace-down" aria-label="Decrease Pace">−</button>
-      <div class="touch-gait-badge" id="touch-gait-badge">STAND</div>
-      <button class="touch-pace-btn" id="btn-touch-pace-up" aria-label="Increase Pace">+</button>
+      <button class="touch-pace-btn" id="btn-touch-pace-down" aria-label="Decrease Pace" style="width:52px;height:52px;border-radius:50%;border:none;background:rgba(15,23,42,0.85);color:#f8fafc;font-size:24px;font-weight:700;touch-action:manipulation;user-select:none;-webkit-user-select:none;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.35);">−</button>
+      <div class="touch-gait-badge" id="touch-gait-badge" style="min-width:64px;padding:6px 10px;border-radius:14px;background:rgba(15,23,42,0.85);color:#fde047;font:600 13px system-ui,-apple-system,sans-serif;text-align:center;letter-spacing:0.5px;touch-action:manipulation;user-select:none;-webkit-user-select:none;">STAND</div>
+      <button class="touch-pace-btn" id="btn-touch-pace-up" aria-label="Increase Pace" style="width:52px;height:52px;border-radius:50%;border:none;background:rgba(15,23,42,0.85);color:#f8fafc;font-size:24px;font-weight:700;touch-action:manipulation;user-select:none;-webkit-user-select:none;cursor:pointer;box-shadow:0 2px 8px rgba(0,0,0,0.35);">+</button>
     `;
     this.overlay.appendChild(this.pacePad);
     this.gaitBadge = this.pacePad.querySelector('#touch-gait-badge');
@@ -94,8 +107,13 @@ export class TouchControls {
       };
 
       btn.addEventListener('touchstart', trigger, { passive: false });
+      btn.addEventListener('pointerdown', (e) => {
+        // Pointer events fire for both mouse and touch; skip if touch already handled
+        if (e.pointerType === 'touch') return;
+        trigger(e);
+      });
       btn.addEventListener('click', (e) => {
-        // Prevent duplicate trigger if touch fired
+        // Prevent duplicate trigger if touch/pointer fired
         if (e.detail === 0) return;
         trigger(e);
       });

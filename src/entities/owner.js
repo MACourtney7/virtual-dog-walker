@@ -1,6 +1,52 @@
 // Human Owner Player Avatar - 8-Way Directional Movement, 3D Procedural Silhouette, Customization & Interaction Controller
 import { resolveFieldCollision } from '../engine/wasm_sim_bridge.js';
 
+// Gait model constants
+export const Gait = Object.freeze({
+  STAND: 'STAND',
+  STROLL: 'STROLL',
+  WALK: 'WALK',
+  JOG: 'JOG'
+});
+
+const GAIT_ORDER = [Gait.STAND, Gait.STROLL, Gait.WALK, Gait.JOG];
+
+const GAIT_SPEEDS = Object.freeze({
+  [Gait.STAND]: 0,
+  [Gait.STROLL]: 100,
+  [Gait.WALK]: 185,
+  [Gait.JOG]: 265
+});
+
+// Max turn rate (radians/sec) per gait
+const GAIT_TURN_RATES = Object.freeze({
+  [Gait.STAND]: Math.PI, // effectively free while standing
+  [Gait.STROLL]: (180 * Math.PI) / 180,
+  [Gait.WALK]: (115 * Math.PI) / 180,
+  [Gait.JOG]: (65 * Math.PI) / 180
+});
+
+const STEP_OFF_TURN_RATE = (300 * Math.PI) / 180; // 300 deg/s
+const STEP_OFF_ALIGN_TOLERANCE = (5 * Math.PI) / 180; // ~5 deg
+const STEP_OFF_MAX_DURATION = 0.5; // seconds
+
+const JOG_DURATION = 2.0;
+const JOG_COOLDOWN = 2.0;
+
+// Shortest-arc angle interpolation helper
+function lerpAngle(a, b, t) {
+  let delta = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (delta < -Math.PI) delta += Math.PI * 2;
+  return a + delta * t;
+}
+
+// Wrapped shortest-arc delta from a to b
+function angleDelta(a, b) {
+  let delta = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (delta < -Math.PI) delta += Math.PI * 2;
+  return delta;
+}
+
 export class Owner {
   constructor(x = 1200, y = 900, name = 'Walker', isLocal = true) {
     this.x = x;
@@ -47,6 +93,138 @@ export class Owner {
       left: false,
       right: false
     };
+
+    // Gait & heading state
+    this.gait = Gait.STAND;
+    this.targetHeading = this.angle;
+    this.jogTimer = 0;
+    this.jogCooldown = 0;
+    this.stepOffTimer = 0;
+    this.stepOffActive = false;
+  }
+
+  // --- Gait API ---
+
+  getCurrentSpeed() {
+    return GAIT_SPEEDS[this.gait] || 0;
+  }
+
+  isMoving() {
+    return this.gait !== Gait.STAND;
+  }
+
+  setTargetHeading(radians) {
+    if (typeof radians !== 'number' || !isFinite(radians)) return;
+    this.targetHeading = radians;
+    if (this.gait === Gait.STAND) {
+      this.setGait(Gait.STROLL);
+    }
+  }
+
+  setGait(nextGait, options = {}) {
+    if (!GAIT_ORDER.includes(nextGait)) return;
+    if (nextGait === this.gait) return;
+
+    const prevIndex = GAIT_ORDER.indexOf(this.gait);
+    const nextIndex = GAIT_ORDER.indexOf(nextGait);
+
+    // Clamp upward transitions into JOG while cooldown is active
+    if (nextGait === Gait.JOG && this.jogCooldown > 0) {
+      nextGait = Gait.WALK;
+    }
+
+    // Leaving JOG starts cooldown
+    if (this.gait === Gait.JOG && nextGait !== Gait.JOG) {
+      this.jogCooldown = JOG_COOLDOWN;
+      this.jogTimer = 0;
+    }
+
+    // Entering JOG starts timer
+    if (nextGait === Gait.JOG) {
+      this.jogTimer = JOG_DURATION;
+    }
+
+    // Leaving STAND begins step-off alignment window
+    if (this.gait === Gait.STAND && nextGait !== Gait.STAND) {
+      this.stepOffActive = true;
+      this.stepOffTimer = STEP_OFF_MAX_DURATION;
+    }
+
+    this.gait = nextGait;
+
+    // Keep targetHeading synced to current angle when stopping
+    if (nextGait === Gait.STAND) {
+      this.targetHeading = this.angle;
+      this.stepOffActive = false;
+      this.stepOffTimer = 0;
+    }
+  }
+
+  stepGait(delta) {
+    const dir = delta > 0 ? 1 : (delta < 0 ? -1 : 0);
+    if (dir === 0) return;
+    const idx = GAIT_ORDER.indexOf(this.gait);
+    const nextIdx = Math.max(0, Math.min(GAIT_ORDER.length - 1, idx + dir));
+    if (nextIdx === idx) return;
+    this.setGait(GAIT_ORDER[nextIdx]);
+  }
+
+  // --- Heading integration ---
+
+  _updateHeading(dt) {
+    if (this.gait === Gait.STAND) {
+      this.angle = this.targetHeading;
+      return;
+    }
+
+    const delta = angleDelta(this.angle, this.targetHeading);
+    const absDelta = Math.abs(delta);
+
+    // Determine max turn rate
+    let maxRate = GAIT_TURN_RATES[this.gait] || GAIT_TURN_RATES[Gait.WALK];
+    if (this.stepOffActive) {
+      if (absDelta <= STEP_OFF_ALIGN_TOLERANCE || this.stepOffTimer <= 0) {
+        this.stepOffActive = false;
+        this.stepOffTimer = 0;
+      } else {
+        maxRate = STEP_OFF_TURN_RATE;
+      }
+    }
+
+    const maxStep = maxRate * dt;
+    if (absDelta <= maxStep) {
+      this.angle = this.targetHeading;
+    } else {
+      this.angle += Math.sign(delta) * maxStep;
+    }
+
+    // Normalize angle to [-PI, PI]
+    this.angle = ((this.angle + Math.PI) % (Math.PI * 2)) - Math.PI;
+    if (this.angle < -Math.PI) this.angle += Math.PI * 2;
+  }
+
+  // --- Rear brake arc helper ---
+
+  isPointOnRearBrakeArc(worldX, worldY) {
+    if (this.gait === Gait.STAND) return false;
+    const dx = worldX - this.x;
+    const dy = worldY - this.y;
+    const dist = Math.hypot(dx, dy);
+    if (dist < 1e-3) return false;
+
+    // Angle of point relative to owner
+    const pointAngle = Math.atan2(dy, dx);
+    // Rear direction is angle + PI
+    const rearAngle = this.angle + Math.PI;
+    const delta = Math.abs(angleDelta(rearAngle, pointAngle));
+
+    const halfSpan = (110 * Math.PI) / 180 / 2; // ~55 deg each side
+    if (delta > halfSpan) return false;
+
+    // Radial tolerance around visual arc radius
+    const arcRadius = 22;
+    const tolerance = 6;
+    return Math.abs(dist - arcRadius) <= tolerance;
   }
 
   setChat(text, duration = 4.0) {
@@ -81,16 +259,51 @@ export class Owner {
 
       const mag = Math.hypot(dx, dy);
       if (mag > 0) {
-        this.vx = (dx / mag) * this.speed;
-        this.vy = (dy / mag) * this.speed;
-        this.isMoving = true;
-        this.angle = Math.atan2(this.vy, this.vx);
-        this.walkPhase += dt * 9.5;
-      } else {
-        this.vx = 0;
-        this.vy = 0;
-        this.isMoving = false;
+        // Input direction drives target heading; gait drives speed
+        const inputHeading = Math.atan2(dy, dx);
+        this.setTargetHeading(inputHeading);
+        if (this.gait === Gait.STAND) {
+          this.setGait(Gait.STROLL);
+        }
+      } else if (this.gait !== Gait.STAND) {
+        // No input: drop to STAND
+        this.setGait(Gait.STAND);
       }
+    }
+
+    // 2. Advance gait timers
+    if (this.jogTimer > 0) {
+      this.jogTimer -= dt;
+      if (this.jogTimer <= 0) {
+        this.jogTimer = 0;
+        if (this.gait === Gait.JOG) {
+          this.setGait(Gait.WALK);
+        }
+      }
+    }
+    if (this.jogCooldown > 0) {
+      this.jogCooldown = Math.max(0, this.jogCooldown - dt);
+    }
+    if (this.stepOffActive) {
+      this.stepOffTimer = Math.max(0, this.stepOffTimer - dt);
+    }
+
+    // 3. Update heading toward target
+    this._updateHeading(dt);
+
+    // 4. Compute velocity from gait speed and current angle
+    const speed = this.getCurrentSpeed();
+    if (speed > 0) {
+      this.vx = Math.cos(this.angle) * speed;
+      this.vy = Math.sin(this.angle) * speed;
+      this.isMoving = true;
+      // Cadence scales with gait speed
+      const cadence = 4.0 + (speed / 265) * 8.0;
+      this.walkPhase += dt * cadence;
+    } else {
+      this.vx = 0;
+      this.vy = 0;
+      this.isMoving = false;
     }
 
     // Apply movement
@@ -140,6 +353,9 @@ export class Owner {
     ctx.save();
 
     const angle = this.angle !== undefined ? this.angle : Math.PI / 2;
+
+    // Ground halo (drawn first, beneath everything)
+    this.drawGroundHalo(ctx, angle);
     const cosA = Math.cos(angle);
     const sinA = Math.sin(angle);
 
@@ -406,6 +622,70 @@ export class Owner {
       this.drawSpeechBubble(ctx, this.chatText);
     } else if (this.emote) {
       this.drawEmoteBubble(ctx, this.emote);
+    }
+
+    ctx.restore();
+  }
+
+  drawGroundHalo(ctx, angle) {
+    ctx.save();
+
+    const cx = this.x;
+    const cy = this.y + 12;
+    const radius = 22;
+
+    // Base halo ring
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.18)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, radius, radius * 0.55, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Forward arrowhead on front perimeter
+    const frontX = cx + Math.cos(angle) * radius;
+    const frontY = cy + Math.sin(angle) * radius * 0.55;
+    const perpX = -Math.sin(angle);
+    const perpY = Math.cos(angle) * 0.55;
+    const arrowSize = 5;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.55)';
+    ctx.beginPath();
+    ctx.moveTo(frontX + Math.cos(angle) * arrowSize, frontY + Math.sin(angle) * arrowSize * 0.55);
+    ctx.lineTo(frontX + perpX * arrowSize, frontY + perpY * arrowSize);
+    ctx.lineTo(frontX - perpX * arrowSize, frontY - perpY * arrowSize);
+    ctx.closePath();
+    ctx.fill();
+
+    // Faint target indicator when turning and misaligned
+    if (this.gait !== Gait.STAND) {
+      const misalign = Math.abs(angleDelta(this.angle, this.targetHeading));
+      if (misalign > (10 * Math.PI) / 180) {
+        const tx = cx + Math.cos(this.targetHeading) * radius;
+        const ty = cy + Math.sin(this.targetHeading) * radius * 0.55;
+        ctx.fillStyle = 'rgba(253, 224, 71, 0.45)';
+        ctx.beginPath();
+        ctx.arc(tx, ty, 2.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
+    // Rear brake arc (hidden in STAND)
+    if (this.gait !== Gait.STAND) {
+      const rearAngle = angle + Math.PI;
+      const halfSpan = (110 * Math.PI) / 180 / 2;
+      ctx.strokeStyle = 'rgba(239, 68, 68, 0.55)';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      // Ellipse arc: use parametric sampling for the foreshortened ellipse
+      const steps = 16;
+      for (let i = 0; i <= steps; i++) {
+        const t = rearAngle - halfSpan + (i / steps) * (halfSpan * 2);
+        const px = cx + Math.cos(t) * radius;
+        const py = cy + Math.sin(t) * radius * 0.55;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
     }
 
     ctx.restore();

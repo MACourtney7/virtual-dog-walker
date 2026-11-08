@@ -13,9 +13,9 @@ const GAIT_ORDER = [Gait.STAND, Gait.STROLL, Gait.WALK, Gait.JOG];
 
 const GAIT_SPEEDS = Object.freeze({
   [Gait.STAND]: 0,
-  [Gait.STROLL]: 75,
-  [Gait.WALK]: 100,
-  [Gait.JOG]: 185
+  [Gait.STROLL]: 100,
+  [Gait.WALK]: 185,
+  [Gait.JOG]: 265
 });
 
 // Max turn rate (radians/sec) per gait
@@ -219,8 +219,8 @@ export class Owner {
     // Match the rendered ground halo ellipse geometry (see drawGroundHalo)
     const centerX = this.x;
     const centerY = this.y + 12;
-    const baseX = 22;
-    const baseY = 12.1;
+    const Rx = 22;
+    const Ry = 12.1;
 
     // Translate world point into owner's local frame (rotate by -angle)
     const dx = worldX - centerX;
@@ -231,7 +231,7 @@ export class Owner {
     const localY = dx * sinA + dy * cosA;
 
     // Normalized elliptical distance
-    const normDist = Math.sqrt((localX / baseX) ** 2 + (localY / baseY) ** 2);
+    const normDist = Math.sqrt((localX / Rx) ** 2 + (localY / Ry) ** 2);
     if (normDist < 0.7 || normDist > 3.5) return false;
 
     // Bearing of local point from +x axis, normalized to [0, 2π)
@@ -311,7 +311,7 @@ export class Owner {
       this.vy = Math.sin(this.angle) * speed;
       this.isMoving = true;
       // Cadence scales with gait speed
-      const cadence = 4.0 + (speed / 185) * 8.0;
+      const cadence = 4.0 + (speed / 265) * 8.0;
       this.walkPhase += dt * cadence;
     } else {
       this.vx = 0;
@@ -719,8 +719,10 @@ export class Owner {
       const baseX = radius;         // 22
       const baseY = radius * 0.55;  // 12.1
       const outerScale = 3.5;
-      const startAngle = angle + (125 * Math.PI) / 180;
-      const endAngle = angle + (235 * Math.PI) / 180;
+      const rearHeading = this.angle + Math.PI;
+      const halfSpan = (110 * Math.PI) / 180 / 2;
+      const startAngle = rearHeading - halfSpan;
+      const endAngle = rearHeading + halfSpan;
 
       // Filled wedge from origin across the full sector
       ctx.fillStyle = 'rgba(239, 68, 68, 0.20)';

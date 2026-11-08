@@ -7024,7 +7024,7 @@ export class CompanionDog {
     this.isPullingLeash = false;
 
     // Leash tension state (exposed for rendering & tests)
-    this.leashTaut = true;
+    this.leashTaut = Boolean(this.owner && this.owner.isLeashed);
     this.leashTension = 1.0;
     this.leashSagPx = 0;
     this.leashVibrationPx = 0;
@@ -7670,8 +7670,8 @@ export class CompanionDog {
       const sagCap = Math.min(2.0, leashDist * 0.03);
       this.leashSagPx = Math.min(sagCap, Math.max(0.0, (90 - leashDist) * 0.05));
       // Subtle vibration only while the owner is moving
-      const ownerMoving = Boolean(this.owner.isMoving) && this.owner.gait !== 'STAND';
-      this.leashVibrationPx = ownerMoving ? 0.6 : 0.0;
+      const isMoving = Boolean(this.owner && this.owner.gait !== 'STAND');
+      this.leashVibrationPx = isMoving ? 0.8 : 0;
     } else {
       this.leashTaut = false;
       this.leashTension = 0.0;
@@ -8845,9 +8845,10 @@ export class CompanionDog {
 
     // Perpendicular vibration while the owner is moving (0 while STAND).
     // The jitter is applied strictly along the leash line's normal so the
-    // lead never appears to stretch or shorten.
+    // lead never appears to stretch or shorten. `this.leashVibrationPx` is
+    // the amplitude (owned by update()); it must NOT be overwritten here.
     const isMoving = Boolean(this.owner) && this.owner.gait !== 'STAND';
-    this.leashVibrationPx = isMoving ? Math.sin(Date.now() * 0.05) * 1.2 : 0;
+    const jitter = isMoving ? Math.sin(Date.now() * 0.05) * this.leashVibrationPx : 0;
 
     const leashDx = collarX - handX;
     const leashDy = collarY - handY;
@@ -8856,9 +8857,8 @@ export class CompanionDog {
     const uy = leashDy / leashLen;
     const perpX = -uy;
     const perpY = ux;
-    const vib = this.leashVibrationPx;
-    const jitterX = perpX * vib;
-    const jitterY = perpY * vib;
+    const jitterX = perpX * jitter;
+    const jitterY = perpY * jitter;
 
     // Minimal sag (<= 2px and <= 3% of leash length) so the lead reads as taut
     const sagCap = Math.min(2.0, leashLen * 0.03);
@@ -12103,9 +12103,9 @@ export class CliftonDownGame {
       const worldY = captured.worldY;
 
       if (isDouble) {
-        // Replace any pending single-click marker for this click
+        // Cancel any pending single-click marker within the double-click window
         this.clickFeedback = this.clickFeedback.filter(
-          (f) => !(f.kind === 'steer-single' && f.worldX === worldX && f.worldY === worldY)
+          (f) => !(f.kind === 'steer-single' && (now - f.startedAt) <= DOUBLE_CLICK_MS + 50)
         );
         this.clickFeedback.push({
           kind: 'steer-double',
@@ -34850,24 +34850,39 @@ class TestLeashTension(unittest.TestCase):
             self.assertLessEqual(sag, dist * 0.03)
 
     def test_behavioral_vibration_moving_vs_stand(self):
-        """Vibration > 0 while moving, 0 while STAND."""
+        """Vibration > 0 (and <= 2.0) while moving, 0 while STAND."""
         def vibration(gait, is_moving):
             if not is_moving or gait == 'STAND':
                 return 0.0
-            return 0.6
+            return 0.8
 
-        self.assertGreater(vibration('WALK', True), 0.0)
-        self.assertGreater(vibration('JOG', True), 0.0)
+        for gait in ('STROLL', 'WALK', 'JOG'):
+            v = vibration(gait, True)
+            self.assertGreater(v, 0.0)
+            self.assertLessEqual(v, 2.0)
         self.assertEqual(vibration('STAND', False), 0.0)
         self.assertEqual(vibration('WALK', False), 0.0)
+
+    def test_vibration_non_negative(self):
+        """leashVibrationPx must always be non-negative."""
+        self.assertIn("this.leashVibrationPx = isMoving ? 0.8 : 0;", self.src)
+        self.assertIn("this.leashVibrationPx = 0;", self.src)
 
     def test_vibration_applied_perpendicular(self):
         """Vibration must be applied along the leash line's normal."""
         self.assertIn("const perpX = -uy;", self.src)
         self.assertIn("const perpY = ux;", self.src)
-        self.assertIn("const jitterX = perpX * vib;", self.src)
-        self.assertIn("const jitterY = perpY * vib;", self.src)
-        self.assertIn("Math.sin(Date.now() * 0.05) * 1.2", self.src)
+        self.assertIn("const jitterX = perpX * jitter;", self.src)
+        self.assertIn("const jitterY = perpY * jitter;", self.src)
+        self.assertIn("Math.sin(Date.now() * 0.05) * this.leashVibrationPx", self.src)
+
+    def test_draw_leash_does_not_overwrite_vibration(self):
+        """drawLeash must not overwrite this.leashVibrationPx with Math.sin."""
+        idx = self.src.index("drawLeash(ctx)")
+        end = self.src.index("drawEmote(ctx, emote)", idx)
+        block = self.src[idx:end]
+        self.assertNotIn("this.leashVibrationPx = isMoving ? Math.sin", block)
+        self.assertNotIn("this.leashVibrationPx = Math.sin", block)
 
     def test_behavioral_perpendicular_vibration(self):
         """Perpendicular offset must be orthogonal to the leash direction."""

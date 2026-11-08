@@ -148,7 +148,7 @@ export class CompanionDog {
     this.isPullingLeash = false;
 
     // Leash tension state (exposed for rendering & tests)
-    this.leashTaut = true;
+    this.leashTaut = Boolean(this.owner && this.owner.isLeashed);
     this.leashTension = 1.0;
     this.leashSagPx = 0;
     this.leashVibrationPx = 0;
@@ -794,8 +794,8 @@ export class CompanionDog {
       const sagCap = Math.min(2.0, leashDist * 0.03);
       this.leashSagPx = Math.min(sagCap, Math.max(0.0, (90 - leashDist) * 0.05));
       // Subtle vibration only while the owner is moving
-      const ownerMoving = Boolean(this.owner.isMoving) && this.owner.gait !== 'STAND';
-      this.leashVibrationPx = ownerMoving ? 0.6 : 0.0;
+      const isMoving = Boolean(this.owner && this.owner.gait !== 'STAND');
+      this.leashVibrationPx = isMoving ? 0.8 : 0;
     } else {
       this.leashTaut = false;
       this.leashTension = 0.0;
@@ -1969,9 +1969,10 @@ export class CompanionDog {
 
     // Perpendicular vibration while the owner is moving (0 while STAND).
     // The jitter is applied strictly along the leash line's normal so the
-    // lead never appears to stretch or shorten.
+    // lead never appears to stretch or shorten. `this.leashVibrationPx` is
+    // the amplitude (owned by update()); it must NOT be overwritten here.
     const isMoving = Boolean(this.owner) && this.owner.gait !== 'STAND';
-    this.leashVibrationPx = isMoving ? Math.sin(Date.now() * 0.05) * 1.2 : 0;
+    const jitter = isMoving ? Math.sin(Date.now() * 0.05) * this.leashVibrationPx : 0;
 
     const leashDx = collarX - handX;
     const leashDy = collarY - handY;
@@ -1980,9 +1981,8 @@ export class CompanionDog {
     const uy = leashDy / leashLen;
     const perpX = -uy;
     const perpY = ux;
-    const vib = this.leashVibrationPx;
-    const jitterX = perpX * vib;
-    const jitterY = perpY * vib;
+    const jitterX = perpX * jitter;
+    const jitterY = perpY * jitter;
 
     // Minimal sag (<= 2px and <= 3% of leash length) so the lead reads as taut
     const sagCap = Math.min(2.0, leashLen * 0.03);

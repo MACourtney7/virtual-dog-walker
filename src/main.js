@@ -618,9 +618,9 @@ export class CliftonDownGame {
       const worldY = captured.worldY;
 
       if (isDouble) {
-        // Replace any pending single-click marker for this click
+        // Cancel any pending single-click marker within the double-click window
         this.clickFeedback = this.clickFeedback.filter(
-          (f) => !(f.kind === 'steer-single' && f.worldX === worldX && f.worldY === worldY)
+          (f) => !(f.kind === 'steer-single' && (now - f.startedAt) <= DOUBLE_CLICK_MS + 50)
         );
         this.clickFeedback.push({
           kind: 'steer-double',

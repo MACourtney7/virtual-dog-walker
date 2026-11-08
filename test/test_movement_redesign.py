@@ -1369,24 +1369,39 @@ class TestLeashTension(unittest.TestCase):
             self.assertLessEqual(sag, dist * 0.03)
 
     def test_behavioral_vibration_moving_vs_stand(self):
-        """Vibration > 0 while moving, 0 while STAND."""
+        """Vibration > 0 (and <= 2.0) while moving, 0 while STAND."""
         def vibration(gait, is_moving):
             if not is_moving or gait == 'STAND':
                 return 0.0
-            return 0.6
+            return 0.8
 
-        self.assertGreater(vibration('WALK', True), 0.0)
-        self.assertGreater(vibration('JOG', True), 0.0)
+        for gait in ('STROLL', 'WALK', 'JOG'):
+            v = vibration(gait, True)
+            self.assertGreater(v, 0.0)
+            self.assertLessEqual(v, 2.0)
         self.assertEqual(vibration('STAND', False), 0.0)
         self.assertEqual(vibration('WALK', False), 0.0)
+
+    def test_vibration_non_negative(self):
+        """leashVibrationPx must always be non-negative."""
+        self.assertIn("this.leashVibrationPx = isMoving ? 0.8 : 0;", self.src)
+        self.assertIn("this.leashVibrationPx = 0;", self.src)
 
     def test_vibration_applied_perpendicular(self):
         """Vibration must be applied along the leash line's normal."""
         self.assertIn("const perpX = -uy;", self.src)
         self.assertIn("const perpY = ux;", self.src)
-        self.assertIn("const jitterX = perpX * vib;", self.src)
-        self.assertIn("const jitterY = perpY * vib;", self.src)
-        self.assertIn("Math.sin(Date.now() * 0.05) * 1.2", self.src)
+        self.assertIn("const jitterX = perpX * jitter;", self.src)
+        self.assertIn("const jitterY = perpY * jitter;", self.src)
+        self.assertIn("Math.sin(Date.now() * 0.05) * this.leashVibrationPx", self.src)
+
+    def test_draw_leash_does_not_overwrite_vibration(self):
+        """drawLeash must not overwrite this.leashVibrationPx with Math.sin."""
+        idx = self.src.index("drawLeash(ctx)")
+        end = self.src.index("drawEmote(ctx, emote)", idx)
+        block = self.src[idx:end]
+        self.assertNotIn("this.leashVibrationPx = isMoving ? Math.sin", block)
+        self.assertNotIn("this.leashVibrationPx = Math.sin", block)
 
     def test_behavioral_perpendicular_vibration(self):
         """Perpendicular offset must be orthogonal to the leash direction."""

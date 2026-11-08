@@ -163,7 +163,8 @@ export class CliftonDownGame {
     // Touch Controls
     this.joystickActive = false;
     this.touchControls = new TouchControls({
-      onMove: (vec) => this.handleJoystickMove(vec),
+      onPaceDown: () => this.owner.stepGait(-1),
+      onPaceUp: () => this.owner.stepGait(+1),
       onThrow: () => this.throwBall(),
       onLeash: () => this.toggleLeash(),
       onWhistle: () => this.whistleDog(),
@@ -503,33 +504,14 @@ export class CliftonDownGame {
       }
 
       switch (e.code) {
-        case 'KeyW':
-        case 'ArrowUp':
-          this.owner.keys.up = true;
-          break;
-        case 'KeyS':
-        case 'ArrowDown':
-          this.owner.keys.down = true;
-          break;
-        case 'KeyA':
-        case 'ArrowLeft':
-          this.owner.keys.left = true;
-          break;
-        case 'KeyD':
-        case 'ArrowRight':
-          this.owner.keys.right = true;
-          break;
-
-        case 'Space':
-        case 'KeyT':
-          // Throw Tennis Ball
-          e.preventDefault();
-          this.throwBall();
-          break;
-
-        case 'KeyL':
+        case 'KeyQ':
           // Toggle Leash
           this.toggleLeash();
+          break;
+
+        case 'KeyR':
+          // Whistle Recall Dog
+          this.whistleDog();
           break;
 
         case 'KeyC':
@@ -541,20 +523,7 @@ export class CliftonDownGame {
           break;
 
         case 'KeyE':
-          // Contextual Interact: Pick Up Waste -> Dispose in Bin -> Pet Dog
-          if (this.activePoopPileNearPlayer) {
-            this.pickUpPoop();
-          } else if (this.activeBinNearPlayer && this.hasPoopBag) {
-            this.disposePoopBag();
-          } else {
-            this.petDog();
-          }
-          break;
-
-        case 'KeyH':
-        case 'KeyR':
-          // Whistle Recall Dog
-          this.whistleDog();
+          // Reserved / inert (contextual interactions now via canvas click)
           break;
 
         case 'Enter':
@@ -571,48 +540,91 @@ export class CliftonDownGame {
       }
     });
 
-    window.addEventListener('keyup', (e) => {
-      switch (e.code) {
-        case 'KeyW':
-        case 'ArrowUp':
-          this.owner.keys.up = false;
-          break;
-        case 'KeyS':
-        case 'ArrowDown':
-          this.owner.keys.down = false;
-          break;
-        case 'KeyA':
-        case 'ArrowLeft':
-          this.owner.keys.left = false;
-          break;
-        case 'KeyD':
-        case 'ArrowRight':
-          this.owner.keys.right = false;
-          break;
-      }
-    });
-
     // Touch & Pointer Audio Unlock
     window.addEventListener('click', handleAudioInteraction);
     window.addEventListener('touchstart', handleAudioInteraction, { passive: true });
     window.addEventListener('pointerdown', handleAudioInteraction, { passive: true });
 
+    // Suppress browser context menu on the game canvas (right-click is a game gesture)
+    this.canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+    });
+
     // Direct In-World Canvas Tap Gestures
+    // Single vs double click disambiguation: < 280ms and < 24px between clicks.
+    this._lastClickTime = 0;
+    this._lastClickX = 0;
+    this._lastClickY = 0;
+    this._pendingGestureTimer = null;
+
+    const DOUBLE_CLICK_MS = 280;
+    const DOUBLE_CLICK_PX = 24;
+
+    const executeGesture = (worldX, worldY, isDouble) => {
+      // 4. Moving & rear brake arc
+      if (this.owner.gait !== 'STAND' && typeof this.owner.isPointOnRearBrakeArc === 'function' &&
+          this.owner.isPointOnRearBrakeArc(worldX, worldY)) {
+        if (isDouble) {
+          this.owner.setGait('STAND');
+        } else {
+          this.owner.stepGait(-1);
+        }
+        return;
+      }
+
+      // 5. Open field: steer / step gait
+      const dx = worldX - this.owner.x;
+      const dy = worldY - this.owner.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 4) {
+        const heading = Math.atan2(dy, dx);
+        const wasStand = this.owner.gait === 'STAND';
+        this.owner.setTargetHeading(heading);
+        if (wasStand) {
+          this.owner.setGait('STROLL');
+        }
+        if (isDouble) {
+          this.owner.stepGait(+1);
+        }
+      }
+    };
+
     this.canvas.addEventListener('pointerdown', (e) => {
       handleAudioInteraction();
 
       // Only handle if directly clicking/tapping the game canvas
       if (e.target !== this.canvas) return;
 
-      // Check if tap was on or close to the companion dog
+      // Right-click: throw ball toward world coordinate without changing gait
+      if (e.button === 2) {
+        e.preventDefault();
+        const worldTarget = this.camera.screenToWorld(e.clientX, e.clientY);
+        const dx = worldTarget.x - this.owner.x;
+        const dy = worldTarget.y - this.owner.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist > 30) {
+          const dirX = dx / dist;
+          const dirY = dy / dist;
+          this.throwBallAt(worldTarget.x, worldTarget.y, dirX, dirY);
+        }
+        return;
+      }
+
+      // Only left-click / primary pointer
+      if (e.button !== undefined && e.button !== 0) return;
+
+      // --- Immediate hits (no double-click delay) ---
+
+      // 1. Companion dog
       const dogScreen = this.camera.worldToScreen(this.dog.x, this.dog.y);
       const distToDog = Math.hypot(e.clientX - dogScreen.x, e.clientY - dogScreen.y);
       if (distToDog < 48) {
         this.petDog();
+        this.owner.setGait('STAND');
         return;
       }
 
-      // Check if tap was near active poop pile (< 40px)
+      // 2. Poop pile
       if (this.activePoopPileNearPlayer) {
         const poopScreen = this.camera.worldToScreen(this.activePoopPileNearPlayer.x, this.activePoopPileNearPlayer.y);
         const distToPoopScreen = Math.hypot(e.clientX - poopScreen.x, e.clientY - poopScreen.y);
@@ -622,7 +634,7 @@ export class CliftonDownGame {
         }
       }
 
-      // Check if tap was near active dog bin (< 44px)
+      // 3. Dog bin
       if (this.activeBinNearPlayer && this.hasPoopBag) {
         const binScreen = this.camera.worldToScreen(this.activeBinNearPlayer.x, this.activeBinNearPlayer.y);
         const distToBinScreen = Math.hypot(e.clientX - binScreen.x, e.clientY - binScreen.y);
@@ -632,17 +644,32 @@ export class CliftonDownGame {
         }
       }
 
-      // Open field tap: Throw ball towards tapped world coordinate
+      // --- Deferred gestures (single vs double click) ---
       const worldTarget = this.camera.screenToWorld(e.clientX, e.clientY);
-      const dx = worldTarget.x - this.owner.x;
-      const dy = worldTarget.y - this.owner.y;
-      const dist = Math.hypot(dx, dy);
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      const dtSinceLast = now - this._lastClickTime;
+      const distSinceLast = Math.hypot(e.clientX - this._lastClickX, e.clientY - this._lastClickY);
+      const isDouble = dtSinceLast < DOUBLE_CLICK_MS && distSinceLast < DOUBLE_CLICK_PX;
 
-      if (dist > 30) {
-        const dirX = dx / dist;
-        const dirY = dy / dist;
-        this.owner.angle = Math.atan2(dy, dx);
-        this.throwBallAt(worldTarget.x, worldTarget.y, dirX, dirY);
+      this._lastClickTime = now;
+      this._lastClickX = e.clientX;
+      this._lastClickY = e.clientY;
+
+      if (isDouble) {
+        // Cancel any pending single-click gesture
+        if (this._pendingGestureTimer) {
+          clearTimeout(this._pendingGestureTimer);
+          this._pendingGestureTimer = null;
+        }
+        executeGesture(worldTarget.x, worldTarget.y, true);
+      } else {
+        if (this._pendingGestureTimer) {
+          clearTimeout(this._pendingGestureTimer);
+        }
+        this._pendingGestureTimer = setTimeout(() => {
+          this._pendingGestureTimer = null;
+          executeGesture(worldTarget.x, worldTarget.y, false);
+        }, DOUBLE_CLICK_MS);
       }
     });
   }
@@ -1085,6 +1112,27 @@ export class CliftonDownGame {
 
     // 3. Update Local Entities
     this.owner.update(dt, this.field);
+
+    // Collision resolution with result contract (boundary stop / obstacle deflection)
+    if (this.field && typeof this.field.resolveCollisionWithResult === 'function') {
+      const res = this.field.resolveCollisionWithResult(
+        this.owner.x,
+        this.owner.y,
+        this.owner.radius,
+        this.owner.targetHeading
+      );
+      if (res) {
+        this.owner.x = res.x;
+        this.owner.y = res.y;
+        this.owner.depthY = this.owner.y + 12;
+        if (res.kind === 'boundary') {
+          this.owner.setGait('STAND');
+        } else if (res.kind === 'obstacle' && res.deflectedHeading !== undefined) {
+          this.owner.setTargetHeading(res.deflectedHeading);
+        }
+      }
+    }
+
     // this.dog.update(dt, this.field, allDogs, this.ball, this.npcs);
     this.dog.update(dt, this.field, allDogs, this.ball, Array.from(this.npcs.values()));
     this.ball.update(dt, this.field);
@@ -1128,6 +1176,9 @@ export class CliftonDownGame {
 
     // Dynamic Touch Throw Button State
     this.touchControls?.setThrowEnabled(this.canThrowBall());
+    if (this.touchControls && typeof this.touchControls.setCurrentGait === 'function') {
+      this.touchControls.setCurrentGait(this.owner.gait);
+    }
 
     // Grass footstep sound
     if (this.owner.isMoving && timestampNow() - this.lastFootstepTime > 320) {
@@ -1310,14 +1361,14 @@ export class CliftonDownGame {
         this.ctx,
         this.activePoopPileNearPlayer.x,
         this.activePoopPileNearPlayer.y - 18,
-        isTouch ? 'Tap 💩 or [E] to pick up' : '[E] Pick up waste'
+        isTouch ? 'Tap 💩 to pick up' : 'Click to pick up waste'
       );
     } else if (this.activeBinNearPlayer && this.hasPoopBag) {
       this.drawInteractionPrompt(
         this.ctx,
         this.activeBinNearPlayer.x,
         this.activeBinNearPlayer.y - 28,
-        isTouch ? 'Tap 🗑️ or [E] to dispose' : '[E] Dispose in bin'
+        isTouch ? 'Tap 🗑️ to dispose' : 'Click to dispose in bin'
       );
     }
 

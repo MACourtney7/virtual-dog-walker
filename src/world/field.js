@@ -11,6 +11,13 @@ import {
   isClearOfKeepouts
 } from './zone_biomes.js';
 
+// Shortest-arc wrapped delta from a to b (radians)
+function angleDeltaLocal(a, b) {
+  let delta = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
+  if (delta < -Math.PI) delta += Math.PI * 2;
+  return delta;
+}
+
 export class Camera {
   constructor(viewportWidth = 1280, viewportHeight = 720, worldWidth = 3200, worldHeight = 2400, zoom = 1.0) {
     if (worldWidth === 2600 && worldHeight === 1900) {
@@ -1128,6 +1135,130 @@ export class Field {
     }
 
     return { x: nx, y: ny };
+  }
+
+  /**
+   * Resolve collisions and report the kind of resolution that occurred.
+   * Returns { x, y, kind, deflectedHeading? } where kind is one of
+   * 'warp' | 'boundary' | 'obstacle' | 'none'.
+   *
+   * @param {number} x
+   * @param {number} y
+   * @param {number} radius
+   * @param {number|null} targetHeading
+   */
+  resolveCollisionWithResult(x, y, radius, targetHeading = null) {
+    // 1. Warp gate check (highest priority)
+    const gate = this.checkWarpGate(x, y);
+    if (gate) {
+      return { x, y, kind: 'warp' };
+    }
+
+    let nx = x;
+    let ny = y;
+    let kind = 'none';
+    let deflectedHeading;
+
+    // 2. World perimeter clamping
+    const minX = 56 + radius;
+    const maxX = this.width - 56 - radius;
+    const minY = 56 + radius;
+    const maxY = this.height - 56 - radius;
+
+    if (nx < minX) { nx = minX; kind = 'boundary'; }
+    else if (nx > maxX) { nx = maxX; kind = 'boundary'; }
+    if (ny < minY) { ny = minY; kind = 'boundary'; }
+    else if (ny > maxY) { ny = maxY; kind = 'boundary'; }
+
+    const hasHeading = typeof targetHeading === 'number' && isFinite(targetHeading);
+
+    // Helper: push out of a circular obstacle and compute tangent deflection
+    const pushCircle = (ox, oy, orad) => {
+      const dx = nx - ox;
+      const dy = ny - oy;
+      const dist = Math.hypot(dx, dy);
+      const minDist = radius + orad;
+      if (dist < minDist) {
+        let nrmX, nrmY;
+        if (dist > 0.001) {
+          const overlap = minDist - dist;
+          nrmX = dx / dist;
+          nrmY = dy / dist;
+          nx += nrmX * overlap;
+          ny += nrmY * overlap;
+        } else {
+          nrmX = 0;
+          nrmY = 1;
+          ny += minDist;
+        }
+        kind = 'obstacle';
+        if (hasHeading) {
+          const baseAngle = Math.atan2(nrmY, nrmX);
+          const t1 = baseAngle + Math.PI / 2;
+          const t2 = baseAngle - Math.PI / 2;
+          const d1 = Math.abs(angleDeltaLocal(targetHeading, t1));
+          const d2 = Math.abs(angleDeltaLocal(targetHeading, t2));
+          deflectedHeading = d1 <= d2 ? t1 : t2;
+        }
+      }
+    };
+
+    // 3. Tree trunk collisions
+    for (const tree of this.trees) {
+      pushCircle(tree.x, tree.depthY, tree.trunkRadius);
+    }
+
+    // 4. Wooden bench collisions (oriented AABB vs circle)
+    for (const bench of this.benches) {
+      const isVertical = bench.angle && Math.abs(Math.sin(bench.angle)) > 0.7;
+      const halfW = (isVertical ? bench.h : bench.w) / 2;
+      const halfH = (isVertical ? bench.w : bench.h) / 2;
+      const closestX = Math.max(bench.x - halfW, Math.min(nx, bench.x + halfW));
+      const closestY = Math.max(bench.y - halfH, Math.min(ny, bench.y + halfH));
+      const dx = nx - closestX;
+      const dy = ny - closestY;
+      const dist = Math.hypot(dx, dy);
+      if (dist < radius) {
+        let nrmX, nrmY;
+        if (dist > 0.001) {
+          const overlap = radius - dist;
+          nrmX = dx / dist;
+          nrmY = dy / dist;
+          nx += nrmX * overlap;
+          ny += nrmY * overlap;
+        } else {
+          nrmX = 0;
+          nrmY = 1;
+          ny += radius;
+        }
+        kind = 'obstacle';
+        if (hasHeading) {
+          const baseAngle = Math.atan2(nrmY, nrmX);
+          const t1 = baseAngle + Math.PI / 2;
+          const t2 = baseAngle - Math.PI / 2;
+          const d1 = Math.abs(angleDeltaLocal(targetHeading, t1));
+          const d2 = Math.abs(angleDeltaLocal(targetHeading, t2));
+          deflectedHeading = d1 <= d2 ? t1 : t2;
+        }
+      }
+    }
+
+    // 5. Public dog-waste bin collisions
+    for (const bin of this.bins) {
+      pushCircle(bin.x, bin.y, bin.radius);
+    }
+
+    // 6. Water Tower landmark
+    if (this.waterTower) {
+      pushCircle(this.waterTower.x, this.waterTower.y, this.waterTower.radius);
+    }
+
+    // 7. Sea Walls limestone rock outcrops
+    for (const rock of this.rockOutcrops) {
+      pushCircle(rock.x, rock.depthY - 8, rock.r || 24);
+    }
+
+    return { x: nx, y: ny, kind, deflectedHeading };
   }
 
   // Predefined waypoint route loops for ambient park NPCs

@@ -109,10 +109,6 @@ export class Owner {
     return GAIT_SPEEDS[this.gait] || 0;
   }
 
-  isMoving() {
-    return this.gait !== Gait.STAND;
-  }
-
   setTargetHeading(radians) {
     if (typeof radians !== 'number' || !isFinite(radians)) return;
     this.targetHeading = radians;
@@ -182,13 +178,18 @@ export class Owner {
 
     // Determine max turn rate
     let maxRate = GAIT_TURN_RATES[this.gait] || GAIT_TURN_RATES[Gait.WALK];
-    if (this.stepOffActive) {
+    // The 300 deg/s step-off rate applies strictly to the STAND -> STROLL transition.
+    if (this.stepOffActive && this.gait === Gait.STROLL) {
       if (absDelta <= STEP_OFF_ALIGN_TOLERANCE || this.stepOffTimer <= 0) {
         this.stepOffActive = false;
         this.stepOffTimer = 0;
       } else {
         maxRate = STEP_OFF_TURN_RATE;
       }
+    } else if (this.stepOffActive) {
+      // Any other gait cancels the step-off window
+      this.stepOffActive = false;
+      this.stepOffTimer = 0;
     }
 
     const maxStep = maxRate * dt;
@@ -207,24 +208,27 @@ export class Owner {
 
   isPointOnRearBrakeArc(worldX, worldY) {
     if (this.gait === Gait.STAND) return false;
-    const dx = worldX - this.x;
-    const dy = worldY - this.y;
-    const dist = Math.hypot(dx, dy);
-    if (dist < 1e-3) return false;
 
-    // Angle of point relative to owner
+    // Match the rendered ground halo ellipse geometry (see drawGroundHalo)
+    const cx = this.x;
+    const cy = this.y + 12;
+    const rx = 22;
+    const ry = 22 * 0.55; // 12.1
+
+    const dx = worldX - cx;
+    const dy = worldY - cy;
+
+    // Normalized elliptical distance
+    const d = Math.sqrt((dx / rx) * (dx / rx) + (dy / ry) * (dy / ry));
+    if (d < 0.7 || d > 1.35) return false;
+
+    // Angular check: point must fall within the rear arc around angle + PI
     const pointAngle = Math.atan2(dy, dx);
-    // Rear direction is angle + PI
     const rearAngle = this.angle + Math.PI;
     const delta = Math.abs(angleDelta(rearAngle, pointAngle));
 
     const halfSpan = (110 * Math.PI) / 180 / 2; // ~55 deg each side
-    if (delta > halfSpan) return false;
-
-    // Radial tolerance around visual arc radius
-    const arcRadius = 22;
-    const tolerance = 6;
-    return Math.abs(dist - arcRadius) <= tolerance;
+    return delta <= halfSpan;
   }
 
   setChat(text, duration = 4.0) {
@@ -248,28 +252,8 @@ export class Owner {
   }
 
   update(dt, field) {
-    // 1. Process movement inputs if local player
-    if (this.isLocal) {
-      let dx = 0;
-      let dy = 0;
-      if (this.keys.up) dy -= 1;
-      if (this.keys.down) dy += 1;
-      if (this.keys.left) dx -= 1;
-      if (this.keys.right) dx += 1;
-
-      const mag = Math.hypot(dx, dy);
-      if (mag > 0) {
-        // Input direction drives target heading; gait drives speed
-        const inputHeading = Math.atan2(dy, dx);
-        this.setTargetHeading(inputHeading);
-        if (this.gait === Gait.STAND) {
-          this.setGait(Gait.STROLL);
-        }
-      } else if (this.gait !== Gait.STAND) {
-        // No input: drop to STAND
-        this.setGait(Gait.STAND);
-      }
-    }
+    // 1. Gait persists autonomously until changed via setGait / stepGait.
+    //    (Legacy directional key handling removed in movement redesign.)
 
     // 2. Advance gait timers
     if (this.jogTimer > 0) {
@@ -277,7 +261,9 @@ export class Owner {
       if (this.jogTimer <= 0) {
         this.jogTimer = 0;
         if (this.gait === Gait.JOG) {
+          // Expire JOG -> WALK and start cooldown (do not decrement this tick)
           this.setGait(Gait.WALK);
+          this.jogCooldown = JOG_COOLDOWN;
         }
       }
     }
@@ -305,6 +291,8 @@ export class Owner {
       this.vy = 0;
       this.isMoving = false;
     }
+    // Keep isMoving boolean in sync with gait for Protocol.createSyncState & rendering
+    this.isMoving = this.gait !== Gait.STAND;
 
     // Apply movement
     this.x += this.vx * dt;

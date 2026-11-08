@@ -912,6 +912,22 @@ export class CompanionDog {
     return false;
   }
 
+  // Resolve owner gait into dog tuning parameters
+  _getGaitTuning() {
+    const gait = (this.owner && this.owner.gait) ? this.owner.gait : 'STAND';
+    switch (gait) {
+      case 'STAND':
+        return { followDistance: 30, speedScale: 0.0, sniffChance: 0.0, roamSuppressed: true };
+      case 'STROLL':
+        return { followDistance: 46, speedScale: 0.55, sniffChance: 0.35, roamSuppressed: false };
+      case 'JOG':
+        return { followDistance: 34, speedScale: 1.35, sniffChance: 0.05, roamSuppressed: false };
+      case 'WALK':
+      default:
+        return { followDistance: 42, speedScale: 1.0, sniffChance: 0.08, roamSuppressed: false };
+    }
+  }
+
   updateFollowing(dt, otherDogs = [], field = null) {
     if (!this.owner) return;
 
@@ -921,7 +937,8 @@ export class CompanionDog {
       return;
     }
 
-    this.followDistance = 42;
+    const tuning = this._getGaitTuning();
+    this.followDistance = tuning.followDistance;
 
     if (this.checkSocialInteractions(otherDogs)) {
       return;
@@ -953,9 +970,10 @@ export class CompanionDog {
 
     // Arrival steering calculation matching owner's pace
     const slowingRadius = 40;
-    let targetSpeed = this.speed;
+    const baseSpeed = this.speed * tuning.speedScale;
+    let targetSpeed = baseSpeed;
     if (dist < slowingRadius) {
-      targetSpeed = this.speed * (dist / slowingRadius);
+      targetSpeed = baseSpeed * (dist / slowingRadius);
     }
 
     // Higher obedience adheres strictly to heel follow offset with smaller arrival deadband
@@ -981,6 +999,25 @@ export class CompanionDog {
       return;
     }
 
+    const tuning = this._getGaitTuning();
+
+    // STAND: dog settles near owner, roaming bursts suppressed
+    if (tuning.roamSuppressed) {
+      const dx = this.owner.x - this.x;
+      const dy = this.owner.y - this.y;
+      const dist = Math.hypot(dx, dy);
+      if (dist > 40) {
+        this.vx = (dx / dist) * this.speed * 0.5;
+        this.vy = (dy / dist) * this.speed * 0.5;
+        this.angle = Math.atan2(this.vy, this.vx);
+      } else {
+        this.vx *= 0.7;
+        this.vy *= 0.7;
+      }
+      this.wagSpeed = 5;
+      return;
+    }
+
     if (this.checkSocialInteractions(otherDogs)) {
       return;
     }
@@ -999,7 +1036,7 @@ export class CompanionDog {
 
     // 2. Scent trail detection (investigating squirrel or canine scent trails)
     if (!this.hasStick && !this.hasBall && field && typeof field.getNearbyScents === 'function') {
-      if (Math.random() < 0.08) {
+      if (Math.random() < tuning.sniffChance) {
         const nearbyScents = field.getNearbyScents(this.x, this.y, 85);
         if (nearbyScents.length > 0) {
           const chosen = nearbyScents[Math.floor(Math.random() * nearbyScents.length)];
@@ -1077,7 +1114,7 @@ export class CompanionDog {
       } else {
         this.wanderAngle = Math.random() * Math.PI * 2;
       }
-      this.wanderSpeed = this.speed * (0.65 + Math.random() * 0.25);
+      this.wanderSpeed = this.speed * tuning.speedScale * (0.65 + Math.random() * 0.25);
     }
 
     let wanderVx = Math.cos(this.wanderAngle) * this.wanderSpeed;

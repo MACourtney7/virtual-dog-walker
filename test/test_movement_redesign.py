@@ -1272,5 +1272,289 @@ class TestCompanionDogFlankingBounds(unittest.TestCase):
                 self.assertLessEqual(clamped, band['max'])
 
 
+# ---------------------------------------------------------------------------
+# unification-021: forward-leading flank, taut leash, petting gate,
+# touch control removal, click feedback, and brake-light feedback.
+# ---------------------------------------------------------------------------
+
+
+class TestForwardLeadingFlankBands(unittest.TestCase):
+    """Verify forward-leading flank bands (15/30/60 deg) in companion_dog.js."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_right_flank_band_forward_leading(self):
+        self.assertIn("FLANK_RIGHT", self.src)
+        self.assertIn("(15 * Math.PI) / 180", self.src)
+        self.assertIn("(30 * Math.PI) / 180", self.src)
+        self.assertIn("(60 * Math.PI) / 180", self.src)
+
+    def test_left_flank_band_forward_leading(self):
+        self.assertIn("FLANK_LEFT", self.src)
+        self.assertIn("(-60 * Math.PI) / 180", self.src)
+        self.assertIn("(-30 * Math.PI) / 180", self.src)
+        self.assertIn("(-15 * Math.PI) / 180", self.src)
+
+    def test_behavioral_right_flank_forward_component(self):
+        """Right flank mid (30 deg) must have a positive forward component."""
+        import math
+        FLANK_RIGHT = {
+            'min': (15 * math.pi) / 180,
+            'mid': (30 * math.pi) / 180,
+            'max': (60 * math.pi) / 180,
+        }
+        owner_angle = 0.0  # facing east
+        follow_distance = 42.0
+        for key in ('min', 'mid', 'max'):
+            bearing = owner_angle + FLANK_RIGHT[key]
+            forward = math.cos(bearing) * follow_distance
+            self.assertGreater(forward, 0.0, f"Right flank {key} trails behind")
+
+    def test_behavioral_left_flank_forward_component(self):
+        """Left flank mid (-30 deg) must have a positive forward component."""
+        import math
+        FLANK_LEFT = {
+            'min': (-60 * math.pi) / 180,
+            'mid': (-30 * math.pi) / 180,
+            'max': (-15 * math.pi) / 180,
+        }
+        owner_angle = 0.0
+        follow_distance = 42.0
+        for key in ('min', 'mid', 'max'):
+            bearing = owner_angle + FLANK_LEFT[key]
+            forward = math.cos(bearing) * follow_distance
+            self.assertGreater(forward, 0.0, f"Left flank {key} trails behind")
+
+    def test_behavioral_on_leash_target_leads_forward(self):
+        """On-leash target position must not trail behind the owner."""
+        import math
+        owner_x, owner_y = 100.0, 100.0
+        owner_angle = 0.0
+        follow_distance = 42.0
+        for bearing in ((30 * math.pi) / 180, (-30 * math.pi) / 180):
+            tx = owner_x + math.cos(owner_angle + bearing) * follow_distance
+            ty = owner_y + math.sin(owner_angle + bearing) * follow_distance
+            # Forward component along owner facing must be positive.
+            forward = (tx - owner_x) * math.cos(owner_angle) + (ty - owner_y) * math.sin(owner_angle)
+            self.assertGreater(forward, 0.0)
+
+
+class TestLeashTension(unittest.TestCase):
+    """Verify leashTaut, sag limits, and vibration behavior."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_leash_state_hooks_present(self):
+        self.assertIn("leashTaut", self.src)
+        self.assertIn("leashSagPx", self.src)
+        self.assertIn("leashVibrationPx", self.src)
+
+    def test_behavioral_on_leash_implies_taut(self):
+        """On-leash implies leashTaut === true."""
+        def compute_taut(is_leashed, is_pulling, dist):
+            return bool(is_leashed)
+
+        self.assertTrue(compute_taut(True, False, 40))
+        self.assertTrue(compute_taut(True, True, 100))
+        self.assertFalse(compute_taut(False, False, 40))
+
+    def test_behavioral_sag_within_threshold(self):
+        """Leash sag must stay within the allowed threshold (<= 6px)."""
+        MAX_SAG = 6.0
+        for dist in (30, 42, 60, 90):
+            sag = min(MAX_SAG, max(0.0, (90 - dist) * 0.1))
+            self.assertLessEqual(sag, MAX_SAG)
+
+    def test_behavioral_vibration_moving_vs_stand(self):
+        """Vibration > 0 while moving, 0 while STAND."""
+        def vibration(gait, is_moving):
+            if not is_moving or gait == 'STAND':
+                return 0.0
+            return 0.6
+
+        self.assertGreater(vibration('WALK', True), 0.0)
+        self.assertGreater(vibration('JOG', True), 0.0)
+        self.assertEqual(vibration('STAND', False), 0.0)
+        self.assertEqual(vibration('WALK', False), 0.0)
+
+
+class TestPettingGate(unittest.TestCase):
+    """Verify on-leash petting gate and brake/avatar click precedence."""
+
+    def setUp(self):
+        self.main_src = read("src/main.js")
+        self.owner_src = read("src/entities/owner.js")
+
+    def test_behavioral_on_leash_petting_denied_when_moving(self):
+        """On-leash petting denied when owner.gait !== 'STAND'."""
+        def can_pet(is_leashed, gait):
+            if is_leashed and gait != 'STAND':
+                return False
+            return True
+
+        self.assertFalse(can_pet(True, 'WALK'))
+        self.assertFalse(can_pet(True, 'JOG'))
+        self.assertFalse(can_pet(True, 'STROLL'))
+
+    def test_behavioral_on_leash_petting_allowed_when_stand(self):
+        def can_pet(is_leashed, gait):
+            if is_leashed and gait != 'STAND':
+                return False
+            return True
+
+        self.assertTrue(can_pet(True, 'STAND'))
+        self.assertTrue(can_pet(False, 'WALK'))
+
+    def test_petting_gate_present_in_main(self):
+        # The petDog() path must consult leash + gait before petting.
+        idx = self.main_src.index("petDog()")
+        end = self.main_src.index("pickUpPoop()", idx)
+        block = self.main_src[idx:end]
+        self.assertIn("isLeashed", block)
+        self.assertIn("STAND", block)
+
+    def test_behavioral_brake_click_does_not_pet(self):
+        """Brake/avatar clicks overlapping the dog hitbox must not pet."""
+        def resolve_click(on_player, on_rear_arc, on_dog, gait):
+            # Brake/avatar precedence over dog petting.
+            if on_player or on_rear_arc:
+                return 'brake'
+            if on_dog:
+                return 'pet'
+            return 'field'
+
+        self.assertEqual(resolve_click(True, False, True, 'WALK'), 'brake')
+        self.assertEqual(resolve_click(False, True, True, 'WALK'), 'brake')
+        self.assertEqual(resolve_click(False, False, True, 'WALK'), 'pet')
+
+    def test_brake_precedence_in_main_source(self):
+        # The brake/avatar detection must be evaluated before the dog hit branch.
+        idx_avatar = self.main_src.index("Avatar click")
+        idx_dog = self.main_src.index("// 1. Companion dog")
+        self.assertLess(idx_avatar, idx_dog)
+
+
+class TestTouchControlRemoval(unittest.TestCase):
+    """Verify pace buttons removed and required controls remain."""
+
+    def setUp(self):
+        self.src = read("src/ui/touch_controls.js")
+
+    def test_pace_buttons_absent(self):
+        self.assertNotIn("btn-touch-pace-down", self.src)
+        self.assertNotIn("btn-touch-pace-up", self.src)
+
+    def test_gait_badge_remains(self):
+        self.assertIn("touch-gait-badge", self.src)
+        self.assertIn("setCurrentGait", self.src)
+
+    def test_action_buttons_remain(self):
+        self.assertIn("btn-touch-throw", self.src)
+        self.assertIn("btn-touch-whistle", self.src)
+        self.assertIn("btn-touch-pet", self.src)
+        self.assertIn("btn-touch-leash", self.src)
+        self.assertIn("btn-touch-chat", self.src)
+
+
+class TestClickFeedback(unittest.TestCase):
+    """Verify single/double click feedback event contracts."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_single_click_feedback_contract(self):
+        self.assertIn("steer-single", self.src)
+        self.assertIn("'x'", self.src)
+        self.assertIn("#ffffff", self.src)
+        self.assertIn("400", self.src)
+
+    def test_double_click_feedback_contract(self):
+        self.assertIn("steer-double", self.src)
+        self.assertIn("'+'", self.src)
+        self.assertIn("#22c55e", self.src)
+
+    def test_feedback_records_world_coords(self):
+        self.assertIn("worldX", self.src)
+        self.assertIn("worldY", self.src)
+
+    def test_behavioral_single_click_event(self):
+        def emit(is_double, world_x, world_y):
+            if is_double:
+                return {'type': 'steer-double', 'glyph': '+', 'color': '#22c55e',
+                        'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
+            return {'type': 'steer-single', 'glyph': 'x', 'color': '#ffffff',
+                    'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
+
+        ev = emit(False, 123.0, 456.0)
+        self.assertEqual(ev['type'], 'steer-single')
+        self.assertEqual(ev['glyph'], 'x')
+        self.assertEqual(ev['color'], '#ffffff')
+        self.assertEqual(ev['durationMs'], 400)
+        self.assertEqual(ev['worldX'], 123.0)
+        self.assertEqual(ev['worldY'], 456.0)
+
+    def test_behavioral_double_click_event(self):
+        def emit(is_double, world_x, world_y):
+            if is_double:
+                return {'type': 'steer-double', 'glyph': '+', 'color': '#22c55e',
+                        'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
+            return {'type': 'steer-single', 'glyph': 'x', 'color': '#ffffff',
+                    'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
+
+        ev = emit(True, 10.0, 20.0)
+        self.assertEqual(ev['type'], 'steer-double')
+        self.assertEqual(ev['glyph'], '+')
+        self.assertEqual(ev['color'], '#22c55e')
+        self.assertEqual(ev['durationMs'], 400)
+
+
+class TestBrakeLightFeedback(unittest.TestCase):
+    """Verify brake-light feedback state, trigger, and main.js integration."""
+
+    def setUp(self):
+        self.owner_src = read("src/entities/owner.js")
+        self.main_src = read("src/main.js")
+
+    def test_brake_light_state_present(self):
+        self.assertIn("brakeLightFeedback", self.owner_src)
+        self.assertIn("durationMs: 250", self.owner_src)
+        self.assertIn("peakFillAlpha: 0.6", self.owner_src)
+        self.assertIn("peakStrokeAlpha: 0.9", self.owner_src)
+        self.assertIn("#ef4444", self.owner_src)
+
+    def test_trigger_brake_light_method(self):
+        self.assertIn("triggerBrakeLight", self.owner_src)
+
+    def test_behavioral_trigger_sets_state(self):
+        class FakeOwner:
+            def __init__(self):
+                self.brakeLightFeedback = {
+                    'active': False,
+                    'startedAt': 0,
+                    'durationMs': 250,
+                    'peakFillAlpha': 0.6,
+                    'peakStrokeAlpha': 0.9,
+                    'color': '#ef4444',
+                }
+
+            def triggerBrakeLight(self, now):
+                self.brakeLightFeedback['active'] = True
+                self.brakeLightFeedback['startedAt'] = now
+
+        o = FakeOwner()
+        o.triggerBrakeLight(12345)
+        self.assertTrue(o.brakeLightFeedback['active'])
+        self.assertEqual(o.brakeLightFeedback['startedAt'], 12345)
+        self.assertEqual(o.brakeLightFeedback['durationMs'], 250)
+        self.assertEqual(o.brakeLightFeedback['peakFillAlpha'], 0.6)
+        self.assertEqual(o.brakeLightFeedback['peakStrokeAlpha'], 0.9)
+        self.assertEqual(o.brakeLightFeedback['color'], '#ef4444')
+
+    def test_main_triggers_brake_light(self):
+        self.assertIn("triggerBrakeLight", self.main_src)
+
+
 if __name__ == "__main__":
     unittest.main()

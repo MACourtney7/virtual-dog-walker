@@ -1293,15 +1293,11 @@ export class CliftonDownGame {
       this.touchControls.setCurrentGait(this.owner.gait);
     }
 
-    // Grass footstep sound (cadence scales linearly with gait speed over [75, 185])
+    // Grass footstep sound (cadence scales with gait)
     if (this.owner.isMoving && this.owner.gait !== 'STAND') {
-      const gaitSpeeds = (Owner && Owner.GAIT_SPEEDS) ? Owner.GAIT_SPEEDS : null;
-      const speed = gaitSpeeds && gaitSpeeds[this.owner.gait] !== undefined
-        ? gaitSpeeds[this.owner.gait]
-        : (this.owner.getCurrentSpeed ? this.owner.getCurrentSpeed() : 100);
-      // Map speed [75, 185] -> interval [460ms, 200ms] (linear, clamped)
-      const t = Math.max(0, Math.min(1, (speed - 75) / (185 - 75)));
-      const footstepInterval = 460 - t * (460 - 200);
+      const footstepInterval = this.owner.gait === 'JOG' ? 200
+        : this.owner.gait === 'WALK' ? 300
+        : 460; // STROLL
       if (timestampNow() - this.lastFootstepTime > footstepInterval) {
         this.lastFootstepTime = timestampNow();
         sound.playFootstep();

@@ -728,8 +728,7 @@ export class Owner {
         const t = startAngle + (i / steps) * (endAngle - startAngle);
         const px = cx + Math.cos(t) * baseX * outerScale;
         const py = cy + Math.sin(t) * baseY * outerScale;
-        if (i === 0) ctx.lineTo(px, py);
-        else ctx.lineTo(px, py);
+        ctx.lineTo(px, py);
       }
       ctx.closePath();
       ctx.fill();

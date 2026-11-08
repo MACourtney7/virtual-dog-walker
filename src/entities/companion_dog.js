@@ -38,8 +38,9 @@ const FLANK_LEFT = {
   max: (-30 * Math.PI) / 180
 };
 
-// Leash hand anchor geometry (must stay inside the 26px body radius).
-const HAND_RADIUS = 12;
+// Leash hand anchor geometry (must stay OUTSIDE the 26px body radius so the
+// leash never clips the owner torso).
+const HAND_RADIUS = 28;
 const HAND_SIDE = (60 * Math.PI) / 180;
 const PLAYER_HIT_RADIUS = 26;
 
@@ -958,6 +959,8 @@ export class CompanionDog {
     const speedFor = (g, fallback) => (speeds && speeds[g] !== undefined) ? speeds[g] : fallback;
 
     // distance = base + k * speed, with base chosen so STAND gives the at-heel gap.
+    // Follow distance is strictly monotonic with gait speed:
+    // STAND (0) < STROLL (75) < WALK (100) < JOG (185).
     const base = 30;
     const k = 0.065;
 
@@ -1899,6 +1902,8 @@ export class CompanionDog {
     ctx.save();
 
     // Hand anchor on the flank side the dog is currently on (matches flank band).
+    // HAND_RADIUS (28) is strictly outside PLAYER_HIT_RADIUS (26) so the anchor
+    // itself never sits inside the owner torso.
     const sideSign = this.preferredSide === 'left' ? -1 : 1;
     let handSide = sideSign * HAND_SIDE;
     let handX = this.owner.x + Math.cos(this.owner.angle + handSide) * HAND_RADIUS;
@@ -1908,7 +1913,8 @@ export class CompanionDog {
     const collarX = this.x;
     const collarY = this.y - 2;
 
-    // Guard: if the leash midpoint would clip the owner torso, widen the hand offset.
+    // Guard: if the leash midpoint would clip the owner torso, widen the hand
+    // offset further so the sag point clears the body radius.
     const midX0 = (handX + collarX) / 2;
     const midY0 = (handY + collarY) / 2;
     if (Math.hypot(midX0 - this.owner.x, midY0 - this.owner.y) <= PLAYER_HIT_RADIUS) {
@@ -1929,9 +1935,20 @@ export class CompanionDog {
       ctx.lineTo(collarX + jitter, collarY + jitter);
       ctx.stroke();
     } else {
-      // Slack catenary sag quadratic curve
-      const midX = (handX + collarX) / 2;
-      const midY = (handY + collarY) / 2 + 14;
+      // Slack catenary sag quadratic curve. The sag point is pushed outward
+      // along the owner->midpoint direction so the curve never dips inside
+      // the owner body radius.
+      let midX = (handX + collarX) / 2;
+      let midY = (handY + collarY) / 2 + 14;
+
+      const midDx = midX - this.owner.x;
+      const midDy = midY - this.owner.y;
+      const midDist = Math.hypot(midDx, midDy);
+      if (midDist < PLAYER_HIT_RADIUS + 2 && midDist > 0.001) {
+        const push = (PLAYER_HIT_RADIUS + 2) / midDist;
+        midX = this.owner.x + midDx * push;
+        midY = this.owner.y + midDy * push;
+      }
 
       ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
       ctx.lineWidth = 1.8;

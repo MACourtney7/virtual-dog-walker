@@ -7661,11 +7661,14 @@ export class CompanionDog {
 
     // Update leash tension state (on-leash implies taut; sag/vibration derived)
     if (this.owner && this.owner.isLeashed) {
+      // Keep the owner's leash hand on the same side as the dog's flank.
+      this.owner.leashHandSide = this.preferredSide;
       const leashDist = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
       this.leashTaut = true;
       this.leashTension = 1.0;
       // Minimal sag: never more than 2px (and <= 3% of leash length)
-      this.leashSagPx = Math.min(2.0, Math.max(0.0, (90 - leashDist) * 0.05));
+      const sagCap = Math.min(2.0, leashDist * 0.03);
+      this.leashSagPx = Math.min(sagCap, Math.max(0.0, (90 - leashDist) * 0.05));
       // Subtle vibration only while the owner is moving
       const ownerMoving = Boolean(this.owner.isMoving) && this.owner.gait !== 'STAND';
       this.leashVibrationPx = ownerMoving ? 0.6 : 0.0;
@@ -8804,6 +8807,11 @@ export class CompanionDog {
   drawLeash(ctx) {
     ctx.save();
 
+    // Keep the owner's leash hand on the same side as the dog's flank.
+    if (this.owner) {
+      this.owner.leashHandSide = this.preferredSide;
+    }
+
     // Hand anchor on the flank side the dog is currently on (matches flank band).
     // HAND_RADIUS (28) is strictly outside PLAYER_HIT_RADIUS (26) so the anchor
     // itself never sits inside the owner torso.
@@ -8835,12 +8843,26 @@ export class CompanionDog {
       handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
     }
 
-    // Subtle vibration while the owner is moving (0 while STAND)
-    const vibration = this.leashVibrationPx || 0;
-    const jitter = vibration > 0 ? Math.sin(Date.now() * 0.05) * vibration : 0;
+    // Perpendicular vibration while the owner is moving (0 while STAND).
+    // The jitter is applied strictly along the leash line's normal so the
+    // lead never appears to stretch or shorten.
+    const isMoving = Boolean(this.owner) && this.owner.gait !== 'STAND';
+    this.leashVibrationPx = isMoving ? Math.sin(Date.now() * 0.05) * 1.2 : 0;
 
-    // Minimal sag (<= 2px) so the lead reads as taut
-    const sag = Math.min(2.0, this.leashSagPx || 0);
+    const leashDx = collarX - handX;
+    const leashDy = collarY - handY;
+    const leashLen = Math.hypot(leashDx, leashDy) || 1;
+    const ux = leashDx / leashLen;
+    const uy = leashDy / leashLen;
+    const perpX = -uy;
+    const perpY = ux;
+    const vib = this.leashVibrationPx;
+    const jitterX = perpX * vib;
+    const jitterY = perpY * vib;
+
+    // Minimal sag (<= 2px and <= 3% of leash length) so the lead reads as taut
+    const sagCap = Math.min(2.0, leashLen * 0.03);
+    const sag = Math.min(sagCap, this.leashSagPx || 0);
 
     ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
     ctx.lineWidth = this.isPullingLeash ? 2.0 : 1.8;
@@ -8848,8 +8870,8 @@ export class CompanionDog {
     ctx.moveTo(handX, handY);
     if (sag > 0.01) {
       // Very shallow sag curve, pushed outward so it never dips inside the body.
-      let midX = (handX + collarX) / 2;
-      let midY = (handY + collarY) / 2 + sag;
+      let midX = (handX + collarX) / 2 + jitterX;
+      let midY = (handY + collarY) / 2 + sag + jitterY;
       const midDx = midX - this.owner.x;
       const midDy = midY - this.owner.y;
       const midDist = Math.hypot(midDx, midDy);
@@ -8858,9 +8880,9 @@ export class CompanionDog {
         midX = this.owner.x + midDx * push;
         midY = this.owner.y + midDy * push;
       }
-      ctx.quadraticCurveTo(midX, midY, collarX + jitter, collarY + jitter);
+      ctx.quadraticCurveTo(midX, midY, collarX + jitterX, collarY + jitterY);
     } else {
-      ctx.lineTo(collarX + jitter, collarY + jitter);
+      ctx.lineTo(collarX + jitterX, collarY + jitterY);
     }
     ctx.stroke();
     ctx.restore();
@@ -10087,6 +10109,7 @@ export class Owner {
     this.isBending = false;
     this.bendTimer = 0;
     this.isLeashed = true;
+    this.leashHandSide = 'right';
 
     // Chat / Emote bubble
     this.chatText = null;
@@ -10126,8 +10149,10 @@ export class Owner {
     this.brakeLightFeedback.startedAt = now;
   }
 
-  getLeashHandAnchor(preferredSide = 'right') {
-    const sideSign = preferredSide === 'left' ? -1 : 1;
+  getLeashHandAnchor(preferredSide = this.leashHandSide || 'right') {
+    const side = preferredSide === 'left' ? 'left' : 'right';
+    this.leashHandSide = side;
+    const sideSign = side === 'left' ? -1 : 1;
     const handSide = sideSign * ((30 * Math.PI) / 180);
     return {
       x: this.x + Math.cos(this.angle + handSide) * 28,
@@ -12040,7 +12065,8 @@ export class CliftonDownGame {
       if (captured.type === 'brake') {
         // Brake-light feedback pulse on any brake gesture
         if (typeof this.owner.triggerBrakeLight === 'function') {
-          this.owner.triggerBrakeLight();
+          const brakeNow = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+          this.owner.triggerBrakeLight(brakeNow);
         }
         if (isDouble) {
           this.owner.setGait('STAND');
@@ -12952,6 +12978,11 @@ export class CliftonDownGame {
       for (const f of this.clickFeedback) {
         const elapsed = now - f.startedAt;
         const alpha = Math.max(0, 1.0 - (elapsed / f.durationMs));
+        // Project world coordinates through the camera transform so the
+        // feedback glyph lands on the correct screen pixel.
+        const pt = this.camera.worldToScreen(f.worldX, f.worldY);
+        const sx = pt.x;
+        const sy = pt.y;
         this.ctx.save();
         this.ctx.globalAlpha = alpha;
         this.ctx.strokeStyle = f.color;
@@ -12961,17 +12992,17 @@ export class CliftonDownGame {
         const s = 7;
         if (f.glyph === '+') {
           this.ctx.beginPath();
-          this.ctx.moveTo(f.worldX - s, f.worldY);
-          this.ctx.lineTo(f.worldX + s, f.worldY);
-          this.ctx.moveTo(f.worldX, f.worldY - s);
-          this.ctx.lineTo(f.worldX, f.worldY + s);
+          this.ctx.moveTo(sx - s, sy);
+          this.ctx.lineTo(sx + s, sy);
+          this.ctx.moveTo(sx, sy - s);
+          this.ctx.lineTo(sx, sy + s);
           this.ctx.stroke();
         } else {
           this.ctx.beginPath();
-          this.ctx.moveTo(f.worldX - s, f.worldY - s);
-          this.ctx.lineTo(f.worldX + s, f.worldY + s);
-          this.ctx.moveTo(f.worldX + s, f.worldY - s);
-          this.ctx.lineTo(f.worldX - s, f.worldY + s);
+          this.ctx.moveTo(sx - s, sy - s);
+          this.ctx.lineTo(sx + s, sy + s);
+          this.ctx.moveTo(sx + s, sy - s);
+          this.ctx.lineTo(sx - s, sy + s);
           this.ctx.stroke();
         }
         this.ctx.restore();
@@ -34811,11 +34842,12 @@ class TestLeashTension(unittest.TestCase):
         self.assertFalse(compute_taut(False, False, 40))
 
     def test_behavioral_sag_within_threshold(self):
-        """Leash sag must stay within the allowed threshold (<= 6px)."""
-        MAX_SAG = 6.0
+        """Leash sag must be <= 2.0px AND <= 3% of leash length."""
         for dist in (30, 42, 60, 90):
-            sag = min(MAX_SAG, max(0.0, (90 - dist) * 0.1))
-            self.assertLessEqual(sag, MAX_SAG)
+            sag_cap = min(2.0, dist * 0.03)
+            sag = min(sag_cap, max(0.0, (90 - dist) * 0.05))
+            self.assertLessEqual(sag, 2.0)
+            self.assertLessEqual(sag, dist * 0.03)
 
     def test_behavioral_vibration_moving_vs_stand(self):
         """Vibration > 0 while moving, 0 while STAND."""
@@ -34828,6 +34860,69 @@ class TestLeashTension(unittest.TestCase):
         self.assertGreater(vibration('JOG', True), 0.0)
         self.assertEqual(vibration('STAND', False), 0.0)
         self.assertEqual(vibration('WALK', False), 0.0)
+
+    def test_vibration_applied_perpendicular(self):
+        """Vibration must be applied along the leash line's normal."""
+        self.assertIn("const perpX = -uy;", self.src)
+        self.assertIn("const perpY = ux;", self.src)
+        self.assertIn("const jitterX = perpX * vib;", self.src)
+        self.assertIn("const jitterY = perpY * vib;", self.src)
+        self.assertIn("Math.sin(Date.now() * 0.05) * 1.2", self.src)
+
+    def test_behavioral_perpendicular_vibration(self):
+        """Perpendicular offset must be orthogonal to the leash direction."""
+        import math
+        hand_x, hand_y = 100.0, 100.0
+        collar_x, collar_y = 130.0, 140.0
+        dx = collar_x - hand_x
+        dy = collar_y - hand_y
+        length = math.hypot(dx, dy)
+        ux, uy = dx / length, dy / length
+        perp_x, perp_y = -uy, ux
+        # Dot product of unit direction and perpendicular must be ~0.
+        self.assertAlmostEqual(ux * perp_x + uy * perp_y, 0.0, places=9)
+        # Perpendicular must be a unit vector.
+        self.assertAlmostEqual(math.hypot(perp_x, perp_y), 1.0, places=9)
+
+
+class TestLeashHandSide(unittest.TestCase):
+    """Verify owner.leashHandSide is defined and synced with the active flank."""
+
+    def setUp(self):
+        self.owner_src = read("src/entities/owner.js")
+        self.dog_src = read("src/entities/companion_dog.js")
+
+    def test_owner_defines_leash_hand_side(self):
+        self.assertIn("this.leashHandSide = 'right';", self.owner_src)
+
+    def test_get_leash_hand_anchor_syncs_side(self):
+        self.assertIn("getLeashHandAnchor(preferredSide = this.leashHandSide || 'right')", self.owner_src)
+        self.assertIn("this.leashHandSide = side;", self.owner_src)
+
+    def test_dog_syncs_owner_hand_side(self):
+        self.assertIn("this.owner.leashHandSide = this.preferredSide;", self.dog_src)
+
+    def test_behavioral_hand_side_matches_flank(self):
+        """Simulate the sync: owner.leashHandSide must equal dog.preferredSide."""
+        class FakeOwner:
+            def __init__(self):
+                self.leashHandSide = 'right'
+
+        class FakeDog:
+            def __init__(self, owner, side):
+                self.owner = owner
+                self.preferredSide = side
+
+            def sync(self):
+                self.owner.leashHandSide = self.preferredSide
+
+        owner = FakeOwner()
+        dog = FakeDog(owner, 'left')
+        dog.sync()
+        self.assertEqual(owner.leashHandSide, 'left')
+        dog.preferredSide = 'right'
+        dog.sync()
+        self.assertEqual(owner.leashHandSide, 'right')
 
 
 class TestPettingGate(unittest.TestCase):
@@ -34928,6 +35023,15 @@ class TestClickFeedback(unittest.TestCase):
         self.assertIn("worldX", self.src)
         self.assertIn("worldY", self.src)
 
+    def test_feedback_projected_through_camera(self):
+        """Click feedback must be projected to screen space via worldToScreen."""
+        self.assertIn("this.camera.worldToScreen(f.worldX, f.worldY)", self.src)
+        self.assertIn("const sx = pt.x;", self.src)
+        self.assertIn("const sy = pt.y;", self.src)
+        # Glyph drawing must use the projected screen coordinates.
+        self.assertIn("this.ctx.moveTo(sx - s, sy - s);", self.src)
+        self.assertIn("this.ctx.moveTo(sx - s, sy);", self.src)
+
     def test_behavioral_single_click_event(self):
         def emit(is_double, world_x, world_y):
             if is_double:
@@ -35003,6 +35107,11 @@ class TestBrakeLightFeedback(unittest.TestCase):
 
     def test_main_triggers_brake_light(self):
         self.assertIn("triggerBrakeLight", self.main_src)
+
+    def test_main_passes_now_to_brake_light(self):
+        """triggerBrakeLight must be called with an explicit timestamp."""
+        self.assertIn("this.owner.triggerBrakeLight(brakeNow)", self.main_src)
+        self.assertIn("const brakeNow = (typeof performance !== 'undefined' ? performance.now() : Date.now());", self.main_src)
 
 
 if __name__ == "__main__":

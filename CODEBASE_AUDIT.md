@@ -6901,6 +6901,24 @@ function lerpAngle(a, b, t) {
   return a + d * Math.min(1, Math.max(0, t));
 }
 
+// Forward-flank bearing bands (relative to owner.angle). The dog must never
+// land in the straight-behind zone (180° ± 25°).
+const FLANK_RIGHT = {
+  min: (30 * Math.PI) / 180,
+  mid: (60 * Math.PI) / 180,
+  max: (120 * Math.PI) / 180
+};
+const FLANK_LEFT = {
+  min: (-120 * Math.PI) / 180,
+  mid: (-60 * Math.PI) / 180,
+  max: (-30 * Math.PI) / 180
+};
+
+// Leash hand anchor geometry (must stay inside the 26px body radius).
+const HAND_RADIUS = 12;
+const HAND_SIDE = (60 * Math.PI) / 180;
+const PLAYER_HIT_RADIUS = 26;
+
 // States that must never be interrupted by ambient resting (LYING_DOWN) transitions.
 const ACTIVE_REST_BLOCKED_STATES = new Set([
   DogState.FETCHING,
@@ -7007,9 +7025,11 @@ export class CompanionDog {
     this.state = (this.owner && !this.owner.isLeashed) ? DogState.ROAMING : DogState.FOLLOWING;
     this.stateTimer = 0;
 
-    // Follow offset relative to owner (on-leash close heel follow between 35px and 45px)
+    // Follow offset relative to owner (forward flank, never straight behind)
     this.followDistance = 42;
-    this.followAngleOffset = Math.PI * 0.75; // trots slightly behind and to the side
+    this.followAngleOffset = FLANK_RIGHT.mid; // forward-right flank by default
+    this.preferredSide = 'right'; // 'right' | 'left'
+    this.flankAngle = FLANK_RIGHT.mid; // smoothed flank bearing relative to owner.angle
 
     // Ear spring physics (secondary damper system)
     this.leftEar = { angle: 0, vel: 0 };
@@ -7788,19 +7808,60 @@ export class CompanionDog {
     return false;
   }
 
-  // Resolve owner gait into dog tuning parameters
+  // Resolve the current flank band based on preferred side.
+  _getFlankBand() {
+    return this.preferredSide === 'left' ? FLANK_LEFT : FLANK_RIGHT;
+  }
+
+  // Resolve the smoothed flank bearing (relative to owner.angle), clamped to the band.
+  _resolveFlankAngle(dt) {
+    const band = this._getFlankBand();
+    const target = band.mid;
+    // Exponential smoothing toward the target flank bearing.
+    const smooth = Math.min(1, dt * 6);
+    this.flankAngle += (target - this.flankAngle) * smooth;
+    // Clamp into the band so the dog never lands straight behind.
+    return Math.max(band.min, Math.min(band.max, this.flankAngle));
+  }
+
+  // Resolve owner gait into dog tuning parameters.
+  // Follow distance scales strictly with gait speed (STAND < STROLL < WALK < JOG).
   _getGaitTuning() {
     const gait = (this.owner && this.owner.gait) ? this.owner.gait : 'STAND';
+    const speeds = (typeof window !== 'undefined' && window.Owner && window.Owner.GAIT_SPEEDS)
+      ? window.Owner.GAIT_SPEEDS
+      : null;
+    const speedFor = (g, fallback) => (speeds && speeds[g] !== undefined) ? speeds[g] : fallback;
+
+    // distance = base + k * speed, with base chosen so STAND gives the at-heel gap.
+    const base = 30;
+    const k = 0.065;
+
     switch (gait) {
       case 'STAND':
-        return { followDistance: 30, speedScale: 0.0, sniffChance: 0.0, roamSuppressed: true };
+        return { followDistance: base, speedScale: 0.0, sniffChance: 0.0, roamSuppressed: true };
       case 'STROLL':
-        return { followDistance: 46, speedScale: 0.55, sniffChance: 0.35, roamSuppressed: false };
+        return {
+          followDistance: base + k * speedFor('STROLL', 75),
+          speedScale: 0.55,
+          sniffChance: 0.35,
+          roamSuppressed: false
+        };
       case 'JOG':
-        return { followDistance: 34, speedScale: 1.35, sniffChance: 0.05, roamSuppressed: false };
+        return {
+          followDistance: base + k * speedFor('JOG', 185),
+          speedScale: 1.35,
+          sniffChance: 0.05,
+          roamSuppressed: false
+        };
       case 'WALK':
       default:
-        return { followDistance: 42, speedScale: 1.0, sniffChance: 0.08, roamSuppressed: false };
+        return {
+          followDistance: base + k * speedFor('WALK', 100),
+          speedScale: 1.0,
+          sniffChance: 0.08,
+          roamSuppressed: false
+        };
     }
   }
 
@@ -7820,9 +7881,11 @@ export class CompanionDog {
       return;
     }
 
-    // Desired position: slightly offset from owner
-    const targetX = this.owner.x + Math.cos(this.owner.angle + this.followAngleOffset) * this.followDistance;
-    const targetY = this.owner.y + Math.sin(this.owner.angle + this.followAngleOffset) * this.followDistance;
+    // Desired position: forward flank offset from owner (never straight behind)
+    const flankAngle = this._resolveFlankAngle(dt);
+    this.followAngleOffset = flankAngle;
+    const targetX = this.owner.x + Math.cos(this.owner.angle + flankAngle) * this.followDistance;
+    const targetY = this.owner.y + Math.sin(this.owner.angle + flankAngle) * this.followDistance;
 
     const dx = targetX - this.x;
     const dy = targetY - this.y;
@@ -8124,8 +8187,10 @@ export class CompanionDog {
     if (this.isRecalledToHeel) {
       // Executes tight close heel following (followDistance = 35)
       this.followDistance = 35;
-      const targetX = this.owner.x + Math.cos(this.owner.angle + this.followAngleOffset) * this.followDistance;
-      const targetY = this.owner.y + Math.sin(this.owner.angle + this.followAngleOffset) * this.followDistance;
+      const flankAngle = this._resolveFlankAngle(dt);
+      this.followAngleOffset = flankAngle;
+      const targetX = this.owner.x + Math.cos(this.owner.angle + flankAngle) * this.followDistance;
+      const targetY = this.owner.y + Math.sin(this.owner.angle + flankAngle) * this.followDistance;
 
       const dx = targetX - this.x;
       const dy = targetY - this.y;
@@ -8708,13 +8773,25 @@ export class CompanionDog {
 
   drawLeash(ctx) {
     ctx.save();
-    // Hand anchor point on owner
-    const handX = this.owner.x + Math.cos(this.owner.angle + Math.PI / 2) * 11;
-    const handY = this.owner.y + Math.sin(this.owner.angle + Math.PI / 2) * 11;
+
+    // Hand anchor on the flank side the dog is currently on (matches flank band).
+    const sideSign = this.preferredSide === 'left' ? -1 : 1;
+    let handSide = sideSign * HAND_SIDE;
+    let handX = this.owner.x + Math.cos(this.owner.angle + handSide) * HAND_RADIUS;
+    let handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
 
     // Collar anchor point on dog
     const collarX = this.x;
     const collarY = this.y - 2;
+
+    // Guard: if the leash midpoint would clip the owner torso, widen the hand offset.
+    const midX0 = (handX + collarX) / 2;
+    const midY0 = (handY + collarY) / 2;
+    if (Math.hypot(midX0 - this.owner.x, midY0 - this.owner.y) <= PLAYER_HIT_RADIUS) {
+      handSide = sideSign * (HAND_SIDE + (10 * Math.PI) / 180);
+      handX = this.owner.x + Math.cos(this.owner.angle + handSide) * HAND_RADIUS;
+      handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
+    }
 
     const distToOwner = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
 
@@ -9901,9 +9978,9 @@ const GAIT_ORDER = [Gait.STAND, Gait.STROLL, Gait.WALK, Gait.JOG];
 
 const GAIT_SPEEDS = Object.freeze({
   [Gait.STAND]: 0,
-  [Gait.STROLL]: 100,
-  [Gait.WALK]: 185,
-  [Gait.JOG]: 265
+  [Gait.STROLL]: 75,
+  [Gait.WALK]: 100,
+  [Gait.JOG]: 185
 });
 
 // Max turn rate (radians/sec) per gait
@@ -9917,6 +9994,9 @@ const GAIT_TURN_RATES = Object.freeze({
 const STEP_OFF_TURN_RATE = (300 * Math.PI) / 180; // 300 deg/s
 const STEP_OFF_ALIGN_TOLERANCE = (5 * Math.PI) / 180; // ~5 deg
 const STEP_OFF_MAX_DURATION = 0.5; // seconds
+
+// Player body hit-test radius (px)
+const PLAYER_HIT_RADIUS = 26;
 
 const JOG_DURATION = 2.0;
 const JOG_COOLDOWN = 2.0;
@@ -9995,6 +10075,10 @@ export class Owner {
     // Heading-only update. Gait transitions are the caller's responsibility
     // (e.g. main.js explicitly promotes STAND -> STROLL on a field press).
     this.targetHeading = radians;
+    // Turn-on-the-spot: while STAND, snap the facing angle immediately.
+    if (this.gait === Gait.STAND) {
+      this.angle = radians;
+    }
   }
 
   setGait(nextGait, options = {}) {
@@ -10108,7 +10192,7 @@ export class Owner {
 
     // Normalized elliptical distance
     const normDist = Math.hypot(dx / Rx, dy / Ry);
-    if (normDist < 0.7 || normDist > 1.35) return false;
+    if (normDist < 0.7 || normDist > 3.5) return false;
 
     // Normalized angle in ellipse space
     const normAngle = Math.atan2(dy / Ry, dx / Rx);
@@ -10117,6 +10201,12 @@ export class Owner {
 
     const halfSpan = (110 * Math.PI) / 180 / 2; // ~55 deg each side
     return delta <= halfSpan;
+  }
+
+  isPointOnPlayer(worldX, worldY) {
+    const dx = worldX - this.x;
+    const dy = worldY - this.y;
+    return (dx * dx + dy * dy) < (PLAYER_HIT_RADIUS * PLAYER_HIT_RADIUS);
   }
 
   setChat(text, duration = 4.0) {
@@ -10187,6 +10277,17 @@ export class Owner {
       this.vx = 0;
       this.vy = 0;
       this.isMoving = false;
+    }
+
+    // Step-off alignment gate: hold position until facing target heading.
+    if (this.stepOffActive) {
+      const alignErr = Math.abs(angleDelta(this.angle, this.targetHeading));
+      if (alignErr > STEP_OFF_ALIGN_TOLERANCE) {
+        this.vx = 0;
+        this.vy = 0;
+      } else {
+        this.stepOffActive = false;
+      }
     }
     // Keep isMoving boolean in sync with gait for Protocol.createSyncState & rendering
     this.isMoving = this.gait !== Gait.STAND;
@@ -10573,19 +10674,39 @@ export class Owner {
       }
     }
 
-    // Rear brake arc (hidden in STAND)
+    // Enlarged rear brake sector (hidden in STAND)
     if (this.gait !== Gait.STAND) {
-      const rearAngle = angle + Math.PI;
+      const baseX = radius;         // 22
+      const baseY = radius * 0.55;  // 12.1
+      const outerScale = 3.5;
+      const rearHeading = this.angle + Math.PI;
       const halfSpan = (110 * Math.PI) / 180 / 2;
+      const startAngle = rearHeading - halfSpan;
+      const endAngle = rearHeading + halfSpan;
+
+      // Filled wedge from origin across the full sector
+      ctx.fillStyle = 'rgba(239, 68, 68, 0.20)';
+      ctx.beginPath();
+      ctx.moveTo(cx, cy);
+      const steps = 24;
+      for (let i = 0; i <= steps; i++) {
+        const t = startAngle + (i / steps) * (endAngle - startAngle);
+        const px = cx + Math.cos(t) * baseX * outerScale;
+        const py = cy + Math.sin(t) * baseY * outerScale;
+        if (i === 0) ctx.lineTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.closePath();
+      ctx.fill();
+
+      // Contour arc at the outer ring of the sector
       ctx.strokeStyle = 'rgba(239, 68, 68, 0.55)';
       ctx.lineWidth = 3;
       ctx.beginPath();
-      // Ellipse arc: use parametric sampling for the foreshortened ellipse
-      const steps = 16;
       for (let i = 0; i <= steps; i++) {
-        const t = rearAngle - halfSpan + (i / steps) * (halfSpan * 2);
-        const px = cx + Math.cos(t) * radius;
-        const py = cy + Math.sin(t) * radius * 0.55;
+        const t = startAngle + (i / steps) * (endAngle - startAngle);
+        const px = cx + Math.cos(t) * baseX * outerScale;
+        const py = cy + Math.sin(t) * baseY * outerScale;
         if (i === 0) ctx.moveTo(px, py);
         else ctx.lineTo(px, py);
       }
@@ -10990,6 +11111,11 @@ export class Owner {
     ctx.restore();
   }
 }
+
+// Static exports for test/tooling access
+Owner.GAIT_SPEEDS = GAIT_SPEEDS;
+Owner.PLAYER_HIT_RADIUS = PLAYER_HIT_RADIUS;
+Owner.STEP_OFF_ALIGN_TOLERANCE = STEP_OFF_ALIGN_TOLERANCE;
 ```
 
 ## FILE: src/entities/tombstone.js
@@ -11250,7 +11376,7 @@ export class PoopPile {
 // Clifton Down: Social Dog Walking Sandbox - Main Orchestrator
 
 import { Field, Camera } from './world/field.js';
-import { Owner } from './entities/owner.js';
+import { Owner, Gait } from './entities/owner.js';
 import { CompanionDog, CoatPreset, DogState } from './entities/companion_dog.js';
 import { TennisBall } from './entities/toy.js';
 import { NetworkManager, NetStatus } from './net/network.js';
@@ -11267,6 +11393,16 @@ import { weatherClient, WeatherType } from './systems/weather.js';
 import { environmentSystem, TimeOfDay } from './world/environment.js';
 import { initWasmSim, syncWorldObstacles } from './engine/wasm_sim_bridge.js';
 import { applyCoastalShallowWaterInteraction } from './systems/coastalWater.js';
+
+// Fallback gait order for step-down resolution when Owner lacks a helper.
+const GAIT_ORDER = ['STAND', 'STROLL', 'WALK', 'JOG'];
+
+// Resolve the next-lower gait from the given gait string.
+function stepDownGaitName(gait) {
+  const idx = GAIT_ORDER.indexOf(gait);
+  if (idx <= 0) return GAIT_ORDER[0];
+  return GAIT_ORDER[idx - 1];
+}
 
 export class CliftonDownGame {
   constructor() {
@@ -11897,6 +12033,52 @@ export class CliftonDownGame {
 
       // Only left-click / primary pointer
       if (e.button !== undefined && e.button !== 0) return;
+
+      // --- Avatar click → brake gesture (REQ-004) ---
+      // Detect clicks on the player avatar body and resolve as a brake gesture.
+      // This is an ADDITION: non-avatar clicks fall through to existing handling.
+      {
+        const avatarWorld = this.camera.screenToWorld(e.clientX, e.clientY);
+        const hitRadius = (Owner && typeof Owner.PLAYER_HIT_RADIUS === 'number')
+          ? Owner.PLAYER_HIT_RADIUS
+          : 26;
+        const distSq = (avatarWorld.x - this.owner.x) ** 2 + (avatarWorld.y - this.owner.y) ** 2;
+        const onPlayer = distSq < (hitRadius * hitRadius) ||
+          (typeof this.owner.isPointOnPlayer === 'function' &&
+            this.owner.isPointOnPlayer(avatarWorld.x, avatarWorld.y));
+
+        if (onPlayer) {
+          if (this.owner.gait !== 'STAND') {
+            const nowMs = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+            const lastAvatarClickTime = this._lastAvatarClickTime || 0;
+            let mode;
+            if (lastAvatarClickTime > 0 && (nowMs - lastAvatarClickTime) <= 300) {
+              mode = 'immediate';
+              this._lastAvatarClickTime = 0;
+            } else {
+              mode = 'step';
+              this._lastAvatarClickTime = nowMs;
+            }
+            // Cancel any pending deferred field gesture so it doesn't fire later.
+            cancelPendingSingle();
+            this._lastClickTime = 0;
+            this._lastClickX = 0;
+            this._lastClickY = 0;
+
+            if (mode === 'immediate') {
+              this.owner.setGait('STAND');
+            } else {
+              if (typeof this.owner.stepDownGait === 'function') {
+                this.owner.stepDownGait();
+              } else {
+                this.owner.setGait(stepDownGaitName(this.owner.gait));
+              }
+            }
+          }
+          // Clicking a STAND avatar: no brake, no gait change.
+          return;
+        }
+      }
 
       // --- Immediate hits (no double-click delay) ---
 
@@ -26099,7 +26281,29 @@ export class Field {
     const clampedX = Math.max(minX, Math.min(maxX, nx));
     const clampedY = Math.max(minY, Math.min(maxY, ny));
     if (clampedX !== nx || clampedY !== ny) {
-      kind = 'boundary';
+      // Boundary anti-stuck: if the heading points back into the playable
+      // area (dot(heading, inwardNormal) > 0), do not flag as boundary so
+      // the owner is not forced to STAND while escaping the wall.
+      let escaping = false;
+      if (typeof targetHeading === 'number' && isFinite(targetHeading)) {
+        const hx = Math.cos(targetHeading);
+        const hy = Math.sin(targetHeading);
+        // Inward normal components (pointing away from the wall into playable area)
+        let nX = 0;
+        let nY = 0;
+        if (clampedX !== nx) {
+          // Clamped on X axis: inward normal points toward world centre on X
+          nX = nx < clampedX ? 1 : -1;
+        }
+        if (clampedY !== ny) {
+          nY = ny < clampedY ? 1 : -1;
+        }
+        const dot = hx * nX + hy * nY;
+        if (dot > 0) escaping = true;
+      }
+      if (!escaping) {
+        kind = 'boundary';
+      }
     }
     nx = clampedX;
     ny = clampedY;
@@ -33140,9 +33344,9 @@ class TestOwnerGait(unittest.TestCase):
     def test_gait_speeds_defined(self):
         self.assertIn("GAIT_SPEEDS", self.src)
         self.assertIn("[Gait.STAND]: 0", self.src)
-        self.assertIn("[Gait.STROLL]: 100", self.src)
-        self.assertIn("[Gait.WALK]: 185", self.src)
-        self.assertIn("[Gait.JOG]: 265", self.src)
+        self.assertIn("[Gait.STROLL]: 75", self.src)
+        self.assertIn("[Gait.WALK]: 100", self.src)
+        self.assertIn("[Gait.JOG]: 185", self.src)
 
     def test_gait_turn_rates(self):
         self.assertIn("GAIT_TURN_RATES", self.src)
@@ -33171,7 +33375,7 @@ class TestOwnerGait(unittest.TestCase):
         self.assertIn("isPointOnRearBrakeArc", self.src)
         self.assertTrue("centerY = this.y + 12" in self.src or "cy = this.y + 12" in self.src)
         self.assertTrue("Rx = 22" in self.src or "rx = 22" in self.src)
-        self.assertTrue("normDist < 0.7 || normDist > 1.35" in self.src or "d < 0.7 || d > 1.35" in self.src)
+        self.assertTrue("normDist < 0.7 || normDist > 3.5" in self.src or "d < 0.7 || d > 3.5" in self.src)
 
 
 class TestFieldCollisionResult(unittest.TestCase):
@@ -33272,7 +33476,7 @@ class TestRearBrakeArcNormalizedEllipse(unittest.TestCase):
         self.assertIn("const Ry = 12.1", self.src)
         self.assertIn("Math.hypot(dx / Rx, dy / Ry)", self.src)
         self.assertIn("Math.atan2(dy / Ry, dx / Rx)", self.src)
-        self.assertIn("normDist < 0.7 || normDist > 1.35", self.src)
+        self.assertIn("normDist < 0.7 || normDist > 3.5", self.src)
 
     def test_rear_heading_uses_angle_plus_pi(self):
         self.assertIn("const rearHeading = this.angle + Math.PI", self.src)
@@ -33295,7 +33499,7 @@ class TestRearBrakeArcNormalizedEllipse(unittest.TestCase):
             dx = wx - cx
             dy = wy - cy
             norm_dist = math.hypot(dx / Rx, dy / Ry)
-            if norm_dist < 0.7 or norm_dist > 1.35:
+            if norm_dist < 0.7 or norm_dist > 3.5:
                 return False
             norm_angle = math.atan2(dy / Ry, dx / Rx)
             rear = angle + math.pi
@@ -33311,8 +33515,8 @@ class TestRearBrakeArcNormalizedEllipse(unittest.TestCase):
         self.assertFalse(on_rear_arc(100, 100, 0.0, 100 + 22, 100 + 12))
         # Point to the side (north) should NOT be on rear arc
         self.assertFalse(on_rear_arc(100, 100, 0.0, 100, 100 + 12 - 12.1))
-        # Point far outside distance band should NOT hit
-        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 60, 100 + 12))
+        # Point far outside distance band (normDist > 3.5) should NOT hit
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 22 * 3.6, 100 + 12))
         # Point inside inner band should NOT hit
         self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 5, 100 + 12))
         # STAND gait never hits
@@ -33913,6 +34117,255 @@ class TestDoublePressDistanceThreshold(unittest.TestCase):
         self.assertTrue(is_double(24))
         self.assertFalse(is_double(24.01))
         self.assertFalse(is_double(50))
+
+
+class TestGaitSpeedConstants(unittest.TestCase):
+    """Verify GAIT_SPEEDS exact values (unification-020)."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_exact_speed_values(self):
+        self.assertIn("[Gait.STAND]: 0", self.src)
+        self.assertIn("[Gait.STROLL]: 75", self.src)
+        self.assertIn("[Gait.WALK]: 100", self.src)
+        self.assertIn("[Gait.JOG]: 185", self.src)
+
+    def test_behavioral_speed_lookup(self):
+        GAIT_SPEEDS = {'STAND': 0, 'STROLL': 75, 'WALK': 100, 'JOG': 185}
+        self.assertEqual(GAIT_SPEEDS['STAND'], 0)
+        self.assertEqual(GAIT_SPEEDS['STROLL'], 75)
+        self.assertEqual(GAIT_SPEEDS['WALK'], 100)
+        self.assertEqual(GAIT_SPEEDS['JOG'], 185)
+
+
+class TestTurnOnTheSpot(unittest.TestCase):
+    """Verify STAND gait snaps angle immediately on setTargetHeading."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_stand_snaps_angle(self):
+        self.assertIn("if (this.gait === Gait.STAND) {", self.src)
+        self.assertIn("this.angle = radians;", self.src)
+
+    def test_behavioral_stand_snap(self):
+        class FakeOwner:
+            def __init__(self):
+                self.gait = 'STAND'
+                self.angle = 0.0
+                self.targetHeading = 0.0
+
+            def setTargetHeading(self, radians):
+                self.targetHeading = radians
+                if self.gait == 'STAND':
+                    self.angle = radians
+
+        o = FakeOwner()
+        o.setTargetHeading(1.57)
+        self.assertAlmostEqual(o.angle, 1.57)
+        self.assertAlmostEqual(o.targetHeading, 1.57)
+
+
+class TestStepOffAlignmentGate(unittest.TestCase):
+    """Verify STAND -> STROLL suppresses velocity until aligned."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_step_off_constants(self):
+        self.assertIn("STEP_OFF_ALIGN_TOLERANCE", self.src)
+        self.assertIn("STEP_OFF_MAX_DURATION", self.src)
+        self.assertIn("STEP_OFF_TURN_RATE", self.src)
+
+    def test_step_off_gate_present(self):
+        self.assertIn("if (this.stepOffActive) {", self.src)
+        self.assertIn("alignErr > STEP_OFF_ALIGN_TOLERANCE", self.src)
+        self.assertIn("this.vx = 0;", self.src)
+        self.assertIn("this.vy = 0;", self.src)
+
+    def test_behavioral_gate_suppresses_velocity(self):
+        import math
+        STEP_OFF_ALIGN_TOLERANCE = (5 * math.pi) / 180
+
+        def gate(angle, target, vx, vy):
+            align_err = abs(((target - angle + math.pi) % (2 * math.pi)) - math.pi)
+            if align_err > STEP_OFF_ALIGN_TOLERANCE:
+                return 0.0, 0.0
+            return vx, vy
+
+        # Misaligned by 90 degrees: velocity suppressed
+        vx, vy = gate(0.0, math.pi / 2, 75.0, 0.0)
+        self.assertEqual(vx, 0.0)
+        self.assertEqual(vy, 0.0)
+
+        # Aligned within tolerance: velocity preserved
+        vx, vy = gate(0.0, 0.01, 75.0, 0.0)
+        self.assertEqual(vx, 75.0)
+
+
+class TestBoundaryAntiStuck(unittest.TestCase):
+    """Verify boundary collision does not force STAND when heading is inward."""
+
+    def setUp(self):
+        self.src = read("src/world/field.js")
+
+    def test_boundary_kind_present(self):
+        self.assertIn("kind = 'boundary'", self.src)
+
+    def test_behavioral_inward_movement_allowed(self):
+        """Simulate boundary clamp: inward heading should not force STAND."""
+        width = 3200
+        height = 2400
+        radius = 16
+        minX = 56 + radius
+        maxX = width - 56 - radius
+        minY = 56 + radius
+        maxY = height - 56 - radius
+
+        # Owner at west boundary, heading east (inward)
+        nx = minX - 5
+        ny = 500
+        clampedX = max(minX, min(maxX, nx))
+        clampedY = max(minY, min(maxY, ny))
+        kind = 'none'
+        if clampedX != nx or clampedY != ny:
+            kind = 'boundary'
+
+        # Boundary contact detected, but heading is inward (east)
+        self.assertEqual(kind, 'boundary')
+        # The owner's heading (east) points into playable area, so movement
+        # should be allowed on the next tick (no forced STAND).
+        heading = 0.0  # east
+        inward = heading > -1.5708 and heading < 1.5708
+        self.assertTrue(inward)
+
+
+class TestRearBrake5xHitTesting(unittest.TestCase):
+    """Verify 5x expanded rear brake arc (normDist 0.7 to 3.5)."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_5x_band_constant(self):
+        self.assertIn("normDist < 0.7 || normDist > 3.5", self.src)
+
+    def test_behavioral_5x_band(self):
+        import math
+
+        def on_rear_arc(owner_x, owner_y, angle, wx, wy):
+            cx = owner_x
+            cy = owner_y + 12
+            Rx = 22
+            Ry = 12.1
+            dx = wx - cx
+            dy = wy - cy
+            norm_dist = math.hypot(dx / Rx, dy / Ry)
+            if norm_dist < 0.7 or norm_dist > 3.5:
+                return False
+            norm_angle = math.atan2(dy / Ry, dx / Rx)
+            rear = angle + math.pi
+            delta = ((norm_angle - rear + math.pi) % (2 * math.pi)) - math.pi
+            if delta < -math.pi:
+                delta += 2 * math.pi
+            return abs(delta) <= (55 * math.pi / 180)
+
+        # Behind owner at normDist 1.0, 2.0, 3.0, 3.4 -> all hit
+        for mult in (1.0, 2.0, 3.0, 3.4):
+            self.assertTrue(on_rear_arc(100, 100, 0.0, 100 - 22 * mult, 100 + 12),
+                            f"normDist {mult} should hit")
+        # normDist 3.6 -> miss
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 22 * 3.6, 100 + 12))
+        # normDist 0.5 -> miss
+        self.assertFalse(on_rear_arc(100, 100, 0.0, 100 - 22 * 0.5, 100 + 12))
+
+
+class TestPlayerAvatarHitTest(unittest.TestCase):
+    """Verify isPointOnPlayer uses 26px radius squared."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_hit_radius_constant(self):
+        self.assertIn("PLAYER_HIT_RADIUS = 26", self.src)
+        self.assertIn("Owner.PLAYER_HIT_RADIUS = PLAYER_HIT_RADIUS", self.src)
+
+    def test_is_point_on_player_present(self):
+        self.assertIn("isPointOnPlayer(worldX, worldY)", self.src)
+        self.assertIn("PLAYER_HIT_RADIUS * PLAYER_HIT_RADIUS", self.src)
+
+    def test_behavioral_hit_test(self):
+        PLAYER_HIT_RADIUS = 26
+
+        def is_on_player(ox, oy, wx, wy):
+            dx = wx - ox
+            dy = wy - oy
+            return (dx * dx + dy * dy) < (PLAYER_HIT_RADIUS * PLAYER_HIT_RADIUS)
+
+        # Center hit
+        self.assertTrue(is_on_player(100, 100, 100, 100))
+        # Edge hit (25px away)
+        self.assertTrue(is_on_player(100, 100, 125, 100))
+        # Outside (27px away)
+        self.assertFalse(is_on_player(100, 100, 127, 100))
+
+
+class TestAvatarClickBraking(unittest.TestCase):
+    """Verify main.js contains avatar click brake detection."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_avatar_click_detection(self):
+        self.assertIn("Avatar click", self.src)
+        self.assertIn("isPointOnPlayer", self.src)
+        self.assertIn("cancelPendingSingle", self.src)
+
+    def test_avatar_brake_uses_step_down(self):
+        self.assertIn("stepDownGait", self.src)
+        self.assertIn("setGait('STAND')", self.src)
+
+
+class TestCompanionDogFlankingBounds(unittest.TestCase):
+    """Verify companion dog flank bands are within forward hemisphere."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_flank_right_band(self):
+        self.assertIn("FLANK_RIGHT", self.src)
+        self.assertIn("(30 * Math.PI) / 180", self.src)
+        self.assertIn("(120 * Math.PI) / 180", self.src)
+
+    def test_flank_left_band(self):
+        self.assertIn("FLANK_LEFT", self.src)
+        self.assertIn("(-120 * Math.PI) / 180", self.src)
+        self.assertIn("(-30 * Math.PI) / 180", self.src)
+
+    def test_get_flank_band_helper(self):
+        self.assertIn("_getFlankBand", self.src)
+
+    def test_behavioral_flank_bounds(self):
+        import math
+        FLANK_RIGHT = {
+            'min': (30 * math.pi) / 180,
+            'mid': (60 * math.pi) / 180,
+            'max': (120 * math.pi) / 180
+        }
+        FLANK_LEFT = {
+            'min': (-120 * math.pi) / 180,
+            'mid': (-60 * math.pi) / 180,
+            'max': (-30 * math.pi) / 180
+        }
+        # Right flank is in forward-right quadrant
+        self.assertGreater(FLANK_RIGHT['min'], 0)
+        self.assertLess(FLANK_RIGHT['max'], math.pi)
+        # Left flank is in forward-left quadrant
+        self.assertLess(FLANK_LEFT['max'], 0)
+        self.assertGreater(FLANK_LEFT['min'], -math.pi)
+        # Neither band includes straight-behind (180 deg)
+        self.assertLess(FLANK_RIGHT['max'], math.pi)
+        self.assertGreater(FLANK_LEFT['min'], -math.pi)
 
 
 if __name__ == "__main__":

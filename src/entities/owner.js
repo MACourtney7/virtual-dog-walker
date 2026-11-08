@@ -263,6 +263,11 @@ export class Owner {
     //    (Legacy directional key handling removed in movement redesign.)
 
     // 2. Advance gait timers
+    // Decrement cooldown BEFORE the JOG expiry check so a cooldown that is
+    // freshly initialised this tick is not decremented on the same tick.
+    if (this.jogCooldown > 0) {
+      this.jogCooldown = Math.max(0, this.jogCooldown - dt);
+    }
     if (this.jogTimer > 0) {
       this.jogTimer -= dt;
       if (this.jogTimer <= 0) {
@@ -273,9 +278,6 @@ export class Owner {
           this.jogCooldown = JOG_COOLDOWN;
         }
       }
-    }
-    if (this.jogCooldown > 0) {
-      this.jogCooldown = Math.max(0, this.jogCooldown - dt);
     }
     if (this.stepOffActive) {
       this.stepOffTimer = Math.max(0, this.stepOffTimer - dt);

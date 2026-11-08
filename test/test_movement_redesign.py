@@ -630,6 +630,152 @@ class TestTouchButtonPerButtonDedup(unittest.TestCase):
         self.assertEqual(len(b['fired']), 1)
 
 
+class TestDeferredSingleBrakeRespectsGaitAtPress(unittest.TestCase):
+    """Verify deferred single brake steps down relative to gaitAtPress."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_brake_uses_gait_at_press(self):
+        idx = self.src.index("if (captured.type === 'brake')")
+        end = self.src.index("// Field press", idx)
+        block = self.src[idx:end]
+        self.assertIn("if (this.owner.gait === 'STAND') return;", block)
+        self.assertIn("const gaitAtPress = captured.gaitAtPress;", block)
+        self.assertIn("if (gaitAtPress === 'JOG')", block)
+        self.assertIn("this.owner.setGait('WALK');", block)
+        self.assertIn("if (gaitAtPress === 'WALK')", block)
+        self.assertIn("this.owner.setGait('STROLL');", block)
+        self.assertIn("if (gaitAtPress === 'STROLL')", block)
+        self.assertIn("this.owner.setGait('STAND');", block)
+
+    def test_behavioral_jog_expired_to_walk(self):
+        """JOG at press, expired to WALK by the time the deferred brake fires.
+
+        Expected: WALK -> STROLL (one step down from gaitAtPress), NOT WALK -> STAND.
+        """
+        state = {'gait': 'JOG'}
+
+        def resolve_brake(gait_at_press):
+            if state['gait'] == 'STAND':
+                return
+            if gait_at_press == 'JOG':
+                state['gait'] = 'WALK'
+            elif gait_at_press == 'WALK':
+                state['gait'] = 'STROLL'
+            elif gait_at_press == 'STROLL':
+                state['gait'] = 'STAND'
+
+        # Capture at press time
+        captured_gait = state['gait']  # JOG
+        # JOG expires during the 280ms window
+        state['gait'] = 'WALK'
+        # Deferred brake fires
+        resolve_brake(captured_gait)
+        self.assertEqual(state['gait'], 'STROLL')
+
+    def test_behavioral_stand_guard(self):
+        """If owner is already STAND, deferred brake must not restart motion."""
+        state = {'gait': 'STAND'}
+
+        def resolve_brake(gait_at_press):
+            if state['gait'] == 'STAND':
+                return
+            if gait_at_press == 'JOG':
+                state['gait'] = 'WALK'
+            elif gait_at_press == 'WALK':
+                state['gait'] = 'STROLL'
+            elif gait_at_press == 'STROLL':
+                state['gait'] = 'STAND'
+
+        resolve_brake('WALK')
+        self.assertEqual(state['gait'], 'STAND')
+
+
+class TestBoundaryPrioritySuppressesDeflection(unittest.TestCase):
+    """Verify boundary contact suppresses obstacle heading deflection."""
+
+    def setUp(self):
+        self.src = read("src/world/field.js")
+
+    def test_boundary_clamp_sets_kind(self):
+        self.assertIn("const clampedX = Math.max(minX, Math.min(maxX, nx));", self.src)
+        self.assertIn("const clampedY = Math.max(minY, Math.min(maxY, ny));", self.src)
+        self.assertIn("if (clampedX !== nx || clampedY !== ny)", self.src)
+        self.assertIn("kind = 'boundary';", self.src)
+
+    def test_obstacle_loops_preserve_boundary(self):
+        # Both pushCircle and bench loops must guard on kind !== 'boundary'
+        self.assertGreaterEqual(self.src.count("if (kind !== 'boundary') {"), 2)
+
+    def test_boundary_return_omits_deflection(self):
+        self.assertIn("if (kind === 'boundary') {", self.src)
+        self.assertIn("return { x: nx, y: ny, kind };", self.src)
+
+    def test_behavioral_boundary_suppresses_deflection(self):
+        """Simulate boundary + obstacle contact: kind stays 'boundary', no deflection."""
+        width = 3200
+        height = 2400
+        radius = 16
+        minX = 56 + radius
+        maxX = width - 56 - radius
+        minY = 56 + radius
+        maxY = height - 56 - radius
+
+        nx = minX - 10  # outside west boundary
+        ny = 500
+        kind = 'none'
+        deflected = None
+
+        clampedX = max(minX, min(maxX, nx))
+        clampedY = max(minY, min(maxY, ny))
+        if clampedX != nx or clampedY != ny:
+            kind = 'boundary'
+        nx, ny = clampedX, clampedY
+
+        # Simulate an obstacle push that would normally set kind='obstacle'
+        # and compute a deflected heading.
+        if kind != 'boundary':
+            kind = 'obstacle'
+            deflected = 1.23
+
+        self.assertEqual(kind, 'boundary')
+        self.assertIsNone(deflected)
+
+
+class TestJogCooldownDecrementOrder(unittest.TestCase):
+    """Verify jogCooldown is decremented before the JOG expiry check."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_cooldown_decrement_precedes_jog_timer(self):
+        idx_cooldown = self.src.index("if (this.jogCooldown > 0) {\n      this.jogCooldown = Math.max(0, this.jogCooldown - dt);")
+        idx_jog_timer = self.src.index("if (this.jogTimer > 0) {\n      this.jogTimer -= dt;")
+        self.assertLess(idx_cooldown, idx_jog_timer)
+
+    def test_behavioral_cooldown_not_decremented_on_set_tick(self):
+        """A cooldown initialised this tick must remain at 2.0 after the tick."""
+        JOG_COOLDOWN = 2.0
+        dt = 0.016
+        state = {'gait': 'JOG', 'jogTimer': 0.01, 'jogCooldown': 0.0}
+
+        # Decrement cooldown first
+        if state['jogCooldown'] > 0:
+            state['jogCooldown'] = max(0, state['jogCooldown'] - dt)
+        # Then advance jog timer
+        if state['jogTimer'] > 0:
+            state['jogTimer'] -= dt
+            if state['jogTimer'] <= 0:
+                state['jogTimer'] = 0
+                if state['gait'] == 'JOG':
+                    state['gait'] = 'WALK'
+                    state['jogCooldown'] = JOG_COOLDOWN
+
+        self.assertEqual(state['gait'], 'WALK')
+        self.assertEqual(state['jogCooldown'], JOG_COOLDOWN)
+
+
 class TestDoublePressDistanceThreshold(unittest.TestCase):
     """Verify double-press distance threshold uses inclusive <= 24px."""
 

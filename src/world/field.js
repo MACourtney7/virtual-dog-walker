@@ -1165,10 +1165,13 @@ export class Field {
     const minY = 56 + radius;
     const maxY = this.height - 56 - radius;
 
-    if (nx < minX) { nx = minX; kind = 'boundary'; }
-    else if (nx > maxX) { nx = maxX; kind = 'boundary'; }
-    if (ny < minY) { ny = minY; kind = 'boundary'; }
-    else if (ny > maxY) { ny = maxY; kind = 'boundary'; }
+    const clampedX = Math.max(minX, Math.min(maxX, nx));
+    const clampedY = Math.max(minY, Math.min(maxY, ny));
+    if (clampedX !== nx || clampedY !== ny) {
+      kind = 'boundary';
+    }
+    nx = clampedX;
+    ny = clampedY;
 
     const hasHeading = typeof targetHeading === 'number' && isFinite(targetHeading);
 
@@ -1191,14 +1194,16 @@ export class Field {
           nrmY = 1;
           ny += minDist;
         }
-        kind = 'obstacle';
-        if (hasHeading) {
-          const baseAngle = Math.atan2(nrmY, nrmX);
-          const t1 = baseAngle + Math.PI / 2;
-          const t2 = baseAngle - Math.PI / 2;
-          const d1 = Math.abs(angleDeltaLocal(targetHeading, t1));
-          const d2 = Math.abs(angleDeltaLocal(targetHeading, t2));
-          deflectedHeading = d1 <= d2 ? t1 : t2;
+        if (kind !== 'boundary') {
+          kind = 'obstacle';
+          if (hasHeading) {
+            const baseAngle = Math.atan2(nrmY, nrmX);
+            const t1 = baseAngle + Math.PI / 2;
+            const t2 = baseAngle - Math.PI / 2;
+            const d1 = Math.abs(angleDeltaLocal(targetHeading, t1));
+            const d2 = Math.abs(angleDeltaLocal(targetHeading, t2));
+            deflectedHeading = d1 <= d2 ? t1 : t2;
+          }
         }
       }
     };
@@ -1231,14 +1236,16 @@ export class Field {
           nrmY = 1;
           ny += radius;
         }
-        kind = 'obstacle';
-        if (hasHeading) {
-          const baseAngle = Math.atan2(nrmY, nrmX);
-          const t1 = baseAngle + Math.PI / 2;
-          const t2 = baseAngle - Math.PI / 2;
-          const d1 = Math.abs(angleDeltaLocal(targetHeading, t1));
-          const d2 = Math.abs(angleDeltaLocal(targetHeading, t2));
-          deflectedHeading = d1 <= d2 ? t1 : t2;
+        if (kind !== 'boundary') {
+          kind = 'obstacle';
+          if (hasHeading) {
+            const baseAngle = Math.atan2(nrmY, nrmX);
+            const t1 = baseAngle + Math.PI / 2;
+            const t2 = baseAngle - Math.PI / 2;
+            const d1 = Math.abs(angleDeltaLocal(targetHeading, t1));
+            const d2 = Math.abs(angleDeltaLocal(targetHeading, t2));
+            deflectedHeading = d1 <= d2 ? t1 : t2;
+          }
         }
       }
     }
@@ -1258,6 +1265,9 @@ export class Field {
       pushCircle(rock.x, rock.depthY - 8, rock.r || 24);
     }
 
+    if (kind === 'boundary') {
+      return { x: nx, y: ny, kind };
+    }
     return { x: nx, y: ny, kind, deflectedHeading };
   }
 

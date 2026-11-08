@@ -577,6 +577,21 @@ export class CliftonDownGame {
       if (captured.type === 'brake') {
         if (isDouble) {
           this.owner.setGait('STAND');
+          return;
+        }
+        // Deferred single brake: if the owner has already stopped in the
+        // interim (boundary collision, petting, etc.) do not restart motion.
+        if (this.owner.gait === 'STAND') return;
+        // Step down exactly one level relative to the gait captured at press
+        // time, so a JOG that expired to WALK during the 280ms window does
+        // not over-brake.
+        const gaitAtPress = captured.gaitAtPress;
+        if (gaitAtPress === 'JOG') {
+          this.owner.setGait('WALK');
+        } else if (gaitAtPress === 'WALK') {
+          this.owner.setGait('STROLL');
+        } else if (gaitAtPress === 'STROLL') {
+          this.owner.setGait('STAND');
         } else {
           this.owner.stepGait(-1);
         }
@@ -1415,7 +1430,7 @@ export class CliftonDownGame {
         this.ctx,
         this.activeBinNearPlayer.x,
         this.activeBinNearPlayer.y - 28,
-        isTouch ? 'Tap 🗑️ to dispose' : 'Click to dispose in bin'
+        isTouch ? 'Tap 🗑️ to dispose' : 'Click to dispose'
       );
     }
 

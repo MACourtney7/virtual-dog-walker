@@ -44,6 +44,105 @@ const HAND_RADIUS = 28;
 const HAND_SIDE = (60 * Math.PI) / 180;
 const PLAYER_HIT_RADIUS = 26;
 
+// Leash slot spacing constants (owner-local frame).
+// Flank clearance is measured from the owner's hip/half-width out to the dog.
+export const LEASH_FLANK_CLEARANCE_MIN_PX = 24;
+export const LEASH_FLANK_CLEARANCE_MAX_PX = 28;
+export const LEASH_FLANK_CLEARANCE_TARGET_PX = 26;
+// Forward lead is measured ahead of the owner's transverse shoulder line.
+export const LEASH_FORWARD_LEAD_MIN_PX = 40;
+export const LEASH_FORWARD_LEAD_MAX_PX = 52;
+export const LEASH_FORWARD_LEAD_TARGET_PX = 46;
+// Velocity feed-forward horizon (seconds) so the dog leads rather than trails.
+export const LEASH_FEEDFORWARD_SECONDS = 0.12;
+// Minimum forward projection of the slot past the shoulder line.
+export const LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = 2;
+
+// Resolve the owner's heading in radians. Prefers `owner.heading`, then
+// `owner.angle`, then a sane default (facing South).
+function resolveOwnerHeading(owner) {
+  if (!owner) return Math.PI / 2;
+  if (typeof owner.heading === 'number' && isFinite(owner.heading)) return owner.heading;
+  if (typeof owner.angle === 'number' && isFinite(owner.angle)) return owner.angle;
+  return Math.PI / 2;
+}
+
+// Resolve the owner's hip/half-width used as the flank clearance baseline.
+function resolveOwnerHalfWidth(owner) {
+  if (!owner) return 10.5;
+  if (typeof owner.halfWidth === 'number' && isFinite(owner.halfWidth)) return owner.halfWidth;
+  if (typeof owner.hipHalfWidth === 'number' && isFinite(owner.hipHalfWidth)) return owner.hipHalfWidth;
+  if (typeof owner.radius === 'number' && isFinite(owner.radius)) return owner.radius;
+  return 10.5;
+}
+
+// Resolve the owner's world position.
+function resolveOwnerPos(owner) {
+  if (!owner) return { x: 0, y: 0 };
+  return { x: owner.x || 0, y: owner.y || 0 };
+}
+
+// Resolve the owner's velocity.
+function resolveOwnerVelocity(owner) {
+  if (!owner) return { x: 0, y: 0 };
+  return { x: owner.vx || 0, y: owner.vy || 0 };
+}
+
+// Compute the leash target slot in world space for the given owner.
+// The slot sits on the owner's leash-hand flank, forward of the shoulder line.
+export function getLeashSlot(owner) {
+  const heading = resolveOwnerHeading(owner);
+  const pos = resolveOwnerPos(owner);
+  const vel = resolveOwnerVelocity(owner);
+
+  const forward = { x: Math.cos(heading), y: Math.sin(heading) };
+  // Screen-space right vector (consistent with the rest of the file).
+  const right = { x: -Math.sin(heading), y: Math.cos(heading) };
+
+  const flankSign = (owner && owner.leashHandSide === 'left') ? -1 : 1;
+
+  const halfWidth = resolveOwnerHalfWidth(owner);
+  const rawLateral = halfWidth + LEASH_FLANK_CLEARANCE_TARGET_PX;
+  const lateral = Math.max(
+    halfWidth + LEASH_FLANK_CLEARANCE_MIN_PX,
+    Math.min(halfWidth + LEASH_FLANK_CLEARANCE_MAX_PX, rawLateral)
+  );
+
+  // Velocity feed-forward is applied STRICTLY along the forward axis so that
+  // lateral velocity (e.g. wall-collision sliding) can never push the slot
+  // outside the [LEASH_FLANK_CLEARANCE_MIN_PX, LEASH_FLANK_CLEARANCE_MAX_PX]
+  // lateral band.
+  const forwardSpeed = vel.x * forward.x + vel.y * forward.y;
+  let forwardLead = LEASH_FORWARD_LEAD_TARGET_PX + forwardSpeed * LEASH_FEEDFORWARD_SECONDS;
+
+  // Clamp forward lead strictly to [MIN, MAX] so it never exceeds 52px ahead
+  // even at high gaits or with large feed-forward velocity.
+  forwardLead = Math.max(
+    LEASH_FORWARD_LEAD_MIN_PX,
+    Math.min(LEASH_FORWARD_LEAD_MAX_PX, forwardLead)
+  );
+
+  // Compose the slot from the (already clamped) forward lead and lateral
+  // clearance. Because both components are clamped independently, the
+  // resulting slot is guaranteed to satisfy both bounds.
+  let slotX = pos.x + forward.x * forwardLead + right.x * flankSign * lateral;
+  let slotY = pos.y + forward.y * forwardLead + right.y * flankSign * lateral;
+
+  // Shoulder-line clamp: the slot must stay forward of the owner's transverse
+  // shoulder line by at least LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX.
+  const shoulderCentre = pos;
+  const relX = slotX - shoulderCentre.x;
+  const relY = slotY - shoulderCentre.y;
+  const projection = relX * forward.x + relY * forward.y;
+  if (projection < LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX) {
+    const push = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX - projection;
+    slotX += forward.x * push;
+    slotY += forward.y * push;
+  }
+
+  return { x: slotX, y: slotY };
+}
+
 // States that must never be interrupted by ambient resting (LYING_DOWN) transitions.
 const ACTIVE_REST_BLOCKED_STATES = new Set([
   DogState.FETCHING,
@@ -249,6 +348,9 @@ export class CompanionDog {
 
     // Current zone reference (set externally for sunny-zone rolling)
     this.currentZone = null;
+
+    // Resolved leash target slot (world space), updated each frame while leashed.
+    this.targetSlot = null;
 
     // Audio cooldowns
     this._whineCooldown = 0;
@@ -783,6 +885,11 @@ export class CompanionDog {
       this.isPullingLeash = false;
     }
 
+    // Clear the resolved slot when off-leash so tests can distinguish states.
+    if (!this.owner || !this.owner.isLeashed) {
+      this.targetSlot = null;
+    }
+
     // Update leash tension state (on-leash implies taut; sag/vibration derived)
     if (this.owner && this.owner.isLeashed) {
       // Keep the owner's leash hand on the same side as the dog's flank.
@@ -959,6 +1066,11 @@ export class CompanionDog {
     return false;
   }
 
+  // Public helper: compute the leash target slot for the given owner.
+  getLeashSlot(owner = this.owner) {
+    return getLeashSlot(owner);
+  }
+
   // Resolve the current flank band based on preferred side.
   _getFlankBand() {
     return this.preferredSide === 'left' ? FLANK_LEFT : FLANK_RIGHT;
@@ -1034,11 +1146,20 @@ export class CompanionDog {
       return;
     }
 
-    // Desired position: forward flank offset from owner (never straight behind)
-    const flankAngle = this._resolveFlankAngle(dt);
-    this.followAngleOffset = flankAngle;
-    const targetX = this.owner.x + Math.cos(this.owner.angle + flankAngle) * this.followDistance;
-    const targetY = this.owner.y + Math.sin(this.owner.angle + flankAngle) * this.followDistance;
+    // Desired position: leash slot in the owner's local frame (forward flank,
+    // forward of the shoulder line, with velocity feed-forward).
+    // Only resolve the leash slot while actually leashed; off-leash callers
+    // are routed to updateRoaming() above.
+    if (!this.owner || !this.owner.isLeashed) {
+      this.targetSlot = null;
+      this.state = DogState.ROAMING;
+      this.updateRoaming(dt, otherDogs, field);
+      return;
+    }
+    const slot = getLeashSlot(this.owner);
+    this.targetSlot = slot;
+    const targetX = slot.x;
+    const targetY = slot.y;
 
     const dx = targetX - this.x;
     const dy = targetY - this.y;
@@ -1079,6 +1200,19 @@ export class CompanionDog {
       this.vx = 0;
       this.vy = 0;
       this.wagSpeed = 6;
+    }
+
+    // Rendered-position shoulder-line clamp: after arrival damping, the dog's
+    // actual position must never lag behind the owner's transverse shoulder
+    // line during sharp turns while on leash.
+    const heading = resolveOwnerHeading(this.owner);
+    const fwdX = Math.cos(heading);
+    const fwdY = Math.sin(heading);
+    const proj = (this.x - this.owner.x) * fwdX + (this.y - this.owner.y) * fwdY;
+    if (proj < LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX) {
+      const push = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX - proj;
+      this.x += fwdX * push;
+      this.y += fwdY * push;
     }
   }
 
@@ -1338,12 +1472,25 @@ export class CompanionDog {
     }
 
     if (this.isRecalledToHeel) {
-      // Executes tight close heel following (followDistance = 35)
+      // Executes tight close heel following. When on-leash, use the leash
+      // slot geometry; when off-leash, preserve the tight-heel follow offset
+      // relative to the owner's forward flank.
       this.followDistance = 35;
-      const flankAngle = this._resolveFlankAngle(dt);
-      this.followAngleOffset = flankAngle;
-      const targetX = this.owner.x + Math.cos(this.owner.angle + flankAngle) * this.followDistance;
-      const targetY = this.owner.y + Math.sin(this.owner.angle + flankAngle) * this.followDistance;
+      let targetX;
+      let targetY;
+      if (this.owner && this.owner.isLeashed) {
+        const slot = getLeashSlot(this.owner);
+        this.targetSlot = slot;
+        targetX = slot.x;
+        targetY = slot.y;
+      } else {
+        this.targetSlot = null;
+        const heading = resolveOwnerHeading(this.owner);
+        const sideSign = this.preferredSide === 'left' ? -1 : 1;
+        const bearing = heading + sideSign * FLANK_RIGHT.mid;
+        targetX = this.owner.x + Math.cos(bearing) * this.followDistance;
+        targetY = this.owner.y + Math.sin(bearing) * this.followDistance;
+      }
 
       const dx = targetX - this.x;
       const dy = targetY - this.y;
@@ -1937,8 +2084,7 @@ export class CompanionDog {
     }
 
     // Hand anchor on the flank side the dog is currently on (matches flank band).
-    // HAND_RADIUS (28) is strictly outside PLAYER_HIT_RADIUS (26) so the anchor
-    // itself never sits inside the owner torso.
+    // Prefer the owner's rendered grip hand so the leash starts exactly there.
     const sideSign = this.preferredSide === 'left' ? -1 : 1;
     let handSide = sideSign * HAND_SIDE;
     let handX;
@@ -1958,10 +2104,12 @@ export class CompanionDog {
     const collarY = collar.y;
 
     // Guard: if the leash midpoint would clip the owner torso, widen the hand
-    // offset further so the sag point clears the body radius.
+    // offset further so the sag point clears the body radius. When the owner
+    // exposes a real grip anchor we keep it fixed (never detach from the hand).
+    const hasAnchor = Boolean(this.owner && typeof this.owner.getLeashHandAnchor === 'function');
     const midX0 = (handX + collarX) / 2;
     const midY0 = (handY + collarY) / 2;
-    if (Math.hypot(midX0 - this.owner.x, midY0 - this.owner.y) <= PLAYER_HIT_RADIUS) {
+    if (!hasAnchor && Math.hypot(midX0 - this.owner.x, midY0 - this.owner.y) <= PLAYER_HIT_RADIUS) {
       handSide = sideSign * (HAND_SIDE + (10 * Math.PI) / 180);
       handX = this.owner.x + Math.cos(this.owner.angle + handSide) * HAND_RADIUS;
       handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
@@ -1984,7 +2132,8 @@ export class CompanionDog {
     const jitterX = perpX * jitter;
     const jitterY = perpY * jitter;
 
-    // Minimal sag (<= 2px and <= 3% of leash length) so the lead reads as taut
+    // Minimal sag (<= 2px and <= 3% of leash length) so the lead reads as taut.
+    // Under high tension / pulling the lead must stay taut: never increase sag.
     const sagCap = Math.min(2.0, leashLen * 0.03);
     const sag = Math.min(sagCap, this.leashSagPx || 0);
 
@@ -2039,3 +2188,14 @@ export class CompanionDog {
     ctx.restore();
   }
 }
+
+// Static exports for test/tooling access
+CompanionDog.LEASH_FLANK_CLEARANCE_MIN_PX = LEASH_FLANK_CLEARANCE_MIN_PX;
+CompanionDog.LEASH_FLANK_CLEARANCE_MAX_PX = LEASH_FLANK_CLEARANCE_MAX_PX;
+CompanionDog.LEASH_FLANK_CLEARANCE_TARGET_PX = LEASH_FLANK_CLEARANCE_TARGET_PX;
+CompanionDog.LEASH_FORWARD_LEAD_MIN_PX = LEASH_FORWARD_LEAD_MIN_PX;
+CompanionDog.LEASH_FORWARD_LEAD_MAX_PX = LEASH_FORWARD_LEAD_MAX_PX;
+CompanionDog.LEASH_FORWARD_LEAD_TARGET_PX = LEASH_FORWARD_LEAD_TARGET_PX;
+CompanionDog.LEASH_FEEDFORWARD_SECONDS = LEASH_FEEDFORWARD_SECONDS;
+CompanionDog.LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX;
+CompanionDog.getLeashSlot = getLeashSlot;

@@ -19,6 +19,9 @@ import { environmentSystem, TimeOfDay } from './world/environment.js';
 import { initWasmSim, syncWorldObstacles } from './engine/wasm_sim_bridge.js';
 import { applyCoastalShallowWaterInteraction } from './systems/coastalWater.js';
 
+// Speed-up floating chevron badge lifetime (ms). Must stay within [400, 500].
+export const SPEED_BADGE_DURATION_MS = 450;
+
 export class CliftonDownGame {
   constructor() {
     this.canvas = document.getElementById('game-canvas');
@@ -42,6 +45,15 @@ export class CliftonDownGame {
     this.ball.inOwnerPossession = true;
 
     this.camera.follow(this.owner);
+
+    // Speed-up floating chevron badges (STROLL->WALK, WALK->JOG).
+    // Declared before the gait-change hook so the callback can safely push.
+    this.speedBadges = [];
+
+    // Wire gait-change hook at the transition source (Owner.setGait).
+    this.owner.onGaitChange = (prevGait, nextGait) => {
+      this.spawnSpeedBadge(prevGait, nextGait);
+    };
 
     // Zone Warping State
     this.currentZoneId = 'clifton-commons';
@@ -187,7 +199,7 @@ export class CliftonDownGame {
     this.hasInteracted = false;
     this.lastFootstepTime = 0;
 
-    // Click feedback markers (steer-single / steer-double)
+    // Click feedback markers (unified single 'x' reticle)
     this.clickFeedback = [];
 
     // Environment & Weather Systems
@@ -506,6 +518,17 @@ export class CliftonDownGame {
         return;
       }
 
+      // Enable-only wander mode. Never toggles off via KeyW.
+      if (e.code === 'KeyW') {
+        if (this.owner && !this.owner.wanderMode) {
+          this.owner.wanderMode = true;
+          this.owner.wanderBaseHeading = this.owner.angle;
+          this.owner.wanderPhase = 0;
+        }
+        e.preventDefault();
+        return;
+      }
+
       switch (e.code) {
         case 'KeyQ':
           // Toggle Leash
@@ -578,6 +601,8 @@ export class CliftonDownGame {
       if (!captured) return;
 
       if (captured.type === 'brake') {
+        // Any brake gesture cancels wander mode.
+        if (this.owner.wanderMode) this.owner.wanderMode = false;
         // Brake-light feedback pulse on any brake gesture
         if (typeof this.owner.triggerBrakeLight === 'function') {
           const brakeNow = (typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -610,6 +635,9 @@ export class CliftonDownGame {
       const heading = captured.heading;
       if (typeof heading !== 'number' || !isFinite(heading)) return;
 
+      // Any pointer steering (single or double) cancels wander mode.
+      if (this.owner.wanderMode) this.owner.wanderMode = false;
+
       const gaitAtPress = captured.gaitAtPress;
       this.owner.setTargetHeading(heading);
 
@@ -617,20 +645,19 @@ export class CliftonDownGame {
       const worldX = captured.worldX;
       const worldY = captured.worldY;
 
+      // Unified single 'x' reticle for both single and double field presses.
+      // Double-click replaces any prior marker so exactly ONE reticle renders.
+      this.clickFeedback = [{
+        kind: 'steer-single',
+        worldX,
+        worldY,
+        startedAt: now,
+        durationMs: 400,
+        glyph: 'x',
+        color: '#ffffff'
+      }];
+
       if (isDouble) {
-        // Cancel any pending single-click marker within the double-click window
-        this.clickFeedback = this.clickFeedback.filter(
-          (f) => !(f.kind === 'steer-single' && (now - f.startedAt) <= DOUBLE_CLICK_MS + 50)
-        );
-        this.clickFeedback.push({
-          kind: 'steer-double',
-          worldX,
-          worldY,
-          startedAt: now,
-          durationMs: 400,
-          glyph: '+',
-          color: '#22c55e'
-        });
         if (gaitAtPress === 'STAND') {
           this.owner.setGait('STROLL');
         } else if (gaitAtPress === 'STROLL') {
@@ -639,15 +666,6 @@ export class CliftonDownGame {
           this.owner.setGait('JOG');
         }
       } else {
-        this.clickFeedback.push({
-          kind: 'steer-single',
-          worldX,
-          worldY,
-          startedAt: now,
-          durationMs: 400,
-          glyph: 'x',
-          color: '#ffffff'
-        });
         if (gaitAtPress === 'STAND') {
           this.owner.setGait('STROLL');
         }
@@ -683,6 +701,12 @@ export class CliftonDownGame {
       // Only left-click / primary pointer
       if (e.button !== undefined && e.button !== 0) return;
 
+      // Immediate wander-mode cancellation on the very first primary
+      // pointerdown, without waiting for the 280ms double-click window.
+      if (this.owner && this.owner.wanderMode) {
+        this.owner.wanderMode = false;
+      }
+
       // --- Avatar click → brake gesture (REQ-004) ---
       // Detect clicks on the player avatar body. A standing avatar is an
       // explicit no-op for locomotion. A moving avatar is routed through the
@@ -700,6 +724,7 @@ export class CliftonDownGame {
       if (onPlayer && this.owner.gait === 'STAND') {
         // Standing avatar: no brake, no gait change. Cancel any pending
         // deferred gesture so it cannot fire later.
+        if (this.owner.wanderMode) this.owner.wanderMode = false;
         cancelPendingSingle();
         this._lastClickTime = 0;
         this._lastClickX = 0;
@@ -764,6 +789,11 @@ export class CliftonDownGame {
         (typeof this.owner.isPointOnRearBrakeArc === 'function' &&
           this.owner.isPointOnRearBrakeArc(worldTarget.x, worldTarget.y))
       );
+
+      // Avatar click or rear-brake-arc click cancels wander mode immediately.
+      if (isBrake && this.owner.wanderMode) {
+        this.owner.wanderMode = false;
+      }
 
       const captured = {
         type: isBrake ? 'brake' : 'field',
@@ -1256,6 +1286,8 @@ export class CliftonDownGame {
     this.updateLocalSpawner(dt);
 
     // 3. Update Local Entities
+    // Speed badges are spawned via the Owner.onGaitChange hook (see constructor),
+    // so no fragile frame-polling is required here.
     this.owner.update(dt, this.field);
 
     // Collision resolution is handled inside Owner.update() via resolveCollisionWithResult.
@@ -1454,6 +1486,33 @@ export class CliftonDownGame {
     this.camera.update(dt);
   }
 
+  // Spawn a floating speed-up chevron badge for qualifying gait transitions.
+  // Only STROLL->WALK (level 1) and WALK->JOG (level 2) qualify.
+  // Accepts either Gait enum values or their string equivalents.
+  spawnSpeedBadge(prevGait, nextGait) {
+    if (!this.owner) return;
+    const prev = String(prevGait);
+    const next = String(nextGait);
+    let badge = null;
+    if (prev === 'STROLL' && next === 'WALK') {
+      badge = { level: 1, glyph: '^', color: '#94a3b8' };
+    } else if (prev === 'WALK' && next === 'JOG') {
+      badge = { level: 2, glyph: '^^', color: '#22c55e' };
+    }
+    if (!badge) return;
+    if (!Array.isArray(this.speedBadges)) this.speedBadges = [];
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    this.speedBadges.push({
+      level: badge.level,
+      glyph: badge.glyph,
+      color: badge.color,
+      worldX: this.owner.x + 16,
+      worldY: this.owner.y - 20,
+      startedAt: now,
+      durationMs: SPEED_BADGE_DURATION_MS
+    });
+  }
+
   render() {
     if (!this.ctx) return;
 
@@ -1486,18 +1545,17 @@ export class CliftonDownGame {
     // Field renders background turf, then Y-sorts trees, benches, owners, dogs, and balls
     this.field.render(this.ctx, this.camera, dynamicEntities);
 
-    // Click feedback markers (steer-single / steer-double)
+    // Click feedback markers (unified single 'x' reticle).
+    // Rendered directly in WORLD coordinates inside the camera transform —
+    // never call worldToScreen() here (that would double-project).
     if (Array.isArray(this.clickFeedback) && this.clickFeedback.length > 0) {
       const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       this.clickFeedback = this.clickFeedback.filter((f) => (now - f.startedAt) <= f.durationMs);
       for (const f of this.clickFeedback) {
         const elapsed = now - f.startedAt;
         const alpha = Math.max(0, 1.0 - (elapsed / f.durationMs));
-        // Project world coordinates through the camera transform so the
-        // feedback glyph lands on the correct screen pixel.
-        const pt = this.camera.worldToScreen(f.worldX, f.worldY);
-        const sx = pt.x;
-        const sy = pt.y;
+        const sx = f.worldX;
+        const sy = f.worldY;
         this.ctx.save();
         this.ctx.globalAlpha = alpha;
         this.ctx.strokeStyle = f.color;
@@ -1505,21 +1563,32 @@ export class CliftonDownGame {
         this.ctx.lineWidth = 2.5;
         this.ctx.lineCap = 'round';
         const s = 7;
-        if (f.glyph === '+') {
-          this.ctx.beginPath();
-          this.ctx.moveTo(sx - s, sy);
-          this.ctx.lineTo(sx + s, sy);
-          this.ctx.moveTo(sx, sy - s);
-          this.ctx.lineTo(sx, sy + s);
-          this.ctx.stroke();
-        } else {
-          this.ctx.beginPath();
-          this.ctx.moveTo(sx - s, sy - s);
-          this.ctx.lineTo(sx + s, sy + s);
-          this.ctx.moveTo(sx + s, sy - s);
-          this.ctx.lineTo(sx - s, sy + s);
-          this.ctx.stroke();
-        }
+        this.ctx.beginPath();
+        this.ctx.moveTo(sx - s, sy - s);
+        this.ctx.lineTo(sx + s, sy + s);
+        this.ctx.moveTo(sx + s, sy - s);
+        this.ctx.lineTo(sx - s, sy + s);
+        this.ctx.stroke();
+        this.ctx.restore();
+      }
+    }
+
+    // Speed-up floating chevron badges (world-space, float up + fade).
+    if (Array.isArray(this.speedBadges) && this.speedBadges.length > 0) {
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      this.speedBadges = this.speedBadges.filter((b) => (now - b.startedAt) <= b.durationMs);
+      for (const b of this.speedBadges) {
+        const elapsed = now - b.startedAt;
+        const t = Math.max(0, Math.min(1, elapsed / b.durationMs));
+        const alpha = Math.max(0, 1.0 - t);
+        const rise = 15 * t;
+        this.ctx.save();
+        this.ctx.globalAlpha = alpha;
+        this.ctx.fillStyle = b.color;
+        this.ctx.font = 'bold 13px system-ui, -apple-system, sans-serif';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText(b.glyph, b.worldX, b.worldY - rise);
         this.ctx.restore();
       }
     }

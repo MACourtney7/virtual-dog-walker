@@ -36,6 +36,30 @@ const PLAYER_HIT_RADIUS = 26;
 const JOG_DURATION = 2.0;
 const JOG_COOLDOWN = 2.0;
 
+// Wander mode (KeyW autopilot stroll) constants
+export const WANDER_SPEED = Gait.STROLL;            // 75 px/s
+export const WANDER_MAX_TURN_RATE = Math.PI * 1.4;  // rad/s
+export const WANDER_DRIFT_AMPLITUDE = 0.55;         // rad
+export const WANDER_DRIFT_FREQUENCY = 0.35;         // Hz
+export const WANDER_LOOKAHEAD_PX = 96;
+
+// Leash arm pose constants (exported for tests/tooling)
+export const LEASH_ARM_SWING_SCALE = 0.15;
+export const LEASH_ARM_BASE_REACH_PX = 18;
+export const LEASH_ARM_MAX_REACH_PX = 34;
+export const LEASH_ARM_TENSION_RAMP_PX = 140; // distance that maps to tension = 1
+export const LEASH_ARM_SHOULDER_OFFSET_PX = 8;
+export const LEASH_ARM_HAND_RADIUS_PX = 3.5;
+
+function clamp01(v) {
+  if (!isFinite(v)) return 0;
+  return v < 0 ? 0 : (v > 1 ? 1 : v);
+}
+
+function lerpNum(a, b, t) {
+  return a + (b - a) * t;
+}
+
 // Wrapped shortest-arc delta from a to b
 function angleDelta(a, b) {
   let delta = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
@@ -99,6 +123,17 @@ export class Owner {
     this.stepOffTimer = 0;
     this.stepOffActive = false;
 
+    // Leash arm pose state (updated each frame while leashed)
+    this.leashArmExtensionPx = LEASH_ARM_BASE_REACH_PX;
+    this.leashArmTension = 0;
+    this.leashDistance = 0;
+
+    // Wander mode (KeyW autopilot stroll) state
+    this.wanderMode = false;
+    this.wanderPhase = 0;
+    this.wanderBaseHeading = this.angle;
+    this.wanderTargetHeading = this.angle;
+
     // Brake-light feedback pulse (rear brake sector flash)
     this.brakeLightFeedback = {
       active: false,
@@ -108,6 +143,10 @@ export class Owner {
       peakStrokeAlpha: 0.9,
       color: '#ef4444'
     };
+
+    // Gait-change event hook (wired by main.js to spawn speed badges).
+    // Signature: (prevGait, nextGait) => void
+    this.onGaitChange = null;
   }
 
   triggerBrakeLight(now = (typeof performance !== 'undefined' ? performance.now() : Date.now())) {
@@ -115,14 +154,69 @@ export class Owner {
     this.brakeLightFeedback.startedAt = now;
   }
 
+  // Normalized leash tension in [0, 1]. Derived from leash distance and the
+  // dog's pulling state. Falls back gracefully when no dog reference exists.
+  getLeashTension() {
+    const dog = this.dog || null;
+    let dist = this.leashDistance;
+    if ((!dist || !isFinite(dist)) && dog) {
+      dist = Math.hypot(dog.x - this.x, dog.y - this.y);
+    }
+    if (!dist || !isFinite(dist)) dist = 0;
+    let tension = clamp01(dist / LEASH_ARM_TENSION_RAMP_PX);
+    if (dog && dog.isPullingLeash) {
+      tension = Math.max(tension, 0.85);
+    }
+    return tension;
+  }
+
+  // Compute the leash hand position in owner-local space.
+  // Local frame: +x = forward (heading), +y = screen-right of heading.
+  // This is the SINGLE SOURCE OF TRUTH for both rendering and the anchor.
+  computeLeashHandLocal() {
+    const sideSign = this.leashHandSide === 'left' ? -1 : 1;
+    const tension = this.getLeashTension();
+
+    const shoulderX = 0;
+    const shoulderY = sideSign * LEASH_ARM_SHOULDER_OFFSET_PX;
+
+    const reach = lerpNum(LEASH_ARM_BASE_REACH_PX, LEASH_ARM_MAX_REACH_PX, tension);
+
+    // Aim forward with a slight outward bias toward the dog's flank.
+    let armAngle = sideSign * (0.35 + 0.25 * (1 - tension));
+
+    // Reduced stride oscillation on the holding arm only.
+    // NOTE: armAngle is in RADIANS, so the swing must be an angular amplitude
+    // (not a pixel displacement). 0.35 rad * LEASH_ARM_SWING_SCALE (0.15)
+    // yields ~0.0525 rad (~3 deg) of gentle, stabilized leash-hand vibration.
+    const swingAngle = this.isMoving ? 0.35 : 0;
+    armAngle += Math.sin(this.walkPhase) * swingAngle * LEASH_ARM_SWING_SCALE * sideSign;
+
+    return {
+      x: shoulderX + Math.cos(armAngle) * reach,
+      y: shoulderY + Math.sin(armAngle) * reach,
+      shoulderX,
+      shoulderY,
+      armAngle,
+      reach,
+      tension
+    };
+  }
+
   getLeashHandAnchor(preferredSide = this.leashHandSide || 'right') {
     const side = preferredSide === 'left' ? 'left' : 'right';
     this.leashHandSide = side;
-    const sideSign = side === 'left' ? -1 : 1;
-    const handSide = sideSign * ((30 * Math.PI) / 180);
+
+    const local = this.computeLeashHandLocal();
+    const c = Math.cos(this.angle);
+    const s = Math.sin(this.angle);
+    // Match the rendered grip hand exactly: draw() places the torso at
+    // `this.y - 3 + kneelDrop` and the leash arm hand at torso-relative
+    // coordinates, so the anchor must include the same -3 vertical offset.
+    const torsoYOffset = -3;
     return {
-      x: this.x + Math.cos(this.angle + handSide) * 28,
-      y: this.y + Math.sin(this.angle + handSide) * 28
+      x: this.x + local.x * c - local.y * s,
+      y: this.y + torsoYOffset + local.x * s + local.y * c
     };
   }
 
@@ -147,13 +241,15 @@ export class Owner {
     if (!GAIT_ORDER.includes(nextGait)) return;
     if (nextGait === this.gait) return;
 
-    const prevIndex = GAIT_ORDER.indexOf(this.gait);
-    const nextIndex = GAIT_ORDER.indexOf(nextGait);
+    const prevGait = this.gait;
 
     // Clamp upward transitions into JOG while cooldown is active
     if (nextGait === Gait.JOG && this.jogCooldown > 0) {
       nextGait = Gait.WALK;
     }
+
+    // If the clamp collapsed the transition back to the current gait, bail.
+    if (nextGait === this.gait) return;
 
     // Leaving JOG starts cooldown
     if (this.gait === Gait.JOG && nextGait !== Gait.JOG) {
@@ -188,6 +284,12 @@ export class Owner {
       this.vx = 0;
       this.vy = 0;
     }
+
+    // Fire the gait-change hook at the transition source so downstream
+    // consumers (e.g. speed badges) never rely on fragile frame polling.
+    if (typeof this.onGaitChange === 'function') {
+      this.onGaitChange(prevGait, this.gait);
+    }
   }
 
   stepGait(delta) {
@@ -197,6 +299,134 @@ export class Owner {
     const nextIdx = Math.max(0, Math.min(GAIT_ORDER.length - 1, idx + dir));
     if (nextIdx === idx) return;
     this.setGait(GAIT_ORDER[nextIdx]);
+  }
+
+  // --- Wander mode (autopilot stroll) ---
+
+  getWanderSpeed() {
+    return GAIT_SPEEDS[WANDER_SPEED] || 0;
+  }
+
+  // Probe a point ahead of the owner for world-boundary or obstacle blockage.
+  // Returns true when the probe point is blocked.
+  _isWanderProbeBlocked(px, py, world) {
+    if (!world) return false;
+
+    // World bounds check (respect owner radius + small margin)
+    const w = (typeof world.width === 'number') ? world.width : null;
+    const h = (typeof world.height === 'number') ? world.height : null;
+    if (w !== null && h !== null) {
+      const margin = (this.radius || 16) + 4;
+      if (px < margin || py < margin || px > w - margin || py > h - margin) {
+        return true;
+      }
+    }
+
+    // Obstacle colliders check
+    const colliders = Array.isArray(world.colliders) ? world.colliders : null;
+    if (colliders) {
+      for (const c of colliders) {
+        if (!c) continue;
+        const cx = (typeof c.x === 'number') ? c.x : null;
+        const cy = (typeof c.y === 'number') ? c.y : null;
+        if (cx === null || cy === null) continue;
+        const cr = (typeof c.radius === 'number') ? c.radius : 0;
+        const reach = cr + (this.radius || 16);
+        const dx = px - cx;
+        const dy = py - cy;
+        if (dx * dx + dy * dy < reach * reach) return true;
+      }
+    }
+
+    // World obstacles (rectangular) check
+    const obstacles = Array.isArray(world.obstacles) ? world.obstacles : null;
+    if (obstacles) {
+      for (const o of obstacles) {
+        if (!o) continue;
+        const ox = (typeof o.x === 'number') ? o.x : null;
+        const oy = (typeof o.y === 'number') ? o.y : null;
+        if (ox === null || oy === null) continue;
+        const ow = (typeof o.w === 'number') ? o.w : (typeof o.width === 'number' ? o.width : 0);
+        const oh = (typeof o.h === 'number') ? o.h : (typeof o.height === 'number' ? o.height : 0);
+        const pad = (this.radius || 16);
+        if (px > ox - pad && px < ox + ow + pad && py > oy - pad && py < oy + oh + pad) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  // Per-frame autopilot stepper. Advances a smooth meandering heading at
+  // Gait.STROLL speed, steering away from obstacles and world boundaries.
+  updateWander(dt, world) {
+    if (!this.wanderMode) return;
+
+    // Advance drift phase
+    this.wanderPhase += WANDER_DRIFT_FREQUENCY * Math.PI * 2 * dt;
+
+    // Base meandering target heading
+    let targetHeading = this.wanderBaseHeading +
+      Math.sin(this.wanderPhase) * WANDER_DRIFT_AMPLITUDE;
+
+    // Forward probe: if blocked, search for a clear side.
+    const probeDist = WANDER_LOOKAHEAD_PX;
+    const probeX = this.x + Math.cos(targetHeading) * probeDist;
+    const probeY = this.y + Math.sin(targetHeading) * probeDist;
+
+    if (this._isWanderProbeBlocked(probeX, probeY, world)) {
+      const offsets = [
+        Math.PI / 6, -Math.PI / 6,
+        Math.PI / 3, -Math.PI / 3,
+        Math.PI / 2, -Math.PI / 2
+      ];
+      let chosen = null;
+      for (const off of offsets) {
+        const testHeading = targetHeading + off;
+        const tx = this.x + Math.cos(testHeading) * probeDist;
+        const ty = this.y + Math.sin(testHeading) * probeDist;
+        if (!this._isWanderProbeBlocked(tx, ty, world)) {
+          chosen = testHeading;
+          break;
+        }
+      }
+      if (chosen !== null) {
+        targetHeading = chosen;
+        // Slowly rotate the base heading away from the obstacle so we do not
+        // re-target it every frame.
+        const baseDelta = angleDelta(this.wanderBaseHeading, chosen);
+        this.wanderBaseHeading += Math.sign(baseDelta) * Math.min(Math.abs(baseDelta), 0.6 * dt);
+      } else {
+        // Fully boxed in: reverse the base heading to escape.
+        this.wanderBaseHeading += Math.PI;
+      }
+    }
+
+    this.wanderTargetHeading = targetHeading;
+
+    // Clamp heading change to the wander max turn rate.
+    const maxStep = WANDER_MAX_TURN_RATE * dt;
+    const delta = angleDelta(this.angle, targetHeading);
+    if (Math.abs(delta) <= maxStep) {
+      this.angle = targetHeading;
+    } else {
+      this.angle += Math.sign(delta) * maxStep;
+    }
+    this.angle = ((this.angle + Math.PI) % (Math.PI * 2)) - Math.PI;
+    if (this.angle < -Math.PI) this.angle += Math.PI * 2;
+
+    // Keep targetHeading synced so external readers see the wander intent.
+    this.targetHeading = this.angle;
+
+    // Force STROLL gait while wandering. Route through setGait so that
+    // leaving JOG starts the normal JOG_COOLDOWN, isMoving is synced, and
+    // onGaitChange fires for downstream consumers (e.g. speed badges).
+    if (this.gait !== Gait.STROLL) {
+      this.setGait(Gait.STROLL);
+    }
+    this.stepOffActive = false;
+    this.stepOffTimer = 0;
   }
 
   // --- Heading integration ---
@@ -323,8 +553,12 @@ export class Owner {
       this.stepOffTimer = Math.max(0, this.stepOffTimer - dt);
     }
 
-    // 3. Update heading toward target
-    this._updateHeading(dt);
+    // 3. Wander mode overrides normal heading integration.
+    if (this.wanderMode) {
+      this.updateWander(dt, field);
+    } else {
+      this._updateHeading(dt);
+    }
 
     // 4. Compute velocity from gait speed and current angle
     const speed = this.getCurrentSpeed();
@@ -380,6 +614,21 @@ export class Owner {
     if (!this.isMoving) {
       this.vx = 0;
       this.vy = 0;
+    }
+
+    // Update leash arm pose state (tension + extension) each frame.
+    if (this.isLeashed) {
+      const dog = this.dog || null;
+      this.leashDistance = dog ? Math.hypot(dog.x - this.x, dog.y - this.y) : 0;
+      this.leashArmTension = this.getLeashTension();
+      this.leashArmExtensionPx = lerpNum(
+        LEASH_ARM_BASE_REACH_PX,
+        LEASH_ARM_MAX_REACH_PX,
+        this.leashArmTension
+      );
+    } else {
+      this.leashArmTension = 0;
+      this.leashArmExtensionPx = LEASH_ARM_BASE_REACH_PX;
     }
 
     this.depthY = this.y + 12;
@@ -511,12 +760,63 @@ export class Owner {
     };
 
     // Helper for arms
-    const drawArm = (shX, shY, swing, isFar) => {
+    const drawArm = (shX, shY, swing, isFar, isLeashArm = false) => {
       ctx.save();
       const ax = torsoX + shX;
       const ay = torsoY - 7 + shY;
 
       ctx.fillStyle = isFar ? this.getShadedColor(this.jacketColor, -0.18) : this.jacketColor;
+
+      if (isLeashArm && this.isLeashed) {
+        // Leash-holding arm: bent elbow reaching toward the dog's flank.
+        const local = this.computeLeashHandLocal();
+        const c = cosA;
+        const s = sinA;
+        // Convert owner-local (forward, right) to world offset.
+        const handWorldX = local.x * c - local.y * s;
+        const handWorldY = local.x * s + local.y * c;
+        const handX = this.x + handWorldX;
+        const handY = this.y - 3 + handWorldY;
+
+        // Elbow: midpoint pushed slightly outward from the shoulder.
+        const midX = (ax + handX) / 2;
+        const midY = (ay + handY) / 2;
+        const sideSign = this.leashHandSide === 'left' ? -1 : 1;
+        const elbowX = midX + (-sinA) * sideSign * 3.0;
+        const elbowY = midY + (cosA * 0.36) * sideSign * 3.0;
+
+        // Upper arm (shoulder -> elbow)
+        ctx.strokeStyle = isFar ? this.getShadedColor(this.jacketColor, -0.18) : this.jacketColor;
+        ctx.lineWidth = 4.6;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(elbowX, elbowY);
+        ctx.stroke();
+
+        // Forearm (elbow -> hand)
+        ctx.beginPath();
+        ctx.moveTo(elbowX, elbowY);
+        ctx.lineTo(handX, handY);
+        ctx.stroke();
+
+        // Grip hand
+        ctx.fillStyle = this.skinTone;
+        ctx.beginPath();
+        ctx.arc(handX, handY, LEASH_ARM_HAND_RADIUS_PX, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Short thumb stroke across the grip
+        ctx.strokeStyle = this.getShadedColor(this.skinTone, -0.15);
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(handX - 1.5, handY - 1.5);
+        ctx.lineTo(handX + 1.5, handY + 1.5);
+        ctx.stroke();
+
+        ctx.restore();
+        return;
+      }
 
       if (isKneeling && !isFar) {
         // Kneeling / bending gesture: arm reaches down toward pet or waste
@@ -551,13 +851,18 @@ export class Owner {
       ctx.restore();
     };
 
+    // Determine which shoulder is the leash-holding side.
+    const leashSideSign = this.leashHandSide === 'left' ? -1 : 1;
+    const leftIsLeashArm = this.isLeashed && leashSideSign === -1;
+    const rightIsLeashArm = this.isLeashed && leashSideSign === 1;
+
     // --- DEPTH LAYER 1: Far Arm & Far Leg (behind torso) ---
     if (leftIsFar) {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, true);
-      drawArm(leftShoulderX, leftShoulderY, -armSwing, true);
+      drawArm(leftShoulderX, leftShoulderY, -armSwing, true, leftIsLeashArm);
     } else {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, true);
-      drawArm(rightShoulderX, rightShoulderY, armSwing, true);
+      drawArm(rightShoulderX, rightShoulderY, armSwing, true, rightIsLeashArm);
     }
 
     // --- DEPTH LAYER 2: Accessory (Backpack when facing South / from front) ---
@@ -657,10 +962,10 @@ export class Owner {
     // --- DEPTH LAYER 5: Near Leg & Near Arm (in front of torso) ---
     if (leftIsFar) {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, false);
-      drawArm(rightShoulderX, rightShoulderY, armSwing, false);
+      drawArm(rightShoulderX, rightShoulderY, armSwing, false, rightIsLeashArm);
     } else {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, false);
-      drawArm(leftShoulderX, leftShoulderY, -armSwing, false);
+      drawArm(leftShoulderX, leftShoulderY, -armSwing, false, leftIsLeashArm);
     }
 
     // --- DEPTH LAYER 6: Head, Face, Ears & Hairstyle ---
@@ -1192,3 +1497,14 @@ export class Owner {
 Owner.GAIT_SPEEDS = GAIT_SPEEDS;
 Owner.PLAYER_HIT_RADIUS = PLAYER_HIT_RADIUS;
 Owner.STEP_OFF_ALIGN_TOLERANCE = STEP_OFF_ALIGN_TOLERANCE;
+Owner.LEASH_ARM_SWING_SCALE = LEASH_ARM_SWING_SCALE;
+Owner.LEASH_ARM_BASE_REACH_PX = LEASH_ARM_BASE_REACH_PX;
+Owner.LEASH_ARM_MAX_REACH_PX = LEASH_ARM_MAX_REACH_PX;
+Owner.LEASH_ARM_TENSION_RAMP_PX = LEASH_ARM_TENSION_RAMP_PX;
+Owner.LEASH_ARM_SHOULDER_OFFSET_PX = LEASH_ARM_SHOULDER_OFFSET_PX;
+Owner.LEASH_ARM_HAND_RADIUS_PX = LEASH_ARM_HAND_RADIUS_PX;
+Owner.WANDER_SPEED = WANDER_SPEED;
+Owner.WANDER_MAX_TURN_RATE = WANDER_MAX_TURN_RATE;
+Owner.WANDER_DRIFT_AMPLITUDE = WANDER_DRIFT_AMPLITUDE;
+Owner.WANDER_DRIFT_FREQUENCY = WANDER_DRIFT_FREQUENCY;
+Owner.WANDER_LOOKAHEAD_PX = WANDER_LOOKAHEAD_PX;

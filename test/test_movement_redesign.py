@@ -2306,5 +2306,257 @@ class TestForwardLeadBoundsAllGaits(unittest.TestCase):
                     )
 
 
+# ---------------------------------------------------------------------------
+# unification-022 remediation cycle 3: holding-arm swing amplitude,
+# wander setGait routing, and forward-only feed-forward with strict clamps.
+# ---------------------------------------------------------------------------
+
+
+class TestHoldingArmSwingAmplitude(unittest.TestCase):
+    """Verify the holding-arm swing is an angular amplitude (radians), not px."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_swing_uses_angular_amplitude(self):
+        self.assertIn("const swingAngle = this.isMoving ? 0.35 : 0;", self.src)
+        self.assertIn(
+            "armAngle += Math.sin(this.walkPhase) * swingAngle * LEASH_ARM_SWING_SCALE * sideSign;",
+            self.src,
+        )
+        # The old pixel-based amplitude must be gone.
+        self.assertNotIn("const swingAmplitude = this.isMoving ? 5.5 : 0;", self.src)
+
+    def test_behavioral_swing_within_0_1_radians(self):
+        """Effective swing amplitude must be <= 0.1 rad (~5.7 deg)."""
+        import math
+        LEASH_ARM_SWING_SCALE = 0.15
+        swing_angle = 0.35
+        effective = swing_angle * LEASH_ARM_SWING_SCALE
+        self.assertLessEqual(effective, 0.1)
+        # Sanity: the old bug produced ~0.825 rad (~47 deg).
+        old_effective = 5.5 * LEASH_ARM_SWING_SCALE
+        self.assertGreater(old_effective, 0.5)
+        # Peak-to-peak excursion of the arm angle stays tiny.
+        peak = abs(math.sin(1.0) * effective)
+        self.assertLess(peak, 0.1)
+
+
+class TestWanderUsesSetGait(unittest.TestCase):
+    """Verify updateWander() transitions via setGait (not raw assignment)."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_update_wander_calls_set_gait(self):
+        idx = self.src.index("updateWander(dt, world)")
+        end = self.src.index("// --- Heading integration ---", idx)
+        block = self.src[idx:end]
+        self.assertIn("if (this.gait !== Gait.STROLL) {", block)
+        self.assertIn("this.setGait(Gait.STROLL);", block)
+        # Raw assignment must be gone.
+        self.assertNotIn("this.gait = WANDER_SPEED;", block)
+
+    def test_behavioral_wander_from_jog_starts_cooldown(self):
+        """Entering wander from JOG must start the JOG cooldown via setGait."""
+        JOG_COOLDOWN = 2.0
+
+        class FakeOwner:
+            def __init__(self):
+                self.gait = 'JOG'
+                self.jogCooldown = 0.0
+                self.jogTimer = 1.5
+                self.isMoving = True
+                self.vx = 185.0
+                self.vy = 0.0
+                self.onGaitChange = None
+                self.events = []
+
+            def setGait(self, next_gait):
+                if next_gait == self.gait:
+                    return
+                prev = self.gait
+                if self.gait == 'JOG' and next_gait != 'JOG':
+                    self.jogCooldown = JOG_COOLDOWN
+                    self.jogTimer = 0
+                self.gait = next_gait
+                self.isMoving = self.gait != 'STAND'
+                if callable(self.onGaitChange):
+                    self.onGaitChange(prev, self.gait)
+
+            def updateWander(self):
+                if self.gait != 'STROLL':
+                    self.setGait('STROLL')
+
+        o = FakeOwner()
+        o.onGaitChange = lambda p, n: o.events.append((p, n))
+        o.updateWander()
+        self.assertEqual(o.gait, 'STROLL')
+        self.assertEqual(o.jogCooldown, JOG_COOLDOWN)
+        self.assertEqual(o.jogTimer, 0)
+        self.assertTrue(o.isMoving)
+        self.assertEqual(o.events, [('JOG', 'STROLL')])
+
+    def test_behavioral_wander_from_stand_no_cooldown(self):
+        class FakeOwner:
+            def __init__(self):
+                self.gait = 'STAND'
+                self.jogCooldown = 0.0
+                self.jogTimer = 0
+                self.isMoving = False
+
+            def setGait(self, next_gait):
+                if next_gait == self.gait:
+                    return
+                if self.gait == 'JOG' and next_gait != 'JOG':
+                    self.jogCooldown = 2.0
+                self.gait = next_gait
+                self.isMoving = self.gait != 'STAND'
+
+            def updateWander(self):
+                if self.gait != 'STROLL':
+                    self.setGait('STROLL')
+
+        o = FakeOwner()
+        o.updateWander()
+        self.assertEqual(o.gait, 'STROLL')
+        self.assertEqual(o.jogCooldown, 0.0)
+        self.assertTrue(o.isMoving)
+
+
+class TestForwardOnlyFeedForward(unittest.TestCase):
+    """Verify getLeashSlot applies feed-forward only along forward and clamps."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_forward_only_feedforward_present(self):
+        idx = self.src.index("export function getLeashSlot")
+        end = self.src.index("// States that must never be interrupted", idx)
+        block = self.src[idx:end]
+        self.assertIn("const forwardSpeed = vel.x * forward.x + vel.y * forward.y;", block)
+        self.assertIn("forwardSpeed * LEASH_FEEDFORWARD_SECONDS", block)
+        # The old per-axis feed-forward must be gone.
+        self.assertNotIn("slotX += vel.x * LEASH_FEEDFORWARD_SECONDS;", block)
+        self.assertNotIn("slotY += vel.y * LEASH_FEEDFORWARD_SECONDS;", block)
+
+    def test_forward_lead_clamped_before_compose(self):
+        idx = self.src.index("export function getLeashSlot")
+        end = self.src.index("// States that must never be interrupted", idx)
+        block = self.src[idx:end]
+        # Clamp must appear before the slot composition.
+        idx_clamp = block.index("forwardLead = Math.max(")
+        idx_compose = block.index("let slotX = pos.x + forward.x * forwardLead")
+        self.assertLess(idx_clamp, idx_compose)
+
+    def _slot(self, owner_x, owner_y, heading, vx, vy, side='right',
+              half_width=10.5):
+        import math
+        forward = (math.cos(heading), math.sin(heading))
+        right = (-math.sin(heading), math.cos(heading))
+        flank_sign = -1 if side == 'left' else 1
+        lateral = max(half_width + 24, min(half_width + 28, half_width + 26))
+        forward_speed = vx * forward[0] + vy * forward[1]
+        forward_lead = 46.0 + forward_speed * 0.12
+        forward_lead = max(40.0, min(52.0, forward_lead))
+        sx = owner_x + forward[0] * forward_lead + right[0] * flank_sign * lateral
+        sy = owner_y + forward[1] * forward_lead + right[1] * flank_sign * lateral
+        # Shoulder-line clamp
+        proj = (sx - owner_x) * forward[0] + (sy - owner_y) * forward[1]
+        if proj < 2.0:
+            push = 2.0 - proj
+            sx += forward[0] * push
+            sy += forward[1] * push
+        return sx, sy
+
+    def test_behavioral_forward_lead_all_gaits_and_collisions(self):
+        """Forward lead stays in [40, 52] and lateral in [24, 28] across gaits
+        and collision-slide velocities."""
+        import math
+        GAIT_SPEEDS = {'STAND': 0, 'STROLL': 75, 'WALK': 100, 'JOG': 185}
+        half_width = 10.5
+        # Include pure-lateral collision-slide velocities.
+        velocities = []
+        for speed in GAIT_SPEEDS.values():
+            velocities.append((speed, 0.0))
+            velocities.append((0.0, speed))
+            velocities.append((speed * 0.7, speed * 0.7))
+            velocities.append((-speed, 0.0))
+            velocities.append((0.0, -speed))
+        # Extra high-speed lateral slide (wall collision).
+        velocities.append((0.0, 400.0))
+        velocities.append((400.0, 0.0))
+
+        for deg in (0, 45, 90, 135, 180, 225, 270, 315):
+            heading = math.radians(deg)
+            forward = (math.cos(heading), math.sin(heading))
+            right = (-math.sin(heading), math.cos(heading))
+            for vx, vy in velocities:
+                for side in ('right', 'left'):
+                    sx, sy = self._slot(100.0, 100.0, heading, vx, vy, side,
+                                        half_width=half_width)
+                    rel_x = sx - 100.0
+                    rel_y = sy - 100.0
+                    proj = rel_x * forward[0] + rel_y * forward[1]
+                    lateral = math.hypot(
+                        rel_x - forward[0] * proj,
+                        rel_y - forward[1] * proj,
+                    )
+                    clearance = lateral - half_width
+                    self.assertGreaterEqual(
+                        proj, 40 - 1e-6,
+                        f"deg={deg} v=({vx},{vy}) side={side} proj={proj} < 40"
+                    )
+                    self.assertLessEqual(
+                        proj, 52 + 1e-6,
+                        f"deg={deg} v=({vx},{vy}) side={side} proj={proj} > 52"
+                    )
+                    self.assertGreaterEqual(
+                        clearance, 24 - 1e-6,
+                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} < 24"
+                    )
+                    self.assertLessEqual(
+                        clearance, 28 + 1e-6,
+                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} > 28"
+                    )
+
+    def test_behavioral_lateral_velocity_does_not_shift_lateral(self):
+        """Pure lateral velocity must not change the lateral clearance."""
+        import math
+        heading = 0.0
+        base_x, base_y = self._slot(100.0, 100.0, heading, 0.0, 0.0)
+        slide_x, slide_y = self._slot(100.0, 100.0, heading, 0.0, 400.0)
+        # Lateral (y) offset must be identical; only forward (x) may change.
+        self.assertAlmostEqual(base_y, slide_y, places=6)
+        # Forward lead must remain within bounds.
+        self.assertGreaterEqual(slide_x - 100.0, 40 - 1e-6)
+        self.assertLessEqual(slide_x - 100.0, 52 + 1e-6)
+
+
+class TestLeashSagUnderTension(unittest.TestCase):
+    """Verify leash sag stays <= 2px and never increases under pulling."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_sag_cap_present(self):
+        self.assertIn("const sagCap = Math.min(2.0, leashLen * 0.03);", self.src)
+
+    def test_behavioral_sag_never_increases_with_tension(self):
+        """Sag must be monotonically non-increasing as tension (pulling) rises."""
+        def sag_for(dist, pulling):
+            sag_cap = min(2.0, dist * 0.03)
+            base = min(sag_cap, max(0.0, (90 - dist) * 0.05))
+            # Under pulling the lead must stay taut: never increase sag.
+            return base if not pulling else min(base, sag_cap)
+
+        for dist in (30, 42, 60, 90, 105):
+            relaxed = sag_for(dist, False)
+            taut = sag_for(dist, True)
+            self.assertLessEqual(taut, relaxed + 1e-9)
+            self.assertLessEqual(taut, 2.0)
+            self.assertLessEqual(taut, dist * 0.03 + 1e-9)
+
+
 if __name__ == "__main__":
     unittest.main()

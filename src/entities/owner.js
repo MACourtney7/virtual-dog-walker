@@ -186,8 +186,11 @@ export class Owner {
     let armAngle = sideSign * (0.35 + 0.25 * (1 - tension));
 
     // Reduced stride oscillation on the holding arm only.
-    const swingAmplitude = this.isMoving ? 5.5 : 0;
-    armAngle += Math.sin(this.walkPhase) * swingAmplitude * LEASH_ARM_SWING_SCALE * sideSign;
+    // NOTE: armAngle is in RADIANS, so the swing must be an angular amplitude
+    // (not a pixel displacement). 0.35 rad * LEASH_ARM_SWING_SCALE (0.15)
+    // yields ~0.0525 rad (~3 deg) of gentle, stabilized leash-hand vibration.
+    const swingAngle = this.isMoving ? 0.35 : 0;
+    armAngle += Math.sin(this.walkPhase) * swingAngle * LEASH_ARM_SWING_SCALE * sideSign;
 
     return {
       x: shoulderX + Math.cos(armAngle) * reach,
@@ -416,12 +419,14 @@ export class Owner {
     // Keep targetHeading synced so external readers see the wander intent.
     this.targetHeading = this.angle;
 
-    // Force STROLL gait while wandering.
-    if (this.gait !== WANDER_SPEED) {
-      this.gait = WANDER_SPEED;
-      this.stepOffActive = false;
-      this.stepOffTimer = 0;
+    // Force STROLL gait while wandering. Route through setGait so that
+    // leaving JOG starts the normal JOG_COOLDOWN, isMoving is synced, and
+    // onGaitChange fires for downstream consumers (e.g. speed badges).
+    if (this.gait !== Gait.STROLL) {
+      this.setGait(Gait.STROLL);
     }
+    this.stepOffActive = false;
+    this.stepOffTimer = 0;
   }
 
   // --- Heading integration ---

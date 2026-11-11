@@ -108,43 +108,32 @@ export function getLeashSlot(owner) {
     Math.min(halfWidth + LEASH_FLANK_CLEARANCE_MAX_PX, rawLateral)
   );
 
-  const forwardLead = Math.max(
+  // Velocity feed-forward is applied STRICTLY along the forward axis so that
+  // lateral velocity (e.g. wall-collision sliding) can never push the slot
+  // outside the [LEASH_FLANK_CLEARANCE_MIN_PX, LEASH_FLANK_CLEARANCE_MAX_PX]
+  // lateral band.
+  const forwardSpeed = vel.x * forward.x + vel.y * forward.y;
+  let forwardLead = LEASH_FORWARD_LEAD_TARGET_PX + forwardSpeed * LEASH_FEEDFORWARD_SECONDS;
+
+  // Clamp forward lead strictly to [MIN, MAX] so it never exceeds 52px ahead
+  // even at high gaits or with large feed-forward velocity.
+  forwardLead = Math.max(
     LEASH_FORWARD_LEAD_MIN_PX,
-    Math.min(LEASH_FORWARD_LEAD_MAX_PX, LEASH_FORWARD_LEAD_TARGET_PX)
+    Math.min(LEASH_FORWARD_LEAD_MAX_PX, forwardLead)
   );
 
+  // Compose the slot from the (already clamped) forward lead and lateral
+  // clearance. Because both components are clamped independently, the
+  // resulting slot is guaranteed to satisfy both bounds.
   let slotX = pos.x + forward.x * forwardLead + right.x * flankSign * lateral;
   let slotY = pos.y + forward.y * forwardLead + right.y * flankSign * lateral;
 
-  // Velocity feed-forward so the dog leads rather than trails.
-  slotX += vel.x * LEASH_FEEDFORWARD_SECONDS;
-  slotY += vel.y * LEASH_FEEDFORWARD_SECONDS;
-
-  // Forward-lead clamp AFTER feed-forward: the slot's forward component must
-  // stay strictly within [LEASH_FORWARD_LEAD_MIN_PX, LEASH_FORWARD_LEAD_MAX_PX]
-  // so it never exceeds 52px ahead even at high gaits.
-  const shoulderCentre = pos;
-  let relX = slotX - shoulderCentre.x;
-  let relY = slotY - shoulderCentre.y;
-  let projection = relX * forward.x + relY * forward.y;
-  if (projection > LEASH_FORWARD_LEAD_MAX_PX) {
-    const pull = projection - LEASH_FORWARD_LEAD_MAX_PX;
-    slotX -= forward.x * pull;
-    slotY -= forward.y * pull;
-    relX = slotX - shoulderCentre.x;
-    relY = slotY - shoulderCentre.y;
-    projection = relX * forward.x + relY * forward.y;
-  } else if (projection < LEASH_FORWARD_LEAD_MIN_PX) {
-    const push = LEASH_FORWARD_LEAD_MIN_PX - projection;
-    slotX += forward.x * push;
-    slotY += forward.y * push;
-    relX = slotX - shoulderCentre.x;
-    relY = slotY - shoulderCentre.y;
-    projection = relX * forward.x + relY * forward.y;
-  }
-
   // Shoulder-line clamp: the slot must stay forward of the owner's transverse
   // shoulder line by at least LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX.
+  const shoulderCentre = pos;
+  const relX = slotX - shoulderCentre.x;
+  const relY = slotY - shoulderCentre.y;
+  const projection = relX * forward.x + relY * forward.y;
   if (projection < LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX) {
     const push = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX - projection;
     slotX += forward.x * push;

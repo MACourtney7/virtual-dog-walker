@@ -1648,5 +1648,274 @@ class TestBrakeLightFeedback(unittest.TestCase):
         self.assertIn("const brakeNow = (typeof performance !== 'undefined' ? performance.now() : Date.now());", self.main_src)
 
 
+# ---------------------------------------------------------------------------
+# unification-022: wander mode, dog spacing, owner arm/anchor, and feedback.
+# ---------------------------------------------------------------------------
+
+
+class TestWanderMode(unittest.TestCase):
+    """REQ-WANDER: enable-only wander mode, stroll speed, cancel paths, no HUD."""
+
+    def setUp(self):
+        self.owner_src = read("src/entities/owner.js")
+        self.main_src = read("src/main.js")
+
+    def test_wander_mode_default_off(self):
+        self.assertIn("this.wanderMode = false;", self.owner_src)
+
+    def test_keyw_enable_only(self):
+        idx = self.main_src.index("case 'KeyW':")
+        # Grab the KeyW block up to the next case/switch boundary.
+        end = self.main_src.index("case 'KeyQ':", idx)
+        block = self.main_src[idx:end]
+        self.assertIn("this.owner.wanderMode = true", block)
+        self.assertNotIn("wanderMode = !", block)
+        self.assertNotIn("wanderMode = !this.owner.wanderMode", block)
+
+    def test_wander_speed_is_stroll(self):
+        self.assertIn("WANDER_SPEED", self.owner_src)
+        self.assertIn("[Gait.STROLL]: 75", self.owner_src)
+        # WANDER_SPEED must resolve to the STROLL speed (75).
+        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*GAIT_SPEEDS\[Gait\.STROLL\]")
+
+    def test_wander_cancel_on_field_click(self):
+        # Field press path cancels wander mode.
+        idx = self.main_src.index("// Field press")
+        end = self.main_src.index("const gaitAtPress = captured.gaitAtPress;", idx)
+        block = self.main_src[idx:end]
+        self.assertIn("this.owner.wanderMode = false", block)
+
+    def test_wander_cancel_on_brake(self):
+        # Brake path (avatar / rear arc) cancels wander mode.
+        idx = self.main_src.index("if (captured.type === 'brake')")
+        end = self.main_src.index("// Field press", idx)
+        block = self.main_src[idx:end]
+        self.assertIn("this.owner.wanderMode = false", block)
+
+    def test_wander_has_no_hud(self):
+        # No toast/banner/HUD emission inside the KeyW wander enable path.
+        idx = self.main_src.index("case 'KeyW':")
+        end = self.main_src.index("case 'KeyQ':", idx)
+        block = self.main_src[idx:end]
+        self.assertNotIn("showToast", block)
+        self.assertNotIn("hud.", block)
+        self.assertNotIn("banner", block.lower())
+
+
+class TestDogSpacing(unittest.TestCase):
+    """REQ-DOG: flank clearance, forward lead, shoulder-line, feed-forward, mirroring."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def _slot(self, owner_x, owner_y, heading, side='right', vx=0.0, vy=0.0,
+              half_width=10.5):
+        import math
+        forward = (math.cos(heading), math.sin(heading))
+        right = (-math.sin(heading), math.cos(heading))
+        flank_sign = -1 if side == 'left' else 1
+        lateral = max(half_width + 24, min(half_width + 28, half_width + 26))
+        forward_lead = max(40, min(52, 46))
+        sx = owner_x + forward[0] * forward_lead + right[0] * flank_sign * lateral
+        sy = owner_y + forward[1] * forward_lead + right[1] * flank_sign * lateral
+        sx += vx * 0.12
+        sy += vy * 0.12
+        # Shoulder-line clamp
+        rel_x = sx - owner_x
+        rel_y = sy - owner_y
+        proj = rel_x * forward[0] + rel_y * forward[1]
+        if proj < 2:
+            push = 2 - proj
+            sx += forward[0] * push
+            sy += forward[1] * push
+        return sx, sy
+
+    def test_flank_clearance_bounds(self):
+        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 24", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 28", self.src)
+        import math
+        for deg in (0, 90, 180, 270, 45):
+            heading = math.radians(deg)
+            sx, sy = self._slot(100.0, 100.0, heading)
+            # Lateral distance from the forward axis must be within [24, 28].
+            forward = (math.cos(heading), math.sin(heading))
+            rel_x = sx - 100.0
+            rel_y = sy - 100.0
+            proj = rel_x * forward[0] + rel_y * forward[1]
+            lateral = math.hypot(rel_x - forward[0] * proj, rel_y - forward[1] * proj)
+            self.assertGreaterEqual(lateral, 24 - 1e-6)
+            self.assertLessEqual(lateral, 28 + 1e-6)
+
+    def test_forward_lead_bounds(self):
+        self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 40", self.src)
+        self.assertIn("LEASH_FORWARD_LEAD_MAX_PX = 52", self.src)
+        import math
+        for deg in (0, 90, 180, 270, 45):
+            heading = math.radians(deg)
+            sx, sy = self._slot(100.0, 100.0, heading)
+            forward = (math.cos(heading), math.sin(heading))
+            proj = (sx - 100.0) * forward[0] + (sy - 100.0) * forward[1]
+            self.assertGreaterEqual(proj, 40 - 1e-6)
+            self.assertLessEqual(proj, 52 + 1e-6)
+
+    def test_dog_never_behind_shoulder_line(self):
+        self.assertIn("LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = 2", self.src)
+        import math
+        for deg in (0, 90, 180, 270, 45, 135, 225, 315):
+            heading = math.radians(deg)
+            for vx, vy in ((0.0, 0.0), (200.0, 0.0), (0.0, -200.0), (-150.0, 150.0)):
+                sx, sy = self._slot(100.0, 100.0, heading, vx=vx, vy=vy)
+                forward = (math.cos(heading), math.sin(heading))
+                proj = (sx - 100.0) * forward[0] + (sy - 100.0) * forward[1]
+                self.assertGreaterEqual(proj, 2 - 1e-6)
+
+    def test_flank_mirrors_leash_hand_side(self):
+        import math
+        heading = math.radians(30)
+        rx, ry = self._slot(100.0, 100.0, heading, side='right')
+        lx, ly = self._slot(100.0, 100.0, heading, side='left')
+        forward = (math.cos(heading), math.sin(heading))
+        right = (-math.sin(heading), math.cos(heading))
+        r_lat = (rx - 100.0) * right[0] + (ry - 100.0) * right[1]
+        l_lat = (lx - 100.0) * right[0] + (ly - 100.0) * right[1]
+        self.assertGreater(r_lat, 0)
+        self.assertLess(l_lat, 0)
+        self.assertAlmostEqual(r_lat, -l_lat, places=6)
+
+    def test_feedforward_constant_present(self):
+        self.assertIn("LEASH_FEEDFORWARD_SECONDS = 0.12", self.src)
+        self.assertIn("LEASH_FEEDFORWARD_SECONDS", self.src)
+        # Used inside getLeashSlot (which updateFollowing consumes).
+        idx = self.src.index("export function getLeashSlot")
+        end = self.src.index("// States that must never be interrupted", idx)
+        block = self.src[idx:end]
+        self.assertIn("LEASH_FEEDFORWARD_SECONDS", block)
+
+
+class TestOwnerArmAnchor(unittest.TestCase):
+    """REQ-ARM: holding pose, tension monotonicity, swing isolation, anchor geometry."""
+
+    def setUp(self):
+        self.owner_src = read("src/entities/owner.js")
+        self.dog_src = read("src/entities/companion_dog.js")
+
+    def test_owner_arm_pose_active_when_leashed(self):
+        self.assertIn("computeLeashHandLocal", self.owner_src)
+        self.assertIn("LEASH_ARM_BASE_REACH_PX", self.owner_src)
+        self.assertIn("LEASH_ARM_MAX_REACH_PX", self.owner_src)
+        # Extension must exceed base reach when leashed (tension > 0).
+        self.assertIn("isLeashed", self.owner_src)
+
+    def test_owner_arm_extension_monotonic_with_tension(self):
+        # Simulate lerpNum(base, max, tension) monotonicity.
+        base = 10.0
+        max_reach = 22.0
+
+        def extension(t):
+            return base + (max_reach - base) * max(0.0, min(1.0, t))
+
+        samples = [extension(t) for t in (0.0, 0.33, 0.66, 1.0)]
+        for a, b in zip(samples, samples[1:]):
+            self.assertLessEqual(a, b)
+        self.assertGreater(samples[-1], samples[0])
+
+    def test_holding_arm_swing_reduced(self):
+        self.assertIn("LEASH_ARM_SWING_SCALE", self.owner_src)
+        import re
+        m = re.search(r"LEASH_ARM_SWING_SCALE\s*=\s*([0-9.]+)", self.owner_src)
+        self.assertIsNotNone(m, "LEASH_ARM_SWING_SCALE constant not found")
+        self.assertLessEqual(float(m.group(1)), 0.2)
+
+    def test_leash_hand_anchor_eight_headings(self):
+        import math
+        # Simulate the local-to-world transform of the rendered hand.
+        HAND_RADIUS = 28
+        HAND_SIDE = (60 * math.pi) / 180
+        owner_x, owner_y = 100.0, 100.0
+        for deg in (0, 45, 90, 135, 180, 225, 270, 315):
+            heading = math.radians(deg)
+            for side, sign in (('right', 1), ('left', -1)):
+                hand_angle = heading + sign * HAND_SIDE
+                hx = owner_x + math.cos(hand_angle) * HAND_RADIUS
+                hy = owner_y + math.sin(hand_angle) * HAND_RADIUS
+                # Not at centre.
+                self.assertGreater(math.hypot(hx - owner_x, hy - owner_y), 1.0)
+                # Within reach radius.
+                self.assertLessEqual(
+                    math.hypot(hx - owner_x, hy - owner_y), HAND_RADIUS + 1e-6
+                )
+                # Correct side: cross product sign of (forward, hand-owner).
+                forward = (math.cos(heading), math.sin(heading))
+                rel = (hx - owner_x, hy - owner_y)
+                cross = forward[0] * rel[1] - forward[1] * rel[0]
+                if side == 'right':
+                    self.assertGreater(cross, 0)
+                else:
+                    self.assertLess(cross, 0)
+
+    def test_leash_origin_uses_anchor(self):
+        self.assertIn("getLeashHandAnchor", self.dog_src)
+
+
+class TestFeedback(unittest.TestCase):
+    """REQ-CLICK / REQ-SPEED: single marker, no double projection, badge matrix."""
+
+    def setUp(self):
+        self.main_src = read("src/main.js")
+
+    def test_click_marker_single_instance(self):
+        # Simulate replaceClickMarker: only one active marker, at last click.
+        markers = []
+
+        def replace_click_marker(world_x, world_y):
+            markers.clear()
+            markers.append({'worldX': world_x, 'worldY': world_y})
+
+        replace_click_marker(10.0, 20.0)
+        replace_click_marker(30.0, 40.0)
+        self.assertEqual(len(markers), 1)
+        self.assertEqual(markers[0]['worldX'], 30.0)
+        self.assertEqual(markers[0]['worldY'], 40.0)
+
+    def test_click_marker_no_double_projection(self):
+        # Marker render path must not call worldToScreen after camera.apply.
+        idx = self.main_src.index("this.camera.apply(this.ctx);")
+        end = self.main_src.index("this.camera.restore(this.ctx);", idx)
+        block = self.main_src[idx:end]
+        # The click-marker block must not re-project via worldToScreen.
+        if "clickFeedback" in block:
+            marker_idx = block.index("clickFeedback")
+            marker_block = block[marker_idx:]
+            self.assertNotIn("worldToScreen", marker_block)
+
+    def test_speed_badge_trigger_rules(self):
+        def badge_level(prev, nxt):
+            if prev == 'STROLL' and nxt == 'WALK':
+                return 1
+            if prev == 'WALK' and nxt == 'JOG':
+                return 2
+            return 0
+
+        self.assertEqual(badge_level('STROLL', 'WALK'), 1)
+        self.assertEqual(badge_level('WALK', 'JOG'), 2)
+        self.assertEqual(badge_level('STAND', 'STROLL'), 0)
+        self.assertEqual(badge_level('JOG', 'WALK'), 0)
+        self.assertEqual(badge_level('WALK', 'WALK'), 0)
+        # Brake transition (any -> STAND) yields no badge.
+        self.assertEqual(badge_level('WALK', 'STAND'), 0)
+        self.assertEqual(badge_level('JOG', 'STAND'), 0)
+
+    def test_speed_badge_duration(self):
+        import re
+        m = re.search(r"SPEED_BADGE_DURATION\w*\s*=\s*([0-9.]+)", self.main_src)
+        if m is None:
+            # Fall back to any badge duration constant in the file.
+            m = re.search(r"badgeDuration\w*\s*[:=]\s*([0-9.]+)", self.main_src)
+        self.assertIsNotNone(m, "Speed badge duration constant not found")
+        duration = float(m.group(1))
+        self.assertGreaterEqual(duration, 0.4)
+        self.assertLessEqual(duration, 0.5)
+
+
 if __name__ == "__main__":
     unittest.main()

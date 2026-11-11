@@ -1537,40 +1537,43 @@ class TestTouchControlRemoval(unittest.TestCase):
 
 
 class TestClickFeedback(unittest.TestCase):
-    """Verify single/double click feedback event contracts."""
+    """Verify unified single 'x' click feedback contract (unification-022)."""
 
     def setUp(self):
         self.src = read("src/main.js")
 
     def test_single_click_feedback_contract(self):
         self.assertIn("steer-single", self.src)
-        self.assertIn("'x'", self.src)
-        self.assertIn("#ffffff", self.src)
-        self.assertIn("400", self.src)
+        self.assertIn("glyph: 'x'", self.src)
+        self.assertIn("color: '#ffffff'", self.src)
+        self.assertIn("durationMs: 400", self.src)
 
-    def test_double_click_feedback_contract(self):
-        self.assertIn("steer-double", self.src)
-        self.assertIn("'+'", self.src)
-        self.assertIn("#22c55e", self.src)
+    def test_double_click_uses_unified_x_reticle(self):
+        # unification-022: double-click emits the SAME white 'x' reticle.
+        self.assertNotIn("steer-double", self.src)
+        self.assertNotIn("glyph: '+'", self.src)
 
     def test_feedback_records_world_coords(self):
         self.assertIn("worldX", self.src)
         self.assertIn("worldY", self.src)
 
-    def test_feedback_projected_through_camera(self):
-        """Click feedback must be projected to screen space via worldToScreen."""
-        self.assertIn("this.camera.worldToScreen(f.worldX, f.worldY)", self.src)
-        self.assertIn("const sx = pt.x;", self.src)
-        self.assertIn("const sy = pt.y;", self.src)
-        # Glyph drawing must use the projected screen coordinates.
-        self.assertIn("this.ctx.moveTo(sx - s, sy - s);", self.src)
-        self.assertIn("this.ctx.moveTo(sx - s, sy);", self.src)
+    def test_feedback_rendered_in_world_space(self):
+        """Click feedback must be drawn in world coords inside camera.apply —
+        never via worldToScreen (that would double-project)."""
+        idx = self.src.index("this.camera.apply(this.ctx);")
+        end = self.src.index("this.camera.restore(this.ctx);", idx)
+        block = self.src[idx:end]
+        self.assertIn("clickFeedback", block)
+        marker_idx = block.index("clickFeedback")
+        marker_block = block[marker_idx:]
+        self.assertNotIn("worldToScreen", marker_block)
+        self.assertIn("const sx = f.worldX;", marker_block)
+        self.assertIn("const sy = f.worldY;", marker_block)
+        self.assertIn("this.ctx.moveTo(sx - s, sy - s);", marker_block)
 
     def test_behavioral_single_click_event(self):
         def emit(is_double, world_x, world_y):
-            if is_double:
-                return {'type': 'steer-double', 'glyph': '+', 'color': '#22c55e',
-                        'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
+            # Unified: both single and double emit the same white 'x' reticle.
             return {'type': 'steer-single', 'glyph': 'x', 'color': '#ffffff',
                     'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
 
@@ -1584,16 +1587,13 @@ class TestClickFeedback(unittest.TestCase):
 
     def test_behavioral_double_click_event(self):
         def emit(is_double, world_x, world_y):
-            if is_double:
-                return {'type': 'steer-double', 'glyph': '+', 'color': '#22c55e',
-                        'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
             return {'type': 'steer-single', 'glyph': 'x', 'color': '#ffffff',
                     'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
 
         ev = emit(True, 10.0, 20.0)
-        self.assertEqual(ev['type'], 'steer-double')
-        self.assertEqual(ev['glyph'], '+')
-        self.assertEqual(ev['color'], '#22c55e')
+        self.assertEqual(ev['type'], 'steer-single')
+        self.assertEqual(ev['glyph'], 'x')
+        self.assertEqual(ev['color'], '#ffffff')
         self.assertEqual(ev['durationMs'], 400)
 
 
@@ -1734,10 +1734,25 @@ class TestDogSpacing(unittest.TestCase):
         sy = owner_y + forward[1] * forward_lead + right[1] * flank_sign * lateral
         sx += vx * 0.12
         sy += vy * 0.12
-        # Shoulder-line clamp
+        # Forward-lead clamp AFTER feed-forward (mirrors getLeashSlot).
         rel_x = sx - owner_x
         rel_y = sy - owner_y
         proj = rel_x * forward[0] + rel_y * forward[1]
+        if proj > 52:
+            pull = proj - 52
+            sx -= forward[0] * pull
+            sy -= forward[1] * pull
+            rel_x = sx - owner_x
+            rel_y = sy - owner_y
+            proj = rel_x * forward[0] + rel_y * forward[1]
+        elif proj < 40:
+            push = 40 - proj
+            sx += forward[0] * push
+            sy += forward[1] * push
+            rel_x = sx - owner_x
+            rel_y = sy - owner_y
+            proj = rel_x * forward[0] + rel_y * forward[1]
+        # Shoulder-line clamp
         if proj < 2:
             push = 2 - proj
             sx += forward[0] * push

@@ -36,6 +36,13 @@ const PLAYER_HIT_RADIUS = 26;
 const JOG_DURATION = 2.0;
 const JOG_COOLDOWN = 2.0;
 
+// Wander mode (KeyW autopilot stroll) constants
+export const WANDER_SPEED = Gait.STROLL;            // 75 px/s
+export const WANDER_MAX_TURN_RATE = Math.PI * 1.4;  // rad/s
+export const WANDER_DRIFT_AMPLITUDE = 0.55;         // rad
+export const WANDER_DRIFT_FREQUENCY = 0.35;         // Hz
+export const WANDER_LOOKAHEAD_PX = 96;
+
 // Leash arm pose constants (exported for tests/tooling)
 export const LEASH_ARM_SWING_SCALE = 0.15;
 export const LEASH_ARM_BASE_REACH_PX = 18;
@@ -120,6 +127,12 @@ export class Owner {
     this.leashArmExtensionPx = LEASH_ARM_BASE_REACH_PX;
     this.leashArmTension = 0;
     this.leashDistance = 0;
+
+    // Wander mode (KeyW autopilot stroll) state
+    this.wanderMode = false;
+    this.wanderPhase = 0;
+    this.wanderBaseHeading = this.angle;
+    this.wanderTargetHeading = this.angle;
 
     // Brake-light feedback pulse (rear brake sector flash)
     this.brakeLightFeedback = {
@@ -269,6 +282,132 @@ export class Owner {
     this.setGait(GAIT_ORDER[nextIdx]);
   }
 
+  // --- Wander mode (autopilot stroll) ---
+
+  getWanderSpeed() {
+    return GAIT_SPEEDS[WANDER_SPEED] || 0;
+  }
+
+  // Probe a point ahead of the owner for world-boundary or obstacle blockage.
+  // Returns true when the probe point is blocked.
+  _isWanderProbeBlocked(px, py, world) {
+    if (!world) return false;
+
+    // World bounds check (respect owner radius + small margin)
+    const w = (typeof world.width === 'number') ? world.width : null;
+    const h = (typeof world.height === 'number') ? world.height : null;
+    if (w !== null && h !== null) {
+      const margin = (this.radius || 16) + 4;
+      if (px < margin || py < margin || px > w - margin || py > h - margin) {
+        return true;
+      }
+    }
+
+    // Obstacle colliders check
+    const colliders = Array.isArray(world.colliders) ? world.colliders : null;
+    if (colliders) {
+      for (const c of colliders) {
+        if (!c) continue;
+        const cx = (typeof c.x === 'number') ? c.x : null;
+        const cy = (typeof c.y === 'number') ? c.y : null;
+        if (cx === null || cy === null) continue;
+        const cr = (typeof c.radius === 'number') ? c.radius : 0;
+        const reach = cr + (this.radius || 16);
+        const dx = px - cx;
+        const dy = py - cy;
+        if (dx * dx + dy * dy < reach * reach) return true;
+      }
+    }
+
+    // World obstacles (rectangular) check
+    const obstacles = Array.isArray(world.obstacles) ? world.obstacles : null;
+    if (obstacles) {
+      for (const o of obstacles) {
+        if (!o) continue;
+        const ox = (typeof o.x === 'number') ? o.x : null;
+        const oy = (typeof o.y === 'number') ? o.y : null;
+        if (ox === null || oy === null) continue;
+        const ow = (typeof o.w === 'number') ? o.w : (typeof o.width === 'number' ? o.width : 0);
+        const oh = (typeof o.h === 'number') ? o.h : (typeof o.height === 'number' ? o.height : 0);
+        const pad = (this.radius || 16);
+        if (px > ox - pad && px < ox + ow + pad && py > oy - pad && py < oy + oh + pad) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  // Per-frame autopilot stepper. Advances a smooth meandering heading at
+  // Gait.STROLL speed, steering away from obstacles and world boundaries.
+  updateWander(dt, world) {
+    if (!this.wanderMode) return;
+
+    // Advance drift phase
+    this.wanderPhase += WANDER_DRIFT_FREQUENCY * Math.PI * 2 * dt;
+
+    // Base meandering target heading
+    let targetHeading = this.wanderBaseHeading +
+      Math.sin(this.wanderPhase) * WANDER_DRIFT_AMPLITUDE;
+
+    // Forward probe: if blocked, search for a clear side.
+    const probeDist = WANDER_LOOKAHEAD_PX;
+    const probeX = this.x + Math.cos(targetHeading) * probeDist;
+    const probeY = this.y + Math.sin(targetHeading) * probeDist;
+
+    if (this._isWanderProbeBlocked(probeX, probeY, world)) {
+      const offsets = [
+        Math.PI / 6, -Math.PI / 6,
+        Math.PI / 3, -Math.PI / 3,
+        Math.PI / 2, -Math.PI / 2
+      ];
+      let chosen = null;
+      for (const off of offsets) {
+        const testHeading = targetHeading + off;
+        const tx = this.x + Math.cos(testHeading) * probeDist;
+        const ty = this.y + Math.sin(testHeading) * probeDist;
+        if (!this._isWanderProbeBlocked(tx, ty, world)) {
+          chosen = testHeading;
+          break;
+        }
+      }
+      if (chosen !== null) {
+        targetHeading = chosen;
+        // Slowly rotate the base heading away from the obstacle so we do not
+        // re-target it every frame.
+        const baseDelta = angleDelta(this.wanderBaseHeading, chosen);
+        this.wanderBaseHeading += Math.sign(baseDelta) * Math.min(Math.abs(baseDelta), 0.6 * dt);
+      } else {
+        // Fully boxed in: reverse the base heading to escape.
+        this.wanderBaseHeading += Math.PI;
+      }
+    }
+
+    this.wanderTargetHeading = targetHeading;
+
+    // Clamp heading change to the wander max turn rate.
+    const maxStep = WANDER_MAX_TURN_RATE * dt;
+    const delta = angleDelta(this.angle, targetHeading);
+    if (Math.abs(delta) <= maxStep) {
+      this.angle = targetHeading;
+    } else {
+      this.angle += Math.sign(delta) * maxStep;
+    }
+    this.angle = ((this.angle + Math.PI) % (Math.PI * 2)) - Math.PI;
+    if (this.angle < -Math.PI) this.angle += Math.PI * 2;
+
+    // Keep targetHeading synced so external readers see the wander intent.
+    this.targetHeading = this.angle;
+
+    // Force STROLL gait while wandering.
+    if (this.gait !== WANDER_SPEED) {
+      this.gait = WANDER_SPEED;
+      this.stepOffActive = false;
+      this.stepOffTimer = 0;
+    }
+  }
+
   // --- Heading integration ---
 
   _updateHeading(dt) {
@@ -393,8 +532,12 @@ export class Owner {
       this.stepOffTimer = Math.max(0, this.stepOffTimer - dt);
     }
 
-    // 3. Update heading toward target
-    this._updateHeading(dt);
+    // 3. Wander mode overrides normal heading integration.
+    if (this.wanderMode) {
+      this.updateWander(dt, field);
+    } else {
+      this._updateHeading(dt);
+    }
 
     // 4. Compute velocity from gait speed and current angle
     const speed = this.getCurrentSpeed();
@@ -1339,3 +1482,8 @@ Owner.LEASH_ARM_MAX_REACH_PX = LEASH_ARM_MAX_REACH_PX;
 Owner.LEASH_ARM_TENSION_RAMP_PX = LEASH_ARM_TENSION_RAMP_PX;
 Owner.LEASH_ARM_SHOULDER_OFFSET_PX = LEASH_ARM_SHOULDER_OFFSET_PX;
 Owner.LEASH_ARM_HAND_RADIUS_PX = LEASH_ARM_HAND_RADIUS_PX;
+Owner.WANDER_SPEED = WANDER_SPEED;
+Owner.WANDER_MAX_TURN_RATE = WANDER_MAX_TURN_RATE;
+Owner.WANDER_DRIFT_AMPLITUDE = WANDER_DRIFT_AMPLITUDE;
+Owner.WANDER_DRIFT_FREQUENCY = WANDER_DRIFT_FREQUENCY;
+Owner.WANDER_LOOKAHEAD_PX = WANDER_LOOKAHEAD_PX;

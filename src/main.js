@@ -507,6 +507,16 @@ export class CliftonDownGame {
       }
 
       switch (e.code) {
+        case 'KeyW':
+          // Enable-only wander mode. Never toggles off via KeyW.
+          if (this.owner && !this.owner.wanderMode) {
+            this.owner.wanderMode = true;
+            this.owner.wanderBaseHeading = this.owner.angle;
+            this.owner.wanderPhase = 0;
+          }
+          e.preventDefault();
+          break;
+
         case 'KeyQ':
           // Toggle Leash
           this.toggleLeash();
@@ -578,6 +588,8 @@ export class CliftonDownGame {
       if (!captured) return;
 
       if (captured.type === 'brake') {
+        // Any brake gesture cancels wander mode.
+        if (this.owner.wanderMode) this.owner.wanderMode = false;
         // Brake-light feedback pulse on any brake gesture
         if (typeof this.owner.triggerBrakeLight === 'function') {
           const brakeNow = (typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -609,6 +621,9 @@ export class CliftonDownGame {
       // Field press
       const heading = captured.heading;
       if (typeof heading !== 'number' || !isFinite(heading)) return;
+
+      // Any pointer steering (single or double) cancels wander mode.
+      if (this.owner.wanderMode) this.owner.wanderMode = false;
 
       const gaitAtPress = captured.gaitAtPress;
       this.owner.setTargetHeading(heading);
@@ -700,6 +715,7 @@ export class CliftonDownGame {
       if (onPlayer && this.owner.gait === 'STAND') {
         // Standing avatar: no brake, no gait change. Cancel any pending
         // deferred gesture so it cannot fire later.
+        if (this.owner.wanderMode) this.owner.wanderMode = false;
         cancelPendingSingle();
         this._lastClickTime = 0;
         this._lastClickX = 0;
@@ -764,6 +780,11 @@ export class CliftonDownGame {
         (typeof this.owner.isPointOnRearBrakeArc === 'function' &&
           this.owner.isPointOnRearBrakeArc(worldTarget.x, worldTarget.y))
       );
+
+      // Avatar click or rear-brake-arc click cancels wander mode immediately.
+      if (isBrake && this.owner.wanderMode) {
+        this.owner.wanderMode = false;
+      }
 
       const captured = {
         type: isBrake ? 'brake' : 'field',

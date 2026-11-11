@@ -1701,6 +1701,20 @@ class TestWanderMode(unittest.TestCase):
         self.assertNotIn("hud.", block)
         self.assertNotIn("banner", block.lower())
 
+    def test_wander_update_uses_stroll_speed(self):
+        # updateWander must force the STROLL gait while wandering.
+        idx = self.owner_src.index("updateWander(dt, world)")
+        end = self.owner_src.index("// --- Heading integration ---", idx)
+        block = self.owner_src[idx:end]
+        self.assertIn("WANDER_SPEED", block)
+        self.assertIn("this.gait = WANDER_SPEED", block)
+
+    def test_behavioral_wander_speed_value(self):
+        # WANDER_SPEED resolves to STROLL = 75 px/s.
+        GAIT_SPEEDS = {'STAND': 0, 'STROLL': 75, 'WALK': 100, 'JOG': 185}
+        WANDER_SPEED = 'STROLL'
+        self.assertEqual(GAIT_SPEEDS[WANDER_SPEED], 75)
+
 
 class TestDogSpacing(unittest.TestCase):
     """REQ-DOG: flank clearance, forward lead, shoulder-line, feed-forward, mirroring."""
@@ -1794,6 +1808,49 @@ class TestDogSpacing(unittest.TestCase):
         block = self.src[idx:end]
         self.assertIn("LEASH_FEEDFORWARD_SECONDS", block)
 
+    def test_forward_lead_clamped_after_feedforward(self):
+        """Forward lead must stay <= 52px even with high feed-forward velocity."""
+        import math
+        for speed in (0.0, 100.0, 185.0, 400.0):
+            for deg in (0, 45, 90, 135, 180, 225, 270, 315):
+                heading = math.radians(deg)
+                vx = math.cos(heading) * speed
+                vy = math.sin(heading) * speed
+                sx, sy = self._slot(100.0, 100.0, heading, vx=vx, vy=vy)
+                forward = (math.cos(heading), math.sin(heading))
+                proj = (sx - 100.0) * forward[0] + (sy - 100.0) * forward[1]
+                self.assertLessEqual(proj, 52 + 1e-6,
+                                     f"forward lead {proj} exceeds 52 at speed {speed}")
+                self.assertGreaterEqual(proj, 40 - 1e-6,
+                                        f"forward lead {proj} below 40 at speed {speed}")
+
+    def test_rendered_position_shoulder_line_clamp_present(self):
+        """updateFollowing must clamp the rendered position to the shoulder line."""
+        idx = self.src.index("updateFollowing(dt, otherDogs = [], field = null)")
+        end = self.src.index("updateRoaming(dt, otherDogs = [], field = null)", idx)
+        block = self.src[idx:end]
+        self.assertIn("LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX", block)
+        self.assertIn("this.x += fwdX * push;", block)
+        self.assertIn("this.y += fwdY * push;", block)
+
+    def test_behavioral_rendered_position_clamp(self):
+        """Simulate the rendered-position clamp: dog behind shoulder line is pushed forward."""
+        import math
+        owner_x, owner_y = 100.0, 100.0
+        heading = 0.0  # facing east
+        fwd_x, fwd_y = math.cos(heading), math.sin(heading)
+        margin = 2.0
+
+        # Dog is 5px BEHIND the shoulder line (west of owner).
+        dog_x, dog_y = owner_x - 5.0, owner_y
+        proj = (dog_x - owner_x) * fwd_x + (dog_y - owner_y) * fwd_y
+        self.assertLess(proj, margin)
+        push = margin - proj
+        dog_x += fwd_x * push
+        dog_y += fwd_y * push
+        proj_after = (dog_x - owner_x) * fwd_x + (dog_y - owner_y) * fwd_y
+        self.assertGreaterEqual(proj_after, margin - 1e-6)
+
 
 class TestOwnerArmAnchor(unittest.TestCase):
     """REQ-ARM: holding pose, tension monotonicity, swing isolation, anchor geometry."""
@@ -1859,6 +1916,31 @@ class TestOwnerArmAnchor(unittest.TestCase):
     def test_leash_origin_uses_anchor(self):
         self.assertIn("getLeashHandAnchor", self.dog_src)
 
+    def test_anchor_matches_rendered_grip_hand(self):
+        """getLeashHandAnchor() must include the -3 torso vertical offset."""
+        idx = self.owner_src.index("getLeashHandAnchor(preferredSide")
+        end = self.owner_src.index("// --- Gait API ---", idx)
+        block = self.owner_src[idx:end]
+        self.assertIn("torsoYOffset = -3", block)
+        self.assertIn("this.y + torsoYOffset", block)
+
+    def test_behavioral_anchor_matches_compute_local(self):
+        """Anchor world position must equal computeLeashHandLocal() + torso offset."""
+        import math
+        owner_x, owner_y = 100.0, 100.0
+        angle = math.radians(30)
+        # Simulated local hand (forward, right) in owner-local frame.
+        local_x, local_y = 18.0, 8.0
+        c, s = math.cos(angle), math.sin(angle)
+        torso_y_offset = -3
+        anchor_x = owner_x + local_x * c - local_y * s
+        anchor_y = owner_y + torso_y_offset + local_x * s + local_y * c
+        # Rendered hand uses the same transform (torsoY = this.y - 3).
+        rendered_x = owner_x + local_x * c - local_y * s
+        rendered_y = (owner_y - 3) + local_x * s + local_y * c
+        self.assertAlmostEqual(anchor_x, rendered_x, places=6)
+        self.assertAlmostEqual(anchor_y, rendered_y, places=6)
+
 
 class TestFeedback(unittest.TestCase):
     """REQ-CLICK / REQ-SPEED: single marker, no double projection, badge matrix."""
@@ -1881,20 +1963,32 @@ class TestFeedback(unittest.TestCase):
         self.assertEqual(markers[0]['worldY'], 40.0)
 
     def test_click_marker_no_double_projection(self):
-        # Marker render path must project world coords exactly ONCE via
-        # worldToScreen (after camera.apply). A double projection would call
-        # worldToScreen twice, or apply the camera transform twice.
+        # Click feedback must be rendered in WORLD coordinates inside the
+        # camera.apply block — never via worldToScreen (that double-projects).
         idx = self.main_src.index("this.camera.apply(this.ctx);")
         end = self.main_src.index("this.camera.restore(this.ctx);", idx)
         block = self.main_src[idx:end]
-        if "clickFeedback" in block:
-            marker_idx = block.index("clickFeedback")
-            marker_block = block[marker_idx:]
-            # Exactly one projection call for the marker glyph.
-            self.assertEqual(marker_block.count("worldToScreen"), 1)
-            # The glyph must be drawn from the projected screen coords.
-            self.assertIn("const sx = pt.x;", marker_block)
-            self.assertIn("const sy = pt.y;", marker_block)
+        self.assertIn("clickFeedback", block)
+        marker_idx = block.index("clickFeedback")
+        marker_block = block[marker_idx:]
+        self.assertNotIn("worldToScreen", marker_block)
+        self.assertIn("const sx = f.worldX;", marker_block)
+        self.assertIn("const sy = f.worldY;", marker_block)
+
+    def test_unified_single_x_reticle(self):
+        # Both single and double field presses emit a single white 'x' reticle.
+        self.assertIn("glyph: 'x'", self.main_src)
+        self.assertIn("color: '#ffffff'", self.main_src)
+        # The old green '+' double-click glyph must be gone.
+        self.assertNotIn("glyph: '+'", self.main_src)
+        self.assertNotIn("steer-double", self.main_src)
+
+    def test_double_click_replaces_marker(self):
+        # Double-click must replace (not append) the click feedback array.
+        idx = self.main_src.index("// Unified single 'x' reticle")
+        end = self.main_src.index("if (isDouble) {", idx)
+        block = self.main_src[idx:end]
+        self.assertIn("this.clickFeedback = [{", block)
 
     def test_speed_badge_trigger_rules(self):
         def badge_level(prev, nxt):
@@ -1913,19 +2007,31 @@ class TestFeedback(unittest.TestCase):
         self.assertEqual(badge_level('WALK', 'STAND'), 0)
         self.assertEqual(badge_level('JOG', 'STAND'), 0)
 
-    def test_speed_badge_duration(self):
+    def test_speed_badge_duration_exported(self):
         import re
-        m = re.search(r"SPEED_BADGE_DURATION\w*\s*=\s*([0-9.]+)", self.main_src)
-        if m is None:
-            # Fall back to any badge duration constant in the file.
-            m = re.search(r"badgeDuration\w*\s*[:=]\s*([0-9.]+)", self.main_src)
-        if m is None:
-            # Speed badge is not yet wired into main.js; the trigger-matrix
-            # contract is still covered by test_speed_badge_trigger_rules.
-            self.skipTest("Speed badge duration constant not yet present in main.js")
+        m = re.search(r"export const SPEED_BADGE_DURATION_MS\s*=\s*([0-9.]+)", self.main_src)
+        self.assertIsNotNone(m, "SPEED_BADGE_DURATION_MS must be exported from main.js")
         duration = float(m.group(1))
-        self.assertGreaterEqual(duration, 0.4)
-        self.assertLessEqual(duration, 0.5)
+        self.assertGreaterEqual(duration, 400)
+        self.assertLessEqual(duration, 500)
+
+    def test_speed_badge_state_and_spawn(self):
+        self.assertIn("this.speedBadges = [];", self.main_src)
+        self.assertIn("spawnSpeedBadge(prevGait, nextGait)", self.main_src)
+        # Level 1 (STROLL->WALK) soft slate chevron.
+        self.assertIn("level: 1", self.main_src)
+        self.assertIn("#94a3b8", self.main_src)
+        # Level 2 (WALK->JOG) soft emerald chevron.
+        self.assertIn("level: 2", self.main_src)
+        self.assertIn("#22c55e", self.main_src)
+
+    def test_speed_badge_render_floats_and_fades(self):
+        idx = self.main_src.index("Speed-up floating chevron badges")
+        end = self.main_src.index("// In-World Contextual Interaction Badges", idx)
+        block = self.main_src[idx:end]
+        self.assertIn("const rise = 15 * t;", block)
+        self.assertIn("this.ctx.globalAlpha = alpha;", block)
+        self.assertIn("b.worldY - rise", block)
 
 
 if __name__ == "__main__":

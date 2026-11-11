@@ -203,9 +203,13 @@ export class Owner {
     const local = this.computeLeashHandLocal();
     const c = Math.cos(this.angle);
     const s = Math.sin(this.angle);
+    // Match the rendered grip hand exactly: draw() places the torso at
+    // `this.y - 3 + kneelDrop` and the leash arm hand at torso-relative
+    // coordinates, so the anchor must include the same -3 vertical offset.
+    const torsoYOffset = -3;
     return {
       x: this.x + local.x * c - local.y * s,
-      y: this.y + local.x * s + local.y * c
+      y: this.y + torsoYOffset + local.x * s + local.y * c
     };
   }
 

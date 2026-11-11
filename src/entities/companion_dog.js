@@ -120,12 +120,31 @@ export function getLeashSlot(owner) {
   slotX += vel.x * LEASH_FEEDFORWARD_SECONDS;
   slotY += vel.y * LEASH_FEEDFORWARD_SECONDS;
 
+  // Forward-lead clamp AFTER feed-forward: the slot's forward component must
+  // stay strictly within [LEASH_FORWARD_LEAD_MIN_PX, LEASH_FORWARD_LEAD_MAX_PX]
+  // so it never exceeds 52px ahead even at high gaits.
+  const shoulderCentre = pos;
+  let relX = slotX - shoulderCentre.x;
+  let relY = slotY - shoulderCentre.y;
+  let projection = relX * forward.x + relY * forward.y;
+  if (projection > LEASH_FORWARD_LEAD_MAX_PX) {
+    const pull = projection - LEASH_FORWARD_LEAD_MAX_PX;
+    slotX -= forward.x * pull;
+    slotY -= forward.y * pull;
+    relX = slotX - shoulderCentre.x;
+    relY = slotY - shoulderCentre.y;
+    projection = relX * forward.x + relY * forward.y;
+  } else if (projection < LEASH_FORWARD_LEAD_MIN_PX) {
+    const push = LEASH_FORWARD_LEAD_MIN_PX - projection;
+    slotX += forward.x * push;
+    slotY += forward.y * push;
+    relX = slotX - shoulderCentre.x;
+    relY = slotY - shoulderCentre.y;
+    projection = relX * forward.x + relY * forward.y;
+  }
+
   // Shoulder-line clamp: the slot must stay forward of the owner's transverse
   // shoulder line by at least LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX.
-  const shoulderCentre = pos;
-  const relX = slotX - shoulderCentre.x;
-  const relY = slotY - shoulderCentre.y;
-  const projection = relX * forward.x + relY * forward.y;
   if (projection < LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX) {
     const push = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX - projection;
     slotX += forward.x * push;
@@ -1184,6 +1203,19 @@ export class CompanionDog {
       this.vx = 0;
       this.vy = 0;
       this.wagSpeed = 6;
+    }
+
+    // Rendered-position shoulder-line clamp: after arrival damping, the dog's
+    // actual position must never lag behind the owner's transverse shoulder
+    // line during sharp turns while on leash.
+    const heading = resolveOwnerHeading(this.owner);
+    const fwdX = Math.cos(heading);
+    const fwdY = Math.sin(heading);
+    const proj = (this.x - this.owner.x) * fwdX + (this.y - this.owner.y) * fwdY;
+    if (proj < LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX) {
+      const push = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX - proj;
+      this.x += fwdX * push;
+      this.y += fwdY * push;
     }
   }
 

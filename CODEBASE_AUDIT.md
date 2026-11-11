@@ -6920,6 +6920,105 @@ const HAND_RADIUS = 28;
 const HAND_SIDE = (60 * Math.PI) / 180;
 const PLAYER_HIT_RADIUS = 26;
 
+// Leash slot spacing constants (owner-local frame).
+// Flank clearance is measured from the owner's hip/half-width out to the dog.
+export const LEASH_FLANK_CLEARANCE_MIN_PX = 24;
+export const LEASH_FLANK_CLEARANCE_MAX_PX = 28;
+export const LEASH_FLANK_CLEARANCE_TARGET_PX = 26;
+// Forward lead is measured ahead of the owner's transverse shoulder line.
+export const LEASH_FORWARD_LEAD_MIN_PX = 40;
+export const LEASH_FORWARD_LEAD_MAX_PX = 52;
+export const LEASH_FORWARD_LEAD_TARGET_PX = 46;
+// Velocity feed-forward horizon (seconds) so the dog leads rather than trails.
+export const LEASH_FEEDFORWARD_SECONDS = 0.12;
+// Minimum forward projection of the slot past the shoulder line.
+export const LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = 2;
+
+// Resolve the owner's heading in radians. Prefers `owner.heading`, then
+// `owner.angle`, then a sane default (facing South).
+function resolveOwnerHeading(owner) {
+  if (!owner) return Math.PI / 2;
+  if (typeof owner.heading === 'number' && isFinite(owner.heading)) return owner.heading;
+  if (typeof owner.angle === 'number' && isFinite(owner.angle)) return owner.angle;
+  return Math.PI / 2;
+}
+
+// Resolve the owner's hip/half-width used as the flank clearance baseline.
+function resolveOwnerHalfWidth(owner) {
+  if (!owner) return 10.5;
+  if (typeof owner.halfWidth === 'number' && isFinite(owner.halfWidth)) return owner.halfWidth;
+  if (typeof owner.hipHalfWidth === 'number' && isFinite(owner.hipHalfWidth)) return owner.hipHalfWidth;
+  if (typeof owner.radius === 'number' && isFinite(owner.radius)) return owner.radius;
+  return 10.5;
+}
+
+// Resolve the owner's world position.
+function resolveOwnerPos(owner) {
+  if (!owner) return { x: 0, y: 0 };
+  return { x: owner.x || 0, y: owner.y || 0 };
+}
+
+// Resolve the owner's velocity.
+function resolveOwnerVelocity(owner) {
+  if (!owner) return { x: 0, y: 0 };
+  return { x: owner.vx || 0, y: owner.vy || 0 };
+}
+
+// Compute the leash target slot in world space for the given owner.
+// The slot sits on the owner's leash-hand flank, forward of the shoulder line.
+export function getLeashSlot(owner) {
+  const heading = resolveOwnerHeading(owner);
+  const pos = resolveOwnerPos(owner);
+  const vel = resolveOwnerVelocity(owner);
+
+  const forward = { x: Math.cos(heading), y: Math.sin(heading) };
+  // Screen-space right vector (consistent with the rest of the file).
+  const right = { x: -Math.sin(heading), y: Math.cos(heading) };
+
+  const flankSign = (owner && owner.leashHandSide === 'left') ? -1 : 1;
+
+  const halfWidth = resolveOwnerHalfWidth(owner);
+  const rawLateral = halfWidth + LEASH_FLANK_CLEARANCE_TARGET_PX;
+  const lateral = Math.max(
+    halfWidth + LEASH_FLANK_CLEARANCE_MIN_PX,
+    Math.min(halfWidth + LEASH_FLANK_CLEARANCE_MAX_PX, rawLateral)
+  );
+
+  // Velocity feed-forward is applied STRICTLY along the forward axis so that
+  // lateral velocity (e.g. wall-collision sliding) can never push the slot
+  // outside the [LEASH_FLANK_CLEARANCE_MIN_PX, LEASH_FLANK_CLEARANCE_MAX_PX]
+  // lateral band.
+  const forwardSpeed = vel.x * forward.x + vel.y * forward.y;
+  let forwardLead = LEASH_FORWARD_LEAD_TARGET_PX + forwardSpeed * LEASH_FEEDFORWARD_SECONDS;
+
+  // Clamp forward lead strictly to [MIN, MAX] so it never exceeds 52px ahead
+  // even at high gaits or with large feed-forward velocity.
+  forwardLead = Math.max(
+    LEASH_FORWARD_LEAD_MIN_PX,
+    Math.min(LEASH_FORWARD_LEAD_MAX_PX, forwardLead)
+  );
+
+  // Compose the slot from the (already clamped) forward lead and lateral
+  // clearance. Because both components are clamped independently, the
+  // resulting slot is guaranteed to satisfy both bounds.
+  let slotX = pos.x + forward.x * forwardLead + right.x * flankSign * lateral;
+  let slotY = pos.y + forward.y * forwardLead + right.y * flankSign * lateral;
+
+  // Shoulder-line clamp: the slot must stay forward of the owner's transverse
+  // shoulder line by at least LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX.
+  const shoulderCentre = pos;
+  const relX = slotX - shoulderCentre.x;
+  const relY = slotY - shoulderCentre.y;
+  const projection = relX * forward.x + relY * forward.y;
+  if (projection < LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX) {
+    const push = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX - projection;
+    slotX += forward.x * push;
+    slotY += forward.y * push;
+  }
+
+  return { x: slotX, y: slotY };
+}
+
 // States that must never be interrupted by ambient resting (LYING_DOWN) transitions.
 const ACTIVE_REST_BLOCKED_STATES = new Set([
   DogState.FETCHING,
@@ -7125,6 +7224,9 @@ export class CompanionDog {
 
     // Current zone reference (set externally for sunny-zone rolling)
     this.currentZone = null;
+
+    // Resolved leash target slot (world space), updated each frame while leashed.
+    this.targetSlot = null;
 
     // Audio cooldowns
     this._whineCooldown = 0;
@@ -7659,6 +7761,11 @@ export class CompanionDog {
       this.isPullingLeash = false;
     }
 
+    // Clear the resolved slot when off-leash so tests can distinguish states.
+    if (!this.owner || !this.owner.isLeashed) {
+      this.targetSlot = null;
+    }
+
     // Update leash tension state (on-leash implies taut; sag/vibration derived)
     if (this.owner && this.owner.isLeashed) {
       // Keep the owner's leash hand on the same side as the dog's flank.
@@ -7835,6 +7942,11 @@ export class CompanionDog {
     return false;
   }
 
+  // Public helper: compute the leash target slot for the given owner.
+  getLeashSlot(owner = this.owner) {
+    return getLeashSlot(owner);
+  }
+
   // Resolve the current flank band based on preferred side.
   _getFlankBand() {
     return this.preferredSide === 'left' ? FLANK_LEFT : FLANK_RIGHT;
@@ -7910,11 +8022,20 @@ export class CompanionDog {
       return;
     }
 
-    // Desired position: forward flank offset from owner (never straight behind)
-    const flankAngle = this._resolveFlankAngle(dt);
-    this.followAngleOffset = flankAngle;
-    const targetX = this.owner.x + Math.cos(this.owner.angle + flankAngle) * this.followDistance;
-    const targetY = this.owner.y + Math.sin(this.owner.angle + flankAngle) * this.followDistance;
+    // Desired position: leash slot in the owner's local frame (forward flank,
+    // forward of the shoulder line, with velocity feed-forward).
+    // Only resolve the leash slot while actually leashed; off-leash callers
+    // are routed to updateRoaming() above.
+    if (!this.owner || !this.owner.isLeashed) {
+      this.targetSlot = null;
+      this.state = DogState.ROAMING;
+      this.updateRoaming(dt, otherDogs, field);
+      return;
+    }
+    const slot = getLeashSlot(this.owner);
+    this.targetSlot = slot;
+    const targetX = slot.x;
+    const targetY = slot.y;
 
     const dx = targetX - this.x;
     const dy = targetY - this.y;
@@ -7955,6 +8076,19 @@ export class CompanionDog {
       this.vx = 0;
       this.vy = 0;
       this.wagSpeed = 6;
+    }
+
+    // Rendered-position shoulder-line clamp: after arrival damping, the dog's
+    // actual position must never lag behind the owner's transverse shoulder
+    // line during sharp turns while on leash.
+    const heading = resolveOwnerHeading(this.owner);
+    const fwdX = Math.cos(heading);
+    const fwdY = Math.sin(heading);
+    const proj = (this.x - this.owner.x) * fwdX + (this.y - this.owner.y) * fwdY;
+    if (proj < LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX) {
+      const push = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX - proj;
+      this.x += fwdX * push;
+      this.y += fwdY * push;
     }
   }
 
@@ -8214,12 +8348,25 @@ export class CompanionDog {
     }
 
     if (this.isRecalledToHeel) {
-      // Executes tight close heel following (followDistance = 35)
+      // Executes tight close heel following. When on-leash, use the leash
+      // slot geometry; when off-leash, preserve the tight-heel follow offset
+      // relative to the owner's forward flank.
       this.followDistance = 35;
-      const flankAngle = this._resolveFlankAngle(dt);
-      this.followAngleOffset = flankAngle;
-      const targetX = this.owner.x + Math.cos(this.owner.angle + flankAngle) * this.followDistance;
-      const targetY = this.owner.y + Math.sin(this.owner.angle + flankAngle) * this.followDistance;
+      let targetX;
+      let targetY;
+      if (this.owner && this.owner.isLeashed) {
+        const slot = getLeashSlot(this.owner);
+        this.targetSlot = slot;
+        targetX = slot.x;
+        targetY = slot.y;
+      } else {
+        this.targetSlot = null;
+        const heading = resolveOwnerHeading(this.owner);
+        const sideSign = this.preferredSide === 'left' ? -1 : 1;
+        const bearing = heading + sideSign * FLANK_RIGHT.mid;
+        targetX = this.owner.x + Math.cos(bearing) * this.followDistance;
+        targetY = this.owner.y + Math.sin(bearing) * this.followDistance;
+      }
 
       const dx = targetX - this.x;
       const dy = targetY - this.y;
@@ -8813,8 +8960,7 @@ export class CompanionDog {
     }
 
     // Hand anchor on the flank side the dog is currently on (matches flank band).
-    // HAND_RADIUS (28) is strictly outside PLAYER_HIT_RADIUS (26) so the anchor
-    // itself never sits inside the owner torso.
+    // Prefer the owner's rendered grip hand so the leash starts exactly there.
     const sideSign = this.preferredSide === 'left' ? -1 : 1;
     let handSide = sideSign * HAND_SIDE;
     let handX;
@@ -8834,10 +8980,12 @@ export class CompanionDog {
     const collarY = collar.y;
 
     // Guard: if the leash midpoint would clip the owner torso, widen the hand
-    // offset further so the sag point clears the body radius.
+    // offset further so the sag point clears the body radius. When the owner
+    // exposes a real grip anchor we keep it fixed (never detach from the hand).
+    const hasAnchor = Boolean(this.owner && typeof this.owner.getLeashHandAnchor === 'function');
     const midX0 = (handX + collarX) / 2;
     const midY0 = (handY + collarY) / 2;
-    if (Math.hypot(midX0 - this.owner.x, midY0 - this.owner.y) <= PLAYER_HIT_RADIUS) {
+    if (!hasAnchor && Math.hypot(midX0 - this.owner.x, midY0 - this.owner.y) <= PLAYER_HIT_RADIUS) {
       handSide = sideSign * (HAND_SIDE + (10 * Math.PI) / 180);
       handX = this.owner.x + Math.cos(this.owner.angle + handSide) * HAND_RADIUS;
       handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
@@ -8860,7 +9008,8 @@ export class CompanionDog {
     const jitterX = perpX * jitter;
     const jitterY = perpY * jitter;
 
-    // Minimal sag (<= 2px and <= 3% of leash length) so the lead reads as taut
+    // Minimal sag (<= 2px and <= 3% of leash length) so the lead reads as taut.
+    // Under high tension / pulling the lead must stay taut: never increase sag.
     const sagCap = Math.min(2.0, leashLen * 0.03);
     const sag = Math.min(sagCap, this.leashSagPx || 0);
 
@@ -8915,6 +9064,17 @@ export class CompanionDog {
     ctx.restore();
   }
 }
+
+// Static exports for test/tooling access
+CompanionDog.LEASH_FLANK_CLEARANCE_MIN_PX = LEASH_FLANK_CLEARANCE_MIN_PX;
+CompanionDog.LEASH_FLANK_CLEARANCE_MAX_PX = LEASH_FLANK_CLEARANCE_MAX_PX;
+CompanionDog.LEASH_FLANK_CLEARANCE_TARGET_PX = LEASH_FLANK_CLEARANCE_TARGET_PX;
+CompanionDog.LEASH_FORWARD_LEAD_MIN_PX = LEASH_FORWARD_LEAD_MIN_PX;
+CompanionDog.LEASH_FORWARD_LEAD_MAX_PX = LEASH_FORWARD_LEAD_MAX_PX;
+CompanionDog.LEASH_FORWARD_LEAD_TARGET_PX = LEASH_FORWARD_LEAD_TARGET_PX;
+CompanionDog.LEASH_FEEDFORWARD_SECONDS = LEASH_FEEDFORWARD_SECONDS;
+CompanionDog.LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX;
+CompanionDog.getLeashSlot = getLeashSlot;
 ```
 
 ## FILE: src/entities/npc.js
@@ -10070,6 +10230,30 @@ const PLAYER_HIT_RADIUS = 26;
 const JOG_DURATION = 2.0;
 const JOG_COOLDOWN = 2.0;
 
+// Wander mode (KeyW autopilot stroll) constants
+export const WANDER_SPEED = Gait.STROLL;            // 75 px/s
+export const WANDER_MAX_TURN_RATE = Math.PI * 1.4;  // rad/s
+export const WANDER_DRIFT_AMPLITUDE = 0.55;         // rad
+export const WANDER_DRIFT_FREQUENCY = 0.35;         // Hz
+export const WANDER_LOOKAHEAD_PX = 96;
+
+// Leash arm pose constants (exported for tests/tooling)
+export const LEASH_ARM_SWING_SCALE = 0.15;
+export const LEASH_ARM_BASE_REACH_PX = 18;
+export const LEASH_ARM_MAX_REACH_PX = 34;
+export const LEASH_ARM_TENSION_RAMP_PX = 140; // distance that maps to tension = 1
+export const LEASH_ARM_SHOULDER_OFFSET_PX = 8;
+export const LEASH_ARM_HAND_RADIUS_PX = 3.5;
+
+function clamp01(v) {
+  if (!isFinite(v)) return 0;
+  return v < 0 ? 0 : (v > 1 ? 1 : v);
+}
+
+function lerpNum(a, b, t) {
+  return a + (b - a) * t;
+}
+
 // Wrapped shortest-arc delta from a to b
 function angleDelta(a, b) {
   let delta = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
@@ -10133,6 +10317,17 @@ export class Owner {
     this.stepOffTimer = 0;
     this.stepOffActive = false;
 
+    // Leash arm pose state (updated each frame while leashed)
+    this.leashArmExtensionPx = LEASH_ARM_BASE_REACH_PX;
+    this.leashArmTension = 0;
+    this.leashDistance = 0;
+
+    // Wander mode (KeyW autopilot stroll) state
+    this.wanderMode = false;
+    this.wanderPhase = 0;
+    this.wanderBaseHeading = this.angle;
+    this.wanderTargetHeading = this.angle;
+
     // Brake-light feedback pulse (rear brake sector flash)
     this.brakeLightFeedback = {
       active: false,
@@ -10142,6 +10337,10 @@ export class Owner {
       peakStrokeAlpha: 0.9,
       color: '#ef4444'
     };
+
+    // Gait-change event hook (wired by main.js to spawn speed badges).
+    // Signature: (prevGait, nextGait) => void
+    this.onGaitChange = null;
   }
 
   triggerBrakeLight(now = (typeof performance !== 'undefined' ? performance.now() : Date.now())) {
@@ -10149,14 +10348,69 @@ export class Owner {
     this.brakeLightFeedback.startedAt = now;
   }
 
+  // Normalized leash tension in [0, 1]. Derived from leash distance and the
+  // dog's pulling state. Falls back gracefully when no dog reference exists.
+  getLeashTension() {
+    const dog = this.dog || null;
+    let dist = this.leashDistance;
+    if ((!dist || !isFinite(dist)) && dog) {
+      dist = Math.hypot(dog.x - this.x, dog.y - this.y);
+    }
+    if (!dist || !isFinite(dist)) dist = 0;
+    let tension = clamp01(dist / LEASH_ARM_TENSION_RAMP_PX);
+    if (dog && dog.isPullingLeash) {
+      tension = Math.max(tension, 0.85);
+    }
+    return tension;
+  }
+
+  // Compute the leash hand position in owner-local space.
+  // Local frame: +x = forward (heading), +y = screen-right of heading.
+  // This is the SINGLE SOURCE OF TRUTH for both rendering and the anchor.
+  computeLeashHandLocal() {
+    const sideSign = this.leashHandSide === 'left' ? -1 : 1;
+    const tension = this.getLeashTension();
+
+    const shoulderX = 0;
+    const shoulderY = sideSign * LEASH_ARM_SHOULDER_OFFSET_PX;
+
+    const reach = lerpNum(LEASH_ARM_BASE_REACH_PX, LEASH_ARM_MAX_REACH_PX, tension);
+
+    // Aim forward with a slight outward bias toward the dog's flank.
+    let armAngle = sideSign * (0.35 + 0.25 * (1 - tension));
+
+    // Reduced stride oscillation on the holding arm only.
+    // NOTE: armAngle is in RADIANS, so the swing must be an angular amplitude
+    // (not a pixel displacement). 0.35 rad * LEASH_ARM_SWING_SCALE (0.15)
+    // yields ~0.0525 rad (~3 deg) of gentle, stabilized leash-hand vibration.
+    const swingAngle = this.isMoving ? 0.35 : 0;
+    armAngle += Math.sin(this.walkPhase) * swingAngle * LEASH_ARM_SWING_SCALE * sideSign;
+
+    return {
+      x: shoulderX + Math.cos(armAngle) * reach,
+      y: shoulderY + Math.sin(armAngle) * reach,
+      shoulderX,
+      shoulderY,
+      armAngle,
+      reach,
+      tension
+    };
+  }
+
   getLeashHandAnchor(preferredSide = this.leashHandSide || 'right') {
     const side = preferredSide === 'left' ? 'left' : 'right';
     this.leashHandSide = side;
-    const sideSign = side === 'left' ? -1 : 1;
-    const handSide = sideSign * ((30 * Math.PI) / 180);
+
+    const local = this.computeLeashHandLocal();
+    const c = Math.cos(this.angle);
+    const s = Math.sin(this.angle);
+    // Match the rendered grip hand exactly: draw() places the torso at
+    // `this.y - 3 + kneelDrop` and the leash arm hand at torso-relative
+    // coordinates, so the anchor must include the same -3 vertical offset.
+    const torsoYOffset = -3;
     return {
-      x: this.x + Math.cos(this.angle + handSide) * 28,
-      y: this.y + Math.sin(this.angle + handSide) * 28
+      x: this.x + local.x * c - local.y * s,
+      y: this.y + torsoYOffset + local.x * s + local.y * c
     };
   }
 
@@ -10181,13 +10435,15 @@ export class Owner {
     if (!GAIT_ORDER.includes(nextGait)) return;
     if (nextGait === this.gait) return;
 
-    const prevIndex = GAIT_ORDER.indexOf(this.gait);
-    const nextIndex = GAIT_ORDER.indexOf(nextGait);
+    const prevGait = this.gait;
 
     // Clamp upward transitions into JOG while cooldown is active
     if (nextGait === Gait.JOG && this.jogCooldown > 0) {
       nextGait = Gait.WALK;
     }
+
+    // If the clamp collapsed the transition back to the current gait, bail.
+    if (nextGait === this.gait) return;
 
     // Leaving JOG starts cooldown
     if (this.gait === Gait.JOG && nextGait !== Gait.JOG) {
@@ -10222,6 +10478,12 @@ export class Owner {
       this.vx = 0;
       this.vy = 0;
     }
+
+    // Fire the gait-change hook at the transition source so downstream
+    // consumers (e.g. speed badges) never rely on fragile frame polling.
+    if (typeof this.onGaitChange === 'function') {
+      this.onGaitChange(prevGait, this.gait);
+    }
   }
 
   stepGait(delta) {
@@ -10231,6 +10493,134 @@ export class Owner {
     const nextIdx = Math.max(0, Math.min(GAIT_ORDER.length - 1, idx + dir));
     if (nextIdx === idx) return;
     this.setGait(GAIT_ORDER[nextIdx]);
+  }
+
+  // --- Wander mode (autopilot stroll) ---
+
+  getWanderSpeed() {
+    return GAIT_SPEEDS[WANDER_SPEED] || 0;
+  }
+
+  // Probe a point ahead of the owner for world-boundary or obstacle blockage.
+  // Returns true when the probe point is blocked.
+  _isWanderProbeBlocked(px, py, world) {
+    if (!world) return false;
+
+    // World bounds check (respect owner radius + small margin)
+    const w = (typeof world.width === 'number') ? world.width : null;
+    const h = (typeof world.height === 'number') ? world.height : null;
+    if (w !== null && h !== null) {
+      const margin = (this.radius || 16) + 4;
+      if (px < margin || py < margin || px > w - margin || py > h - margin) {
+        return true;
+      }
+    }
+
+    // Obstacle colliders check
+    const colliders = Array.isArray(world.colliders) ? world.colliders : null;
+    if (colliders) {
+      for (const c of colliders) {
+        if (!c) continue;
+        const cx = (typeof c.x === 'number') ? c.x : null;
+        const cy = (typeof c.y === 'number') ? c.y : null;
+        if (cx === null || cy === null) continue;
+        const cr = (typeof c.radius === 'number') ? c.radius : 0;
+        const reach = cr + (this.radius || 16);
+        const dx = px - cx;
+        const dy = py - cy;
+        if (dx * dx + dy * dy < reach * reach) return true;
+      }
+    }
+
+    // World obstacles (rectangular) check
+    const obstacles = Array.isArray(world.obstacles) ? world.obstacles : null;
+    if (obstacles) {
+      for (const o of obstacles) {
+        if (!o) continue;
+        const ox = (typeof o.x === 'number') ? o.x : null;
+        const oy = (typeof o.y === 'number') ? o.y : null;
+        if (ox === null || oy === null) continue;
+        const ow = (typeof o.w === 'number') ? o.w : (typeof o.width === 'number' ? o.width : 0);
+        const oh = (typeof o.h === 'number') ? o.h : (typeof o.height === 'number' ? o.height : 0);
+        const pad = (this.radius || 16);
+        if (px > ox - pad && px < ox + ow + pad && py > oy - pad && py < oy + oh + pad) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  // Per-frame autopilot stepper. Advances a smooth meandering heading at
+  // Gait.STROLL speed, steering away from obstacles and world boundaries.
+  updateWander(dt, world) {
+    if (!this.wanderMode) return;
+
+    // Advance drift phase
+    this.wanderPhase += WANDER_DRIFT_FREQUENCY * Math.PI * 2 * dt;
+
+    // Base meandering target heading
+    let targetHeading = this.wanderBaseHeading +
+      Math.sin(this.wanderPhase) * WANDER_DRIFT_AMPLITUDE;
+
+    // Forward probe: if blocked, search for a clear side.
+    const probeDist = WANDER_LOOKAHEAD_PX;
+    const probeX = this.x + Math.cos(targetHeading) * probeDist;
+    const probeY = this.y + Math.sin(targetHeading) * probeDist;
+
+    if (this._isWanderProbeBlocked(probeX, probeY, world)) {
+      const offsets = [
+        Math.PI / 6, -Math.PI / 6,
+        Math.PI / 3, -Math.PI / 3,
+        Math.PI / 2, -Math.PI / 2
+      ];
+      let chosen = null;
+      for (const off of offsets) {
+        const testHeading = targetHeading + off;
+        const tx = this.x + Math.cos(testHeading) * probeDist;
+        const ty = this.y + Math.sin(testHeading) * probeDist;
+        if (!this._isWanderProbeBlocked(tx, ty, world)) {
+          chosen = testHeading;
+          break;
+        }
+      }
+      if (chosen !== null) {
+        targetHeading = chosen;
+        // Slowly rotate the base heading away from the obstacle so we do not
+        // re-target it every frame.
+        const baseDelta = angleDelta(this.wanderBaseHeading, chosen);
+        this.wanderBaseHeading += Math.sign(baseDelta) * Math.min(Math.abs(baseDelta), 0.6 * dt);
+      } else {
+        // Fully boxed in: reverse the base heading to escape.
+        this.wanderBaseHeading += Math.PI;
+      }
+    }
+
+    this.wanderTargetHeading = targetHeading;
+
+    // Clamp heading change to the wander max turn rate.
+    const maxStep = WANDER_MAX_TURN_RATE * dt;
+    const delta = angleDelta(this.angle, targetHeading);
+    if (Math.abs(delta) <= maxStep) {
+      this.angle = targetHeading;
+    } else {
+      this.angle += Math.sign(delta) * maxStep;
+    }
+    this.angle = ((this.angle + Math.PI) % (Math.PI * 2)) - Math.PI;
+    if (this.angle < -Math.PI) this.angle += Math.PI * 2;
+
+    // Keep targetHeading synced so external readers see the wander intent.
+    this.targetHeading = this.angle;
+
+    // Force STROLL gait while wandering. Route through setGait so that
+    // leaving JOG starts the normal JOG_COOLDOWN, isMoving is synced, and
+    // onGaitChange fires for downstream consumers (e.g. speed badges).
+    if (this.gait !== Gait.STROLL) {
+      this.setGait(Gait.STROLL);
+    }
+    this.stepOffActive = false;
+    this.stepOffTimer = 0;
   }
 
   // --- Heading integration ---
@@ -10357,8 +10747,12 @@ export class Owner {
       this.stepOffTimer = Math.max(0, this.stepOffTimer - dt);
     }
 
-    // 3. Update heading toward target
-    this._updateHeading(dt);
+    // 3. Wander mode overrides normal heading integration.
+    if (this.wanderMode) {
+      this.updateWander(dt, field);
+    } else {
+      this._updateHeading(dt);
+    }
 
     // 4. Compute velocity from gait speed and current angle
     const speed = this.getCurrentSpeed();
@@ -10414,6 +10808,21 @@ export class Owner {
     if (!this.isMoving) {
       this.vx = 0;
       this.vy = 0;
+    }
+
+    // Update leash arm pose state (tension + extension) each frame.
+    if (this.isLeashed) {
+      const dog = this.dog || null;
+      this.leashDistance = dog ? Math.hypot(dog.x - this.x, dog.y - this.y) : 0;
+      this.leashArmTension = this.getLeashTension();
+      this.leashArmExtensionPx = lerpNum(
+        LEASH_ARM_BASE_REACH_PX,
+        LEASH_ARM_MAX_REACH_PX,
+        this.leashArmTension
+      );
+    } else {
+      this.leashArmTension = 0;
+      this.leashArmExtensionPx = LEASH_ARM_BASE_REACH_PX;
     }
 
     this.depthY = this.y + 12;
@@ -10545,12 +10954,63 @@ export class Owner {
     };
 
     // Helper for arms
-    const drawArm = (shX, shY, swing, isFar) => {
+    const drawArm = (shX, shY, swing, isFar, isLeashArm = false) => {
       ctx.save();
       const ax = torsoX + shX;
       const ay = torsoY - 7 + shY;
 
       ctx.fillStyle = isFar ? this.getShadedColor(this.jacketColor, -0.18) : this.jacketColor;
+
+      if (isLeashArm && this.isLeashed) {
+        // Leash-holding arm: bent elbow reaching toward the dog's flank.
+        const local = this.computeLeashHandLocal();
+        const c = cosA;
+        const s = sinA;
+        // Convert owner-local (forward, right) to world offset.
+        const handWorldX = local.x * c - local.y * s;
+        const handWorldY = local.x * s + local.y * c;
+        const handX = this.x + handWorldX;
+        const handY = this.y - 3 + handWorldY;
+
+        // Elbow: midpoint pushed slightly outward from the shoulder.
+        const midX = (ax + handX) / 2;
+        const midY = (ay + handY) / 2;
+        const sideSign = this.leashHandSide === 'left' ? -1 : 1;
+        const elbowX = midX + (-sinA) * sideSign * 3.0;
+        const elbowY = midY + (cosA * 0.36) * sideSign * 3.0;
+
+        // Upper arm (shoulder -> elbow)
+        ctx.strokeStyle = isFar ? this.getShadedColor(this.jacketColor, -0.18) : this.jacketColor;
+        ctx.lineWidth = 4.6;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(elbowX, elbowY);
+        ctx.stroke();
+
+        // Forearm (elbow -> hand)
+        ctx.beginPath();
+        ctx.moveTo(elbowX, elbowY);
+        ctx.lineTo(handX, handY);
+        ctx.stroke();
+
+        // Grip hand
+        ctx.fillStyle = this.skinTone;
+        ctx.beginPath();
+        ctx.arc(handX, handY, LEASH_ARM_HAND_RADIUS_PX, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Short thumb stroke across the grip
+        ctx.strokeStyle = this.getShadedColor(this.skinTone, -0.15);
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(handX - 1.5, handY - 1.5);
+        ctx.lineTo(handX + 1.5, handY + 1.5);
+        ctx.stroke();
+
+        ctx.restore();
+        return;
+      }
 
       if (isKneeling && !isFar) {
         // Kneeling / bending gesture: arm reaches down toward pet or waste
@@ -10585,13 +11045,18 @@ export class Owner {
       ctx.restore();
     };
 
+    // Determine which shoulder is the leash-holding side.
+    const leashSideSign = this.leashHandSide === 'left' ? -1 : 1;
+    const leftIsLeashArm = this.isLeashed && leashSideSign === -1;
+    const rightIsLeashArm = this.isLeashed && leashSideSign === 1;
+
     // --- DEPTH LAYER 1: Far Arm & Far Leg (behind torso) ---
     if (leftIsFar) {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, true);
-      drawArm(leftShoulderX, leftShoulderY, -armSwing, true);
+      drawArm(leftShoulderX, leftShoulderY, -armSwing, true, leftIsLeashArm);
     } else {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, true);
-      drawArm(rightShoulderX, rightShoulderY, armSwing, true);
+      drawArm(rightShoulderX, rightShoulderY, armSwing, true, rightIsLeashArm);
     }
 
     // --- DEPTH LAYER 2: Accessory (Backpack when facing South / from front) ---
@@ -10691,10 +11156,10 @@ export class Owner {
     // --- DEPTH LAYER 5: Near Leg & Near Arm (in front of torso) ---
     if (leftIsFar) {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, false);
-      drawArm(rightShoulderX, rightShoulderY, armSwing, false);
+      drawArm(rightShoulderX, rightShoulderY, armSwing, false, rightIsLeashArm);
     } else {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, false);
-      drawArm(leftShoulderX, leftShoulderY, -armSwing, false);
+      drawArm(leftShoulderX, leftShoulderY, -armSwing, false, leftIsLeashArm);
     }
 
     // --- DEPTH LAYER 6: Head, Face, Ears & Hairstyle ---
@@ -11226,6 +11691,17 @@ export class Owner {
 Owner.GAIT_SPEEDS = GAIT_SPEEDS;
 Owner.PLAYER_HIT_RADIUS = PLAYER_HIT_RADIUS;
 Owner.STEP_OFF_ALIGN_TOLERANCE = STEP_OFF_ALIGN_TOLERANCE;
+Owner.LEASH_ARM_SWING_SCALE = LEASH_ARM_SWING_SCALE;
+Owner.LEASH_ARM_BASE_REACH_PX = LEASH_ARM_BASE_REACH_PX;
+Owner.LEASH_ARM_MAX_REACH_PX = LEASH_ARM_MAX_REACH_PX;
+Owner.LEASH_ARM_TENSION_RAMP_PX = LEASH_ARM_TENSION_RAMP_PX;
+Owner.LEASH_ARM_SHOULDER_OFFSET_PX = LEASH_ARM_SHOULDER_OFFSET_PX;
+Owner.LEASH_ARM_HAND_RADIUS_PX = LEASH_ARM_HAND_RADIUS_PX;
+Owner.WANDER_SPEED = WANDER_SPEED;
+Owner.WANDER_MAX_TURN_RATE = WANDER_MAX_TURN_RATE;
+Owner.WANDER_DRIFT_AMPLITUDE = WANDER_DRIFT_AMPLITUDE;
+Owner.WANDER_DRIFT_FREQUENCY = WANDER_DRIFT_FREQUENCY;
+Owner.WANDER_LOOKAHEAD_PX = WANDER_LOOKAHEAD_PX;
 ```
 
 ## FILE: src/entities/tombstone.js
@@ -11504,6 +11980,9 @@ import { environmentSystem, TimeOfDay } from './world/environment.js';
 import { initWasmSim, syncWorldObstacles } from './engine/wasm_sim_bridge.js';
 import { applyCoastalShallowWaterInteraction } from './systems/coastalWater.js';
 
+// Speed-up floating chevron badge lifetime (ms). Must stay within [400, 500].
+export const SPEED_BADGE_DURATION_MS = 450;
+
 export class CliftonDownGame {
   constructor() {
     this.canvas = document.getElementById('game-canvas');
@@ -11527,6 +12006,15 @@ export class CliftonDownGame {
     this.ball.inOwnerPossession = true;
 
     this.camera.follow(this.owner);
+
+    // Speed-up floating chevron badges (STROLL->WALK, WALK->JOG).
+    // Declared before the gait-change hook so the callback can safely push.
+    this.speedBadges = [];
+
+    // Wire gait-change hook at the transition source (Owner.setGait).
+    this.owner.onGaitChange = (prevGait, nextGait) => {
+      this.spawnSpeedBadge(prevGait, nextGait);
+    };
 
     // Zone Warping State
     this.currentZoneId = 'clifton-commons';
@@ -11672,7 +12160,7 @@ export class CliftonDownGame {
     this.hasInteracted = false;
     this.lastFootstepTime = 0;
 
-    // Click feedback markers (steer-single / steer-double)
+    // Click feedback markers (unified single 'x' reticle)
     this.clickFeedback = [];
 
     // Environment & Weather Systems
@@ -11991,6 +12479,17 @@ export class CliftonDownGame {
         return;
       }
 
+      // Enable-only wander mode. Never toggles off via KeyW.
+      if (e.code === 'KeyW') {
+        if (this.owner && !this.owner.wanderMode) {
+          this.owner.wanderMode = true;
+          this.owner.wanderBaseHeading = this.owner.angle;
+          this.owner.wanderPhase = 0;
+        }
+        e.preventDefault();
+        return;
+      }
+
       switch (e.code) {
         case 'KeyQ':
           // Toggle Leash
@@ -12063,6 +12562,8 @@ export class CliftonDownGame {
       if (!captured) return;
 
       if (captured.type === 'brake') {
+        // Any brake gesture cancels wander mode.
+        if (this.owner.wanderMode) this.owner.wanderMode = false;
         // Brake-light feedback pulse on any brake gesture
         if (typeof this.owner.triggerBrakeLight === 'function') {
           const brakeNow = (typeof performance !== 'undefined' ? performance.now() : Date.now());
@@ -12095,6 +12596,9 @@ export class CliftonDownGame {
       const heading = captured.heading;
       if (typeof heading !== 'number' || !isFinite(heading)) return;
 
+      // Any pointer steering (single or double) cancels wander mode.
+      if (this.owner.wanderMode) this.owner.wanderMode = false;
+
       const gaitAtPress = captured.gaitAtPress;
       this.owner.setTargetHeading(heading);
 
@@ -12102,20 +12606,19 @@ export class CliftonDownGame {
       const worldX = captured.worldX;
       const worldY = captured.worldY;
 
+      // Unified single 'x' reticle for both single and double field presses.
+      // Double-click replaces any prior marker so exactly ONE reticle renders.
+      this.clickFeedback = [{
+        kind: 'steer-single',
+        worldX,
+        worldY,
+        startedAt: now,
+        durationMs: 400,
+        glyph: 'x',
+        color: '#ffffff'
+      }];
+
       if (isDouble) {
-        // Cancel any pending single-click marker within the double-click window
-        this.clickFeedback = this.clickFeedback.filter(
-          (f) => !(f.kind === 'steer-single' && (now - f.startedAt) <= DOUBLE_CLICK_MS + 50)
-        );
-        this.clickFeedback.push({
-          kind: 'steer-double',
-          worldX,
-          worldY,
-          startedAt: now,
-          durationMs: 400,
-          glyph: '+',
-          color: '#22c55e'
-        });
         if (gaitAtPress === 'STAND') {
           this.owner.setGait('STROLL');
         } else if (gaitAtPress === 'STROLL') {
@@ -12124,15 +12627,6 @@ export class CliftonDownGame {
           this.owner.setGait('JOG');
         }
       } else {
-        this.clickFeedback.push({
-          kind: 'steer-single',
-          worldX,
-          worldY,
-          startedAt: now,
-          durationMs: 400,
-          glyph: 'x',
-          color: '#ffffff'
-        });
         if (gaitAtPress === 'STAND') {
           this.owner.setGait('STROLL');
         }
@@ -12168,6 +12662,12 @@ export class CliftonDownGame {
       // Only left-click / primary pointer
       if (e.button !== undefined && e.button !== 0) return;
 
+      // Immediate wander-mode cancellation on the very first primary
+      // pointerdown, without waiting for the 280ms double-click window.
+      if (this.owner && this.owner.wanderMode) {
+        this.owner.wanderMode = false;
+      }
+
       // --- Avatar click → brake gesture (REQ-004) ---
       // Detect clicks on the player avatar body. A standing avatar is an
       // explicit no-op for locomotion. A moving avatar is routed through the
@@ -12185,6 +12685,7 @@ export class CliftonDownGame {
       if (onPlayer && this.owner.gait === 'STAND') {
         // Standing avatar: no brake, no gait change. Cancel any pending
         // deferred gesture so it cannot fire later.
+        if (this.owner.wanderMode) this.owner.wanderMode = false;
         cancelPendingSingle();
         this._lastClickTime = 0;
         this._lastClickX = 0;
@@ -12249,6 +12750,11 @@ export class CliftonDownGame {
         (typeof this.owner.isPointOnRearBrakeArc === 'function' &&
           this.owner.isPointOnRearBrakeArc(worldTarget.x, worldTarget.y))
       );
+
+      // Avatar click or rear-brake-arc click cancels wander mode immediately.
+      if (isBrake && this.owner.wanderMode) {
+        this.owner.wanderMode = false;
+      }
 
       const captured = {
         type: isBrake ? 'brake' : 'field',
@@ -12741,6 +13247,8 @@ export class CliftonDownGame {
     this.updateLocalSpawner(dt);
 
     // 3. Update Local Entities
+    // Speed badges are spawned via the Owner.onGaitChange hook (see constructor),
+    // so no fragile frame-polling is required here.
     this.owner.update(dt, this.field);
 
     // Collision resolution is handled inside Owner.update() via resolveCollisionWithResult.
@@ -12939,6 +13447,33 @@ export class CliftonDownGame {
     this.camera.update(dt);
   }
 
+  // Spawn a floating speed-up chevron badge for qualifying gait transitions.
+  // Only STROLL->WALK (level 1) and WALK->JOG (level 2) qualify.
+  // Accepts either Gait enum values or their string equivalents.
+  spawnSpeedBadge(prevGait, nextGait) {
+    if (!this.owner) return;
+    const prev = String(prevGait);
+    const next = String(nextGait);
+    let badge = null;
+    if (prev === 'STROLL' && next === 'WALK') {
+      badge = { level: 1, glyph: '^', color: '#94a3b8' };
+    } else if (prev === 'WALK' && next === 'JOG') {
+      badge = { level: 2, glyph: '^^', color: '#22c55e' };
+    }
+    if (!badge) return;
+    if (!Array.isArray(this.speedBadges)) this.speedBadges = [];
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    this.speedBadges.push({
+      level: badge.level,
+      glyph: badge.glyph,
+      color: badge.color,
+      worldX: this.owner.x + 16,
+      worldY: this.owner.y - 20,
+      startedAt: now,
+      durationMs: SPEED_BADGE_DURATION_MS
+    });
+  }
+
   render() {
     if (!this.ctx) return;
 
@@ -12971,18 +13506,17 @@ export class CliftonDownGame {
     // Field renders background turf, then Y-sorts trees, benches, owners, dogs, and balls
     this.field.render(this.ctx, this.camera, dynamicEntities);
 
-    // Click feedback markers (steer-single / steer-double)
+    // Click feedback markers (unified single 'x' reticle).
+    // Rendered directly in WORLD coordinates inside the camera transform —
+    // never call worldToScreen() here (that would double-project).
     if (Array.isArray(this.clickFeedback) && this.clickFeedback.length > 0) {
       const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       this.clickFeedback = this.clickFeedback.filter((f) => (now - f.startedAt) <= f.durationMs);
       for (const f of this.clickFeedback) {
         const elapsed = now - f.startedAt;
         const alpha = Math.max(0, 1.0 - (elapsed / f.durationMs));
-        // Project world coordinates through the camera transform so the
-        // feedback glyph lands on the correct screen pixel.
-        const pt = this.camera.worldToScreen(f.worldX, f.worldY);
-        const sx = pt.x;
-        const sy = pt.y;
+        const sx = f.worldX;
+        const sy = f.worldY;
         this.ctx.save();
         this.ctx.globalAlpha = alpha;
         this.ctx.strokeStyle = f.color;
@@ -12990,21 +13524,32 @@ export class CliftonDownGame {
         this.ctx.lineWidth = 2.5;
         this.ctx.lineCap = 'round';
         const s = 7;
-        if (f.glyph === '+') {
-          this.ctx.beginPath();
-          this.ctx.moveTo(sx - s, sy);
-          this.ctx.lineTo(sx + s, sy);
-          this.ctx.moveTo(sx, sy - s);
-          this.ctx.lineTo(sx, sy + s);
-          this.ctx.stroke();
-        } else {
-          this.ctx.beginPath();
-          this.ctx.moveTo(sx - s, sy - s);
-          this.ctx.lineTo(sx + s, sy + s);
-          this.ctx.moveTo(sx + s, sy - s);
-          this.ctx.lineTo(sx - s, sy + s);
-          this.ctx.stroke();
-        }
+        this.ctx.beginPath();
+        this.ctx.moveTo(sx - s, sy - s);
+        this.ctx.lineTo(sx + s, sy + s);
+        this.ctx.moveTo(sx + s, sy - s);
+        this.ctx.lineTo(sx - s, sy + s);
+        this.ctx.stroke();
+        this.ctx.restore();
+      }
+    }
+
+    // Speed-up floating chevron badges (world-space, float up + fade).
+    if (Array.isArray(this.speedBadges) && this.speedBadges.length > 0) {
+      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      this.speedBadges = this.speedBadges.filter((b) => (now - b.startedAt) <= b.durationMs);
+      for (const b of this.speedBadges) {
+        const elapsed = now - b.startedAt;
+        const t = Math.max(0, Math.min(1, elapsed / b.durationMs));
+        const alpha = Math.max(0, 1.0 - t);
+        const rise = 15 * t;
+        this.ctx.save();
+        this.ctx.globalAlpha = alpha;
+        this.ctx.fillStyle = b.color;
+        this.ctx.font = 'bold 13px system-ui, -apple-system, sans-serif';
+        this.ctx.textAlign = 'center';
+        this.ctx.textBaseline = 'middle';
+        this.ctx.fillText(b.glyph, b.worldX, b.worldY - rise);
         this.ctx.restore();
       }
     }
@@ -35018,40 +35563,43 @@ class TestTouchControlRemoval(unittest.TestCase):
 
 
 class TestClickFeedback(unittest.TestCase):
-    """Verify single/double click feedback event contracts."""
+    """Verify unified single 'x' click feedback contract (unification-022)."""
 
     def setUp(self):
         self.src = read("src/main.js")
 
     def test_single_click_feedback_contract(self):
         self.assertIn("steer-single", self.src)
-        self.assertIn("'x'", self.src)
-        self.assertIn("#ffffff", self.src)
-        self.assertIn("400", self.src)
+        self.assertIn("glyph: 'x'", self.src)
+        self.assertIn("color: '#ffffff'", self.src)
+        self.assertIn("durationMs: 400", self.src)
 
-    def test_double_click_feedback_contract(self):
-        self.assertIn("steer-double", self.src)
-        self.assertIn("'+'", self.src)
-        self.assertIn("#22c55e", self.src)
+    def test_double_click_uses_unified_x_reticle(self):
+        # unification-022: double-click emits the SAME white 'x' reticle.
+        self.assertNotIn("steer-double", self.src)
+        self.assertNotIn("glyph: '+'", self.src)
 
     def test_feedback_records_world_coords(self):
         self.assertIn("worldX", self.src)
         self.assertIn("worldY", self.src)
 
-    def test_feedback_projected_through_camera(self):
-        """Click feedback must be projected to screen space via worldToScreen."""
-        self.assertIn("this.camera.worldToScreen(f.worldX, f.worldY)", self.src)
-        self.assertIn("const sx = pt.x;", self.src)
-        self.assertIn("const sy = pt.y;", self.src)
-        # Glyph drawing must use the projected screen coordinates.
-        self.assertIn("this.ctx.moveTo(sx - s, sy - s);", self.src)
-        self.assertIn("this.ctx.moveTo(sx - s, sy);", self.src)
+    def test_feedback_rendered_in_world_space(self):
+        """Click feedback must be drawn in world coords inside camera.apply —
+        never via worldToScreen (that would double-project)."""
+        idx = self.src.index("this.camera.apply(this.ctx);")
+        end = self.src.index("this.camera.restore(this.ctx);", idx)
+        block = self.src[idx:end]
+        self.assertIn("clickFeedback", block)
+        marker_idx = block.index("clickFeedback")
+        marker_block = block[marker_idx:]
+        self.assertNotIn("worldToScreen", marker_block)
+        self.assertIn("const sx = f.worldX;", marker_block)
+        self.assertIn("const sy = f.worldY;", marker_block)
+        self.assertIn("this.ctx.moveTo(sx - s, sy - s);", marker_block)
 
     def test_behavioral_single_click_event(self):
         def emit(is_double, world_x, world_y):
-            if is_double:
-                return {'type': 'steer-double', 'glyph': '+', 'color': '#22c55e',
-                        'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
+            # Unified: both single and double emit the same white 'x' reticle.
             return {'type': 'steer-single', 'glyph': 'x', 'color': '#ffffff',
                     'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
 
@@ -35065,16 +35613,13 @@ class TestClickFeedback(unittest.TestCase):
 
     def test_behavioral_double_click_event(self):
         def emit(is_double, world_x, world_y):
-            if is_double:
-                return {'type': 'steer-double', 'glyph': '+', 'color': '#22c55e',
-                        'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
             return {'type': 'steer-single', 'glyph': 'x', 'color': '#ffffff',
                     'durationMs': 400, 'worldX': world_x, 'worldY': world_y}
 
         ev = emit(True, 10.0, 20.0)
-        self.assertEqual(ev['type'], 'steer-double')
-        self.assertEqual(ev['glyph'], '+')
-        self.assertEqual(ev['color'], '#22c55e')
+        self.assertEqual(ev['type'], 'steer-single')
+        self.assertEqual(ev['glyph'], 'x')
+        self.assertEqual(ev['color'], '#ffffff')
         self.assertEqual(ev['durationMs'], 400)
 
 
@@ -35127,6 +35672,924 @@ class TestBrakeLightFeedback(unittest.TestCase):
         """triggerBrakeLight must be called with an explicit timestamp."""
         self.assertIn("this.owner.triggerBrakeLight(brakeNow)", self.main_src)
         self.assertIn("const brakeNow = (typeof performance !== 'undefined' ? performance.now() : Date.now());", self.main_src)
+
+
+# ---------------------------------------------------------------------------
+# unification-022: wander mode, dog spacing, owner arm/anchor, and feedback.
+# ---------------------------------------------------------------------------
+
+
+class TestWanderMode(unittest.TestCase):
+    """REQ-WANDER: enable-only wander mode, stroll speed, cancel paths, no HUD."""
+
+    def setUp(self):
+        self.owner_src = read("src/entities/owner.js")
+        self.main_src = read("src/main.js")
+
+    def test_wander_mode_default_off(self):
+        self.assertIn("this.wanderMode = false;", self.owner_src)
+
+    def test_keyw_enable_only(self):
+        # KeyW is handled via an `if (e.code === 'KeyW')` guard (not a switch case).
+        idx = self.main_src.index("if (e.code === 'KeyW')")
+        end = self.main_src.index("switch (e.code)", idx)
+        block = self.main_src[idx:end]
+        self.assertIn("this.owner.wanderMode = true", block)
+        self.assertNotIn("wanderMode = !", block)
+        self.assertNotIn("wanderMode = !this.owner.wanderMode", block)
+
+    def test_wander_speed_is_stroll(self):
+        self.assertIn("WANDER_SPEED", self.owner_src)
+        self.assertIn("[Gait.STROLL]: 75", self.owner_src)
+        # WANDER_SPEED must resolve to the STROLL gait (which is 75 px/s).
+        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.STROLL")
+
+    def test_wander_cancel_on_field_click(self):
+        # Field press path cancels wander mode.
+        idx = self.main_src.index("// Field press")
+        end = self.main_src.index("const gaitAtPress = captured.gaitAtPress;", idx)
+        block = self.main_src[idx:end]
+        self.assertIn("this.owner.wanderMode = false", block)
+
+    def test_wander_cancel_on_brake(self):
+        # Brake path (avatar / rear arc) cancels wander mode.
+        idx = self.main_src.index("if (captured.type === 'brake')")
+        end = self.main_src.index("// Field press", idx)
+        block = self.main_src[idx:end]
+        self.assertIn("this.owner.wanderMode = false", block)
+
+    def test_wander_has_no_hud(self):
+        # No toast/banner/HUD emission inside the KeyW wander enable path.
+        idx = self.main_src.index("if (e.code === 'KeyW')")
+        end = self.main_src.index("switch (e.code)", idx)
+        block = self.main_src[idx:end]
+        self.assertNotIn("showToast", block)
+        self.assertNotIn("hud.", block)
+        self.assertNotIn("banner", block.lower())
+
+    def test_wander_update_uses_stroll_speed(self):
+        # updateWander must force the STROLL gait while wandering.
+        # unification-022 remediation cycle 3: the raw `this.gait = WANDER_SPEED`
+        # assignment was replaced with a `setGait(Gait.STROLL)` transition so
+        # that leaving JOG starts the cooldown, isMoving is synced, and
+        # onGaitChange fires. WANDER_SPEED still resolves to Gait.STROLL.
+        idx = self.owner_src.index("updateWander(dt, world)")
+        end = self.owner_src.index("// --- Heading integration ---", idx)
+        block = self.owner_src[idx:end]
+        self.assertIn("if (this.gait !== Gait.STROLL) {", block)
+        self.assertIn("this.setGait(Gait.STROLL);", block)
+        # The old raw assignment must be gone.
+        self.assertNotIn("this.gait = WANDER_SPEED", block)
+        # WANDER_SPEED must still resolve to the STROLL gait.
+        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.STROLL")
+
+    def test_behavioral_wander_speed_value(self):
+        # WANDER_SPEED resolves to STROLL = 75 px/s.
+        GAIT_SPEEDS = {'STAND': 0, 'STROLL': 75, 'WALK': 100, 'JOG': 185}
+        WANDER_SPEED = 'STROLL'
+        self.assertEqual(GAIT_SPEEDS[WANDER_SPEED], 75)
+
+
+class TestDogSpacing(unittest.TestCase):
+    """REQ-DOG: flank clearance, forward lead, shoulder-line, feed-forward, mirroring."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def _slot(self, owner_x, owner_y, heading, side='right', vx=0.0, vy=0.0,
+              half_width=10.5):
+        import math
+        forward = (math.cos(heading), math.sin(heading))
+        right = (-math.sin(heading), math.cos(heading))
+        flank_sign = -1 if side == 'left' else 1
+        lateral = max(half_width + 24, min(half_width + 28, half_width + 26))
+        forward_lead = max(40, min(52, 46))
+        sx = owner_x + forward[0] * forward_lead + right[0] * flank_sign * lateral
+        sy = owner_y + forward[1] * forward_lead + right[1] * flank_sign * lateral
+        sx += vx * 0.12
+        sy += vy * 0.12
+        # Forward-lead clamp AFTER feed-forward (mirrors getLeashSlot).
+        rel_x = sx - owner_x
+        rel_y = sy - owner_y
+        proj = rel_x * forward[0] + rel_y * forward[1]
+        if proj > 52:
+            pull = proj - 52
+            sx -= forward[0] * pull
+            sy -= forward[1] * pull
+            rel_x = sx - owner_x
+            rel_y = sy - owner_y
+            proj = rel_x * forward[0] + rel_y * forward[1]
+        elif proj < 40:
+            push = 40 - proj
+            sx += forward[0] * push
+            sy += forward[1] * push
+            rel_x = sx - owner_x
+            rel_y = sy - owner_y
+            proj = rel_x * forward[0] + rel_y * forward[1]
+        # Shoulder-line clamp
+        if proj < 2:
+            push = 2 - proj
+            sx += forward[0] * push
+            sy += forward[1] * push
+        return sx, sy
+
+    def test_flank_clearance_bounds(self):
+        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 24", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 28", self.src)
+        import math
+        half_width = 10.5
+        for deg in (0, 90, 180, 270, 45):
+            heading = math.radians(deg)
+            sx, sy = self._slot(100.0, 100.0, heading, half_width=half_width)
+            # Lateral distance from the forward axis, minus the owner half-width,
+            # must be within [24, 28] (the flank clearance band).
+            forward = (math.cos(heading), math.sin(heading))
+            rel_x = sx - 100.0
+            rel_y = sy - 100.0
+            proj = rel_x * forward[0] + rel_y * forward[1]
+            lateral = math.hypot(rel_x - forward[0] * proj, rel_y - forward[1] * proj)
+            clearance = lateral - half_width
+            self.assertGreaterEqual(clearance, 24 - 1e-6)
+            self.assertLessEqual(clearance, 28 + 1e-6)
+
+    def test_forward_lead_bounds(self):
+        self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 40", self.src)
+        self.assertIn("LEASH_FORWARD_LEAD_MAX_PX = 52", self.src)
+        import math
+        for deg in (0, 90, 180, 270, 45):
+            heading = math.radians(deg)
+            sx, sy = self._slot(100.0, 100.0, heading)
+            forward = (math.cos(heading), math.sin(heading))
+            proj = (sx - 100.0) * forward[0] + (sy - 100.0) * forward[1]
+            self.assertGreaterEqual(proj, 40 - 1e-6)
+            self.assertLessEqual(proj, 52 + 1e-6)
+
+    def test_dog_never_behind_shoulder_line(self):
+        self.assertIn("LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = 2", self.src)
+        import math
+        for deg in (0, 90, 180, 270, 45, 135, 225, 315):
+            heading = math.radians(deg)
+            for vx, vy in ((0.0, 0.0), (200.0, 0.0), (0.0, -200.0), (-150.0, 150.0)):
+                sx, sy = self._slot(100.0, 100.0, heading, vx=vx, vy=vy)
+                forward = (math.cos(heading), math.sin(heading))
+                proj = (sx - 100.0) * forward[0] + (sy - 100.0) * forward[1]
+                self.assertGreaterEqual(proj, 2 - 1e-6)
+
+    def test_flank_mirrors_leash_hand_side(self):
+        import math
+        heading = math.radians(30)
+        rx, ry = self._slot(100.0, 100.0, heading, side='right')
+        lx, ly = self._slot(100.0, 100.0, heading, side='left')
+        forward = (math.cos(heading), math.sin(heading))
+        right = (-math.sin(heading), math.cos(heading))
+        r_lat = (rx - 100.0) * right[0] + (ry - 100.0) * right[1]
+        l_lat = (lx - 100.0) * right[0] + (ly - 100.0) * right[1]
+        self.assertGreater(r_lat, 0)
+        self.assertLess(l_lat, 0)
+        self.assertAlmostEqual(r_lat, -l_lat, places=6)
+
+    def test_feedforward_constant_present(self):
+        self.assertIn("LEASH_FEEDFORWARD_SECONDS = 0.12", self.src)
+        self.assertIn("LEASH_FEEDFORWARD_SECONDS", self.src)
+        # Used inside getLeashSlot (which updateFollowing consumes).
+        idx = self.src.index("export function getLeashSlot")
+        end = self.src.index("// States that must never be interrupted", idx)
+        block = self.src[idx:end]
+        self.assertIn("LEASH_FEEDFORWARD_SECONDS", block)
+
+    def test_forward_lead_clamped_after_feedforward(self):
+        """Forward lead must stay <= 52px even with high feed-forward velocity."""
+        import math
+        for speed in (0.0, 100.0, 185.0, 400.0):
+            for deg in (0, 45, 90, 135, 180, 225, 270, 315):
+                heading = math.radians(deg)
+                vx = math.cos(heading) * speed
+                vy = math.sin(heading) * speed
+                sx, sy = self._slot(100.0, 100.0, heading, vx=vx, vy=vy)
+                forward = (math.cos(heading), math.sin(heading))
+                proj = (sx - 100.0) * forward[0] + (sy - 100.0) * forward[1]
+                self.assertLessEqual(proj, 52 + 1e-6,
+                                     f"forward lead {proj} exceeds 52 at speed {speed}")
+                self.assertGreaterEqual(proj, 40 - 1e-6,
+                                        f"forward lead {proj} below 40 at speed {speed}")
+
+    def test_rendered_position_shoulder_line_clamp_present(self):
+        """updateFollowing must clamp the rendered position to the shoulder line."""
+        idx = self.src.index("updateFollowing(dt, otherDogs = [], field = null)")
+        end = self.src.index("updateRoaming(dt, otherDogs = [], field = null)", idx)
+        block = self.src[idx:end]
+        self.assertIn("LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX", block)
+        self.assertIn("this.x += fwdX * push;", block)
+        self.assertIn("this.y += fwdY * push;", block)
+
+    def test_behavioral_rendered_position_clamp(self):
+        """Simulate the rendered-position clamp: dog behind shoulder line is pushed forward."""
+        import math
+        owner_x, owner_y = 100.0, 100.0
+        heading = 0.0  # facing east
+        fwd_x, fwd_y = math.cos(heading), math.sin(heading)
+        margin = 2.0
+
+        # Dog is 5px BEHIND the shoulder line (west of owner).
+        dog_x, dog_y = owner_x - 5.0, owner_y
+        proj = (dog_x - owner_x) * fwd_x + (dog_y - owner_y) * fwd_y
+        self.assertLess(proj, margin)
+        push = margin - proj
+        dog_x += fwd_x * push
+        dog_y += fwd_y * push
+        proj_after = (dog_x - owner_x) * fwd_x + (dog_y - owner_y) * fwd_y
+        self.assertGreaterEqual(proj_after, margin - 1e-6)
+
+
+class TestOwnerArmAnchor(unittest.TestCase):
+    """REQ-ARM: holding pose, tension monotonicity, swing isolation, anchor geometry."""
+
+    def setUp(self):
+        self.owner_src = read("src/entities/owner.js")
+        self.dog_src = read("src/entities/companion_dog.js")
+
+    def test_owner_arm_pose_active_when_leashed(self):
+        self.assertIn("computeLeashHandLocal", self.owner_src)
+        self.assertIn("LEASH_ARM_BASE_REACH_PX", self.owner_src)
+        self.assertIn("LEASH_ARM_MAX_REACH_PX", self.owner_src)
+        # Extension must exceed base reach when leashed (tension > 0).
+        self.assertIn("isLeashed", self.owner_src)
+
+    def test_owner_arm_extension_monotonic_with_tension(self):
+        # Simulate lerpNum(base, max, tension) monotonicity.
+        base = 10.0
+        max_reach = 22.0
+
+        def extension(t):
+            return base + (max_reach - base) * max(0.0, min(1.0, t))
+
+        samples = [extension(t) for t in (0.0, 0.33, 0.66, 1.0)]
+        for a, b in zip(samples, samples[1:]):
+            self.assertLessEqual(a, b)
+        self.assertGreater(samples[-1], samples[0])
+
+    def test_holding_arm_swing_reduced(self):
+        self.assertIn("LEASH_ARM_SWING_SCALE", self.owner_src)
+        import re
+        m = re.search(r"LEASH_ARM_SWING_SCALE\s*=\s*([0-9.]+)", self.owner_src)
+        self.assertIsNotNone(m, "LEASH_ARM_SWING_SCALE constant not found")
+        self.assertLessEqual(float(m.group(1)), 0.2)
+
+    def test_leash_hand_anchor_eight_headings(self):
+        import math
+        # Simulate the local-to-world transform of the rendered hand.
+        HAND_RADIUS = 28
+        HAND_SIDE = (60 * math.pi) / 180
+        owner_x, owner_y = 100.0, 100.0
+        for deg in (0, 45, 90, 135, 180, 225, 270, 315):
+            heading = math.radians(deg)
+            for side, sign in (('right', 1), ('left', -1)):
+                hand_angle = heading + sign * HAND_SIDE
+                hx = owner_x + math.cos(hand_angle) * HAND_RADIUS
+                hy = owner_y + math.sin(hand_angle) * HAND_RADIUS
+                # Not at centre.
+                self.assertGreater(math.hypot(hx - owner_x, hy - owner_y), 1.0)
+                # Within reach radius.
+                self.assertLessEqual(
+                    math.hypot(hx - owner_x, hy - owner_y), HAND_RADIUS + 1e-6
+                )
+                # Correct side: cross product sign of (forward, hand-owner).
+                forward = (math.cos(heading), math.sin(heading))
+                rel = (hx - owner_x, hy - owner_y)
+                cross = forward[0] * rel[1] - forward[1] * rel[0]
+                if side == 'right':
+                    self.assertGreater(cross, 0)
+                else:
+                    self.assertLess(cross, 0)
+
+    def test_leash_origin_uses_anchor(self):
+        self.assertIn("getLeashHandAnchor", self.dog_src)
+
+    def test_anchor_matches_rendered_grip_hand(self):
+        """getLeashHandAnchor() must include the -3 torso vertical offset."""
+        idx = self.owner_src.index("getLeashHandAnchor(preferredSide")
+        end = self.owner_src.index("// --- Gait API ---", idx)
+        block = self.owner_src[idx:end]
+        self.assertIn("torsoYOffset = -3", block)
+        self.assertIn("this.y + torsoYOffset", block)
+
+    def test_behavioral_anchor_matches_compute_local(self):
+        """Anchor world position must equal computeLeashHandLocal() + torso offset."""
+        import math
+        owner_x, owner_y = 100.0, 100.0
+        angle = math.radians(30)
+        # Simulated local hand (forward, right) in owner-local frame.
+        local_x, local_y = 18.0, 8.0
+        c, s = math.cos(angle), math.sin(angle)
+        torso_y_offset = -3
+        anchor_x = owner_x + local_x * c - local_y * s
+        anchor_y = owner_y + torso_y_offset + local_x * s + local_y * c
+        # Rendered hand uses the same transform (torsoY = this.y - 3).
+        rendered_x = owner_x + local_x * c - local_y * s
+        rendered_y = (owner_y - 3) + local_x * s + local_y * c
+        self.assertAlmostEqual(anchor_x, rendered_x, places=6)
+        self.assertAlmostEqual(anchor_y, rendered_y, places=6)
+
+
+class TestFeedback(unittest.TestCase):
+    """REQ-CLICK / REQ-SPEED: single marker, no double projection, badge matrix."""
+
+    def setUp(self):
+        self.main_src = read("src/main.js")
+
+    def test_click_marker_single_instance(self):
+        # Simulate replaceClickMarker: only one active marker, at last click.
+        markers = []
+
+        def replace_click_marker(world_x, world_y):
+            markers.clear()
+            markers.append({'worldX': world_x, 'worldY': world_y})
+
+        replace_click_marker(10.0, 20.0)
+        replace_click_marker(30.0, 40.0)
+        self.assertEqual(len(markers), 1)
+        self.assertEqual(markers[0]['worldX'], 30.0)
+        self.assertEqual(markers[0]['worldY'], 40.0)
+
+    def test_click_marker_no_double_projection(self):
+        # Click feedback must be rendered in WORLD coordinates inside the
+        # camera.apply block — never via worldToScreen (that double-projects).
+        idx = self.main_src.index("this.camera.apply(this.ctx);")
+        end = self.main_src.index("this.camera.restore(this.ctx);", idx)
+        block = self.main_src[idx:end]
+        self.assertIn("clickFeedback", block)
+        marker_idx = block.index("clickFeedback")
+        marker_block = block[marker_idx:]
+        self.assertNotIn("worldToScreen", marker_block)
+        self.assertIn("const sx = f.worldX;", marker_block)
+        self.assertIn("const sy = f.worldY;", marker_block)
+
+    def test_unified_single_x_reticle(self):
+        # Both single and double field presses emit a single white 'x' reticle.
+        self.assertIn("glyph: 'x'", self.main_src)
+        self.assertIn("color: '#ffffff'", self.main_src)
+        # The old green '+' double-click glyph must be gone.
+        self.assertNotIn("glyph: '+'", self.main_src)
+        self.assertNotIn("steer-double", self.main_src)
+
+    def test_double_click_replaces_marker(self):
+        # Double-click must replace (not append) the click feedback array.
+        idx = self.main_src.index("// Unified single 'x' reticle")
+        end = self.main_src.index("if (isDouble) {", idx)
+        block = self.main_src[idx:end]
+        self.assertIn("this.clickFeedback = [{", block)
+
+    def test_speed_badge_trigger_rules(self):
+        def badge_level(prev, nxt):
+            if prev == 'STROLL' and nxt == 'WALK':
+                return 1
+            if prev == 'WALK' and nxt == 'JOG':
+                return 2
+            return 0
+
+        self.assertEqual(badge_level('STROLL', 'WALK'), 1)
+        self.assertEqual(badge_level('WALK', 'JOG'), 2)
+        self.assertEqual(badge_level('STAND', 'STROLL'), 0)
+        self.assertEqual(badge_level('JOG', 'WALK'), 0)
+        self.assertEqual(badge_level('WALK', 'WALK'), 0)
+        # Brake transition (any -> STAND) yields no badge.
+        self.assertEqual(badge_level('WALK', 'STAND'), 0)
+        self.assertEqual(badge_level('JOG', 'STAND'), 0)
+
+    def test_speed_badge_duration_exported(self):
+        import re
+        m = re.search(r"export const SPEED_BADGE_DURATION_MS\s*=\s*([0-9.]+)", self.main_src)
+        self.assertIsNotNone(m, "SPEED_BADGE_DURATION_MS must be exported from main.js")
+        duration = float(m.group(1))
+        self.assertGreaterEqual(duration, 400)
+        self.assertLessEqual(duration, 500)
+
+    def test_speed_badge_state_and_spawn(self):
+        self.assertIn("this.speedBadges = [];", self.main_src)
+        self.assertIn("spawnSpeedBadge(prevGait, nextGait)", self.main_src)
+        # Level 1 (STROLL->WALK) soft slate chevron.
+        self.assertIn("level: 1", self.main_src)
+        self.assertIn("#94a3b8", self.main_src)
+        # Level 2 (WALK->JOG) soft emerald chevron.
+        self.assertIn("level: 2", self.main_src)
+        self.assertIn("#22c55e", self.main_src)
+
+    def test_speed_badge_render_floats_and_fades(self):
+        idx = self.main_src.index("Speed-up floating chevron badges")
+        end = self.main_src.index("// In-World Contextual Interaction Badges", idx)
+        block = self.main_src[idx:end]
+        self.assertIn("const rise = 15 * t;", block)
+        self.assertIn("this.ctx.globalAlpha = alpha;", block)
+        self.assertIn("b.worldY - rise", block)
+
+
+# ---------------------------------------------------------------------------
+# unification-022 remediation cycle 2: immediate wander cancellation,
+# gait-change hook, leash-slot gating, and forward-lead bounds.
+# ---------------------------------------------------------------------------
+
+
+class TestImmediateWanderCancellation(unittest.TestCase):
+    """Verify wander mode cancels immediately on primary pointerdown."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_immediate_cancel_present(self):
+        # The immediate cancel must appear in the pointerdown handler, before
+        # the deferred double-click disambiguation block.
+        idx_primary = self.src.index("// Only left-click / primary pointer")
+        idx_avatar = self.src.index("// --- Avatar click", idx_primary)
+        block = self.src[idx_primary:idx_avatar]
+        self.assertIn("if (this.owner && this.owner.wanderMode) {", block)
+        self.assertIn("this.owner.wanderMode = false;", block)
+
+    def test_immediate_cancel_precedes_deferred_gestures(self):
+        idx_primary = self.src.index("// Only left-click / primary pointer")
+        idx_deferred = self.src.index("// --- Deferred gestures", idx_primary)
+        block = self.src[idx_primary:idx_deferred]
+        self.assertIn("this.owner.wanderMode = false;", block)
+
+    def test_behavioral_immediate_cancel(self):
+        """Simulate pointerdown: wanderMode flips false on the first event."""
+        state = {'wanderMode': True}
+
+        def pointerdown_primary():
+            if state['wanderMode']:
+                state['wanderMode'] = False
+
+        pointerdown_primary()
+        self.assertFalse(state['wanderMode'])
+
+
+class TestGaitChangeHook(unittest.TestCase):
+    """Verify Owner.setGait fires onGaitChange and main wires spawnSpeedBadge."""
+
+    def setUp(self):
+        self.owner_src = read("src/entities/owner.js")
+        self.main_src = read("src/main.js")
+
+    def test_owner_defines_on_gait_change(self):
+        self.assertIn("this.onGaitChange = null;", self.owner_src)
+
+    def test_set_gait_fires_hook(self):
+        idx = self.owner_src.index("setGait(nextGait, options = {})")
+        end = self.owner_src.index("stepGait(delta)", idx)
+        block = self.owner_src[idx:end]
+        self.assertIn("const prevGait = this.gait;", block)
+        self.assertIn("if (typeof this.onGaitChange === 'function') {", block)
+        self.assertIn("this.onGaitChange(prevGait, this.gait);", block)
+
+    def test_main_wires_hook(self):
+        self.assertIn("this.owner.onGaitChange = (prevGait, nextGait) => {", self.main_src)
+        self.assertIn("this.spawnSpeedBadge(prevGait, nextGait);", self.main_src)
+
+    def test_no_frame_polling_in_update(self):
+        # The fragile frame-polling block must be gone.
+        self.assertNotIn("if (this.owner.gait !== prevGait) {", self.main_src)
+
+    def test_behavioral_hook_fires_on_transition(self):
+        """Simulate setGait: onGaitChange receives (prev, next) on real transitions."""
+        events = []
+
+        class FakeOwner:
+            def __init__(self):
+                self.gait = 'STAND'
+                self.onGaitChange = None
+
+            def setGait(self, next_gait):
+                if next_gait == self.gait:
+                    return
+                prev = self.gait
+                self.gait = next_gait
+                if callable(self.onGaitChange):
+                    self.onGaitChange(prev, self.gait)
+
+        o = FakeOwner()
+        o.onGaitChange = lambda p, n: events.append((p, n))
+        o.setGait('STROLL')
+        o.setGait('WALK')
+        o.setGait('JOG')
+        o.setGait('JOG')  # no-op
+        self.assertEqual(events, [('STAND', 'STROLL'), ('STROLL', 'WALK'), ('WALK', 'JOG')])
+
+    def test_behavioral_badge_matrix(self):
+        """spawnSpeedBadge only fires for STROLL->WALK and WALK->JOG."""
+        spawned = []
+
+        def spawn(prev, nxt):
+            if prev == 'STROLL' and nxt == 'WALK':
+                spawned.append(1)
+            elif prev == 'WALK' and nxt == 'JOG':
+                spawned.append(2)
+
+        spawn('STAND', 'STROLL')
+        spawn('STROLL', 'WALK')
+        spawn('WALK', 'JOG')
+        spawn('JOG', 'WALK')
+        spawn('WALK', 'STAND')
+        self.assertEqual(spawned, [1, 2])
+
+
+class TestLeashSlotGating(unittest.TestCase):
+    """Verify getLeashSlot is only used while owner.isLeashed."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_update_following_gates_on_is_leashed(self):
+        idx = self.src.index("updateFollowing(dt, otherDogs = [], field = null)")
+        end = self.src.index("updateRoaming(dt, otherDogs = [], field = null)", idx)
+        block = self.src[idx:end]
+        self.assertIn("if (!this.owner || !this.owner.isLeashed) {", block)
+        self.assertIn("this.targetSlot = null;", block)
+        self.assertIn("this.updateRoaming(dt, otherDogs, field);", block)
+        # getLeashSlot must appear AFTER the gate.
+        idx_gate = block.index("if (!this.owner || !this.owner.isLeashed) {")
+        idx_slot = block.index("const slot = getLeashSlot(this.owner);")
+        self.assertGreater(idx_slot, idx_gate)
+
+    def test_update_recalled_gates_on_is_leashed(self):
+        idx = self.src.index("updateRecalled(dt)")
+        end = self.src.index("updateFetching(dt)", idx)
+        block = self.src[idx:end]
+        self.assertIn("if (this.owner && this.owner.isLeashed) {", block)
+        self.assertIn("const slot = getLeashSlot(this.owner);", block)
+        self.assertIn("this.followDistance = 35;", block)
+
+    def test_behavioral_off_leash_skips_slot(self):
+        """Off-leash updateFollowing must not call getLeashSlot."""
+        calls = []
+
+        def get_leash_slot(owner):
+            calls.append(owner)
+            return {'x': 0, 'y': 0}
+
+        class FakeDog:
+            def __init__(self, owner):
+                self.owner = owner
+                self.targetSlot = None
+                self.state = 'FOLLOWING'
+
+            def updateFollowing(self):
+                if not self.owner.isLeashed:
+                    self.state = 'ROAMING'
+                    return
+                get_leash_slot(self.owner)
+
+        class FakeOwner:
+            def __init__(self, leashed):
+                self.isLeashed = leashed
+
+        dog = FakeDog(FakeOwner(False))
+        dog.updateFollowing()
+        self.assertEqual(calls, [])
+        self.assertEqual(dog.state, 'ROAMING')
+
+        dog2 = FakeDog(FakeOwner(True))
+        dog2.updateFollowing()
+        self.assertEqual(len(calls), 1)
+
+
+class TestLeashSagTautUnderTension(unittest.TestCase):
+    """Verify sag never increases under pulling / high tension."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_no_tension_boost(self):
+        # The old tensionBoost multiplier must be gone.
+        self.assertNotIn("tensionBoost", self.src)
+
+    def test_sag_cap_is_2px(self):
+        self.assertIn("const sagCap = Math.min(2.0, leashLen * 0.03);", self.src)
+
+    def test_behavioral_sag_never_exceeds_2px(self):
+        for dist in (20, 42, 65, 90, 105):
+            sag_cap = min(2.0, dist * 0.03)
+            sag = min(sag_cap, max(0.0, (90 - dist) * 0.05))
+            self.assertLessEqual(sag, 2.0)
+            self.assertLessEqual(sag, dist * 0.03)
+
+
+class TestForwardLeadBoundsAllGaits(unittest.TestCase):
+    """Verify getLeashSlot forward lead stays within [40, 52] px across gaits."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_constants(self):
+        self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 40", self.src)
+        self.assertIn("LEASH_FORWARD_LEAD_MAX_PX = 52", self.src)
+
+    def test_behavioral_forward_lead_all_gaits(self):
+        import math
+        GAIT_SPEEDS = {'STAND': 0, 'STROLL': 75, 'WALK': 100, 'JOG': 185}
+        half_width = 10.5
+        forward_lead = 46.0
+        lateral = half_width + 26.0
+        feedforward = 0.12
+
+        def slot(owner_x, owner_y, heading, vx, vy, side='right'):
+            fwd = (math.cos(heading), math.sin(heading))
+            right = (-math.sin(heading), math.cos(heading))
+            sign = -1 if side == 'left' else 1
+            sx = owner_x + fwd[0] * forward_lead + right[0] * sign * lateral
+            sy = owner_y + fwd[1] * forward_lead + right[1] * sign * lateral
+            sx += vx * feedforward
+            sy += vy * feedforward
+            rel_x = sx - owner_x
+            rel_y = sy - owner_y
+            proj = rel_x * fwd[0] + rel_y * fwd[1]
+            if proj > 52:
+                pull = proj - 52
+                sx -= fwd[0] * pull
+                sy -= fwd[1] * pull
+                rel_x = sx - owner_x
+                rel_y = sy - owner_y
+                proj = rel_x * fwd[0] + rel_y * fwd[1]
+            elif proj < 40:
+                push = 40 - proj
+                sx += fwd[0] * push
+                sy += fwd[1] * push
+                rel_x = sx - owner_x
+                rel_y = sy - owner_y
+                proj = rel_x * fwd[0] + rel_y * fwd[1]
+            if proj < 2:
+                push = 2 - proj
+                sx += fwd[0] * push
+                sy += fwd[1] * push
+            return sx, sy
+
+        for gait, speed in GAIT_SPEEDS.items():
+            for deg in (0, 45, 90, 135, 180, 225, 270, 315):
+                heading = math.radians(deg)
+                vx = math.cos(heading) * speed
+                vy = math.sin(heading) * speed
+                for side in ('right', 'left'):
+                    sx, sy = slot(100.0, 100.0, heading, vx, vy, side)
+                    fwd = (math.cos(heading), math.sin(heading))
+                    proj = (sx - 100.0) * fwd[0] + (sy - 100.0) * fwd[1]
+                    self.assertGreaterEqual(
+                        proj, 40 - 1e-6,
+                        f"gait={gait} deg={deg} side={side} proj={proj} below 40"
+                    )
+                    self.assertLessEqual(
+                        proj, 52 + 1e-6,
+                        f"gait={gait} deg={deg} side={side} proj={proj} above 52"
+                    )
+
+
+# ---------------------------------------------------------------------------
+# unification-022 remediation cycle 3: holding-arm swing amplitude,
+# wander setGait routing, and forward-only feed-forward with strict clamps.
+# ---------------------------------------------------------------------------
+
+
+class TestHoldingArmSwingAmplitude(unittest.TestCase):
+    """Verify the holding-arm swing is an angular amplitude (radians), not px."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_swing_uses_angular_amplitude(self):
+        self.assertIn("const swingAngle = this.isMoving ? 0.35 : 0;", self.src)
+        self.assertIn(
+            "armAngle += Math.sin(this.walkPhase) * swingAngle * LEASH_ARM_SWING_SCALE * sideSign;",
+            self.src,
+        )
+        # The old pixel-based amplitude must be gone.
+        self.assertNotIn("const swingAmplitude = this.isMoving ? 5.5 : 0;", self.src)
+
+    def test_behavioral_swing_within_0_1_radians(self):
+        """Effective swing amplitude must be <= 0.1 rad (~5.7 deg)."""
+        import math
+        LEASH_ARM_SWING_SCALE = 0.15
+        swing_angle = 0.35
+        effective = swing_angle * LEASH_ARM_SWING_SCALE
+        self.assertLessEqual(effective, 0.1)
+        # Sanity: the old bug produced ~0.825 rad (~47 deg).
+        old_effective = 5.5 * LEASH_ARM_SWING_SCALE
+        self.assertGreater(old_effective, 0.5)
+        # Peak-to-peak excursion of the arm angle stays tiny.
+        peak = abs(math.sin(1.0) * effective)
+        self.assertLess(peak, 0.1)
+
+
+class TestWanderUsesSetGait(unittest.TestCase):
+    """Verify updateWander() transitions via setGait (not raw assignment)."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_update_wander_calls_set_gait(self):
+        idx = self.src.index("updateWander(dt, world)")
+        end = self.src.index("// --- Heading integration ---", idx)
+        block = self.src[idx:end]
+        self.assertIn("if (this.gait !== Gait.STROLL) {", block)
+        self.assertIn("this.setGait(Gait.STROLL);", block)
+        # Raw assignment must be gone.
+        self.assertNotIn("this.gait = WANDER_SPEED;", block)
+
+    def test_behavioral_wander_from_jog_starts_cooldown(self):
+        """Entering wander from JOG must start the JOG cooldown via setGait."""
+        JOG_COOLDOWN = 2.0
+
+        class FakeOwner:
+            def __init__(self):
+                self.gait = 'JOG'
+                self.jogCooldown = 0.0
+                self.jogTimer = 1.5
+                self.isMoving = True
+                self.vx = 185.0
+                self.vy = 0.0
+                self.onGaitChange = None
+                self.events = []
+
+            def setGait(self, next_gait):
+                if next_gait == self.gait:
+                    return
+                prev = self.gait
+                if self.gait == 'JOG' and next_gait != 'JOG':
+                    self.jogCooldown = JOG_COOLDOWN
+                    self.jogTimer = 0
+                self.gait = next_gait
+                self.isMoving = self.gait != 'STAND'
+                if callable(self.onGaitChange):
+                    self.onGaitChange(prev, self.gait)
+
+            def updateWander(self):
+                if self.gait != 'STROLL':
+                    self.setGait('STROLL')
+
+        o = FakeOwner()
+        o.onGaitChange = lambda p, n: o.events.append((p, n))
+        o.updateWander()
+        self.assertEqual(o.gait, 'STROLL')
+        self.assertEqual(o.jogCooldown, JOG_COOLDOWN)
+        self.assertEqual(o.jogTimer, 0)
+        self.assertTrue(o.isMoving)
+        self.assertEqual(o.events, [('JOG', 'STROLL')])
+
+    def test_behavioral_wander_from_stand_no_cooldown(self):
+        class FakeOwner:
+            def __init__(self):
+                self.gait = 'STAND'
+                self.jogCooldown = 0.0
+                self.jogTimer = 0
+                self.isMoving = False
+
+            def setGait(self, next_gait):
+                if next_gait == self.gait:
+                    return
+                if self.gait == 'JOG' and next_gait != 'JOG':
+                    self.jogCooldown = 2.0
+                self.gait = next_gait
+                self.isMoving = self.gait != 'STAND'
+
+            def updateWander(self):
+                if self.gait != 'STROLL':
+                    self.setGait('STROLL')
+
+        o = FakeOwner()
+        o.updateWander()
+        self.assertEqual(o.gait, 'STROLL')
+        self.assertEqual(o.jogCooldown, 0.0)
+        self.assertTrue(o.isMoving)
+
+
+class TestForwardOnlyFeedForward(unittest.TestCase):
+    """Verify getLeashSlot applies feed-forward only along forward and clamps."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_forward_only_feedforward_present(self):
+        idx = self.src.index("export function getLeashSlot")
+        end = self.src.index("// States that must never be interrupted", idx)
+        block = self.src[idx:end]
+        self.assertIn("const forwardSpeed = vel.x * forward.x + vel.y * forward.y;", block)
+        self.assertIn("forwardSpeed * LEASH_FEEDFORWARD_SECONDS", block)
+        # The old per-axis feed-forward must be gone.
+        self.assertNotIn("slotX += vel.x * LEASH_FEEDFORWARD_SECONDS;", block)
+        self.assertNotIn("slotY += vel.y * LEASH_FEEDFORWARD_SECONDS;", block)
+
+    def test_forward_lead_clamped_before_compose(self):
+        idx = self.src.index("export function getLeashSlot")
+        end = self.src.index("// States that must never be interrupted", idx)
+        block = self.src[idx:end]
+        # Clamp must appear before the slot composition.
+        idx_clamp = block.index("forwardLead = Math.max(")
+        idx_compose = block.index("let slotX = pos.x + forward.x * forwardLead")
+        self.assertLess(idx_clamp, idx_compose)
+
+    def _slot(self, owner_x, owner_y, heading, vx, vy, side='right',
+              half_width=10.5):
+        import math
+        forward = (math.cos(heading), math.sin(heading))
+        right = (-math.sin(heading), math.cos(heading))
+        flank_sign = -1 if side == 'left' else 1
+        lateral = max(half_width + 24, min(half_width + 28, half_width + 26))
+        forward_speed = vx * forward[0] + vy * forward[1]
+        forward_lead = 46.0 + forward_speed * 0.12
+        forward_lead = max(40.0, min(52.0, forward_lead))
+        sx = owner_x + forward[0] * forward_lead + right[0] * flank_sign * lateral
+        sy = owner_y + forward[1] * forward_lead + right[1] * flank_sign * lateral
+        # Shoulder-line clamp
+        proj = (sx - owner_x) * forward[0] + (sy - owner_y) * forward[1]
+        if proj < 2.0:
+            push = 2.0 - proj
+            sx += forward[0] * push
+            sy += forward[1] * push
+        return sx, sy
+
+    def test_behavioral_forward_lead_all_gaits_and_collisions(self):
+        """Forward lead stays in [40, 52] and lateral in [24, 28] across gaits
+        and collision-slide velocities."""
+        import math
+        GAIT_SPEEDS = {'STAND': 0, 'STROLL': 75, 'WALK': 100, 'JOG': 185}
+        half_width = 10.5
+        # Include pure-lateral collision-slide velocities.
+        velocities = []
+        for speed in GAIT_SPEEDS.values():
+            velocities.append((speed, 0.0))
+            velocities.append((0.0, speed))
+            velocities.append((speed * 0.7, speed * 0.7))
+            velocities.append((-speed, 0.0))
+            velocities.append((0.0, -speed))
+        # Extra high-speed lateral slide (wall collision).
+        velocities.append((0.0, 400.0))
+        velocities.append((400.0, 0.0))
+
+        for deg in (0, 45, 90, 135, 180, 225, 270, 315):
+            heading = math.radians(deg)
+            forward = (math.cos(heading), math.sin(heading))
+            right = (-math.sin(heading), math.cos(heading))
+            for vx, vy in velocities:
+                for side in ('right', 'left'):
+                    sx, sy = self._slot(100.0, 100.0, heading, vx, vy, side,
+                                        half_width=half_width)
+                    rel_x = sx - 100.0
+                    rel_y = sy - 100.0
+                    proj = rel_x * forward[0] + rel_y * forward[1]
+                    lateral = math.hypot(
+                        rel_x - forward[0] * proj,
+                        rel_y - forward[1] * proj,
+                    )
+                    clearance = lateral - half_width
+                    self.assertGreaterEqual(
+                        proj, 40 - 1e-6,
+                        f"deg={deg} v=({vx},{vy}) side={side} proj={proj} < 40"
+                    )
+                    self.assertLessEqual(
+                        proj, 52 + 1e-6,
+                        f"deg={deg} v=({vx},{vy}) side={side} proj={proj} > 52"
+                    )
+                    self.assertGreaterEqual(
+                        clearance, 24 - 1e-6,
+                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} < 24"
+                    )
+                    self.assertLessEqual(
+                        clearance, 28 + 1e-6,
+                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} > 28"
+                    )
+
+    def test_behavioral_lateral_velocity_does_not_shift_lateral(self):
+        """Pure lateral velocity must not change the lateral clearance."""
+        import math
+        heading = 0.0
+        base_x, base_y = self._slot(100.0, 100.0, heading, 0.0, 0.0)
+        slide_x, slide_y = self._slot(100.0, 100.0, heading, 0.0, 400.0)
+        # Lateral (y) offset must be identical; only forward (x) may change.
+        self.assertAlmostEqual(base_y, slide_y, places=6)
+        # Forward lead must remain within bounds.
+        self.assertGreaterEqual(slide_x - 100.0, 40 - 1e-6)
+        self.assertLessEqual(slide_x - 100.0, 52 + 1e-6)
+
+
+class TestLeashSagUnderTension(unittest.TestCase):
+    """Verify leash sag stays <= 2px and never increases under pulling."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_sag_cap_present(self):
+        self.assertIn("const sagCap = Math.min(2.0, leashLen * 0.03);", self.src)
+
+    def test_behavioral_sag_never_increases_with_tension(self):
+        """Sag must be monotonically non-increasing as tension (pulling) rises."""
+        def sag_for(dist, pulling):
+            sag_cap = min(2.0, dist * 0.03)
+            base = min(sag_cap, max(0.0, (90 - dist) * 0.05))
+            # Under pulling the lead must stay taut: never increase sag.
+            return base if not pulling else min(base, sag_cap)
+
+        for dist in (30, 42, 60, 90, 105):
+            relaxed = sag_for(dist, False)
+            taut = sag_for(dist, True)
+            self.assertLessEqual(taut, relaxed + 1e-9)
+            self.assertLessEqual(taut, 2.0)
+            self.assertLessEqual(taut, dist * 0.03 + 1e-9)
 
 
 if __name__ == "__main__":

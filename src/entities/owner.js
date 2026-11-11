@@ -36,6 +36,23 @@ const PLAYER_HIT_RADIUS = 26;
 const JOG_DURATION = 2.0;
 const JOG_COOLDOWN = 2.0;
 
+// Leash arm pose constants (exported for tests/tooling)
+export const LEASH_ARM_SWING_SCALE = 0.15;
+export const LEASH_ARM_BASE_REACH_PX = 18;
+export const LEASH_ARM_MAX_REACH_PX = 34;
+export const LEASH_ARM_TENSION_RAMP_PX = 140; // distance that maps to tension = 1
+export const LEASH_ARM_SHOULDER_OFFSET_PX = 8;
+export const LEASH_ARM_HAND_RADIUS_PX = 3.5;
+
+function clamp01(v) {
+  if (!isFinite(v)) return 0;
+  return v < 0 ? 0 : (v > 1 ? 1 : v);
+}
+
+function lerpNum(a, b, t) {
+  return a + (b - a) * t;
+}
+
 // Wrapped shortest-arc delta from a to b
 function angleDelta(a, b) {
   let delta = ((b - a + Math.PI) % (Math.PI * 2)) - Math.PI;
@@ -99,6 +116,11 @@ export class Owner {
     this.stepOffTimer = 0;
     this.stepOffActive = false;
 
+    // Leash arm pose state (updated each frame while leashed)
+    this.leashArmExtensionPx = LEASH_ARM_BASE_REACH_PX;
+    this.leashArmTension = 0;
+    this.leashDistance = 0;
+
     // Brake-light feedback pulse (rear brake sector flash)
     this.brakeLightFeedback = {
       active: false,
@@ -115,14 +137,62 @@ export class Owner {
     this.brakeLightFeedback.startedAt = now;
   }
 
+  // Normalized leash tension in [0, 1]. Derived from leash distance and the
+  // dog's pulling state. Falls back gracefully when no dog reference exists.
+  getLeashTension() {
+    const dog = this.dog || null;
+    let dist = this.leashDistance;
+    if ((!dist || !isFinite(dist)) && dog) {
+      dist = Math.hypot(dog.x - this.x, dog.y - this.y);
+    }
+    if (!dist || !isFinite(dist)) dist = 0;
+    let tension = clamp01(dist / LEASH_ARM_TENSION_RAMP_PX);
+    if (dog && dog.isPullingLeash) {
+      tension = Math.max(tension, 0.85);
+    }
+    return tension;
+  }
+
+  // Compute the leash hand position in owner-local space.
+  // Local frame: +x = forward (heading), +y = screen-right of heading.
+  // This is the SINGLE SOURCE OF TRUTH for both rendering and the anchor.
+  computeLeashHandLocal() {
+    const sideSign = this.leashHandSide === 'left' ? -1 : 1;
+    const tension = this.getLeashTension();
+
+    const shoulderX = 0;
+    const shoulderY = sideSign * LEASH_ARM_SHOULDER_OFFSET_PX;
+
+    const reach = lerpNum(LEASH_ARM_BASE_REACH_PX, LEASH_ARM_MAX_REACH_PX, tension);
+
+    // Aim forward with a slight outward bias toward the dog's flank.
+    let armAngle = sideSign * (0.35 + 0.25 * (1 - tension));
+
+    // Reduced stride oscillation on the holding arm only.
+    const swingAmplitude = this.isMoving ? 5.5 : 0;
+    armAngle += Math.sin(this.walkPhase) * swingAmplitude * LEASH_ARM_SWING_SCALE * sideSign;
+
+    return {
+      x: shoulderX + Math.cos(armAngle) * reach,
+      y: shoulderY + Math.sin(armAngle) * reach,
+      shoulderX,
+      shoulderY,
+      armAngle,
+      reach,
+      tension
+    };
+  }
+
   getLeashHandAnchor(preferredSide = this.leashHandSide || 'right') {
     const side = preferredSide === 'left' ? 'left' : 'right';
     this.leashHandSide = side;
-    const sideSign = side === 'left' ? -1 : 1;
-    const handSide = sideSign * ((30 * Math.PI) / 180);
+
+    const local = this.computeLeashHandLocal();
+    const c = Math.cos(this.angle);
+    const s = Math.sin(this.angle);
     return {
-      x: this.x + Math.cos(this.angle + handSide) * 28,
-      y: this.y + Math.sin(this.angle + handSide) * 28
+      x: this.x + local.x * c - local.y * s,
+      y: this.y + local.x * s + local.y * c
     };
   }
 
@@ -382,6 +452,21 @@ export class Owner {
       this.vy = 0;
     }
 
+    // Update leash arm pose state (tension + extension) each frame.
+    if (this.isLeashed) {
+      const dog = this.dog || null;
+      this.leashDistance = dog ? Math.hypot(dog.x - this.x, dog.y - this.y) : 0;
+      this.leashArmTension = this.getLeashTension();
+      this.leashArmExtensionPx = lerpNum(
+        LEASH_ARM_BASE_REACH_PX,
+        LEASH_ARM_MAX_REACH_PX,
+        this.leashArmTension
+      );
+    } else {
+      this.leashArmTension = 0;
+      this.leashArmExtensionPx = LEASH_ARM_BASE_REACH_PX;
+    }
+
     this.depthY = this.y + 12;
 
     // Update timers
@@ -511,12 +596,63 @@ export class Owner {
     };
 
     // Helper for arms
-    const drawArm = (shX, shY, swing, isFar) => {
+    const drawArm = (shX, shY, swing, isFar, isLeashArm = false) => {
       ctx.save();
       const ax = torsoX + shX;
       const ay = torsoY - 7 + shY;
 
       ctx.fillStyle = isFar ? this.getShadedColor(this.jacketColor, -0.18) : this.jacketColor;
+
+      if (isLeashArm && this.isLeashed) {
+        // Leash-holding arm: bent elbow reaching toward the dog's flank.
+        const local = this.computeLeashHandLocal();
+        const c = cosA;
+        const s = sinA;
+        // Convert owner-local (forward, right) to world offset.
+        const handWorldX = local.x * c - local.y * s;
+        const handWorldY = local.x * s + local.y * c;
+        const handX = this.x + handWorldX;
+        const handY = this.y - 3 + handWorldY;
+
+        // Elbow: midpoint pushed slightly outward from the shoulder.
+        const midX = (ax + handX) / 2;
+        const midY = (ay + handY) / 2;
+        const sideSign = this.leashHandSide === 'left' ? -1 : 1;
+        const elbowX = midX + (-sinA) * sideSign * 3.0;
+        const elbowY = midY + (cosA * 0.36) * sideSign * 3.0;
+
+        // Upper arm (shoulder -> elbow)
+        ctx.strokeStyle = isFar ? this.getShadedColor(this.jacketColor, -0.18) : this.jacketColor;
+        ctx.lineWidth = 4.6;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(elbowX, elbowY);
+        ctx.stroke();
+
+        // Forearm (elbow -> hand)
+        ctx.beginPath();
+        ctx.moveTo(elbowX, elbowY);
+        ctx.lineTo(handX, handY);
+        ctx.stroke();
+
+        // Grip hand
+        ctx.fillStyle = this.skinTone;
+        ctx.beginPath();
+        ctx.arc(handX, handY, LEASH_ARM_HAND_RADIUS_PX, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Short thumb stroke across the grip
+        ctx.strokeStyle = this.getShadedColor(this.skinTone, -0.15);
+        ctx.lineWidth = 1.2;
+        ctx.beginPath();
+        ctx.moveTo(handX - 1.5, handY - 1.5);
+        ctx.lineTo(handX + 1.5, handY + 1.5);
+        ctx.stroke();
+
+        ctx.restore();
+        return;
+      }
 
       if (isKneeling && !isFar) {
         // Kneeling / bending gesture: arm reaches down toward pet or waste
@@ -551,13 +687,18 @@ export class Owner {
       ctx.restore();
     };
 
+    // Determine which shoulder is the leash-holding side.
+    const leashSideSign = this.leashHandSide === 'left' ? -1 : 1;
+    const leftIsLeashArm = this.isLeashed && leashSideSign === -1;
+    const rightIsLeashArm = this.isLeashed && leashSideSign === 1;
+
     // --- DEPTH LAYER 1: Far Arm & Far Leg (behind torso) ---
     if (leftIsFar) {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, true);
-      drawArm(leftShoulderX, leftShoulderY, -armSwing, true);
+      drawArm(leftShoulderX, leftShoulderY, -armSwing, true, leftIsLeashArm);
     } else {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, true);
-      drawArm(rightShoulderX, rightShoulderY, armSwing, true);
+      drawArm(rightShoulderX, rightShoulderY, armSwing, true, rightIsLeashArm);
     }
 
     // --- DEPTH LAYER 2: Accessory (Backpack when facing South / from front) ---
@@ -657,10 +798,10 @@ export class Owner {
     // --- DEPTH LAYER 5: Near Leg & Near Arm (in front of torso) ---
     if (leftIsFar) {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, false);
-      drawArm(rightShoulderX, rightShoulderY, armSwing, false);
+      drawArm(rightShoulderX, rightShoulderY, armSwing, false, rightIsLeashArm);
     } else {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, false);
-      drawArm(leftShoulderX, leftShoulderY, -armSwing, false);
+      drawArm(leftShoulderX, leftShoulderY, -armSwing, false, leftIsLeashArm);
     }
 
     // --- DEPTH LAYER 6: Head, Face, Ears & Hairstyle ---
@@ -1192,3 +1333,9 @@ export class Owner {
 Owner.GAIT_SPEEDS = GAIT_SPEEDS;
 Owner.PLAYER_HIT_RADIUS = PLAYER_HIT_RADIUS;
 Owner.STEP_OFF_ALIGN_TOLERANCE = STEP_OFF_ALIGN_TOLERANCE;
+Owner.LEASH_ARM_SWING_SCALE = LEASH_ARM_SWING_SCALE;
+Owner.LEASH_ARM_BASE_REACH_PX = LEASH_ARM_BASE_REACH_PX;
+Owner.LEASH_ARM_MAX_REACH_PX = LEASH_ARM_MAX_REACH_PX;
+Owner.LEASH_ARM_TENSION_RAMP_PX = LEASH_ARM_TENSION_RAMP_PX;
+Owner.LEASH_ARM_SHOULDER_OFFSET_PX = LEASH_ARM_SHOULDER_OFFSET_PX;
+Owner.LEASH_ARM_HAND_RADIUS_PX = LEASH_ARM_HAND_RADIUS_PX;

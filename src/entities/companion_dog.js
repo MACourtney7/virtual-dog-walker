@@ -2042,8 +2042,7 @@ export class CompanionDog {
     }
 
     // Hand anchor on the flank side the dog is currently on (matches flank band).
-    // HAND_RADIUS (28) is strictly outside PLAYER_HIT_RADIUS (26) so the anchor
-    // itself never sits inside the owner torso.
+    // Prefer the owner's rendered grip hand so the leash starts exactly there.
     const sideSign = this.preferredSide === 'left' ? -1 : 1;
     let handSide = sideSign * HAND_SIDE;
     let handX;
@@ -2063,10 +2062,12 @@ export class CompanionDog {
     const collarY = collar.y;
 
     // Guard: if the leash midpoint would clip the owner torso, widen the hand
-    // offset further so the sag point clears the body radius.
+    // offset further so the sag point clears the body radius. When the owner
+    // exposes a real grip anchor we keep it fixed (never detach from the hand).
+    const hasAnchor = Boolean(this.owner && typeof this.owner.getLeashHandAnchor === 'function');
     const midX0 = (handX + collarX) / 2;
     const midY0 = (handY + collarY) / 2;
-    if (Math.hypot(midX0 - this.owner.x, midY0 - this.owner.y) <= PLAYER_HIT_RADIUS) {
+    if (!hasAnchor && Math.hypot(midX0 - this.owner.x, midY0 - this.owner.y) <= PLAYER_HIT_RADIUS) {
       handSide = sideSign * (HAND_SIDE + (10 * Math.PI) / 180);
       handX = this.owner.x + Math.cos(this.owner.angle + handSide) * HAND_RADIUS;
       handY = this.owner.y + Math.sin(this.owner.angle + handSide) * HAND_RADIUS;
@@ -2089,8 +2090,10 @@ export class CompanionDog {
     const jitterX = perpX * jitter;
     const jitterY = perpY * jitter;
 
-    // Minimal sag (<= 2px and <= 3% of leash length) so the lead reads as taut
-    const sagCap = Math.min(2.0, leashLen * 0.03);
+    // Minimal sag (<= 2px and <= 3% of leash length) so the lead reads as taut.
+    // Slightly increase sag when the dog is pulling or tension is high.
+    const tensionBoost = this.isPullingLeash ? 1.5 : 1.0;
+    const sagCap = Math.min(2.0 * tensionBoost, leashLen * 0.03);
     const sag = Math.min(sagCap, this.leashSagPx || 0);
 
     ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead

@@ -506,17 +506,18 @@ export class CliftonDownGame {
         return;
       }
 
-      switch (e.code) {
-        case 'KeyW':
-          // Enable-only wander mode. Never toggles off via KeyW.
-          if (this.owner && !this.owner.wanderMode) {
-            this.owner.wanderMode = true;
-            this.owner.wanderBaseHeading = this.owner.angle;
-            this.owner.wanderPhase = 0;
-          }
-          e.preventDefault();
-          break;
+      // Enable-only wander mode. Never toggles off via KeyW.
+      if (e.code === 'KeyW') {
+        if (this.owner && !this.owner.wanderMode) {
+          this.owner.wanderMode = true;
+          this.owner.wanderBaseHeading = this.owner.angle;
+          this.owner.wanderPhase = 0;
+        }
+        e.preventDefault();
+        return;
+      }
 
+      switch (e.code) {
         case 'KeyQ':
           // Toggle Leash
           this.toggleLeash();

@@ -1159,6 +1159,14 @@ export class CompanionDog {
 
     // Desired position: leash slot in the owner's local frame (forward flank,
     // forward of the shoulder line, with velocity feed-forward).
+    // Only resolve the leash slot while actually leashed; off-leash callers
+    // are routed to updateRoaming() above.
+    if (!this.owner || !this.owner.isLeashed) {
+      this.targetSlot = null;
+      this.state = DogState.ROAMING;
+      this.updateRoaming(dt, otherDogs, field);
+      return;
+    }
     const slot = getLeashSlot(this.owner);
     this.targetSlot = slot;
     const targetX = slot.x;
@@ -1475,12 +1483,25 @@ export class CompanionDog {
     }
 
     if (this.isRecalledToHeel) {
-      // Executes tight close heel following using the leash slot geometry.
+      // Executes tight close heel following. When on-leash, use the leash
+      // slot geometry; when off-leash, preserve the tight-heel follow offset
+      // relative to the owner's forward flank.
       this.followDistance = 35;
-      const slot = getLeashSlot(this.owner);
-      this.targetSlot = slot;
-      const targetX = slot.x;
-      const targetY = slot.y;
+      let targetX;
+      let targetY;
+      if (this.owner && this.owner.isLeashed) {
+        const slot = getLeashSlot(this.owner);
+        this.targetSlot = slot;
+        targetX = slot.x;
+        targetY = slot.y;
+      } else {
+        this.targetSlot = null;
+        const heading = resolveOwnerHeading(this.owner);
+        const sideSign = this.preferredSide === 'left' ? -1 : 1;
+        const bearing = heading + sideSign * FLANK_RIGHT.mid;
+        targetX = this.owner.x + Math.cos(bearing) * this.followDistance;
+        targetY = this.owner.y + Math.sin(bearing) * this.followDistance;
+      }
 
       const dx = targetX - this.x;
       const dy = targetY - this.y;
@@ -2123,9 +2144,8 @@ export class CompanionDog {
     const jitterY = perpY * jitter;
 
     // Minimal sag (<= 2px and <= 3% of leash length) so the lead reads as taut.
-    // Slightly increase sag when the dog is pulling or tension is high.
-    const tensionBoost = this.isPullingLeash ? 1.5 : 1.0;
-    const sagCap = Math.min(2.0 * tensionBoost, leashLen * 0.03);
+    // Under high tension / pulling the lead must stay taut: never increase sag.
+    const sagCap = Math.min(2.0, leashLen * 0.03);
     const sag = Math.min(sagCap, this.leashSagPx || 0);
 
     ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead

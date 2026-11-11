@@ -143,6 +143,10 @@ export class Owner {
       peakStrokeAlpha: 0.9,
       color: '#ef4444'
     };
+
+    // Gait-change event hook (wired by main.js to spawn speed badges).
+    // Signature: (prevGait, nextGait) => void
+    this.onGaitChange = null;
   }
 
   triggerBrakeLight(now = (typeof performance !== 'undefined' ? performance.now() : Date.now())) {
@@ -234,13 +238,15 @@ export class Owner {
     if (!GAIT_ORDER.includes(nextGait)) return;
     if (nextGait === this.gait) return;
 
-    const prevIndex = GAIT_ORDER.indexOf(this.gait);
-    const nextIndex = GAIT_ORDER.indexOf(nextGait);
+    const prevGait = this.gait;
 
     // Clamp upward transitions into JOG while cooldown is active
     if (nextGait === Gait.JOG && this.jogCooldown > 0) {
       nextGait = Gait.WALK;
     }
+
+    // If the clamp collapsed the transition back to the current gait, bail.
+    if (nextGait === this.gait) return;
 
     // Leaving JOG starts cooldown
     if (this.gait === Gait.JOG && nextGait !== Gait.JOG) {
@@ -274,6 +280,12 @@ export class Owner {
     if (!this.isMoving) {
       this.vx = 0;
       this.vy = 0;
+    }
+
+    // Fire the gait-change hook at the transition source so downstream
+    // consumers (e.g. speed badges) never rely on fragile frame polling.
+    if (typeof this.onGaitChange === 'function') {
+      this.onGaitChange(prevGait, this.gait);
     }
   }
 

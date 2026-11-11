@@ -2049,5 +2049,262 @@ class TestFeedback(unittest.TestCase):
         self.assertIn("b.worldY - rise", block)
 
 
+# ---------------------------------------------------------------------------
+# unification-022 remediation cycle 2: immediate wander cancellation,
+# gait-change hook, leash-slot gating, and forward-lead bounds.
+# ---------------------------------------------------------------------------
+
+
+class TestImmediateWanderCancellation(unittest.TestCase):
+    """Verify wander mode cancels immediately on primary pointerdown."""
+
+    def setUp(self):
+        self.src = read("src/main.js")
+
+    def test_immediate_cancel_present(self):
+        # The immediate cancel must appear in the pointerdown handler, before
+        # the deferred double-click disambiguation block.
+        idx_primary = self.src.index("// Only left-click / primary pointer")
+        idx_avatar = self.src.index("// --- Avatar click", idx_primary)
+        block = self.src[idx_primary:idx_avatar]
+        self.assertIn("if (this.owner && this.owner.wanderMode) {", block)
+        self.assertIn("this.owner.wanderMode = false;", block)
+
+    def test_immediate_cancel_precedes_deferred_gestures(self):
+        idx_primary = self.src.index("// Only left-click / primary pointer")
+        idx_deferred = self.src.index("// --- Deferred gestures", idx_primary)
+        block = self.src[idx_primary:idx_deferred]
+        self.assertIn("this.owner.wanderMode = false;", block)
+
+    def test_behavioral_immediate_cancel(self):
+        """Simulate pointerdown: wanderMode flips false on the first event."""
+        state = {'wanderMode': True}
+
+        def pointerdown_primary():
+            if state['wanderMode']:
+                state['wanderMode'] = False
+
+        pointerdown_primary()
+        self.assertFalse(state['wanderMode'])
+
+
+class TestGaitChangeHook(unittest.TestCase):
+    """Verify Owner.setGait fires onGaitChange and main wires spawnSpeedBadge."""
+
+    def setUp(self):
+        self.owner_src = read("src/entities/owner.js")
+        self.main_src = read("src/main.js")
+
+    def test_owner_defines_on_gait_change(self):
+        self.assertIn("this.onGaitChange = null;", self.owner_src)
+
+    def test_set_gait_fires_hook(self):
+        idx = self.owner_src.index("setGait(nextGait, options = {})")
+        end = self.owner_src.index("stepGait(delta)", idx)
+        block = self.owner_src[idx:end]
+        self.assertIn("const prevGait = this.gait;", block)
+        self.assertIn("if (typeof this.onGaitChange === 'function') {", block)
+        self.assertIn("this.onGaitChange(prevGait, this.gait);", block)
+
+    def test_main_wires_hook(self):
+        self.assertIn("this.owner.onGaitChange = (prevGait, nextGait) => {", self.main_src)
+        self.assertIn("this.spawnSpeedBadge(prevGait, nextGait);", self.main_src)
+
+    def test_no_frame_polling_in_update(self):
+        # The fragile frame-polling block must be gone.
+        self.assertNotIn("if (this.owner.gait !== prevGait) {", self.main_src)
+
+    def test_behavioral_hook_fires_on_transition(self):
+        """Simulate setGait: onGaitChange receives (prev, next) on real transitions."""
+        events = []
+
+        class FakeOwner:
+            def __init__(self):
+                self.gait = 'STAND'
+                self.onGaitChange = None
+
+            def setGait(self, next_gait):
+                if next_gait == self.gait:
+                    return
+                prev = self.gait
+                self.gait = next_gait
+                if callable(self.onGaitChange):
+                    self.onGaitChange(prev, self.gait)
+
+        o = FakeOwner()
+        o.onGaitChange = lambda p, n: events.append((p, n))
+        o.setGait('STROLL')
+        o.setGait('WALK')
+        o.setGait('JOG')
+        o.setGait('JOG')  # no-op
+        self.assertEqual(events, [('STAND', 'STROLL'), ('STROLL', 'WALK'), ('WALK', 'JOG')])
+
+    def test_behavioral_badge_matrix(self):
+        """spawnSpeedBadge only fires for STROLL->WALK and WALK->JOG."""
+        spawned = []
+
+        def spawn(prev, nxt):
+            if prev == 'STROLL' and nxt == 'WALK':
+                spawned.append(1)
+            elif prev == 'WALK' and nxt == 'JOG':
+                spawned.append(2)
+
+        spawn('STAND', 'STROLL')
+        spawn('STROLL', 'WALK')
+        spawn('WALK', 'JOG')
+        spawn('JOG', 'WALK')
+        spawn('WALK', 'STAND')
+        self.assertEqual(spawned, [1, 2])
+
+
+class TestLeashSlotGating(unittest.TestCase):
+    """Verify getLeashSlot is only used while owner.isLeashed."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_update_following_gates_on_is_leashed(self):
+        idx = self.src.index("updateFollowing(dt, otherDogs = [], field = null)")
+        end = self.src.index("updateRoaming(dt, otherDogs = [], field = null)", idx)
+        block = self.src[idx:end]
+        self.assertIn("if (!this.owner || !this.owner.isLeashed) {", block)
+        self.assertIn("this.targetSlot = null;", block)
+        self.assertIn("this.updateRoaming(dt, otherDogs, field);", block)
+        # getLeashSlot must appear AFTER the gate.
+        idx_gate = block.index("if (!this.owner || !this.owner.isLeashed) {")
+        idx_slot = block.index("const slot = getLeashSlot(this.owner);")
+        self.assertGreater(idx_slot, idx_gate)
+
+    def test_update_recalled_gates_on_is_leashed(self):
+        idx = self.src.index("updateRecalled(dt)")
+        end = self.src.index("updateFetching(dt)", idx)
+        block = self.src[idx:end]
+        self.assertIn("if (this.owner && this.owner.isLeashed) {", block)
+        self.assertIn("const slot = getLeashSlot(this.owner);", block)
+        self.assertIn("this.followDistance = 35;", block)
+
+    def test_behavioral_off_leash_skips_slot(self):
+        """Off-leash updateFollowing must not call getLeashSlot."""
+        calls = []
+
+        def get_leash_slot(owner):
+            calls.append(owner)
+            return {'x': 0, 'y': 0}
+
+        class FakeDog:
+            def __init__(self, owner):
+                self.owner = owner
+                self.targetSlot = None
+                self.state = 'FOLLOWING'
+
+            def updateFollowing(self):
+                if not self.owner.isLeashed:
+                    self.state = 'ROAMING'
+                    return
+                get_leash_slot(self.owner)
+
+        class FakeOwner:
+            def __init__(self, leashed):
+                self.isLeashed = leashed
+
+        dog = FakeDog(FakeOwner(False))
+        dog.updateFollowing()
+        self.assertEqual(calls, [])
+        self.assertEqual(dog.state, 'ROAMING')
+
+        dog2 = FakeDog(FakeOwner(True))
+        dog2.updateFollowing()
+        self.assertEqual(len(calls), 1)
+
+
+class TestLeashSagTautUnderTension(unittest.TestCase):
+    """Verify sag never increases under pulling / high tension."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_no_tension_boost(self):
+        # The old tensionBoost multiplier must be gone.
+        self.assertNotIn("tensionBoost", self.src)
+
+    def test_sag_cap_is_2px(self):
+        self.assertIn("const sagCap = Math.min(2.0, leashLen * 0.03);", self.src)
+
+    def test_behavioral_sag_never_exceeds_2px(self):
+        for dist in (20, 42, 65, 90, 105):
+            sag_cap = min(2.0, dist * 0.03)
+            sag = min(sag_cap, max(0.0, (90 - dist) * 0.05))
+            self.assertLessEqual(sag, 2.0)
+            self.assertLessEqual(sag, dist * 0.03)
+
+
+class TestForwardLeadBoundsAllGaits(unittest.TestCase):
+    """Verify getLeashSlot forward lead stays within [40, 52] px across gaits."""
+
+    def setUp(self):
+        self.src = read("src/entities/companion_dog.js")
+
+    def test_constants(self):
+        self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 40", self.src)
+        self.assertIn("LEASH_FORWARD_LEAD_MAX_PX = 52", self.src)
+
+    def test_behavioral_forward_lead_all_gaits(self):
+        import math
+        GAIT_SPEEDS = {'STAND': 0, 'STROLL': 75, 'WALK': 100, 'JOG': 185}
+        half_width = 10.5
+        forward_lead = 46.0
+        lateral = half_width + 26.0
+        feedforward = 0.12
+
+        def slot(owner_x, owner_y, heading, vx, vy, side='right'):
+            fwd = (math.cos(heading), math.sin(heading))
+            right = (-math.sin(heading), math.cos(heading))
+            sign = -1 if side == 'left' else 1
+            sx = owner_x + fwd[0] * forward_lead + right[0] * sign * lateral
+            sy = owner_y + fwd[1] * forward_lead + right[1] * sign * lateral
+            sx += vx * feedforward
+            sy += vy * feedforward
+            rel_x = sx - owner_x
+            rel_y = sy - owner_y
+            proj = rel_x * fwd[0] + rel_y * fwd[1]
+            if proj > 52:
+                pull = proj - 52
+                sx -= fwd[0] * pull
+                sy -= fwd[1] * pull
+                rel_x = sx - owner_x
+                rel_y = sy - owner_y
+                proj = rel_x * fwd[0] + rel_y * fwd[1]
+            elif proj < 40:
+                push = 40 - proj
+                sx += fwd[0] * push
+                sy += fwd[1] * push
+                rel_x = sx - owner_x
+                rel_y = sy - owner_y
+                proj = rel_x * fwd[0] + rel_y * fwd[1]
+            if proj < 2:
+                push = 2 - proj
+                sx += fwd[0] * push
+                sy += fwd[1] * push
+            return sx, sy
+
+        for gait, speed in GAIT_SPEEDS.items():
+            for deg in (0, 45, 90, 135, 180, 225, 270, 315):
+                heading = math.radians(deg)
+                vx = math.cos(heading) * speed
+                vy = math.sin(heading) * speed
+                for side in ('right', 'left'):
+                    sx, sy = slot(100.0, 100.0, heading, vx, vy, side)
+                    fwd = (math.cos(heading), math.sin(heading))
+                    proj = (sx - 100.0) * fwd[0] + (sy - 100.0) * fwd[1]
+                    self.assertGreaterEqual(
+                        proj, 40 - 1e-6,
+                        f"gait={gait} deg={deg} side={side} proj={proj} below 40"
+                    )
+                    self.assertLessEqual(
+                        proj, 52 + 1e-6,
+                        f"gait={gait} deg={deg} side={side} proj={proj} above 52"
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -46,6 +46,15 @@ export class CliftonDownGame {
 
     this.camera.follow(this.owner);
 
+    // Speed-up floating chevron badges (STROLL->WALK, WALK->JOG).
+    // Declared before the gait-change hook so the callback can safely push.
+    this.speedBadges = [];
+
+    // Wire gait-change hook at the transition source (Owner.setGait).
+    this.owner.onGaitChange = (prevGait, nextGait) => {
+      this.spawnSpeedBadge(prevGait, nextGait);
+    };
+
     // Zone Warping State
     this.currentZoneId = 'clifton-commons';
     this.warpCooldown = 0;
@@ -192,9 +201,6 @@ export class CliftonDownGame {
 
     // Click feedback markers (unified single 'x' reticle)
     this.clickFeedback = [];
-
-    // Speed-up floating chevron badges (STROLL->WALK, WALK->JOG)
-    this.speedBadges = [];
 
     // Environment & Weather Systems
     this.weatherClient = weatherClient;
@@ -694,6 +700,12 @@ export class CliftonDownGame {
 
       // Only left-click / primary pointer
       if (e.button !== undefined && e.button !== 0) return;
+
+      // Immediate wander-mode cancellation on the very first primary
+      // pointerdown, without waiting for the 280ms double-click window.
+      if (this.owner && this.owner.wanderMode) {
+        this.owner.wanderMode = false;
+      }
 
       // --- Avatar click → brake gesture (REQ-004) ---
       // Detect clicks on the player avatar body. A standing avatar is an
@@ -1274,11 +1286,9 @@ export class CliftonDownGame {
     this.updateLocalSpawner(dt);
 
     // 3. Update Local Entities
-    const prevGait = this.owner.gait;
+    // Speed badges are spawned via the Owner.onGaitChange hook (see constructor),
+    // so no fragile frame-polling is required here.
     this.owner.update(dt, this.field);
-    if (this.owner.gait !== prevGait) {
-      this.spawnSpeedBadge(prevGait, this.owner.gait);
-    }
 
     // Collision resolution is handled inside Owner.update() via resolveCollisionWithResult.
 
@@ -1478,12 +1488,15 @@ export class CliftonDownGame {
 
   // Spawn a floating speed-up chevron badge for qualifying gait transitions.
   // Only STROLL->WALK (level 1) and WALK->JOG (level 2) qualify.
+  // Accepts either Gait enum values or their string equivalents.
   spawnSpeedBadge(prevGait, nextGait) {
     if (!this.owner) return;
+    const prev = String(prevGait);
+    const next = String(nextGait);
     let badge = null;
-    if (prevGait === Gait.STROLL && nextGait === Gait.WALK) {
+    if (prev === 'STROLL' && next === 'WALK') {
       badge = { level: 1, glyph: '^', color: '#94a3b8' };
-    } else if (prevGait === Gait.WALK && nextGait === Gait.JOG) {
+    } else if (prev === 'WALK' && next === 'JOG') {
       badge = { level: 2, glyph: '^^', color: '#22c55e' };
     }
     if (!badge) return;

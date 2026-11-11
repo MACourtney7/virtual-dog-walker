@@ -1703,11 +1703,19 @@ class TestWanderMode(unittest.TestCase):
 
     def test_wander_update_uses_stroll_speed(self):
         # updateWander must force the STROLL gait while wandering.
+        # unification-022 remediation cycle 3: the raw `this.gait = WANDER_SPEED`
+        # assignment was replaced with a `setGait(Gait.STROLL)` transition so
+        # that leaving JOG starts the cooldown, isMoving is synced, and
+        # onGaitChange fires. WANDER_SPEED still resolves to Gait.STROLL.
         idx = self.owner_src.index("updateWander(dt, world)")
         end = self.owner_src.index("// --- Heading integration ---", idx)
         block = self.owner_src[idx:end]
-        self.assertIn("WANDER_SPEED", block)
-        self.assertIn("this.gait = WANDER_SPEED", block)
+        self.assertIn("if (this.gait !== Gait.STROLL) {", block)
+        self.assertIn("this.setGait(Gait.STROLL);", block)
+        # The old raw assignment must be gone.
+        self.assertNotIn("this.gait = WANDER_SPEED", block)
+        # WANDER_SPEED must still resolve to the STROLL gait.
+        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.STROLL")
 
     def test_behavioral_wander_speed_value(self):
         # WANDER_SPEED resolves to STROLL = 75 px/s.

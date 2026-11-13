@@ -10,12 +10,14 @@ export class TouchControls {
       onPet: callbacks.onPet || null,
       onChat: callbacks.onChat || null,
       onWhistle: callbacks.onWhistle || null,
+      onPraise: callbacks.onPraise || null,
       onPickup: callbacks.onPickup || null,
       onDispose: callbacks.onDispose || null
     };
 
     this.contextualAction = null;
     this.currentGait = 'STAND';
+    this.isLeashed = true;
 
     this.overlay = null;
     this.pacePad = null;
@@ -24,6 +26,9 @@ export class TouchControls {
 
     this.initDOM();
     this.bindEvents();
+
+    // The owner starts leashed, so reflect that initial state on the buttons.
+    this.setLeashed(true);
   }
 
   static isTouchDevice() {
@@ -154,7 +159,18 @@ export class TouchControls {
     };
 
     bindButton('btn-touch-throw', () => this.callbacks.onThrow?.());
-    bindButton('btn-touch-whistle', () => this.callbacks.onWhistle?.());
+    bindButton('btn-touch-whistle', () => {
+      // While leashed the whistle button acts as a praise command.
+      if (this.isLeashed) {
+        if (typeof this.callbacks.onPraise === 'function') {
+          this.callbacks.onPraise();
+        } else {
+          this.callbacks.onWhistle?.();
+        }
+      } else {
+        this.callbacks.onWhistle?.();
+      }
+    });
     bindButton('btn-touch-leash', () => this.callbacks.onLeash?.());
     bindButton('btn-touch-pet', () => {
       if (this.contextualAction === 'pickup') {
@@ -194,17 +210,50 @@ export class TouchControls {
   }
 
   setLeashed(isLeashed) {
+    this.isLeashed = Boolean(isLeashed);
     const btn = document.getElementById('btn-touch-leash');
-    if (!btn) return;
+    if (btn) {
+      if (isLeashed) {
+        btn.textContent = '🦮';
+        btn.classList.remove('off-leash');
+        btn.setAttribute('aria-label', 'Toggle Leash (Currently On)');
+      } else {
+        btn.textContent = '🐕';
+        btn.classList.add('off-leash');
+        btn.setAttribute('aria-label', 'Toggle Leash (Currently Off)');
+      }
+    }
 
-    if (isLeashed) {
-      btn.textContent = '🦮';
-      btn.classList.remove('off-leash');
-      btn.setAttribute('aria-label', 'Toggle Leash (Currently On)');
-    } else {
-      btn.textContent = '🐕';
-      btn.classList.add('off-leash');
-      btn.setAttribute('aria-label', 'Toggle Leash (Currently Off)');
+    // While leashed: whistle button becomes a praise button, and the throw
+    // button is disabled (ball cannot be thrown on-leash).
+    const whistleBtn = document.getElementById('btn-touch-whistle');
+    if (whistleBtn) {
+      if (isLeashed) {
+        whistleBtn.textContent = '👏';
+        whistleBtn.setAttribute('aria-label', 'Praise Dog');
+      } else {
+        whistleBtn.textContent = '📯';
+        whistleBtn.setAttribute('aria-label', 'Whistle / Recall Dog');
+      }
+    }
+
+    const throwBtn = document.getElementById('btn-touch-throw');
+    if (throwBtn) {
+      if (isLeashed) {
+        throwBtn.classList.add('is-disabled');
+        throwBtn.style.opacity = '0.4';
+        throwBtn.style.filter = 'grayscale(80%)';
+        throwBtn.style.pointerEvents = 'none';
+        throwBtn.setAttribute('disabled', 'true');
+        throwBtn.setAttribute('aria-disabled', 'true');
+      } else {
+        throwBtn.classList.remove('is-disabled');
+        throwBtn.style.opacity = '';
+        throwBtn.style.filter = '';
+        throwBtn.style.pointerEvents = '';
+        throwBtn.removeAttribute('disabled');
+        throwBtn.setAttribute('aria-disabled', 'false');
+      }
     }
   }
 

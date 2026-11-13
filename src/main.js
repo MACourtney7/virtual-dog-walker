@@ -46,11 +46,13 @@ export class CliftonDownGame {
 
     this.camera.follow(this.owner);
 
-    // Speed-up floating chevron badges (STROLL->WALK, WALK->JOG).
-    // Declared before the gait-change hook so the callback can safely push.
+    // Speed-up floating chevron badges have been retired (unification-023).
+    // Kept as an empty array for backwards compatibility with any external
+    // inspection code; nothing is ever pushed into it.
     this.speedBadges = [];
 
     // Wire gait-change hook at the transition source (Owner.setGait).
+    // spawnSpeedBadge() is now a safe no-op.
     this.owner.onGaitChange = (prevGait, nextGait) => {
       this.spawnSpeedBadge(prevGait, nextGait);
     };
@@ -180,6 +182,7 @@ export class CliftonDownGame {
       onThrow: () => this.throwBall(),
       onLeash: () => this.toggleLeash(),
       onWhistle: () => this.whistleDog(),
+      onPraise: () => this.praiseDog(),
       onPet: () => this.petDog(),
       onPickup: () => this.pickUpPoop(),
       onDispose: () => this.disposePoopBag(),
@@ -536,8 +539,12 @@ export class CliftonDownGame {
           break;
 
         case 'KeyR':
-          // Whistle Recall Dog
-          this.whistleDog();
+          // On-leash: praise the dog in-stride. Off-leash: whistle recall.
+          if (this.owner && this.owner.isLeashed) {
+            this.praiseDog();
+          } else {
+            this.whistleDog();
+          }
           break;
 
         case 'KeyC':
@@ -861,6 +868,13 @@ export class CliftonDownGame {
   }
 
   warpToZone(targetZoneId, targetX, targetY) {
+    // Record the zone we are departing so wander mode can avoid immediately
+    // routing back through the gate we just arrived from.
+    const previousZoneId = this.currentZoneId;
+    if (this.owner) {
+      this.owner.lastArrivedFromZoneId = previousZoneId;
+    }
+
     this.warpCooldown = 2.5;
     this.warpFadeAlpha = 1.0;
 
@@ -943,6 +957,31 @@ export class CliftonDownGame {
     this.hud.showToast('🦮 Leash on: Walking close');
     if (this.net && typeof this.net.broadcast === 'function') {
       this.net.broadcast(Protocol.createSyncState(this.net.peerId, this.owner, this.dog));
+    }
+  }
+
+  /**
+   * In-stride praise command (used while the dog is on-leash).
+   * MUST NOT stop player or dog movement — it is a joyful, moving praise.
+   */
+  praiseDog() {
+    if (!this.dog) return;
+    if (typeof this.dog.praise === 'function') {
+      this.dog.praise();
+    } else if (typeof this.dog.pet === 'function') {
+      this.dog.pet();
+    }
+    if (this.owner) {
+      this.owner.emoteBubble = '👏';
+      this.owner.emoteTimer = 2.0;
+    }
+    if (this.sound && typeof this.sound.playPet === 'function') {
+      this.sound.playPet();
+    } else if (typeof sound !== 'undefined' && sound && typeof sound.playPet === 'function') {
+      sound.playPet();
+    }
+    if (this.hud && typeof this.hud.showToast === 'function') {
+      this.hud.showToast('❤️ Good dog! Ziggy loves the praise!');
     }
   }
 
@@ -1034,6 +1073,8 @@ export class CliftonDownGame {
   }
 
   canThrowBall() {
+    // Cannot throw while the dog is on-leash.
+    if (this.owner && this.owner.isLeashed) return false;
     return Boolean(
       this.ball &&
       this.ball.inOwnerPossession &&
@@ -1486,31 +1527,11 @@ export class CliftonDownGame {
     this.camera.update(dt);
   }
 
-  // Spawn a floating speed-up chevron badge for qualifying gait transitions.
-  // Only STROLL->WALK (level 1) and WALK->JOG (level 2) qualify.
-  // Accepts either Gait enum values or their string equivalents.
-  spawnSpeedBadge(prevGait, nextGait) {
-    if (!this.owner) return;
-    const prev = String(prevGait);
-    const next = String(nextGait);
-    let badge = null;
-    if (prev === 'STROLL' && next === 'WALK') {
-      badge = { level: 1, glyph: '^', color: '#94a3b8' };
-    } else if (prev === 'WALK' && next === 'JOG') {
-      badge = { level: 2, glyph: '^^', color: '#22c55e' };
-    }
-    if (!badge) return;
-    if (!Array.isArray(this.speedBadges)) this.speedBadges = [];
-    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-    this.speedBadges.push({
-      level: badge.level,
-      glyph: badge.glyph,
-      color: badge.color,
-      worldX: this.owner.x + 16,
-      worldY: this.owner.y - 20,
-      startedAt: now,
-      durationMs: SPEED_BADGE_DURATION_MS
-    });
+  // Retired (unification-023): walking speed increase chevrons were too small
+  // to be legible. Kept as a safe no-op so the Owner.onGaitChange hook and any
+  // external callers remain valid.
+  spawnSpeedBadge(_prevGait, _nextGait) {
+    // Intentionally empty.
   }
 
   render() {
@@ -1573,25 +1594,7 @@ export class CliftonDownGame {
       }
     }
 
-    // Speed-up floating chevron badges (world-space, float up + fade).
-    if (Array.isArray(this.speedBadges) && this.speedBadges.length > 0) {
-      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-      this.speedBadges = this.speedBadges.filter((b) => (now - b.startedAt) <= b.durationMs);
-      for (const b of this.speedBadges) {
-        const elapsed = now - b.startedAt;
-        const t = Math.max(0, Math.min(1, elapsed / b.durationMs));
-        const alpha = Math.max(0, 1.0 - t);
-        const rise = 15 * t;
-        this.ctx.save();
-        this.ctx.globalAlpha = alpha;
-        this.ctx.fillStyle = b.color;
-        this.ctx.font = 'bold 13px system-ui, -apple-system, sans-serif';
-        this.ctx.textAlign = 'center';
-        this.ctx.textBaseline = 'middle';
-        this.ctx.fillText(b.glyph, b.worldX, b.worldY - rise);
-        this.ctx.restore();
-      }
-    }
+    // Speed-up floating chevron badges retired (unification-023).
 
     // In-World Contextual Interaction Badges
     const isTouch = typeof TouchControls !== 'undefined' && TouchControls.isTouchDevice && TouchControls.isTouchDevice();

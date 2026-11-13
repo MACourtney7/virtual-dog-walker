@@ -1989,6 +1989,14 @@ export class CompanionDog {
     this.x = expectedX;
     this.y = expectedY;
 
+    // Re-resolve collision after path-specific position override so ORBIT_OWNER
+    // and SHUTTLE paths also shift the center correctly when displaced.
+    if (field && activePath !== ZoomiePath.FIGURE_EIGHT) {
+      resolveFieldCollision(this, this.radius, field);
+      this.zoomiesCenter.x += (this.x - expectedX);
+      this.zoomiesCenter.y += (this.y - expectedY);
+    }
+
     // Analytic tangent velocity vector
     this.vx = dx * this.zoomiesSpeed;
     this.vy = dy * this.zoomiesSpeed;

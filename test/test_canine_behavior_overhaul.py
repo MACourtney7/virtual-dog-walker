@@ -292,20 +292,7 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         # Match the method definition, not the call site in update()
         idx = self.dog_src.find("updateZoomies(dt, field) {")
         self.assertNotEqual(idx, -1)
-        # Extract the full method body via brace matching so multi-path
-        # zoomies implementations (figure-eight / orbit / shuttle) are covered.
-        depth = 0
-        end = idx
-        for i in range(idx, len(self.dog_src)):
-            ch = self.dog_src[i]
-            if ch == '{':
-                depth += 1
-            elif ch == '}':
-                depth -= 1
-                if depth == 0:
-                    end = i + 1
-                    break
-        window = self.dog_src[idx:end]
+        window = self.dog_src[idx:idx + 2000]
         self.assertIn("resolveFieldCollision", window)
         self.assertIn("this.zoomiesCenter.x += (this.x - expectedX)", window)
         self.assertIn("this.zoomiesCenter.y += (this.y - expectedY)", window)

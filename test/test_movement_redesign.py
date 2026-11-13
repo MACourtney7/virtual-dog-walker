@@ -1727,7 +1727,7 @@ class TestDogSpacing(unittest.TestCase):
         forward = (math.cos(heading), math.sin(heading))
         right = (-math.sin(heading), math.cos(heading))
         flank_sign = -1 if side == 'left' else 1
-        lateral = max(half_width + 18, min(half_width + 22, half_width + 20))
+        lateral = max(half_width + 12, min(half_width + 16, half_width + 14))
         forward_lead = max(40, min(52, 46))
         sx = owner_x + forward[0] * forward_lead + right[0] * flank_sign * lateral
         sy = owner_y + forward[1] * forward_lead + right[1] * flank_sign * lateral
@@ -1759,23 +1759,23 @@ class TestDogSpacing(unittest.TestCase):
         return sx, sy
 
     def test_flank_clearance_bounds(self):
-        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 18", self.src)
-        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 22", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 12", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 16", self.src)
         import math
         half_width = 10.5
         for deg in (0, 90, 180, 270, 45):
             heading = math.radians(deg)
             sx, sy = self._slot(100.0, 100.0, heading, half_width=half_width)
             # Lateral distance from the forward axis, minus the owner half-width,
-            # must be within [18, 22] (the flank clearance band).
+            # must be within [12, 16] (the flank clearance band).
             forward = (math.cos(heading), math.sin(heading))
             rel_x = sx - 100.0
             rel_y = sy - 100.0
             proj = rel_x * forward[0] + rel_y * forward[1]
             lateral = math.hypot(rel_x - forward[0] * proj, rel_y - forward[1] * proj)
             clearance = lateral - half_width
-            self.assertGreaterEqual(clearance, 18 - 1e-6)
-            self.assertLessEqual(clearance, 22 + 1e-6)
+            self.assertGreaterEqual(clearance, 12 - 1e-6)
+            self.assertLessEqual(clearance, 16 + 1e-6)
 
     def test_forward_lead_bounds(self):
         self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 40", self.src)

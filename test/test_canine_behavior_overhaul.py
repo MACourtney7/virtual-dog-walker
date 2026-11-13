@@ -215,7 +215,7 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         # Source must force a positive sitting timer after ROLLING completes
         idx = self.dog_src.find("case DogState.ROLLING:")
         self.assertNotEqual(idx, -1)
-        window = self.dog_src[idx:idx + 600]
+        window = self.dog_src[idx:idx + 2000]
         self.assertIn("this.transitionTo(DogState.SITTING)", window)
         self.assertIn("this.stateTimer = 2.0 + Math.random() * 2.0;", window)
 
@@ -289,10 +289,14 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
 
     # MEDIUM-2: zoomies collision-aware source contract
     def test_zoomies_collision_aware_source_contract(self):
-        # Match the method definition, not the call site in update()
+        # Match the method definition, not the call site in update().
+        # Slice from the method header to the next method definition so the
+        # window always covers the full body regardless of its length.
         idx = self.dog_src.find("updateZoomies(dt, field) {")
         self.assertNotEqual(idx, -1)
-        window = self.dog_src[idx:idx + 2000]
+        end_idx = self.dog_src.find("updateSniffingTrail(", idx)
+        self.assertNotEqual(end_idx, -1)
+        window = self.dog_src[idx:end_idx]
         self.assertIn("resolveFieldCollision", window)
         self.assertIn("this.zoomiesCenter.x += (this.x - expectedX)", window)
         self.assertIn("this.zoomiesCenter.y += (this.y - expectedY)", window)

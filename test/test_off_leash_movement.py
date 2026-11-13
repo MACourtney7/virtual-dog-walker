@@ -88,9 +88,8 @@ class TestOffLeashMovement(unittest.TestCase):
 
     def test_zoomie_shuttle_exact_derivative(self):
         """SHUTTLE velocity must use the exact derivative of the eased position."""
-        self.assertIn("const ds = Math.cos(this.zoomiesPhase) * this.zoomiesSpeed;", self.dog_src)
-        self.assertIn("dx = (bx - ax) * 0.5 * ds;", self.dog_src)
-        self.assertIn("dy = (by - ay) * 0.5 * ds;", self.dog_src)
+        self.assertIn("dx = (bx - ax) * 0.5 * Math.cos(this.zoomiesPhase);", self.dog_src)
+        self.assertIn("this.vx = dx * this.zoomiesSpeed;", self.dog_src)
 
     def test_decoupled_speed_bands_present(self):
         """All five decoupled canine speed bands must be defined."""

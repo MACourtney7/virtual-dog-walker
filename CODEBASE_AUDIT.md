@@ -6922,9 +6922,9 @@ const PLAYER_HIT_RADIUS = 26;
 
 // Leash slot spacing constants (owner-local frame).
 // Flank clearance is measured from the owner's hip/half-width out to the dog.
-export const LEASH_FLANK_CLEARANCE_MIN_PX = 24;
-export const LEASH_FLANK_CLEARANCE_MAX_PX = 28;
-export const LEASH_FLANK_CLEARANCE_TARGET_PX = 26;
+export const LEASH_FLANK_CLEARANCE_MIN_PX = 18;
+export const LEASH_FLANK_CLEARANCE_MAX_PX = 22;
+export const LEASH_FLANK_CLEARANCE_TARGET_PX = 20;
 // Forward lead is measured ahead of the owner's transverse shoulder line.
 export const LEASH_FORWARD_LEAD_MIN_PX = 40;
 export const LEASH_FORWARD_LEAD_MAX_PX = 52;
@@ -7407,6 +7407,30 @@ export class CompanionDog {
     this.pet();
     this.emoteBubble = '❤️';
     this.emoteTimer = duration;
+  }
+
+  // Owner praise: boosts happiness, wags tail, spawns hearts and shows the
+  // '❤️' emote WITHOUT interrupting locomotion. Unlike pet(), this never
+  // resets idleRestTimer-driven state or triggers zoomies, so a leashed dog
+  // keeps following smoothly while being praised.
+  praise() {
+    this.happiness = Math.min(100, this.happiness + 20);
+    this.wagSpeed = 18;
+    this.emoteBubble = '❤️';
+    this.emoteTimer = 2.2;
+
+    // Spawn floating heart particles
+    for (let i = 0; i < 3; i++) {
+      this.hearts.push({
+        x: this.x + (Math.random() - 0.5) * 20,
+        y: this.y - 10,
+        vy: -35 - Math.random() * 25,
+        alpha: 1.0,
+        size: 10 + Math.random() * 4
+      });
+    }
+
+    return true;
   }
 
   pet() {
@@ -35762,7 +35786,7 @@ class TestDogSpacing(unittest.TestCase):
         forward = (math.cos(heading), math.sin(heading))
         right = (-math.sin(heading), math.cos(heading))
         flank_sign = -1 if side == 'left' else 1
-        lateral = max(half_width + 24, min(half_width + 28, half_width + 26))
+        lateral = max(half_width + 18, min(half_width + 22, half_width + 20))
         forward_lead = max(40, min(52, 46))
         sx = owner_x + forward[0] * forward_lead + right[0] * flank_sign * lateral
         sy = owner_y + forward[1] * forward_lead + right[1] * flank_sign * lateral
@@ -35794,23 +35818,23 @@ class TestDogSpacing(unittest.TestCase):
         return sx, sy
 
     def test_flank_clearance_bounds(self):
-        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 24", self.src)
-        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 28", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 18", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 22", self.src)
         import math
         half_width = 10.5
         for deg in (0, 90, 180, 270, 45):
             heading = math.radians(deg)
             sx, sy = self._slot(100.0, 100.0, heading, half_width=half_width)
             # Lateral distance from the forward axis, minus the owner half-width,
-            # must be within [24, 28] (the flank clearance band).
+            # must be within [18, 22] (the flank clearance band).
             forward = (math.cos(heading), math.sin(heading))
             rel_x = sx - 100.0
             rel_y = sy - 100.0
             proj = rel_x * forward[0] + rel_y * forward[1]
             lateral = math.hypot(rel_x - forward[0] * proj, rel_y - forward[1] * proj)
             clearance = lateral - half_width
-            self.assertGreaterEqual(clearance, 24 - 1e-6)
-            self.assertLessEqual(clearance, 28 + 1e-6)
+            self.assertGreaterEqual(clearance, 18 - 1e-6)
+            self.assertLessEqual(clearance, 22 + 1e-6)
 
     def test_forward_lead_bounds(self):
         self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 40", self.src)
@@ -36489,7 +36513,7 @@ class TestForwardOnlyFeedForward(unittest.TestCase):
         forward = (math.cos(heading), math.sin(heading))
         right = (-math.sin(heading), math.cos(heading))
         flank_sign = -1 if side == 'left' else 1
-        lateral = max(half_width + 24, min(half_width + 28, half_width + 26))
+        lateral = max(half_width + 18, min(half_width + 22, half_width + 20))
         forward_speed = vx * forward[0] + vy * forward[1]
         forward_lead = 46.0 + forward_speed * 0.12
         forward_lead = max(40.0, min(52.0, forward_lead))
@@ -36546,12 +36570,12 @@ class TestForwardOnlyFeedForward(unittest.TestCase):
                         f"deg={deg} v=({vx},{vy}) side={side} proj={proj} > 52"
                     )
                     self.assertGreaterEqual(
-                        clearance, 24 - 1e-6,
-                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} < 24"
+                        clearance, 18 - 1e-6,
+                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} < 18"
                     )
                     self.assertLessEqual(
-                        clearance, 28 + 1e-6,
-                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} > 28"
+                        clearance, 22 + 1e-6,
+                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} > 22"
                     )
 
     def test_behavioral_lateral_velocity_does_not_shift_lateral(self):

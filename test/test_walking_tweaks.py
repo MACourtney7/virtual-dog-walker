@@ -19,9 +19,9 @@ class TestWalkingTweaks(unittest.TestCase):
         cls.touch_src = read_project_file("src/ui/touch_controls.js")
 
     def test_01_leash_flank_clearance_constants(self):
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_MIN_PX = 18;", self.companion_dog_src)
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_MAX_PX = 22;", self.companion_dog_src)
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_TARGET_PX = 20;", self.companion_dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_MIN_PX = 12;", self.companion_dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_MAX_PX = 16;", self.companion_dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_TARGET_PX = 14;", self.companion_dog_src)
 
     def test_02_straight_locked_elbow_arm(self):
         # Verify elbow bend offset is eliminated in drawArm when isLeashed

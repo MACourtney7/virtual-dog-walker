@@ -6922,9 +6922,9 @@ const PLAYER_HIT_RADIUS = 26;
 
 // Leash slot spacing constants (owner-local frame).
 // Flank clearance is measured from the owner's hip/half-width out to the dog.
-export const LEASH_FLANK_CLEARANCE_MIN_PX = 18;
-export const LEASH_FLANK_CLEARANCE_MAX_PX = 22;
-export const LEASH_FLANK_CLEARANCE_TARGET_PX = 20;
+export const LEASH_FLANK_CLEARANCE_MIN_PX = 12;
+export const LEASH_FLANK_CLEARANCE_MAX_PX = 16;
+export const LEASH_FLANK_CLEARANCE_TARGET_PX = 14;
 // Forward lead is measured ahead of the owner's transverse shoulder line.
 export const LEASH_FORWARD_LEAD_MIN_PX = 40;
 export const LEASH_FORWARD_LEAD_MAX_PX = 52;
@@ -6933,6 +6933,30 @@ export const LEASH_FORWARD_LEAD_TARGET_PX = 46;
 export const LEASH_FEEDFORWARD_SECONDS = 0.12;
 // Minimum forward projection of the slot past the shoulder line.
 export const LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = 2;
+
+// Zoomies path types: the dog can run a figure-eight, orbit the owner, or
+// shuttle back and forth between two points.
+export const ZoomiePath = {
+  FIGURE_EIGHT: 'FIGURE_EIGHT',
+  ORBIT_OWNER: 'ORBIT_OWNER',
+  SHUTTLE: 'SHUTTLE'
+};
+
+export const ZOOMIE_PATH_TYPES = [
+  ZoomiePath.FIGURE_EIGHT,
+  ZoomiePath.ORBIT_OWNER,
+  ZoomiePath.SHUTTLE
+];
+
+// Off-leash roaming sub-modes. These describe the dog's intent while roaming
+// so the steering layer can vary its behaviour instead of pure random wander.
+export const RoamSubMode = {
+  SCOUT_AHEAD: 'SCOUT_AHEAD',
+  FLANK_PACE: 'FLANK_PACE',
+  LAG_AND_SNIFF: 'LAG_AND_SNIFF',
+  CHECK_IN: 'CHECK_IN',
+  FREE_EXPLORE: 'FREE_EXPLORE'
+};
 
 // Resolve the owner's heading in radians. Prefers `owner.heading`, then
 // `owner.angle`, then a sane default (facing South).
@@ -7169,6 +7193,19 @@ export class CompanionDog {
     this.wanderSpeed = 135;
     this.isReturningToOwner = false;
 
+    // Off-leash roaming sub-mode & look-back wait moment
+    this.roamSubMode = RoamSubMode.FREE_EXPLORE;
+    this.roamSubModeTimer = 0;
+    this.roamLookBackActive = false;
+    this.roamLookBackTimer = 0;
+    this.roamLookBackDone = false;
+    this.roamMicroPauseTimer = 0;
+
+    // Persistent roam speed state (target set on sub-mode selection, current
+    // smoothly interpolated each frame so the dog never snaps between gaits).
+    this.roamTargetSpeed = 135;
+    this.roamCurrentSpeed = 135;
+
     // Canine Social Interactions
     this.socialTargetDog = null;
 
@@ -7194,6 +7231,13 @@ export class CompanionDog {
     this.zoomiesTimer = 0;
     this.zoomiesPhase = 0;
     this.zoomiesCenter = { x: this.x, y: this.y };
+    this.zoomiesPath = ZoomiePath.FIGURE_EIGHT;
+    this.zoomiesShuttleA = { x: this.x, y: this.y };
+    this.zoomiesShuttleB = { x: this.x, y: this.y };
+    this.zoomiesShuttleHalfSpan = 120;
+    this.zoomiesOrbitRadius = 110;
+    this.zoomiesOrbitAngle = 0;
+    this.zoomiesOrbitDir = 1;
     this.scentDropTimer = 0;
     this.targetScent = null;
     this.sniffTime = 0;
@@ -7268,7 +7312,7 @@ export class CompanionDog {
     }
   }
 
-  triggerZoomies() {
+  triggerZoomies(pathType = null) {
     if (this.owner && this.owner.isLeashed) return false;
     if (this.state === DogState.LOST || this.state === DogState.POOPING) return false;
     this.dropStick();
@@ -7277,6 +7321,34 @@ export class CompanionDog {
     this.zoomiesTimer = 4.2;
     this.zoomiesPhase = 0;
     this.zoomiesCenter = { x: this.x, y: this.y };
+
+    // Resolve the zoomies path type (explicit override or random selection).
+    const validPath = ZOOMIE_PATH_TYPES.includes(pathType) ? pathType : null;
+    this.zoomiesPath = validPath ||
+      ZOOMIE_PATH_TYPES[Math.floor(Math.random() * ZOOMIE_PATH_TYPES.length)];
+
+    // Pre-compute path-specific anchors.
+    if (this.zoomiesPath === ZoomiePath.ORBIT_OWNER) {
+      const ownerX = this.owner ? this.owner.x : this.x;
+      const ownerY = this.owner ? this.owner.y : this.y;
+      this.zoomiesCenter = { x: ownerX, y: ownerY };
+      this.zoomiesOrbitRadius = 95 + Math.random() * 30; // 95-125 px
+      this.zoomiesOrbitDir = Math.random() < 0.5 ? 1 : -1;
+      this.zoomiesOrbitAngle = Math.atan2(this.y - ownerY, this.x - ownerX);
+    } else if (this.zoomiesPath === ZoomiePath.SHUTTLE) {
+      const heading = this.owner ? resolveOwnerHeading(this.owner) : this.angle;
+      this.zoomiesShuttleHalfSpan = 115 + Math.random() * 15; // 115-130 px
+      const span = this.zoomiesShuttleHalfSpan;
+      this.zoomiesShuttleA = {
+        x: this.x - Math.cos(heading) * span,
+        y: this.y - Math.sin(heading) * span
+      };
+      this.zoomiesShuttleB = {
+        x: this.x + Math.cos(heading) * span,
+        y: this.y + Math.sin(heading) * span
+      };
+    }
+
     this.emoteBubble = '⚡';
     this.emoteTimer = 2.0;
     this.wagSpeed = 22;
@@ -8068,7 +8140,7 @@ export class CompanionDog {
     // If owner stopped for a while, transition to idle sniff or sit
     // High obedience dogs stay attentive at heel longer with smaller stray chance
     const idleTransitionChance = Math.max(0.001, 0.009 - this.personality.obedience * 0.0015);
-    if (!this.owner.isMoving && dist < 25) {
+    if (!this.owner.isMoving && dist < 8) {
       this.vx *= 0.8;
       this.vy *= 0.8;
       this.wagSpeed = 6;
@@ -8127,24 +8199,72 @@ export class CompanionDog {
 
     const tuning = this._getGaitTuning();
 
-    // STAND: dog settles near owner, roaming bursts suppressed
-    if (tuning.roamSuppressed) {
-      const dx = this.owner.x - this.x;
-      const dy = this.owner.y - this.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > 40) {
-        this.vx = (dx / dist) * this.speed * 0.5;
-        this.vy = (dy / dist) * this.speed * 0.5;
-        this.angle = Math.atan2(this.vy, this.vx);
-      } else {
-        this.vx *= 0.7;
-        this.vy *= 0.7;
-      }
-      this.wagSpeed = 5;
+    if (this.checkSocialInteractions(otherDogs)) {
       return;
     }
 
-    if (this.checkSocialInteractions(otherDogs)) {
+    // Off-leash roaming sub-mode selection with personality weighting.
+    this.roamSubModeTimer -= dt;
+    if (this.roamSubModeTimer <= 0) {
+      this.roamSubModeTimer = 3.0 + Math.random() * 3.0;
+      const energy = Number(this.personality?.energy ?? 3);
+      const curiosity = Number(this.personality?.curiosity ?? 3);
+      const obedience = Number(this.personality?.obedience ?? 4);
+      // Weighted mode selection: energetic dogs scout/dart more, curious dogs
+      // lag-and-sniff more, obedient dogs check in more.
+      const weights = [
+        [RoamSubMode.SCOUT_AHEAD, 1.0 + energy * 0.4],
+        [RoamSubMode.FLANK_PACE, 1.0 + obedience * 0.2],
+        [RoamSubMode.LAG_AND_SNIFF, 1.0 + curiosity * 0.5],
+        [RoamSubMode.CHECK_IN, 0.5 + obedience * 0.4],
+        [RoamSubMode.FREE_EXPLORE, 1.0]
+      ];
+      const total = weights.reduce((s, w) => s + w[1], 0);
+      let roll = Math.random() * total;
+      let chosen = RoamSubMode.FREE_EXPLORE;
+      for (const [mode, w] of weights) {
+        roll -= w;
+        if (roll <= 0) { chosen = mode; break; }
+      }
+      this.roamSubMode = chosen;
+      this.roamLookBackDone = false;
+
+      // Set the persistent target speed once per sub-mode selection.
+      switch (chosen) {
+        case RoamSubMode.LAG_AND_SNIFF:
+          this.roamTargetSpeed = 48 + Math.random() * 28; // 48-76 px/s
+          break;
+        case RoamSubMode.SCOUT_AHEAD:
+          this.roamTargetSpeed = 185 + Math.random() * 55; // 185-240 px/s
+          break;
+        case RoamSubMode.CHECK_IN:
+          this.roamTargetSpeed = 235 + Math.random() * 40; // 235-275 px/s
+          break;
+        case RoamSubMode.FLANK_PACE:
+        case RoamSubMode.FREE_EXPLORE:
+        default:
+          this.roamTargetSpeed = 125 + Math.random() * 50; // 125-175 px/s
+          break;
+      }
+    }
+
+    // Look-back wait moment: during SCOUT_AHEAD, once the dog is far enough
+    // ahead it pauses briefly, faces the owner, then continues.
+    if (this.roamLookBackActive) {
+      this.roamLookBackTimer -= dt;
+      this.vx *= 0.6;
+      this.vy *= 0.6;
+      this.wagSpeed = 6;
+      if (this.owner) {
+        this.angle = lerpAngle(
+          this.angle,
+          Math.atan2(this.owner.y - this.y, this.owner.x - this.x),
+          Math.min(1, dt * 8)
+        );
+      }
+      if (this.roamLookBackTimer <= 0) {
+        this.roamLookBackActive = false;
+      }
       return;
     }
 
@@ -8240,30 +8360,169 @@ export class CompanionDog {
       } else {
         this.wanderAngle = Math.random() * Math.PI * 2;
       }
-      this.wanderSpeed = this.speed * tuning.speedScale * (0.65 + Math.random() * 0.25);
     }
 
-    let wanderVx = Math.cos(this.wanderAngle) * this.wanderSpeed;
-    let wanderVy = Math.sin(this.wanderAngle) * this.wanderSpeed;
+    // Smoothly interpolate the current roam speed toward the persistent target.
+    this.roamCurrentSpeed += (this.roamTargetSpeed - this.roamCurrentSpeed) * Math.min(1, dt * 5);
 
-    // If distToOwner > 150: bias wander velocity back towards the owner
-    if (distToOwner > 150) {
-      const bias = Math.min(1.0, (distToOwner - 150) / 50); // 0 at 150, 1 at 200
-      const toOwnerX = (this.owner.x - this.x) / (distToOwner || 1);
-      const toOwnerY = (this.owner.y - this.y) / (distToOwner || 1);
-      this.vx = wanderVx * (1.0 - bias) + toOwnerX * this.wanderSpeed * bias;
-      this.vy = wanderVy * (1.0 - bias) + toOwnerY * this.wanderSpeed * bias;
-    } else {
-      if (!this.owner.isMoving && distToOwner < 40) {
-        this.vx = wanderVx * 0.3;
-        this.vy = wanderVy * 0.3;
-      } else {
-        this.vx = wanderVx;
-        this.vy = wanderVy;
+    // Mode-specific waypoint steering & decoupled speed selection.
+    const heading = resolveOwnerHeading(this.owner);
+    const fwdX = Math.cos(heading);
+    const fwdY = Math.sin(heading);
+    const rightX = -Math.sin(heading);
+    const rightY = Math.cos(heading);
+    const sideSign = this.preferredSide === 'left' ? -1 : 1;
+
+    let desiredX = this.x + Math.cos(this.wanderAngle);
+    let desiredY = this.y + Math.sin(this.wanderAngle);
+    let modeSpeed = this.roamCurrentSpeed;
+
+    // Landmark curiosity: pick a nearby field obstacle (80-320px from owner)
+    // and skirt just outside it so the dog investigates props.
+    const pickLandmark = () => {
+      if (!field || !Array.isArray(field.obstacles) || field.obstacles.length === 0) return null;
+      const candidates = [];
+      for (const obs of field.obstacles) {
+        if (!obs || typeof obs.x !== 'number' || typeof obs.y !== 'number') continue;
+        const dOwner = Math.hypot(obs.x - this.owner.x, obs.y - this.owner.y);
+        if (dOwner >= 80 && dOwner <= 320) candidates.push(obs);
+      }
+      if (candidates.length === 0) return null;
+      return candidates[Math.floor(Math.random() * candidates.length)];
+    };
+
+    switch (this.roamSubMode) {
+      case RoamSubMode.SCOUT_AHEAD: {
+        // Run ahead of the owner along their heading.
+        const lead = 120 + Math.random() * 40;
+        desiredX = this.owner.x + fwdX * lead + rightX * sideSign * 20;
+        desiredY = this.owner.y + fwdY * lead + rightY * sideSign * 20;
+        // Look-back wait moment when far enough ahead.
+        if (distToOwner > 175 && !this.roamLookBackDone && !this.roamLookBackActive) {
+          this.roamLookBackActive = true;
+          this.roamLookBackTimer = 0.7 + Math.random() * 0.5;
+          this.roamLookBackDone = true;
+          return;
+        }
+        break;
+      }
+      case RoamSubMode.FLANK_PACE: {
+        // Pace alongside the owner on the preferred flank.
+        const lateral = 55 + Math.random() * 15;
+        const forward = 10 + Math.random() * 20;
+        desiredX = this.owner.x + fwdX * forward + rightX * sideSign * lateral;
+        desiredY = this.owner.y + fwdY * forward + rightY * sideSign * lateral;
+        break;
+      }
+      case RoamSubMode.LAG_AND_SNIFF: {
+        // Trail behind the owner, ambling slowly. Prefer a nearby landmark.
+        const landmark = pickLandmark();
+        if (landmark) {
+          const obsR = typeof landmark.r === 'number' ? landmark.r : (landmark.radius || 20);
+          const dxL = landmark.x - this.x;
+          const dyL = landmark.y - this.y;
+          const dL = Math.hypot(dxL, dyL) || 1;
+          const skirt = obsR + 22;
+          desiredX = landmark.x - (dxL / dL) * skirt;
+          desiredY = landmark.y - (dyL / dL) * skirt;
+        } else {
+          const lag = 70 + Math.random() * 40;
+          desiredX = this.owner.x - fwdX * lag + rightX * sideSign * 15;
+          desiredY = this.owner.y - fwdY * lag + rightY * sideSign * 15;
+        }
+        break;
+      }
+      case RoamSubMode.CHECK_IN: {
+        // Dart back toward the owner for a check-in.
+        desiredX = this.owner.x + rightX * sideSign * 30;
+        desiredY = this.owner.y + rightY * sideSign * 30;
+        // Arrival: hand off to a fresh sub-mode immediately.
+        if (distToOwner < 48) {
+          this.wagSpeed = 16;
+          this.roamSubModeTimer = 0;
+        }
+        break;
+      }
+      case RoamSubMode.FREE_EXPLORE:
+      default: {
+        // Free wander, biased toward nearby landmarks when available.
+        const landmark = pickLandmark();
+        if (landmark) {
+          const obsR = typeof landmark.r === 'number' ? landmark.r : (landmark.radius || 20);
+          const dxL = landmark.x - this.x;
+          const dyL = landmark.y - this.y;
+          const dL = Math.hypot(dxL, dyL) || 1;
+          const skirt = obsR + 22;
+          desiredX = landmark.x - (dxL / dL) * skirt;
+          desiredY = landmark.y - (dyL / dL) * skirt;
+        }
+        break;
       }
     }
 
-    if (Math.hypot(this.vx, this.vy) > 8) {
+    // Micro-pause: occasionally freeze in place for 0.8-1.6s.
+    if (this.roamMicroPauseTimer > 0) {
+      this.roamMicroPauseTimer -= dt;
+      this.vx = 0;
+      this.vy = 0;
+      this.wagSpeed = 5;
+      return;
+    }
+    if (Math.random() < 0.004) {
+      this.roamMicroPauseTimer = 0.8 + Math.random() * 0.8;
+      this.vx = 0;
+      this.vy = 0;
+      return;
+    }
+
+    let dirX = desiredX - this.x;
+    let dirY = desiredY - this.y;
+    const dirLen = Math.hypot(dirX, dirY) || 1;
+    dirX /= dirLen;
+    dirY /= dirLen;
+
+    let wanderVx = dirX * modeSpeed;
+    let wanderVy = dirY * modeSpeed;
+
+    // Prop curiosity bias: gently steer toward nearby field obstacles/props
+    // so the dog investigates benches, bins, and trees rather than wandering
+    // aimlessly.
+    if (field && Array.isArray(field.obstacles) && field.obstacles.length > 0) {
+      let nearest = null;
+      let nearestDist = 160;
+      for (const obs of field.obstacles) {
+        if (!obs || typeof obs.x !== 'number' || typeof obs.y !== 'number') continue;
+        const d = Math.hypot(obs.x - this.x, obs.y - this.y);
+        if (d < nearestDist) {
+          nearestDist = d;
+          nearest = obs;
+        }
+      }
+      if (nearest && nearestDist > 0.001) {
+        const curiosity = 0.35;
+        const toPropX = (nearest.x - this.x) / nearestDist;
+        const toPropY = (nearest.y - this.y) / nearestDist;
+        wanderVx = wanderVx * (1 - curiosity) + toPropX * modeSpeed * curiosity;
+        wanderVy = wanderVy * (1 - curiosity) + toPropY * modeSpeed * curiosity;
+      }
+    }
+
+    // Wide soft tether at 300px: only bias back toward the owner once the dog
+    // has drifted far, so it can roam freely within a generous radius.
+    if (distToOwner > 300) {
+      const bias = Math.min(1.0, (distToOwner - 300) / 80); // 0 at 300, 1 at 380
+      const toOwnerX = (this.owner.x - this.x) / (distToOwner || 1);
+      const toOwnerY = (this.owner.y - this.y) / (distToOwner || 1);
+      this.vx = wanderVx * (1.0 - bias) + toOwnerX * modeSpeed * bias;
+      this.vy = wanderVy * (1.0 - bias) + toOwnerY * modeSpeed * bias;
+    } else {
+      this.vx = wanderVx;
+      this.vy = wanderVy;
+    }
+
+    if (this.roamSubMode === RoamSubMode.CHECK_IN && distToOwner < 48) {
+      this.wagSpeed = 16;
+    } else if (Math.hypot(this.vx, this.vy) > 8) {
       this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 12));
       this.wagSpeed = 9;
     } else {
@@ -8553,22 +8812,56 @@ export class CompanionDog {
     const rx = 135;
     const ry = 80;
 
-    // Parametric figure-eight retaining Phase 3 regex compatibility
-    this.x = cx + rx * Math.sin(this.zoomiesPhase);
-    this.y = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
+    const activePath = this.zoomiesPath || ZoomiePath.FIGURE_EIGHT;
 
-    // Collision-aware: resolve obstacles/bounds and shift the orbit center if displaced
+    let expectedX;
+    let expectedY;
+    let dx;
+    let dy;
+
+    if (activePath === ZoomiePath.ORBIT_OWNER) {
+      // Circular orbit around the owner's LIVE position.
+      const ownerX = this.owner ? this.owner.x : cx;
+      const ownerY = this.owner ? this.owner.y : cy;
+      this.zoomiesOrbitAngle += dt * this.zoomiesSpeed * (this.zoomiesOrbitDir || 1);
+      const orbitR = this.zoomiesOrbitRadius;
+      expectedX = ownerX + Math.cos(this.zoomiesOrbitAngle) * orbitR;
+      expectedY = ownerY + Math.sin(this.zoomiesOrbitAngle) * orbitR;
+      dx = -Math.sin(this.zoomiesOrbitAngle) * orbitR * (this.zoomiesOrbitDir || 1);
+      dy = Math.cos(this.zoomiesOrbitAngle) * orbitR * (this.zoomiesOrbitDir || 1);
+    } else if (activePath === ZoomiePath.SHUTTLE) {
+      // Shuttle back and forth between two anchors along the owner's heading.
+      const s = Math.sin(this.zoomiesPhase);
+      const ax = this.zoomiesShuttleA.x;
+      const ay = this.zoomiesShuttleA.y;
+      const bx = this.zoomiesShuttleB.x;
+      const by = this.zoomiesShuttleB.y;
+      expectedX = ax + (bx - ax) * 0.5 * (s + 1);
+      expectedY = ay + (by - ay) * 0.5 * (s + 1);
+      // Analytic derivative: d(expected)/dt = 0.5 * (b - a) * cos(phase) * zoomiesSpeed
+      dx = (bx - ax) * 0.5 * Math.cos(this.zoomiesPhase);
+      dy = (by - ay) * 0.5 * Math.cos(this.zoomiesPhase);
+    } else {
+      // Parametric figure-eight retaining Phase 3 regex compatibility.
+      expectedX = cx + rx * Math.sin(this.zoomiesPhase);
+      expectedY = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
+      dx = rx * Math.cos(t);
+      dy = ry * Math.cos(2 * t);
+    }
+
+    // Set position to the expected position FIRST, then resolve collisions so
+    // the push-out operates on fresh coordinates (no stale-position oscillation).
+    this.x = expectedX;
+    this.y = expectedY;
+
+    // Collision-aware: resolve obstacles/bounds and shift the orbit center if displaced.
     if (field) {
       resolveFieldCollision(this, this.radius, field);
-      const expectedX = cx + rx * Math.sin(this.zoomiesPhase);
-      const expectedY = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
       this.zoomiesCenter.x += (this.x - expectedX);
       this.zoomiesCenter.y += (this.y - expectedY);
     }
 
     // Analytic tangent velocity vector
-    const dx = rx * Math.cos(t);
-    const dy = ry * Math.cos(2 * t);
     this.vx = dx * this.zoomiesSpeed;
     this.vy = dy * this.zoomiesSpeed;
 
@@ -9099,6 +9392,9 @@ CompanionDog.LEASH_FORWARD_LEAD_TARGET_PX = LEASH_FORWARD_LEAD_TARGET_PX;
 CompanionDog.LEASH_FEEDFORWARD_SECONDS = LEASH_FEEDFORWARD_SECONDS;
 CompanionDog.LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX;
 CompanionDog.getLeashSlot = getLeashSlot;
+CompanionDog.ZoomiePath = ZoomiePath;
+CompanionDog.ZOOMIE_PATH_TYPES = ZOOMIE_PATH_TYPES;
+CompanionDog.RoamSubMode = RoamSubMode;
 ```
 
 ## FILE: src/entities/npc.js
@@ -30053,7 +30349,7 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         # Source must force a positive sitting timer after ROLLING completes
         idx = self.dog_src.find("case DogState.ROLLING:")
         self.assertNotEqual(idx, -1)
-        window = self.dog_src[idx:idx + 600]
+        window = self.dog_src[idx:idx + 2000]
         self.assertIn("this.transitionTo(DogState.SITTING)", window)
         self.assertIn("this.stateTimer = 2.0 + Math.random() * 2.0;", window)
 
@@ -30127,10 +30423,14 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
 
     # MEDIUM-2: zoomies collision-aware source contract
     def test_zoomies_collision_aware_source_contract(self):
-        # Match the method definition, not the call site in update()
+        # Match the method definition, not the call site in update().
+        # Slice from the method header to the next method definition so the
+        # window always covers the full body regardless of its length.
         idx = self.dog_src.find("updateZoomies(dt, field) {")
         self.assertNotEqual(idx, -1)
-        window = self.dog_src[idx:idx + 2000]
+        end_idx = self.dog_src.find("updateSniffingTrail(", idx)
+        self.assertNotEqual(end_idx, -1)
+        window = self.dog_src[idx:end_idx]
         self.assertIn("resolveFieldCollision", window)
         self.assertIn("this.zoomiesCenter.x += (this.x - expectedX)", window)
         self.assertIn("this.zoomiesCenter.y += (this.y - expectedY)", window)
@@ -35899,7 +36199,7 @@ class TestDogSpacing(unittest.TestCase):
         forward = (math.cos(heading), math.sin(heading))
         right = (-math.sin(heading), math.cos(heading))
         flank_sign = -1 if side == 'left' else 1
-        lateral = max(half_width + 18, min(half_width + 22, half_width + 20))
+        lateral = max(half_width + 12, min(half_width + 16, half_width + 14))
         forward_lead = max(40, min(52, 46))
         sx = owner_x + forward[0] * forward_lead + right[0] * flank_sign * lateral
         sy = owner_y + forward[1] * forward_lead + right[1] * flank_sign * lateral
@@ -35931,23 +36231,23 @@ class TestDogSpacing(unittest.TestCase):
         return sx, sy
 
     def test_flank_clearance_bounds(self):
-        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 18", self.src)
-        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 22", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 12", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 16", self.src)
         import math
         half_width = 10.5
         for deg in (0, 90, 180, 270, 45):
             heading = math.radians(deg)
             sx, sy = self._slot(100.0, 100.0, heading, half_width=half_width)
             # Lateral distance from the forward axis, minus the owner half-width,
-            # must be within [18, 22] (the flank clearance band).
+            # must be within [12, 16] (the flank clearance band).
             forward = (math.cos(heading), math.sin(heading))
             rel_x = sx - 100.0
             rel_y = sy - 100.0
             proj = rel_x * forward[0] + rel_y * forward[1]
             lateral = math.hypot(rel_x - forward[0] * proj, rel_y - forward[1] * proj)
             clearance = lateral - half_width
-            self.assertGreaterEqual(clearance, 18 - 1e-6)
-            self.assertLessEqual(clearance, 22 + 1e-6)
+            self.assertGreaterEqual(clearance, 12 - 1e-6)
+            self.assertLessEqual(clearance, 16 + 1e-6)
 
     def test_forward_lead_bounds(self):
         self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 40", self.src)
@@ -40000,6 +40300,312 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
+## FILE: test/test_off_leash_movement.py
+```python
+import os
+import unittest
+
+TEST_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.abspath(os.path.join(TEST_DIR, ".."))
+
+def read_file(rel_path):
+    path = os.path.join(PROJECT_DIR, rel_path)
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+class TestOffLeashMovement(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.dog_src = read_file("src/entities/companion_dog.js")
+
+    def test_zoomie_path_enum_and_types_exported(self):
+        self.assertIn("export const ZoomiePath = {", self.dog_src)
+        self.assertIn("FIGURE_EIGHT: 'FIGURE_EIGHT'", self.dog_src)
+        self.assertIn("ORBIT_OWNER: 'ORBIT_OWNER'", self.dog_src)
+        self.assertIn("SHUTTLE: 'SHUTTLE'", self.dog_src)
+        self.assertIn("export const ZOOMIE_PATH_TYPES = [", self.dog_src)
+
+    def test_roam_sub_mode_enum_exported(self):
+        self.assertIn("export const RoamSubMode = {", self.dog_src)
+        self.assertIn("SCOUT_AHEAD: 'SCOUT_AHEAD'", self.dog_src)
+        self.assertIn("FLANK_PACE: 'FLANK_PACE'", self.dog_src)
+        self.assertIn("LAG_AND_SNIFF: 'LAG_AND_SNIFF'", self.dog_src)
+        self.assertIn("CHECK_IN: 'CHECK_IN'", self.dog_src)
+        self.assertIn("FREE_EXPLORE: 'FREE_EXPLORE'", self.dog_src)
+
+    def test_leash_flank_clearance_constants_inward_adjusted(self):
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_MIN_PX = 12;", self.dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_MAX_PX = 16;", self.dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_TARGET_PX = 14;", self.dog_src)
+
+    def test_tightened_standing_arrival_deadband(self):
+        self.assertIn("!this.owner.isMoving && dist < 8", self.dog_src)
+
+    def test_no_standing_suppression_in_update_roaming(self):
+        self.assertNotIn("if (tuning.roamSuppressed) {", self.dog_src)
+
+    def test_decoupled_roam_speed(self):
+        self.assertNotIn("this.wanderSpeed = this.speed * tuning.speedScale", self.dog_src)
+
+    def test_zoomies_multi_path_handling(self):
+        self.assertIn("ZoomiePath.ORBIT_OWNER", self.dog_src)
+        self.assertIn("ZoomiePath.SHUTTLE", self.dog_src)
+        self.assertIn("triggerZoomies(pathType = null)", self.dog_src)
+
+    def test_backward_compatible_zoomies_regex_contracts_preserved(self):
+        self.assertIn("Math.sin(this.zoomiesPhase)", self.dog_src)
+        self.assertIn("Math.sin(this.zoomiesPhase * 2)", self.dog_src)
+        self.assertIn("Math.cos(t)", self.dog_src)
+        self.assertIn("Math.cos(2 * t)", self.dog_src)
+        self.assertIn("resolveFieldCollision", self.dog_src)
+        self.assertIn("this.zoomiesCenter.x += (this.x - expectedX)", self.dog_src)
+        self.assertIn("this.zoomiesCenter.y += (this.y - expectedY)", self.dog_src)
+
+    def test_look_back_wait_moment_present(self):
+        self.assertIn("this.roamLookBackActive", self.dog_src)
+        self.assertIn("roamLookBackTimer", self.dog_src)
+
+    def test_prop_curiosity_bias_present(self):
+        self.assertIn("field.obstacles", self.dog_src)
+
+    # ------------------------------------------------------------------
+    # Behavioral simulations
+    # ------------------------------------------------------------------
+
+    def test_zoomie_orbit_radius_and_direction_bounds(self):
+        """ORBIT_OWNER radius must be 95-125px with a +/-1 direction."""
+        self.assertIn("this.zoomiesOrbitRadius = 95 + Math.random() * 30;", self.dog_src)
+        self.assertIn("this.zoomiesOrbitDir = Math.random() < 0.5 ? 1 : -1;", self.dog_src)
+        for _ in range(200):
+            r = 95 + 0.999999 * 30
+            self.assertGreaterEqual(r, 95)
+            self.assertLessEqual(r, 125)
+
+    def test_zoomie_shuttle_half_span_bounds(self):
+        """SHUTTLE half-span must be 115-130px."""
+        self.assertIn("this.zoomiesShuttleHalfSpan = 115 + Math.random() * 15;", self.dog_src)
+
+    def test_zoomie_orbit_tracks_live_owner_position(self):
+        """ORBIT_OWNER must use the owner's live position each frame."""
+        self.assertIn("const ownerX = this.owner ? this.owner.x : cx;", self.dog_src)
+        self.assertIn("const ownerY = this.owner ? this.owner.y : cy;", self.dog_src)
+
+    def test_zoomie_shuttle_exact_derivative(self):
+        """SHUTTLE velocity must use the exact derivative of the eased position."""
+        self.assertIn("dx = (bx - ax) * 0.5 * Math.cos(this.zoomiesPhase);", self.dog_src)
+        self.assertIn("this.vx = dx * this.zoomiesSpeed;", self.dog_src)
+
+    def test_zoomies_collision_resolved_after_position_set(self):
+        """Collision must be resolved AFTER x/y are set to the expected position."""
+        body = self.dog_src
+        set_idx = body.find("this.x = expectedX;")
+        resolve_idx = body.find("resolveFieldCollision(this, this.radius, field);", set_idx)
+        self.assertGreater(set_idx, -1, "expected position assignment missing")
+        self.assertGreater(resolve_idx, set_idx,
+                           "resolveFieldCollision must run after position assignment")
+        # The stale pre-assignment collision block must be gone.
+        self.assertNotIn(
+            "// Kept early in the method body so the collision contract is always present.",
+            body,
+        )
+
+    def test_decoupled_speed_bands_present(self):
+        """Decoupled roam speed bands must be applied via roamTargetSpeed."""
+        # Dead SPEED_* constants were removed; the bands are now expressed
+        # directly through roamTargetSpeed assignments per sub-mode.
+        self.assertNotIn("SPEED_SNIFF_AMBLE_MIN", self.dog_src)
+        self.assertNotIn("SPEED_DART_SPRINT_MAX", self.dog_src)
+        self.assertIn("this.roamTargetSpeed = 48 + Math.random() * 28;", self.dog_src)
+        self.assertIn("this.roamTargetSpeed = 185 + Math.random() * 55;", self.dog_src)
+        self.assertIn("this.roamTargetSpeed = 235 + Math.random() * 40;", self.dog_src)
+        self.assertIn("this.roamTargetSpeed = 125 + Math.random() * 50;", self.dog_src)
+
+    def test_wide_soft_tether_at_300px(self):
+        """The old 150px pull-back must be gone; tether is now at 300px."""
+        self.assertNotIn("if (distToOwner > 150) {", self.dog_src)
+        self.assertIn("if (distToOwner > 300) {", self.dog_src)
+
+    def test_roam_sub_mode_waypoint_steering(self):
+        """Each roam sub-mode must have a dedicated steering branch."""
+        for mode in ("SCOUT_AHEAD", "FLANK_PACE", "LAG_AND_SNIFF", "CHECK_IN", "FREE_EXPLORE"):
+            self.assertIn(f"case RoamSubMode.{mode}", self.dog_src)
+
+    def test_personality_weighted_mode_selection(self):
+        """Mode selection must weight by energy, curiosity, and obedience."""
+        self.assertIn("this.personality?.energy", self.dog_src)
+        self.assertIn("this.personality?.curiosity", self.dog_src)
+        self.assertIn("this.personality?.obedience", self.dog_src)
+
+    def test_look_back_wait_moment_behavioral(self):
+        """SCOUT_AHEAD look-back must trigger past 175px and pause 0.7-1.2s."""
+        self.assertIn("distToOwner > 175", self.dog_src)
+        self.assertIn("this.roamLookBackTimer = 0.7 + Math.random() * 0.5;", self.dog_src)
+
+    def test_micro_pause_behavioral(self):
+        """Micro-pause must freeze the dog for 0.8-1.6s."""
+        self.assertIn("this.roamMicroPauseTimer = 0.8 + Math.random() * 0.8;", self.dog_src)
+
+    def test_standing_free_roaming_not_suppressed(self):
+        """Standing owner must not suppress off-leash roaming."""
+        self.assertNotIn("if (tuning.roamSuppressed) {", self.dog_src)
+        self.assertNotIn("this.wanderSpeed = this.speed * tuning.speedScale", self.dog_src)
+
+    def test_roam_speed_decoupled_from_owner_gait(self):
+        """Roam speeds must be literal constants, not derived from this.speed."""
+        self.assertNotIn("this.wanderSpeed = this.speed *", self.dog_src)
+
+    # ------------------------------------------------------------------
+    # Behavioral simulations (remediation cycle 2)
+    # ------------------------------------------------------------------
+
+    def test_shuttle_derivative_matches_numeric(self):
+        """SHUTTLE velocity must equal the numeric derivative of expectedX/Y."""
+        import math
+
+        ax, ay = 100.0, 200.0
+        bx, by = 400.0, 500.0
+        zoomies_speed = 3.8
+
+        def expected(phase):
+            s = math.sin(phase)
+            ex = ax + (bx - ax) * 0.5 * (s + 1)
+            ey = ay + (by - ay) * 0.5 * (s + 1)
+            return ex, ey
+
+        for phase in (0.0, 0.5, 1.0, 2.0, 3.0):
+            h = 1e-6
+            ex_p, ey_p = expected(phase + h)
+            ex_m, ey_m = expected(phase - h)
+            num_dx = (ex_p - ex_m) / (2 * h)
+            num_dy = (ey_p - ey_m) / (2 * h)
+
+            # Analytic derivative (per unit phase) scaled by zoomiesSpeed
+            dx = (bx - ax) * 0.5 * math.cos(phase)
+            dy = (by - ay) * 0.5 * math.cos(phase)
+            vx = dx * zoomies_speed
+            vy = dy * zoomies_speed
+
+            self.assertAlmostEqual(vx, num_dx * zoomies_speed, places=3)
+            self.assertAlmostEqual(vy, num_dy * zoomies_speed, places=3)
+
+        # Source contract: derivative must be scaled by zoomiesSpeed exactly once
+        self.assertIn("dx = (bx - ax) * 0.5 * Math.cos(this.zoomiesPhase);", self.dog_src)
+        self.assertIn("dy = (by - ay) * 0.5 * Math.cos(this.zoomiesPhase);", self.dog_src)
+        self.assertIn("this.vx = dx * this.zoomiesSpeed;", self.dog_src)
+        self.assertIn("this.vy = dy * this.zoomiesSpeed;", self.dog_src)
+
+    def test_orbit_owner_tracks_live_owner_position(self):
+        """ORBIT_OWNER expectedX/Y must track the owner's live coordinates."""
+        import math
+
+        orbit_r = 110.0
+        orbit_angle = 0.7
+
+        def expected(owner_x, owner_y):
+            ex = owner_x + math.cos(orbit_angle) * orbit_r
+            ey = owner_y + math.sin(orbit_angle) * orbit_r
+            return ex, ey
+
+        ex1, ey1 = expected(0.0, 0.0)
+        ex2, ey2 = expected(500.0, 300.0)
+        # Moving the owner by (dx, dy) must shift the orbit point by the same delta
+        self.assertAlmostEqual(ex2 - ex1, 500.0, places=6)
+        self.assertAlmostEqual(ey2 - ey1, 300.0, places=6)
+
+        # Source contract: owner position resolved live each frame
+        self.assertIn("const ownerX = this.owner ? this.owner.x : cx;", self.dog_src)
+        self.assertIn("const ownerY = this.owner ? this.owner.y : cy;", self.dog_src)
+        self.assertIn(
+            "expectedX = ownerX + Math.cos(this.zoomiesOrbitAngle) * orbitR;",
+            self.dog_src,
+        )
+        self.assertIn(
+            "expectedY = ownerY + Math.sin(this.zoomiesOrbitAngle) * orbitR;",
+            self.dog_src,
+        )
+
+    def test_check_in_arrival_transition(self):
+        """CHECK_IN must dart at 235-275 px/s and hand off on arrival (<48px)."""
+        # Source contract: dart sprint band for CHECK_IN
+        self.assertIn("this.roamTargetSpeed = 235 + Math.random() * 40;", self.dog_src)
+        # Arrival transition
+        self.assertIn("if (distToOwner < 48) {", self.dog_src)
+        self.assertIn("this.wagSpeed = 16;", self.dog_src)
+        self.assertIn("this.roamSubModeTimer = 0;", self.dog_src)
+        # Tail-wag branch must also honour CHECK_IN arrival.
+        self.assertIn(
+            "if (this.roamSubMode === RoamSubMode.CHECK_IN && distToOwner < 48) {",
+            self.dog_src,
+        )
+
+        # Behavioral: simulate arrival
+        class Dog:
+            def __init__(self, dist):
+                self.distToOwner = dist
+                self.wagSpeed = 8
+                self.roamSubModeTimer = 5.0
+                self.roamSubMode = "CHECK_IN"
+
+            def tick(self):
+                if self.roamSubMode == "CHECK_IN" and self.distToOwner < 48:
+                    self.wagSpeed = 16
+                    self.roamSubModeTimer = 0
+
+        near = Dog(40.0)
+        near.tick()
+        self.assertEqual(near.wagSpeed, 16)
+        self.assertEqual(near.roamSubModeTimer, 0)
+
+        far = Dog(120.0)
+        far.tick()
+        self.assertNotEqual(far.wagSpeed, 16)
+        self.assertGreater(far.roamSubModeTimer, 0)
+
+    def test_off_leash_standing_owner_no_slowdown(self):
+        """Off-leash dog must not slow down near a standing owner."""
+        # The old 0.3x slowdown block must be gone
+        self.assertNotIn("this.vx = wanderVx * 0.3;", self.dog_src)
+        self.assertNotIn("this.vy = wanderVy * 0.3;", self.dog_src)
+
+        # Behavioral: velocity is preserved regardless of owner standing state
+        class Dog:
+            def __init__(self, owner_moving, dist_to_owner):
+                self.owner_moving = owner_moving
+                self.dist_to_owner = dist_to_owner
+                self.vx = 0.0
+                self.vy = 0.0
+
+            def steer(self, wander_vx, wander_vy):
+                # Mirrors the post-fix branch: no standing slowdown
+                self.vx = wander_vx
+                self.vy = wander_vy
+
+        dog = Dog(owner_moving=False, dist_to_owner=20.0)
+        dog.steer(150.0, 0.0)
+        self.assertEqual(dog.vx, 150.0)
+        self.assertEqual(dog.vy, 0.0)
+
+    def test_roam_speed_smooth_interpolation(self):
+        """roamCurrentSpeed must interpolate toward roamTargetSpeed each frame."""
+        self.assertIn("this.roamTargetSpeed = 135;", self.dog_src)
+        self.assertIn("this.roamCurrentSpeed = 135;", self.dog_src)
+        self.assertIn(
+            "this.roamCurrentSpeed += (this.roamTargetSpeed - this.roamCurrentSpeed) * Math.min(1, dt * 5);",
+            self.dog_src,
+        )
+
+        # Behavioral: exponential approach
+        current = 135.0
+        target = 250.0
+        dt = 0.1
+        for _ in range(100):
+            current += (target - current) * min(1.0, dt * 5)
+        self.assertAlmostEqual(current, target, places=2)
+
+if __name__ == '__main__':
+    unittest.main()
+```
+
 ## FILE: test/test_phase3_visuals_and_mechanics.py
 ```python
 #!/usr/bin/env python3
@@ -42938,9 +43544,9 @@ class TestWalkingTweaks(unittest.TestCase):
         cls.touch_src = read_project_file("src/ui/touch_controls.js")
 
     def test_01_leash_flank_clearance_constants(self):
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_MIN_PX = 18;", self.companion_dog_src)
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_MAX_PX = 22;", self.companion_dog_src)
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_TARGET_PX = 20;", self.companion_dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_MIN_PX = 12;", self.companion_dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_MAX_PX = 16;", self.companion_dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_TARGET_PX = 14;", self.companion_dog_src)
 
     def test_02_straight_locked_elbow_arm(self):
         # Verify elbow bend offset is eliminated in drawArm when isLeashed

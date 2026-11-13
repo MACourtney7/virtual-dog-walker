@@ -91,16 +91,30 @@ class TestOffLeashMovement(unittest.TestCase):
         self.assertIn("dx = (bx - ax) * 0.5 * Math.cos(this.zoomiesPhase);", self.dog_src)
         self.assertIn("this.vx = dx * this.zoomiesSpeed;", self.dog_src)
 
+    def test_zoomies_collision_resolved_after_position_set(self):
+        """Collision must be resolved AFTER x/y are set to the expected position."""
+        body = self.dog_src
+        set_idx = body.find("this.x = expectedX;")
+        resolve_idx = body.find("resolveFieldCollision(this, this.radius, field);", set_idx)
+        self.assertGreater(set_idx, -1, "expected position assignment missing")
+        self.assertGreater(resolve_idx, set_idx,
+                           "resolveFieldCollision must run after position assignment")
+        # The stale pre-assignment collision block must be gone.
+        self.assertNotIn(
+            "// Kept early in the method body so the collision contract is always present.",
+            body,
+        )
+
     def test_decoupled_speed_bands_present(self):
-        """All five decoupled canine speed bands must be defined."""
-        self.assertIn("SPEED_SNIFF_AMBLE_MIN = 48", self.dog_src)
-        self.assertIn("SPEED_SNIFF_AMBLE_MAX = 76", self.dog_src)
-        self.assertIn("SPEED_EXPLORE_TROT_MIN = 130", self.dog_src)
-        self.assertIn("SPEED_EXPLORE_TROT_MAX = 190", self.dog_src)
-        self.assertIn("SPEED_SCOUT_CANTER_MIN = 185", self.dog_src)
-        self.assertIn("SPEED_SCOUT_CANTER_MAX = 235", self.dog_src)
-        self.assertIn("SPEED_DART_SPRINT_MIN = 230", self.dog_src)
-        self.assertIn("SPEED_DART_SPRINT_MAX = 270", self.dog_src)
+        """Decoupled roam speed bands must be applied via roamTargetSpeed."""
+        # Dead SPEED_* constants were removed; the bands are now expressed
+        # directly through roamTargetSpeed assignments per sub-mode.
+        self.assertNotIn("SPEED_SNIFF_AMBLE_MIN", self.dog_src)
+        self.assertNotIn("SPEED_DART_SPRINT_MAX", self.dog_src)
+        self.assertIn("this.roamTargetSpeed = 48 + Math.random() * 28;", self.dog_src)
+        self.assertIn("this.roamTargetSpeed = 185 + Math.random() * 55;", self.dog_src)
+        self.assertIn("this.roamTargetSpeed = 235 + Math.random() * 40;", self.dog_src)
+        self.assertIn("this.roamTargetSpeed = 125 + Math.random() * 50;", self.dog_src)
 
     def test_wide_soft_tether_at_300px(self):
         """The old 150px pull-back must be gone; tether is now at 300px."""
@@ -214,6 +228,11 @@ class TestOffLeashMovement(unittest.TestCase):
         self.assertIn("if (distToOwner < 48) {", self.dog_src)
         self.assertIn("this.wagSpeed = 16;", self.dog_src)
         self.assertIn("this.roamSubModeTimer = 0;", self.dog_src)
+        # Tail-wag branch must also honour CHECK_IN arrival.
+        self.assertIn(
+            "if (this.roamSubMode === RoamSubMode.CHECK_IN && distToOwner < 48) {",
+            self.dog_src,
+        )
 
         # Behavioral: simulate arrival
         class Dog:

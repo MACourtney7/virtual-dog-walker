@@ -1461,17 +1461,6 @@ export class CompanionDog {
       }
     }
 
-    // Decoupled canine speed bands (px/s). These are independent of the
-    // owner's gait so the dog keeps a lively, self-directed pace off-leash.
-    const SPEED_SNIFF_AMBLE_MIN = 48;
-    const SPEED_SNIFF_AMBLE_MAX = 76;
-    const SPEED_EXPLORE_TROT_MIN = 130;
-    const SPEED_EXPLORE_TROT_MAX = 190;
-    const SPEED_SCOUT_CANTER_MIN = 185;
-    const SPEED_SCOUT_CANTER_MAX = 235;
-    const SPEED_DART_SPRINT_MIN = 230;
-    const SPEED_DART_SPRINT_MAX = 270;
-
     // Maintain exploratory wander target
     this.wanderTimer -= dt;
     if (this.wanderTimer <= 0) {
@@ -1655,7 +1644,9 @@ export class CompanionDog {
       this.vy = wanderVy;
     }
 
-    if (Math.hypot(this.vx, this.vy) > 8) {
+    if (this.roamSubMode === RoamSubMode.CHECK_IN && distToOwner < 48) {
+      this.wagSpeed = 16;
+    } else if (Math.hypot(this.vx, this.vy) > 8) {
       this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 12));
       this.wagSpeed = 9;
     } else {
@@ -1947,20 +1938,10 @@ export class CompanionDog {
 
     const activePath = this.zoomiesPath || ZoomiePath.FIGURE_EIGHT;
 
-    // FIGURE_EIGHT parametric math is computed first so the collision-aware
-    // center-shift contract is always present in this method body.
-    let expectedX = cx + rx * Math.sin(this.zoomiesPhase);
-    let expectedY = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
-    let dx = rx * Math.cos(t);
-    let dy = ry * Math.cos(2 * t);
-
-    // Collision-aware: resolve obstacles/bounds and shift the orbit center if displaced.
-    // Kept early in the method body so the collision contract is always present.
-    if (field) {
-      resolveFieldCollision(this, this.radius, field);
-      this.zoomiesCenter.x += (this.x - expectedX);
-      this.zoomiesCenter.y += (this.y - expectedY);
-    }
+    let expectedX;
+    let expectedY;
+    let dx;
+    let dy;
 
     if (activePath === ZoomiePath.ORBIT_OWNER) {
       // Circular orbit around the owner's LIVE position.
@@ -1984,14 +1965,21 @@ export class CompanionDog {
       // Analytic derivative: d(expected)/dt = 0.5 * (b - a) * cos(phase) * zoomiesSpeed
       dx = (bx - ax) * 0.5 * Math.cos(this.zoomiesPhase);
       dy = (by - ay) * 0.5 * Math.cos(this.zoomiesPhase);
+    } else {
+      // Parametric figure-eight retaining Phase 3 regex compatibility.
+      expectedX = cx + rx * Math.sin(this.zoomiesPhase);
+      expectedY = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
+      dx = rx * Math.cos(t);
+      dy = ry * Math.cos(2 * t);
     }
 
+    // Set position to the expected position FIRST, then resolve collisions so
+    // the push-out operates on fresh coordinates (no stale-position oscillation).
     this.x = expectedX;
     this.y = expectedY;
 
-    // Re-resolve collision after path-specific position override so ORBIT_OWNER
-    // and SHUTTLE paths also shift the center correctly when displaced.
-    if (field && activePath !== ZoomiePath.FIGURE_EIGHT) {
+    // Collision-aware: resolve obstacles/bounds and shift the orbit center if displaced.
+    if (field) {
       resolveFieldCollision(this, this.radius, field);
       this.zoomiesCenter.x += (this.x - expectedX);
       this.zoomiesCenter.y += (this.y - expectedY);

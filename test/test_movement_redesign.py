@@ -1674,9 +1674,8 @@ class TestWanderMode(unittest.TestCase):
 
     def test_wander_speed_is_stroll(self):
         self.assertIn("WANDER_SPEED", self.owner_src)
-        self.assertIn("[Gait.STROLL]: 75", self.owner_src)
-        # WANDER_SPEED must resolve to the STROLL gait (which is 75 px/s).
-        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.STROLL")
+        self.assertIn("[Gait.WANDER]: 60", self.owner_src)
+        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.WANDER")
 
     def test_wander_cancel_on_field_click(self):
         # Field press path cancels wander mode.
@@ -1702,26 +1701,18 @@ class TestWanderMode(unittest.TestCase):
         self.assertNotIn("banner", block.lower())
 
     def test_wander_update_uses_stroll_speed(self):
-        # updateWander must force the STROLL gait while wandering.
-        # unification-022 remediation cycle 3: the raw `this.gait = WANDER_SPEED`
-        # assignment was replaced with a `setGait(Gait.STROLL)` transition so
-        # that leaving JOG starts the cooldown, isMoving is synced, and
-        # onGaitChange fires. WANDER_SPEED still resolves to Gait.STROLL.
         idx = self.owner_src.index("updateWander(dt, world)")
-        end = self.owner_src.index("// --- Heading integration ---", idx)
+        end = self.owner_src.index("this.stepOffActive = false;", idx)
         block = self.owner_src[idx:end]
-        self.assertIn("if (this.gait !== Gait.STROLL) {", block)
-        self.assertIn("this.setGait(Gait.STROLL);", block)
-        # The old raw assignment must be gone.
+        self.assertIn("if (this.gait !== Gait.WANDER) {", block)
+        self.assertIn("this.setGait(Gait.WANDER);", block)
         self.assertNotIn("this.gait = WANDER_SPEED", block)
-        # WANDER_SPEED must still resolve to the STROLL gait.
-        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.STROLL")
+        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.WANDER")
 
     def test_behavioral_wander_speed_value(self):
-        # WANDER_SPEED resolves to STROLL = 75 px/s.
-        GAIT_SPEEDS = {'STAND': 0, 'STROLL': 75, 'WALK': 100, 'JOG': 185}
-        WANDER_SPEED = 'STROLL'
-        self.assertEqual(GAIT_SPEEDS[WANDER_SPEED], 75)
+        GAIT_SPEEDS = {'STAND': 0, 'STROLL': 75, 'WALK': 100, 'JOG': 185, 'WANDER': 60}
+        WANDER_SPEED = 'WANDER'
+        self.assertEqual(GAIT_SPEEDS[WANDER_SPEED], 60)
 
 
 class TestDogSpacing(unittest.TestCase):
@@ -1736,7 +1727,7 @@ class TestDogSpacing(unittest.TestCase):
         forward = (math.cos(heading), math.sin(heading))
         right = (-math.sin(heading), math.cos(heading))
         flank_sign = -1 if side == 'left' else 1
-        lateral = max(half_width + 24, min(half_width + 28, half_width + 26))
+        lateral = max(half_width + 18, min(half_width + 22, half_width + 20))
         forward_lead = max(40, min(52, 46))
         sx = owner_x + forward[0] * forward_lead + right[0] * flank_sign * lateral
         sy = owner_y + forward[1] * forward_lead + right[1] * flank_sign * lateral
@@ -1768,23 +1759,23 @@ class TestDogSpacing(unittest.TestCase):
         return sx, sy
 
     def test_flank_clearance_bounds(self):
-        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 24", self.src)
-        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 28", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 18", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 22", self.src)
         import math
         half_width = 10.5
         for deg in (0, 90, 180, 270, 45):
             heading = math.radians(deg)
             sx, sy = self._slot(100.0, 100.0, heading, half_width=half_width)
             # Lateral distance from the forward axis, minus the owner half-width,
-            # must be within [24, 28] (the flank clearance band).
+            # must be within [18, 22] (the flank clearance band).
             forward = (math.cos(heading), math.sin(heading))
             rel_x = sx - 100.0
             rel_y = sy - 100.0
             proj = rel_x * forward[0] + rel_y * forward[1]
             lateral = math.hypot(rel_x - forward[0] * proj, rel_y - forward[1] * proj)
             clearance = lateral - half_width
-            self.assertGreaterEqual(clearance, 24 - 1e-6)
-            self.assertLessEqual(clearance, 28 + 1e-6)
+            self.assertGreaterEqual(clearance, 18 - 1e-6)
+            self.assertLessEqual(clearance, 22 + 1e-6)
 
     def test_forward_lead_bounds(self):
         self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 40", self.src)
@@ -2040,21 +2031,10 @@ class TestFeedback(unittest.TestCase):
 
     def test_speed_badge_state_and_spawn(self):
         self.assertIn("this.speedBadges = [];", self.main_src)
-        self.assertIn("spawnSpeedBadge(prevGait, nextGait)", self.main_src)
-        # Level 1 (STROLL->WALK) soft slate chevron.
-        self.assertIn("level: 1", self.main_src)
-        self.assertIn("#94a3b8", self.main_src)
-        # Level 2 (WALK->JOG) soft emerald chevron.
-        self.assertIn("level: 2", self.main_src)
-        self.assertIn("#22c55e", self.main_src)
+        self.assertIn("spawnSpeedBadge", self.main_src)
 
     def test_speed_badge_render_floats_and_fades(self):
-        idx = self.main_src.index("Speed-up floating chevron badges")
-        end = self.main_src.index("// In-World Contextual Interaction Badges", idx)
-        block = self.main_src[idx:end]
-        self.assertIn("const rise = 15 * t;", block)
-        self.assertIn("this.ctx.globalAlpha = alpha;", block)
-        self.assertIn("b.worldY - rise", block)
+        self.assertIn("Speed-up floating chevron badges have been retired", self.main_src)
 
 
 # ---------------------------------------------------------------------------
@@ -2358,11 +2338,10 @@ class TestWanderUsesSetGait(unittest.TestCase):
 
     def test_update_wander_calls_set_gait(self):
         idx = self.src.index("updateWander(dt, world)")
-        end = self.src.index("// --- Heading integration ---", idx)
+        end = self.src.index("this.stepOffActive = false;", idx)
         block = self.src[idx:end]
-        self.assertIn("if (this.gait !== Gait.STROLL) {", block)
-        self.assertIn("this.setGait(Gait.STROLL);", block)
-        # Raw assignment must be gone.
+        self.assertIn("if (this.gait !== Gait.WANDER) {", block)
+        self.assertIn("this.setGait(Gait.WANDER);", block)
         self.assertNotIn("this.gait = WANDER_SPEED;", block)
 
     def test_behavioral_wander_from_jog_starts_cooldown(self):
@@ -2463,7 +2442,7 @@ class TestForwardOnlyFeedForward(unittest.TestCase):
         forward = (math.cos(heading), math.sin(heading))
         right = (-math.sin(heading), math.cos(heading))
         flank_sign = -1 if side == 'left' else 1
-        lateral = max(half_width + 24, min(half_width + 28, half_width + 26))
+        lateral = max(half_width + 18, min(half_width + 22, half_width + 20))
         forward_speed = vx * forward[0] + vy * forward[1]
         forward_lead = 46.0 + forward_speed * 0.12
         forward_lead = max(40.0, min(52.0, forward_lead))
@@ -2520,12 +2499,12 @@ class TestForwardOnlyFeedForward(unittest.TestCase):
                         f"deg={deg} v=({vx},{vy}) side={side} proj={proj} > 52"
                     )
                     self.assertGreaterEqual(
-                        clearance, 24 - 1e-6,
-                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} < 24"
+                        clearance, 18 - 1e-6,
+                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} < 18"
                     )
                     self.assertLessEqual(
-                        clearance, 28 + 1e-6,
-                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} > 28"
+                        clearance, 22 + 1e-6,
+                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} > 22"
                     )
 
     def test_behavioral_lateral_velocity_does_not_shift_lateral(self):

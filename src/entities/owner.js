@@ -6,16 +6,21 @@ export const Gait = Object.freeze({
   STAND: 'STAND',
   STROLL: 'STROLL',
   WALK: 'WALK',
-  JOG: 'JOG'
+  JOG: 'JOG',
+  WANDER: 'WANDER'
 });
 
+// NOTE: Gait.WANDER is intentionally excluded from GAIT_ORDER. GAIT_ORDER
+// drives the manual click-to-cycle pace progression (STAND -> STROLL -> WALK
+// -> JOG); WANDER is an autopilot-only gait.
 const GAIT_ORDER = [Gait.STAND, Gait.STROLL, Gait.WALK, Gait.JOG];
 
 const GAIT_SPEEDS = Object.freeze({
   [Gait.STAND]: 0,
   [Gait.STROLL]: 75,
   [Gait.WALK]: 100,
-  [Gait.JOG]: 185
+  [Gait.JOG]: 185,
+  [Gait.WANDER]: 60
 });
 
 // Max turn rate (radians/sec) per gait
@@ -37,7 +42,7 @@ const JOG_DURATION = 2.0;
 const JOG_COOLDOWN = 2.0;
 
 // Wander mode (KeyW autopilot stroll) constants
-export const WANDER_SPEED = Gait.STROLL;            // 75 px/s
+export const WANDER_SPEED = Gait.WANDER;            // 60 px/s (20% slower than STROLL)
 export const WANDER_MAX_TURN_RATE = Math.PI * 1.4;  // rad/s
 export const WANDER_DRIFT_AMPLITUDE = 0.55;         // rad
 export const WANDER_DRIFT_FREQUENCY = 0.35;         // Hz
@@ -133,6 +138,9 @@ export class Owner {
     this.wanderPhase = 0;
     this.wanderBaseHeading = this.angle;
     this.wanderTargetHeading = this.angle;
+    // Zone id the owner most recently arrived from (used to avoid immediately
+    // re-targeting the warp gate we just came through).
+    this.lastArrivedFromZoneId = null;
 
     // Brake-light feedback pulse (rear brake sector flash)
     this.brakeLightFeedback = {
@@ -238,7 +246,9 @@ export class Owner {
   }
 
   setGait(nextGait, options = {}) {
-    if (!GAIT_ORDER.includes(nextGait)) return;
+    // WANDER is a valid autopilot gait even though it is not part of the
+    // manual GAIT_ORDER cycle.
+    if (nextGait !== Gait.WANDER && !GAIT_ORDER.includes(nextGait)) return;
     if (nextGait === this.gait) return;
 
     const prevGait = this.gait;
@@ -269,6 +279,11 @@ export class Owner {
     }
 
     this.gait = nextGait;
+
+    // Keep the legacy `speed` field in sync with the active gait speed.
+    if (nextGait === Gait.WANDER) {
+      this.speed = GAIT_SPEEDS[Gait.WANDER];
+    }
 
     // Keep targetHeading synced to current angle when stopping
     if (nextGait === Gait.STAND) {
@@ -305,6 +320,44 @@ export class Owner {
 
   getWanderSpeed() {
     return GAIT_SPEEDS[WANDER_SPEED] || 0;
+  }
+
+  // Resolve the list of warp gates available in the current world.
+  _getWarpGates(world) {
+    if (!world) return [];
+    if (Array.isArray(world.warpGates)) return world.warpGates;
+    if (world.zoneConfig && Array.isArray(world.zoneConfig.warpGates)) {
+      return world.zoneConfig.warpGates;
+    }
+    return [];
+  }
+
+  // Pick the next warp gate to journey toward. Prefers gates whose
+  // targetZoneId differs from the zone we most recently arrived from so the
+  // owner journeys through all locations one after another.
+  _pickWanderWarpGate(world) {
+    const gates = this._getWarpGates(world);
+    if (!gates.length) return null;
+
+    const candidates = gates.filter(g =>
+      g && g.targetZoneId && g.targetZoneId !== this.lastArrivedFromZoneId
+    );
+    const pool = candidates.length ? candidates : gates;
+
+    // Prefer the closest candidate so the journey feels natural.
+    let best = null;
+    let bestDistSq = Infinity;
+    for (const g of pool) {
+      if (!g || typeof g.x !== 'number' || typeof g.y !== 'number') continue;
+      const dx = g.x - this.x;
+      const dy = g.y - this.y;
+      const dSq = dx * dx + dy * dy;
+      if (dSq < bestDistSq) {
+        bestDistSq = dSq;
+        best = g;
+      }
+    }
+    return best;
   }
 
   // Probe a point ahead of the owner for world-boundary or obstacle blockage.
@@ -370,6 +423,19 @@ export class Owner {
     let targetHeading = this.wanderBaseHeading +
       Math.sin(this.wanderPhase) * WANDER_DRIFT_AMPLITUDE;
 
+    // Warp-journey steering: bias the base heading toward the next warp gate.
+    const gate = this._pickWanderWarpGate(world);
+    if (gate) {
+      const gateAngle = Math.atan2(gate.y - this.y, gate.x - this.x);
+      const gateDelta = angleDelta(this.wanderBaseHeading, gateAngle);
+      // Smoothly rotate the base heading toward the gate (bounded per frame).
+      const gateTurn = Math.min(Math.abs(gateDelta), 1.2 * dt);
+      this.wanderBaseHeading += Math.sign(gateDelta) * gateTurn;
+      // Recompute the meandering target from the updated base heading.
+      targetHeading = this.wanderBaseHeading +
+        Math.sin(this.wanderPhase) * WANDER_DRIFT_AMPLITUDE;
+    }
+
     // Forward probe: if blocked, search for a clear side.
     const probeDist = WANDER_LOOKAHEAD_PX;
     const probeX = this.x + Math.cos(targetHeading) * probeDist;
@@ -419,11 +485,11 @@ export class Owner {
     // Keep targetHeading synced so external readers see the wander intent.
     this.targetHeading = this.angle;
 
-    // Force STROLL gait while wandering. Route through setGait so that
+    // Force WANDER gait while wandering. Route through setGait so that
     // leaving JOG starts the normal JOG_COOLDOWN, isMoving is synced, and
     // onGaitChange fires for downstream consumers (e.g. speed badges).
-    if (this.gait !== Gait.STROLL) {
-      this.setGait(Gait.STROLL);
+    if (this.gait !== Gait.WANDER) {
+      this.setGait(Gait.WANDER);
     }
     this.stepOffActive = false;
     this.stepOffTimer = 0;
@@ -778,12 +844,10 @@ export class Owner {
         const handX = this.x + handWorldX;
         const handY = this.y - 3 + handWorldY;
 
-        // Elbow: midpoint pushed slightly outward from the shoulder.
-        const midX = (ax + handX) / 2;
-        const midY = (ay + handY) / 2;
-        const sideSign = this.leashHandSide === 'left' ? -1 : 1;
-        const elbowX = midX + (-sinA) * sideSign * 3.0;
-        const elbowY = midY + (cosA * 0.36) * sideSign * 3.0;
+        // Locked-elbow pose: the arm is rendered as a straight segment from
+        // shoulder to hand (no lateral elbow bend artifact).
+        const elbowX = (ax + handX) / 2;
+        const elbowY = (ay + handY) / 2;
 
         // Upper arm (shoulder -> elbow)
         ctx.strokeStyle = isFar ? this.getShadedColor(this.jacketColor, -0.18) : this.jacketColor;
@@ -1041,8 +1105,15 @@ export class Owner {
       }
     }
 
-    // Enlarged rear brake sector (hidden in STAND)
-    if (this.gait !== Gait.STAND) {
+    // Enlarged rear brake sector (hidden in STAND unless a brake flash is
+    // currently active, e.g. after a single-click or double-click stop).
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    const isBrakeFlashing = Boolean(
+      this.brakeLightFeedback &&
+      this.brakeLightFeedback.active &&
+      (now - this.brakeLightFeedback.startedAt) < this.brakeLightFeedback.durationMs
+    );
+    if (this.gait !== Gait.STAND || isBrakeFlashing) {
       const baseX = radius;         // 22
       const baseY = radius * 0.55;  // 12.1
       const outerScale = 3.5;
@@ -1055,7 +1126,6 @@ export class Owner {
       let fillAlpha = 0.20;
       let strokeAlpha = 0.55;
       if (this.brakeLightFeedback && this.brakeLightFeedback.active) {
-        const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
         const elapsed = now - this.brakeLightFeedback.startedAt;
         if (elapsed < this.brakeLightFeedback.durationMs) {
           const decay = 1.0 - (elapsed / this.brakeLightFeedback.durationMs);

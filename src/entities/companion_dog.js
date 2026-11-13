@@ -46,9 +46,9 @@ const PLAYER_HIT_RADIUS = 26;
 
 // Leash slot spacing constants (owner-local frame).
 // Flank clearance is measured from the owner's hip/half-width out to the dog.
-export const LEASH_FLANK_CLEARANCE_MIN_PX = 24;
-export const LEASH_FLANK_CLEARANCE_MAX_PX = 28;
-export const LEASH_FLANK_CLEARANCE_TARGET_PX = 26;
+export const LEASH_FLANK_CLEARANCE_MIN_PX = 18;
+export const LEASH_FLANK_CLEARANCE_MAX_PX = 22;
+export const LEASH_FLANK_CLEARANCE_TARGET_PX = 20;
 // Forward lead is measured ahead of the owner's transverse shoulder line.
 export const LEASH_FORWARD_LEAD_MIN_PX = 40;
 export const LEASH_FORWARD_LEAD_MAX_PX = 52;
@@ -531,6 +531,30 @@ export class CompanionDog {
     this.pet();
     this.emoteBubble = '❤️';
     this.emoteTimer = duration;
+  }
+
+  // Owner praise: boosts happiness, wags tail, spawns hearts and shows the
+  // '❤️' emote WITHOUT interrupting locomotion. Unlike pet(), this never
+  // resets idleRestTimer-driven state or triggers zoomies, so a leashed dog
+  // keeps following smoothly while being praised.
+  praise() {
+    this.happiness = Math.min(100, this.happiness + 20);
+    this.wagSpeed = 18;
+    this.emoteBubble = '❤️';
+    this.emoteTimer = 2.2;
+
+    // Spawn floating heart particles
+    for (let i = 0; i < 3; i++) {
+      this.hearts.push({
+        x: this.x + (Math.random() - 0.5) * 20,
+        y: this.y - 10,
+        vy: -35 - Math.random() * 25,
+        alpha: 1.0,
+        size: 10 + Math.random() * 4
+      });
+    }
+
+    return true;
   }
 
   pet() {

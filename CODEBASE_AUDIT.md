@@ -6922,9 +6922,9 @@ const PLAYER_HIT_RADIUS = 26;
 
 // Leash slot spacing constants (owner-local frame).
 // Flank clearance is measured from the owner's hip/half-width out to the dog.
-export const LEASH_FLANK_CLEARANCE_MIN_PX = 24;
-export const LEASH_FLANK_CLEARANCE_MAX_PX = 28;
-export const LEASH_FLANK_CLEARANCE_TARGET_PX = 26;
+export const LEASH_FLANK_CLEARANCE_MIN_PX = 18;
+export const LEASH_FLANK_CLEARANCE_MAX_PX = 22;
+export const LEASH_FLANK_CLEARANCE_TARGET_PX = 20;
 // Forward lead is measured ahead of the owner's transverse shoulder line.
 export const LEASH_FORWARD_LEAD_MIN_PX = 40;
 export const LEASH_FORWARD_LEAD_MAX_PX = 52;
@@ -7407,6 +7407,30 @@ export class CompanionDog {
     this.pet();
     this.emoteBubble = '❤️';
     this.emoteTimer = duration;
+  }
+
+  // Owner praise: boosts happiness, wags tail, spawns hearts and shows the
+  // '❤️' emote WITHOUT interrupting locomotion. Unlike pet(), this never
+  // resets idleRestTimer-driven state or triggers zoomies, so a leashed dog
+  // keeps following smoothly while being praised.
+  praise() {
+    this.happiness = Math.min(100, this.happiness + 20);
+    this.wagSpeed = 18;
+    this.emoteBubble = '❤️';
+    this.emoteTimer = 2.2;
+
+    // Spawn floating heart particles
+    for (let i = 0; i < 3; i++) {
+      this.hearts.push({
+        x: this.x + (Math.random() - 0.5) * 20,
+        y: this.y - 10,
+        vy: -35 - Math.random() * 25,
+        alpha: 1.0,
+        size: 10 + Math.random() * 4
+      });
+    }
+
+    return true;
   }
 
   pet() {
@@ -10200,16 +10224,21 @@ export const Gait = Object.freeze({
   STAND: 'STAND',
   STROLL: 'STROLL',
   WALK: 'WALK',
-  JOG: 'JOG'
+  JOG: 'JOG',
+  WANDER: 'WANDER'
 });
 
+// NOTE: Gait.WANDER is intentionally excluded from GAIT_ORDER. GAIT_ORDER
+// drives the manual click-to-cycle pace progression (STAND -> STROLL -> WALK
+// -> JOG); WANDER is an autopilot-only gait.
 const GAIT_ORDER = [Gait.STAND, Gait.STROLL, Gait.WALK, Gait.JOG];
 
 const GAIT_SPEEDS = Object.freeze({
   [Gait.STAND]: 0,
   [Gait.STROLL]: 75,
   [Gait.WALK]: 100,
-  [Gait.JOG]: 185
+  [Gait.JOG]: 185,
+  [Gait.WANDER]: 60
 });
 
 // Max turn rate (radians/sec) per gait
@@ -10231,7 +10260,7 @@ const JOG_DURATION = 2.0;
 const JOG_COOLDOWN = 2.0;
 
 // Wander mode (KeyW autopilot stroll) constants
-export const WANDER_SPEED = Gait.STROLL;            // 75 px/s
+export const WANDER_SPEED = Gait.WANDER;            // 60 px/s (20% slower than STROLL)
 export const WANDER_MAX_TURN_RATE = Math.PI * 1.4;  // rad/s
 export const WANDER_DRIFT_AMPLITUDE = 0.55;         // rad
 export const WANDER_DRIFT_FREQUENCY = 0.35;         // Hz
@@ -10327,6 +10356,9 @@ export class Owner {
     this.wanderPhase = 0;
     this.wanderBaseHeading = this.angle;
     this.wanderTargetHeading = this.angle;
+    // Zone id the owner most recently arrived from (used to avoid immediately
+    // re-targeting the warp gate we just came through).
+    this.lastArrivedFromZoneId = null;
 
     // Brake-light feedback pulse (rear brake sector flash)
     this.brakeLightFeedback = {
@@ -10432,7 +10464,9 @@ export class Owner {
   }
 
   setGait(nextGait, options = {}) {
-    if (!GAIT_ORDER.includes(nextGait)) return;
+    // WANDER is a valid autopilot gait even though it is not part of the
+    // manual GAIT_ORDER cycle.
+    if (nextGait !== Gait.WANDER && !GAIT_ORDER.includes(nextGait)) return;
     if (nextGait === this.gait) return;
 
     const prevGait = this.gait;
@@ -10463,6 +10497,11 @@ export class Owner {
     }
 
     this.gait = nextGait;
+
+    // Keep the legacy `speed` field in sync with the active gait speed.
+    if (nextGait === Gait.WANDER) {
+      this.speed = GAIT_SPEEDS[Gait.WANDER];
+    }
 
     // Keep targetHeading synced to current angle when stopping
     if (nextGait === Gait.STAND) {
@@ -10499,6 +10538,44 @@ export class Owner {
 
   getWanderSpeed() {
     return GAIT_SPEEDS[WANDER_SPEED] || 0;
+  }
+
+  // Resolve the list of warp gates available in the current world.
+  _getWarpGates(world) {
+    if (!world) return [];
+    if (Array.isArray(world.warpGates)) return world.warpGates;
+    if (world.zoneConfig && Array.isArray(world.zoneConfig.warpGates)) {
+      return world.zoneConfig.warpGates;
+    }
+    return [];
+  }
+
+  // Pick the next warp gate to journey toward. Prefers gates whose
+  // targetZoneId differs from the zone we most recently arrived from so the
+  // owner journeys through all locations one after another.
+  _pickWanderWarpGate(world) {
+    const gates = this._getWarpGates(world);
+    if (!gates.length) return null;
+
+    const candidates = gates.filter(g =>
+      g && g.targetZoneId && g.targetZoneId !== this.lastArrivedFromZoneId
+    );
+    const pool = candidates.length ? candidates : gates;
+
+    // Prefer the closest candidate so the journey feels natural.
+    let best = null;
+    let bestDistSq = Infinity;
+    for (const g of pool) {
+      if (!g || typeof g.x !== 'number' || typeof g.y !== 'number') continue;
+      const dx = g.x - this.x;
+      const dy = g.y - this.y;
+      const dSq = dx * dx + dy * dy;
+      if (dSq < bestDistSq) {
+        bestDistSq = dSq;
+        best = g;
+      }
+    }
+    return best;
   }
 
   // Probe a point ahead of the owner for world-boundary or obstacle blockage.
@@ -10564,6 +10641,19 @@ export class Owner {
     let targetHeading = this.wanderBaseHeading +
       Math.sin(this.wanderPhase) * WANDER_DRIFT_AMPLITUDE;
 
+    // Warp-journey steering: bias the base heading toward the next warp gate.
+    const gate = this._pickWanderWarpGate(world);
+    if (gate) {
+      const gateAngle = Math.atan2(gate.y - this.y, gate.x - this.x);
+      const gateDelta = angleDelta(this.wanderBaseHeading, gateAngle);
+      // Smoothly rotate the base heading toward the gate (bounded per frame).
+      const gateTurn = Math.min(Math.abs(gateDelta), 1.2 * dt);
+      this.wanderBaseHeading += Math.sign(gateDelta) * gateTurn;
+      // Recompute the meandering target from the updated base heading.
+      targetHeading = this.wanderBaseHeading +
+        Math.sin(this.wanderPhase) * WANDER_DRIFT_AMPLITUDE;
+    }
+
     // Forward probe: if blocked, search for a clear side.
     const probeDist = WANDER_LOOKAHEAD_PX;
     const probeX = this.x + Math.cos(targetHeading) * probeDist;
@@ -10613,11 +10703,11 @@ export class Owner {
     // Keep targetHeading synced so external readers see the wander intent.
     this.targetHeading = this.angle;
 
-    // Force STROLL gait while wandering. Route through setGait so that
+    // Force WANDER gait while wandering. Route through setGait so that
     // leaving JOG starts the normal JOG_COOLDOWN, isMoving is synced, and
     // onGaitChange fires for downstream consumers (e.g. speed badges).
-    if (this.gait !== Gait.STROLL) {
-      this.setGait(Gait.STROLL);
+    if (this.gait !== Gait.WANDER) {
+      this.setGait(Gait.WANDER);
     }
     this.stepOffActive = false;
     this.stepOffTimer = 0;
@@ -10972,12 +11062,10 @@ export class Owner {
         const handX = this.x + handWorldX;
         const handY = this.y - 3 + handWorldY;
 
-        // Elbow: midpoint pushed slightly outward from the shoulder.
-        const midX = (ax + handX) / 2;
-        const midY = (ay + handY) / 2;
-        const sideSign = this.leashHandSide === 'left' ? -1 : 1;
-        const elbowX = midX + (-sinA) * sideSign * 3.0;
-        const elbowY = midY + (cosA * 0.36) * sideSign * 3.0;
+        // Locked-elbow pose: the arm is rendered as a straight segment from
+        // shoulder to hand (no lateral elbow bend artifact).
+        const elbowX = (ax + handX) / 2;
+        const elbowY = (ay + handY) / 2;
 
         // Upper arm (shoulder -> elbow)
         ctx.strokeStyle = isFar ? this.getShadedColor(this.jacketColor, -0.18) : this.jacketColor;
@@ -11235,8 +11323,15 @@ export class Owner {
       }
     }
 
-    // Enlarged rear brake sector (hidden in STAND)
-    if (this.gait !== Gait.STAND) {
+    // Enlarged rear brake sector (hidden in STAND unless a brake flash is
+    // currently active, e.g. after a single-click or double-click stop).
+    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+    const isBrakeFlashing = Boolean(
+      this.brakeLightFeedback &&
+      this.brakeLightFeedback.active &&
+      (now - this.brakeLightFeedback.startedAt) < this.brakeLightFeedback.durationMs
+    );
+    if (this.gait !== Gait.STAND || isBrakeFlashing) {
       const baseX = radius;         // 22
       const baseY = radius * 0.55;  // 12.1
       const outerScale = 3.5;
@@ -11249,7 +11344,6 @@ export class Owner {
       let fillAlpha = 0.20;
       let strokeAlpha = 0.55;
       if (this.brakeLightFeedback && this.brakeLightFeedback.active) {
-        const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
         const elapsed = now - this.brakeLightFeedback.startedAt;
         if (elapsed < this.brakeLightFeedback.durationMs) {
           const decay = 1.0 - (elapsed / this.brakeLightFeedback.durationMs);
@@ -12007,11 +12101,13 @@ export class CliftonDownGame {
 
     this.camera.follow(this.owner);
 
-    // Speed-up floating chevron badges (STROLL->WALK, WALK->JOG).
-    // Declared before the gait-change hook so the callback can safely push.
+    // Speed-up floating chevron badges have been retired (unification-023).
+    // Kept as an empty array for backwards compatibility with any external
+    // inspection code; nothing is ever pushed into it.
     this.speedBadges = [];
 
     // Wire gait-change hook at the transition source (Owner.setGait).
+    // spawnSpeedBadge() is now a safe no-op.
     this.owner.onGaitChange = (prevGait, nextGait) => {
       this.spawnSpeedBadge(prevGait, nextGait);
     };
@@ -12141,6 +12237,7 @@ export class CliftonDownGame {
       onThrow: () => this.throwBall(),
       onLeash: () => this.toggleLeash(),
       onWhistle: () => this.whistleDog(),
+      onPraise: () => this.praiseDog(),
       onPet: () => this.petDog(),
       onPickup: () => this.pickUpPoop(),
       onDispose: () => this.disposePoopBag(),
@@ -12497,8 +12594,12 @@ export class CliftonDownGame {
           break;
 
         case 'KeyR':
-          // Whistle Recall Dog
-          this.whistleDog();
+          // On-leash: praise the dog in-stride. Off-leash: whistle recall.
+          if (this.owner && this.owner.isLeashed) {
+            this.praiseDog();
+          } else {
+            this.whistleDog();
+          }
           break;
 
         case 'KeyC':
@@ -12822,6 +12923,13 @@ export class CliftonDownGame {
   }
 
   warpToZone(targetZoneId, targetX, targetY) {
+    // Record the zone we are departing so wander mode can avoid immediately
+    // routing back through the gate we just arrived from.
+    const previousZoneId = this.currentZoneId;
+    if (this.owner) {
+      this.owner.lastArrivedFromZoneId = previousZoneId;
+    }
+
     this.warpCooldown = 2.5;
     this.warpFadeAlpha = 1.0;
 
@@ -12904,6 +13012,31 @@ export class CliftonDownGame {
     this.hud.showToast('🦮 Leash on: Walking close');
     if (this.net && typeof this.net.broadcast === 'function') {
       this.net.broadcast(Protocol.createSyncState(this.net.peerId, this.owner, this.dog));
+    }
+  }
+
+  /**
+   * In-stride praise command (used while the dog is on-leash).
+   * MUST NOT stop player or dog movement — it is a joyful, moving praise.
+   */
+  praiseDog() {
+    if (!this.dog) return;
+    if (typeof this.dog.praise === 'function') {
+      this.dog.praise();
+    } else if (typeof this.dog.pet === 'function') {
+      this.dog.pet();
+    }
+    if (this.owner) {
+      this.owner.emoteBubble = '👏';
+      this.owner.emoteTimer = 2.0;
+    }
+    if (this.sound && typeof this.sound.playPet === 'function') {
+      this.sound.playPet();
+    } else if (typeof sound !== 'undefined' && sound && typeof sound.playPet === 'function') {
+      sound.playPet();
+    }
+    if (this.hud && typeof this.hud.showToast === 'function') {
+      this.hud.showToast('❤️ Good dog! Ziggy loves the praise!');
     }
   }
 
@@ -12995,6 +13128,8 @@ export class CliftonDownGame {
   }
 
   canThrowBall() {
+    // Cannot throw while the dog is on-leash.
+    if (this.owner && this.owner.isLeashed) return false;
     return Boolean(
       this.ball &&
       this.ball.inOwnerPossession &&
@@ -13447,31 +13582,11 @@ export class CliftonDownGame {
     this.camera.update(dt);
   }
 
-  // Spawn a floating speed-up chevron badge for qualifying gait transitions.
-  // Only STROLL->WALK (level 1) and WALK->JOG (level 2) qualify.
-  // Accepts either Gait enum values or their string equivalents.
-  spawnSpeedBadge(prevGait, nextGait) {
-    if (!this.owner) return;
-    const prev = String(prevGait);
-    const next = String(nextGait);
-    let badge = null;
-    if (prev === 'STROLL' && next === 'WALK') {
-      badge = { level: 1, glyph: '^', color: '#94a3b8' };
-    } else if (prev === 'WALK' && next === 'JOG') {
-      badge = { level: 2, glyph: '^^', color: '#22c55e' };
-    }
-    if (!badge) return;
-    if (!Array.isArray(this.speedBadges)) this.speedBadges = [];
-    const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-    this.speedBadges.push({
-      level: badge.level,
-      glyph: badge.glyph,
-      color: badge.color,
-      worldX: this.owner.x + 16,
-      worldY: this.owner.y - 20,
-      startedAt: now,
-      durationMs: SPEED_BADGE_DURATION_MS
-    });
+  // Retired (unification-023): walking speed increase chevrons were too small
+  // to be legible. Kept as a safe no-op so the Owner.onGaitChange hook and any
+  // external callers remain valid.
+  spawnSpeedBadge(_prevGait, _nextGait) {
+    // Intentionally empty.
   }
 
   render() {
@@ -13534,25 +13649,7 @@ export class CliftonDownGame {
       }
     }
 
-    // Speed-up floating chevron badges (world-space, float up + fade).
-    if (Array.isArray(this.speedBadges) && this.speedBadges.length > 0) {
-      const now = (typeof performance !== 'undefined' ? performance.now() : Date.now());
-      this.speedBadges = this.speedBadges.filter((b) => (now - b.startedAt) <= b.durationMs);
-      for (const b of this.speedBadges) {
-        const elapsed = now - b.startedAt;
-        const t = Math.max(0, Math.min(1, elapsed / b.durationMs));
-        const alpha = Math.max(0, 1.0 - t);
-        const rise = 15 * t;
-        this.ctx.save();
-        this.ctx.globalAlpha = alpha;
-        this.ctx.fillStyle = b.color;
-        this.ctx.font = 'bold 13px system-ui, -apple-system, sans-serif';
-        this.ctx.textAlign = 'center';
-        this.ctx.textBaseline = 'middle';
-        this.ctx.fillText(b.glyph, b.worldX, b.worldY - rise);
-        this.ctx.restore();
-      }
-    }
+    // Speed-up floating chevron badges retired (unification-023).
 
     // In-World Contextual Interaction Badges
     const isTouch = typeof TouchControls !== 'undefined' && TouchControls.isTouchDevice && TouchControls.isTouchDevice();
@@ -21388,12 +21485,14 @@ export class TouchControls {
       onPet: callbacks.onPet || null,
       onChat: callbacks.onChat || null,
       onWhistle: callbacks.onWhistle || null,
+      onPraise: callbacks.onPraise || null,
       onPickup: callbacks.onPickup || null,
       onDispose: callbacks.onDispose || null
     };
 
     this.contextualAction = null;
     this.currentGait = 'STAND';
+    this.isLeashed = true;
 
     this.overlay = null;
     this.pacePad = null;
@@ -21402,6 +21501,9 @@ export class TouchControls {
 
     this.initDOM();
     this.bindEvents();
+
+    // The owner starts leashed, so reflect that initial state on the buttons.
+    this.setLeashed(true);
   }
 
   static isTouchDevice() {
@@ -21532,7 +21634,18 @@ export class TouchControls {
     };
 
     bindButton('btn-touch-throw', () => this.callbacks.onThrow?.());
-    bindButton('btn-touch-whistle', () => this.callbacks.onWhistle?.());
+    bindButton('btn-touch-whistle', () => {
+      // While leashed the whistle button acts as a praise command.
+      if (this.isLeashed) {
+        if (typeof this.callbacks.onPraise === 'function') {
+          this.callbacks.onPraise();
+        } else {
+          this.callbacks.onWhistle?.();
+        }
+      } else {
+        this.callbacks.onWhistle?.();
+      }
+    });
     bindButton('btn-touch-leash', () => this.callbacks.onLeash?.());
     bindButton('btn-touch-pet', () => {
       if (this.contextualAction === 'pickup') {
@@ -21572,17 +21685,50 @@ export class TouchControls {
   }
 
   setLeashed(isLeashed) {
+    this.isLeashed = Boolean(isLeashed);
     const btn = document.getElementById('btn-touch-leash');
-    if (!btn) return;
+    if (btn) {
+      if (isLeashed) {
+        btn.textContent = '🦮';
+        btn.classList.remove('off-leash');
+        btn.setAttribute('aria-label', 'Toggle Leash (Currently On)');
+      } else {
+        btn.textContent = '🐕';
+        btn.classList.add('off-leash');
+        btn.setAttribute('aria-label', 'Toggle Leash (Currently Off)');
+      }
+    }
 
-    if (isLeashed) {
-      btn.textContent = '🦮';
-      btn.classList.remove('off-leash');
-      btn.setAttribute('aria-label', 'Toggle Leash (Currently On)');
-    } else {
-      btn.textContent = '🐕';
-      btn.classList.add('off-leash');
-      btn.setAttribute('aria-label', 'Toggle Leash (Currently Off)');
+    // While leashed: whistle button becomes a praise button, and the throw
+    // button is disabled (ball cannot be thrown on-leash).
+    const whistleBtn = document.getElementById('btn-touch-whistle');
+    if (whistleBtn) {
+      if (isLeashed) {
+        whistleBtn.textContent = '👏';
+        whistleBtn.setAttribute('aria-label', 'Praise Dog');
+      } else {
+        whistleBtn.textContent = '📯';
+        whistleBtn.setAttribute('aria-label', 'Whistle / Recall Dog');
+      }
+    }
+
+    const throwBtn = document.getElementById('btn-touch-throw');
+    if (throwBtn) {
+      if (isLeashed) {
+        throwBtn.classList.add('is-disabled');
+        throwBtn.style.opacity = '0.4';
+        throwBtn.style.filter = 'grayscale(80%)';
+        throwBtn.style.pointerEvents = 'none';
+        throwBtn.setAttribute('disabled', 'true');
+        throwBtn.setAttribute('aria-disabled', 'true');
+      } else {
+        throwBtn.classList.remove('is-disabled');
+        throwBtn.style.opacity = '';
+        throwBtn.style.filter = '';
+        throwBtn.style.pointerEvents = '';
+        throwBtn.removeAttribute('disabled');
+        throwBtn.setAttribute('aria-disabled', 'false');
+      }
     }
   }
 
@@ -35700,9 +35846,8 @@ class TestWanderMode(unittest.TestCase):
 
     def test_wander_speed_is_stroll(self):
         self.assertIn("WANDER_SPEED", self.owner_src)
-        self.assertIn("[Gait.STROLL]: 75", self.owner_src)
-        # WANDER_SPEED must resolve to the STROLL gait (which is 75 px/s).
-        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.STROLL")
+        self.assertIn("[Gait.WANDER]: 60", self.owner_src)
+        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.WANDER")
 
     def test_wander_cancel_on_field_click(self):
         # Field press path cancels wander mode.
@@ -35728,26 +35873,18 @@ class TestWanderMode(unittest.TestCase):
         self.assertNotIn("banner", block.lower())
 
     def test_wander_update_uses_stroll_speed(self):
-        # updateWander must force the STROLL gait while wandering.
-        # unification-022 remediation cycle 3: the raw `this.gait = WANDER_SPEED`
-        # assignment was replaced with a `setGait(Gait.STROLL)` transition so
-        # that leaving JOG starts the cooldown, isMoving is synced, and
-        # onGaitChange fires. WANDER_SPEED still resolves to Gait.STROLL.
         idx = self.owner_src.index("updateWander(dt, world)")
-        end = self.owner_src.index("// --- Heading integration ---", idx)
+        end = self.owner_src.index("this.stepOffActive = false;", idx)
         block = self.owner_src[idx:end]
-        self.assertIn("if (this.gait !== Gait.STROLL) {", block)
-        self.assertIn("this.setGait(Gait.STROLL);", block)
-        # The old raw assignment must be gone.
+        self.assertIn("if (this.gait !== Gait.WANDER) {", block)
+        self.assertIn("this.setGait(Gait.WANDER);", block)
         self.assertNotIn("this.gait = WANDER_SPEED", block)
-        # WANDER_SPEED must still resolve to the STROLL gait.
-        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.STROLL")
+        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.WANDER")
 
     def test_behavioral_wander_speed_value(self):
-        # WANDER_SPEED resolves to STROLL = 75 px/s.
-        GAIT_SPEEDS = {'STAND': 0, 'STROLL': 75, 'WALK': 100, 'JOG': 185}
-        WANDER_SPEED = 'STROLL'
-        self.assertEqual(GAIT_SPEEDS[WANDER_SPEED], 75)
+        GAIT_SPEEDS = {'STAND': 0, 'STROLL': 75, 'WALK': 100, 'JOG': 185, 'WANDER': 60}
+        WANDER_SPEED = 'WANDER'
+        self.assertEqual(GAIT_SPEEDS[WANDER_SPEED], 60)
 
 
 class TestDogSpacing(unittest.TestCase):
@@ -35762,7 +35899,7 @@ class TestDogSpacing(unittest.TestCase):
         forward = (math.cos(heading), math.sin(heading))
         right = (-math.sin(heading), math.cos(heading))
         flank_sign = -1 if side == 'left' else 1
-        lateral = max(half_width + 24, min(half_width + 28, half_width + 26))
+        lateral = max(half_width + 18, min(half_width + 22, half_width + 20))
         forward_lead = max(40, min(52, 46))
         sx = owner_x + forward[0] * forward_lead + right[0] * flank_sign * lateral
         sy = owner_y + forward[1] * forward_lead + right[1] * flank_sign * lateral
@@ -35794,23 +35931,23 @@ class TestDogSpacing(unittest.TestCase):
         return sx, sy
 
     def test_flank_clearance_bounds(self):
-        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 24", self.src)
-        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 28", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 18", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 22", self.src)
         import math
         half_width = 10.5
         for deg in (0, 90, 180, 270, 45):
             heading = math.radians(deg)
             sx, sy = self._slot(100.0, 100.0, heading, half_width=half_width)
             # Lateral distance from the forward axis, minus the owner half-width,
-            # must be within [24, 28] (the flank clearance band).
+            # must be within [18, 22] (the flank clearance band).
             forward = (math.cos(heading), math.sin(heading))
             rel_x = sx - 100.0
             rel_y = sy - 100.0
             proj = rel_x * forward[0] + rel_y * forward[1]
             lateral = math.hypot(rel_x - forward[0] * proj, rel_y - forward[1] * proj)
             clearance = lateral - half_width
-            self.assertGreaterEqual(clearance, 24 - 1e-6)
-            self.assertLessEqual(clearance, 28 + 1e-6)
+            self.assertGreaterEqual(clearance, 18 - 1e-6)
+            self.assertLessEqual(clearance, 22 + 1e-6)
 
     def test_forward_lead_bounds(self):
         self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 40", self.src)
@@ -36066,21 +36203,10 @@ class TestFeedback(unittest.TestCase):
 
     def test_speed_badge_state_and_spawn(self):
         self.assertIn("this.speedBadges = [];", self.main_src)
-        self.assertIn("spawnSpeedBadge(prevGait, nextGait)", self.main_src)
-        # Level 1 (STROLL->WALK) soft slate chevron.
-        self.assertIn("level: 1", self.main_src)
-        self.assertIn("#94a3b8", self.main_src)
-        # Level 2 (WALK->JOG) soft emerald chevron.
-        self.assertIn("level: 2", self.main_src)
-        self.assertIn("#22c55e", self.main_src)
+        self.assertIn("spawnSpeedBadge", self.main_src)
 
     def test_speed_badge_render_floats_and_fades(self):
-        idx = self.main_src.index("Speed-up floating chevron badges")
-        end = self.main_src.index("// In-World Contextual Interaction Badges", idx)
-        block = self.main_src[idx:end]
-        self.assertIn("const rise = 15 * t;", block)
-        self.assertIn("this.ctx.globalAlpha = alpha;", block)
-        self.assertIn("b.worldY - rise", block)
+        self.assertIn("Speed-up floating chevron badges have been retired", self.main_src)
 
 
 # ---------------------------------------------------------------------------
@@ -36384,11 +36510,10 @@ class TestWanderUsesSetGait(unittest.TestCase):
 
     def test_update_wander_calls_set_gait(self):
         idx = self.src.index("updateWander(dt, world)")
-        end = self.src.index("// --- Heading integration ---", idx)
+        end = self.src.index("this.stepOffActive = false;", idx)
         block = self.src[idx:end]
-        self.assertIn("if (this.gait !== Gait.STROLL) {", block)
-        self.assertIn("this.setGait(Gait.STROLL);", block)
-        # Raw assignment must be gone.
+        self.assertIn("if (this.gait !== Gait.WANDER) {", block)
+        self.assertIn("this.setGait(Gait.WANDER);", block)
         self.assertNotIn("this.gait = WANDER_SPEED;", block)
 
     def test_behavioral_wander_from_jog_starts_cooldown(self):
@@ -36489,7 +36614,7 @@ class TestForwardOnlyFeedForward(unittest.TestCase):
         forward = (math.cos(heading), math.sin(heading))
         right = (-math.sin(heading), math.cos(heading))
         flank_sign = -1 if side == 'left' else 1
-        lateral = max(half_width + 24, min(half_width + 28, half_width + 26))
+        lateral = max(half_width + 18, min(half_width + 22, half_width + 20))
         forward_speed = vx * forward[0] + vy * forward[1]
         forward_lead = 46.0 + forward_speed * 0.12
         forward_lead = max(40.0, min(52.0, forward_lead))
@@ -36546,12 +36671,12 @@ class TestForwardOnlyFeedForward(unittest.TestCase):
                         f"deg={deg} v=({vx},{vy}) side={side} proj={proj} > 52"
                     )
                     self.assertGreaterEqual(
-                        clearance, 24 - 1e-6,
-                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} < 24"
+                        clearance, 18 - 1e-6,
+                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} < 18"
                     )
                     self.assertLessEqual(
-                        clearance, 28 + 1e-6,
-                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} > 28"
+                        clearance, 22 + 1e-6,
+                        f"deg={deg} v=({vx},{vy}) side={side} clearance={clearance} > 22"
                     )
 
     def test_behavioral_lateral_velocity_does_not_shift_lateral(self):
@@ -42787,6 +42912,85 @@ class TestTombstoneCleanup(unittest.TestCase):
 
 
 if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: test/test_walking_tweaks.py
+```python
+import os
+import unittest
+import re
+
+TEST_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_DIR = os.path.abspath(os.path.join(TEST_DIR, ".."))
+
+def read_project_file(rel_path):
+    path = os.path.join(PROJECT_DIR, rel_path)
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+class TestWalkingTweaks(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.companion_dog_src = read_project_file("src/entities/companion_dog.js")
+        cls.owner_src = read_project_file("src/entities/owner.js")
+        cls.main_src = read_project_file("src/main.js")
+        cls.touch_src = read_project_file("src/ui/touch_controls.js")
+
+    def test_01_leash_flank_clearance_constants(self):
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_MIN_PX = 18;", self.companion_dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_MAX_PX = 22;", self.companion_dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_TARGET_PX = 20;", self.companion_dog_src)
+
+    def test_02_straight_locked_elbow_arm(self):
+        # Verify elbow bend offset is eliminated in drawArm when isLeashed
+        self.assertIn("const elbowX = (ax + handX) / 2;", self.owner_src)
+        self.assertIn("const elbowY = (ay + handY) / 2;", self.owner_src)
+        self.assertNotIn("(-sinA) * sideSign * 3.0", self.owner_src)
+
+    def test_03_speed_badges_retired(self):
+        # spawnSpeedBadge is a safe no-op and floating chevron rendering loop is removed
+        self.assertIn("spawnSpeedBadge(_prevGait, _nextGait)", self.main_src)
+        self.assertNotIn("const rise = 15 * t;", self.main_src)
+        self.assertNotIn("font = 'bold 13px system-ui", self.main_src)
+
+    def test_04_wander_mode_gait_speed_and_warp_journey(self):
+        # 60 px/s is 20% slower than STROLL (75 px/s)
+        self.assertIn("[Gait.WANDER]: 60", self.owner_src)
+        self.assertIn("WANDER_SPEED = Gait.WANDER", self.owner_src)
+        # Gait.WANDER excluded from manual GAIT_ORDER
+        self.assertRegex(self.owner_src, r"const GAIT_ORDER\s*=\s*\[Gait\.STAND,\s*Gait\.STROLL,\s*Gait\.WALK,\s*Gait\.JOG\];")
+        # Destination selection avoids lastArrivedFromZoneId
+        self.assertIn("_pickWanderWarpGate", self.owner_src)
+        self.assertIn("targetZoneId !== this.lastArrivedFromZoneId", self.owner_src)
+        self.assertIn("lastArrivedFromZoneId", self.owner_src)
+        self.assertIn("this.owner.lastArrivedFromZoneId = previousZoneId;", self.main_src)
+
+    def test_05_ball_throw_disabled_on_leash(self):
+        self.assertIn("if (this.owner && this.owner.isLeashed) return false;", self.main_src)
+        self.assertIn("throwBtn.classList.add('is-disabled');", self.touch_src)
+        self.assertIn("throwBtn.setAttribute('disabled', 'true');", self.touch_src)
+
+    def test_06_praise_dog_on_leash(self):
+        # companion_dog.praise()
+        self.assertIn("praise() {", self.companion_dog_src)
+        self.assertIn("this.happiness = Math.min(100, this.happiness + 20);", self.companion_dog_src)
+        self.assertIn("this.wagSpeed = 18;", self.companion_dog_src)
+        # main.js KeyR branches on isLeashed
+        self.assertIn("praiseDog()", self.main_src)
+        self.assertIn("Good dog! Ziggy loves the praise!", self.main_src)
+        # touch_controls whistle button becomes praise
+        self.assertIn("whistleBtn.textContent = '👏';", self.touch_src)
+        self.assertIn("whistleBtn.setAttribute('aria-label', 'Praise Dog');", self.touch_src)
+
+    def test_07_and_08_brake_light_flash_on_stop(self):
+        # Halo renders rear brake sector when brakeLightFeedback.active even in Gait.STAND
+        self.assertIn("isBrakeFlashing", self.owner_src)
+        self.assertIn("this.gait !== Gait.STAND || isBrakeFlashing", self.owner_src)
+        # Triggered on both single-click and double-click stop
+        self.assertIn("triggerBrakeLight", self.main_src)
+
+if __name__ == '__main__':
     unittest.main()
 ```
 

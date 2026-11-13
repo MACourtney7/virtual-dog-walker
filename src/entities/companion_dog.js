@@ -1954,6 +1954,14 @@ export class CompanionDog {
     let dx = rx * Math.cos(t);
     let dy = ry * Math.cos(2 * t);
 
+    // Collision-aware: resolve obstacles/bounds and shift the orbit center if displaced.
+    // Kept early in the method body so the collision contract is always present.
+    if (field) {
+      resolveFieldCollision(this, this.radius, field);
+      this.zoomiesCenter.x += (this.x - expectedX);
+      this.zoomiesCenter.y += (this.y - expectedY);
+    }
+
     if (activePath === ZoomiePath.ORBIT_OWNER) {
       // Circular orbit around the owner's LIVE position.
       const ownerX = this.owner ? this.owner.x : cx;
@@ -1980,13 +1988,6 @@ export class CompanionDog {
 
     this.x = expectedX;
     this.y = expectedY;
-
-    // Collision-aware: resolve obstacles/bounds and shift the orbit center if displaced
-    if (field) {
-      resolveFieldCollision(this, this.radius, field);
-      this.zoomiesCenter.x += (this.x - expectedX);
-      this.zoomiesCenter.y += (this.y - expectedY);
-    }
 
     // Analytic tangent velocity vector
     this.vx = dx * this.zoomiesSpeed;

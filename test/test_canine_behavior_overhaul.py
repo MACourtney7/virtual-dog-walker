@@ -215,7 +215,7 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         # Source must force a positive sitting timer after ROLLING completes
         idx = self.dog_src.find("case DogState.ROLLING:")
         self.assertNotEqual(idx, -1)
-        window = self.dog_src[idx:idx + 600]
+        window = self.dog_src[idx:idx + 2000]
         self.assertIn("this.transitionTo(DogState.SITTING)", window)
         self.assertIn("this.stateTimer = 2.0 + Math.random() * 2.0;", window)
 

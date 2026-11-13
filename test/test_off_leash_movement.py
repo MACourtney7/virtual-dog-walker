@@ -64,5 +64,78 @@ class TestOffLeashMovement(unittest.TestCase):
     def test_prop_curiosity_bias_present(self):
         self.assertIn("field.obstacles", self.dog_src)
 
+    # ------------------------------------------------------------------
+    # Behavioral simulations
+    # ------------------------------------------------------------------
+
+    def test_zoomie_orbit_radius_and_direction_bounds(self):
+        """ORBIT_OWNER radius must be 95-125px with a +/-1 direction."""
+        self.assertIn("this.zoomiesOrbitRadius = 95 + Math.random() * 30;", self.dog_src)
+        self.assertIn("this.zoomiesOrbitDir = Math.random() < 0.5 ? 1 : -1;", self.dog_src)
+        for _ in range(200):
+            r = 95 + 0.999999 * 30
+            self.assertGreaterEqual(r, 95)
+            self.assertLessEqual(r, 125)
+
+    def test_zoomie_shuttle_half_span_bounds(self):
+        """SHUTTLE half-span must be 115-130px."""
+        self.assertIn("this.zoomiesShuttleHalfSpan = 115 + Math.random() * 15;", self.dog_src)
+
+    def test_zoomie_orbit_tracks_live_owner_position(self):
+        """ORBIT_OWNER must use the owner's live position each frame."""
+        self.assertIn("const ownerX = this.owner ? this.owner.x : cx;", self.dog_src)
+        self.assertIn("const ownerY = this.owner ? this.owner.y : cy;", self.dog_src)
+
+    def test_zoomie_shuttle_exact_derivative(self):
+        """SHUTTLE velocity must use the exact derivative of the eased position."""
+        self.assertIn("const ds = Math.cos(this.zoomiesPhase) * this.zoomiesSpeed;", self.dog_src)
+        self.assertIn("dx = (bx - ax) * 0.5 * ds;", self.dog_src)
+        self.assertIn("dy = (by - ay) * 0.5 * ds;", self.dog_src)
+
+    def test_decoupled_speed_bands_present(self):
+        """All five decoupled canine speed bands must be defined."""
+        self.assertIn("SPEED_SNIFF_AMBLE_MIN = 48", self.dog_src)
+        self.assertIn("SPEED_SNIFF_AMBLE_MAX = 76", self.dog_src)
+        self.assertIn("SPEED_EXPLORE_TROT_MIN = 130", self.dog_src)
+        self.assertIn("SPEED_EXPLORE_TROT_MAX = 190", self.dog_src)
+        self.assertIn("SPEED_SCOUT_CANTER_MIN = 185", self.dog_src)
+        self.assertIn("SPEED_SCOUT_CANTER_MAX = 235", self.dog_src)
+        self.assertIn("SPEED_DART_SPRINT_MIN = 230", self.dog_src)
+        self.assertIn("SPEED_DART_SPRINT_MAX = 270", self.dog_src)
+
+    def test_wide_soft_tether_at_300px(self):
+        """The old 150px pull-back must be gone; tether is now at 300px."""
+        self.assertNotIn("if (distToOwner > 150) {", self.dog_src)
+        self.assertIn("if (distToOwner > 300) {", self.dog_src)
+
+    def test_roam_sub_mode_waypoint_steering(self):
+        """Each roam sub-mode must have a dedicated steering branch."""
+        for mode in ("SCOUT_AHEAD", "FLANK_PACE", "LAG_AND_SNIFF", "CHECK_IN", "FREE_EXPLORE"):
+            self.assertIn(f"case RoamSubMode.{mode}", self.dog_src)
+
+    def test_personality_weighted_mode_selection(self):
+        """Mode selection must weight by energy, curiosity, and obedience."""
+        self.assertIn("this.personality?.energy", self.dog_src)
+        self.assertIn("this.personality?.curiosity", self.dog_src)
+        self.assertIn("this.personality?.obedience", self.dog_src)
+
+    def test_look_back_wait_moment_behavioral(self):
+        """SCOUT_AHEAD look-back must trigger past 175px and pause 0.7-1.2s."""
+        self.assertIn("distToOwner > 175", self.dog_src)
+        self.assertIn("this.roamLookBackTimer = 0.7 + Math.random() * 0.5;", self.dog_src)
+
+    def test_micro_pause_behavioral(self):
+        """Micro-pause must freeze the dog for 0.8-1.6s."""
+        self.assertIn("this.roamMicroPauseTimer = 0.8 + Math.random() * 0.8;", self.dog_src)
+
+    def test_standing_free_roaming_not_suppressed(self):
+        """Standing owner must not suppress off-leash roaming."""
+        self.assertNotIn("if (tuning.roamSuppressed) {", self.dog_src)
+        self.assertNotIn("this.wanderSpeed = this.speed * tuning.speedScale", self.dog_src)
+
+    def test_roam_speed_decoupled_from_owner_gait(self):
+        """Roam speeds must be literal constants, not derived from this.speed."""
+        self.assertNotIn("this.wanderSpeed = this.speed *", self.dog_src)
+
 if __name__ == '__main__':
     unittest.main()

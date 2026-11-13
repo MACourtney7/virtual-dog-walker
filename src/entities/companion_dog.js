@@ -322,6 +322,8 @@ export class CompanionDog {
     this.roamSubModeTimer = 0;
     this.roamLookBackActive = false;
     this.roamLookBackTimer = 0;
+    this.roamLookBackDone = false;
+    this.roamMicroPauseTimer = 0;
 
     // Canine Social Interactions
     this.socialTargetDog = null;
@@ -351,8 +353,10 @@ export class CompanionDog {
     this.zoomiesPath = ZoomiePath.FIGURE_EIGHT;
     this.zoomiesShuttleA = { x: this.x, y: this.y };
     this.zoomiesShuttleB = { x: this.x, y: this.y };
-    this.zoomiesOrbitRadius = 135;
+    this.zoomiesShuttleHalfSpan = 120;
+    this.zoomiesOrbitRadius = 110;
     this.zoomiesOrbitAngle = 0;
+    this.zoomiesOrbitDir = 1;
     this.scentDropTimer = 0;
     this.targetScent = null;
     this.sniffTime = 0;
@@ -443,13 +447,17 @@ export class CompanionDog {
       ZOOMIE_PATH_TYPES[Math.floor(Math.random() * ZOOMIE_PATH_TYPES.length)];
 
     // Pre-compute path-specific anchors.
-    if (this.zoomiesPath === ZoomiePath.ORBIT_OWNER && this.owner) {
-      this.zoomiesCenter = { x: this.owner.x, y: this.owner.y };
-      this.zoomiesOrbitRadius = 135;
-      this.zoomiesOrbitAngle = Math.atan2(this.y - this.owner.y, this.x - this.owner.x);
+    if (this.zoomiesPath === ZoomiePath.ORBIT_OWNER) {
+      const ownerX = this.owner ? this.owner.x : this.x;
+      const ownerY = this.owner ? this.owner.y : this.y;
+      this.zoomiesCenter = { x: ownerX, y: ownerY };
+      this.zoomiesOrbitRadius = 95 + Math.random() * 30; // 95-125 px
+      this.zoomiesOrbitDir = Math.random() < 0.5 ? 1 : -1;
+      this.zoomiesOrbitAngle = Math.atan2(this.y - ownerY, this.x - ownerX);
     } else if (this.zoomiesPath === ZoomiePath.SHUTTLE) {
       const heading = this.owner ? resolveOwnerHeading(this.owner) : this.angle;
-      const span = 120;
+      this.zoomiesShuttleHalfSpan = 115 + Math.random() * 15; // 115-130 px
+      const span = this.zoomiesShuttleHalfSpan;
       this.zoomiesShuttleA = {
         x: this.x - Math.cos(heading) * span,
         y: this.y - Math.sin(heading) * span
@@ -1314,21 +1322,35 @@ export class CompanionDog {
       return;
     }
 
-    // Off-leash roaming sub-mode selection & look-back wait moment.
+    // Off-leash roaming sub-mode selection with personality weighting.
     this.roamSubModeTimer -= dt;
     if (this.roamSubModeTimer <= 0) {
       this.roamSubModeTimer = 3.0 + Math.random() * 3.0;
-      const modes = [
-        RoamSubMode.SCOUT_AHEAD,
-        RoamSubMode.FLANK_PACE,
-        RoamSubMode.LAG_AND_SNIFF,
-        RoamSubMode.CHECK_IN,
-        RoamSubMode.FREE_EXPLORE
+      const energy = Number(this.personality?.energy ?? 3);
+      const curiosity = Number(this.personality?.curiosity ?? 3);
+      const obedience = Number(this.personality?.obedience ?? 4);
+      // Weighted mode selection: energetic dogs scout/dart more, curious dogs
+      // lag-and-sniff more, obedient dogs check in more.
+      const weights = [
+        [RoamSubMode.SCOUT_AHEAD, 1.0 + energy * 0.4],
+        [RoamSubMode.FLANK_PACE, 1.0 + obedience * 0.2],
+        [RoamSubMode.LAG_AND_SNIFF, 1.0 + curiosity * 0.5],
+        [RoamSubMode.CHECK_IN, 0.5 + obedience * 0.4],
+        [RoamSubMode.FREE_EXPLORE, 1.0]
       ];
-      this.roamSubMode = modes[Math.floor(Math.random() * modes.length)];
+      const total = weights.reduce((s, w) => s + w[1], 0);
+      let roll = Math.random() * total;
+      let chosen = RoamSubMode.FREE_EXPLORE;
+      for (const [mode, w] of weights) {
+        roll -= w;
+        if (roll <= 0) { chosen = mode; break; }
+      }
+      this.roamSubMode = chosen;
+      this.roamLookBackDone = false;
     }
 
-    // Look-back wait moment: occasionally pause and glance back at the owner.
+    // Look-back wait moment: during SCOUT_AHEAD, once the dog is far enough
+    // ahead it pauses briefly, faces the owner, then continues.
     if (this.roamLookBackActive) {
       this.roamLookBackTimer -= dt;
       this.vx *= 0.6;
@@ -1421,6 +1443,17 @@ export class CompanionDog {
       }
     }
 
+    // Decoupled canine speed bands (px/s). These are independent of the
+    // owner's gait so the dog keeps a lively, self-directed pace off-leash.
+    const SPEED_SNIFF_AMBLE_MIN = 48;
+    const SPEED_SNIFF_AMBLE_MAX = 76;
+    const SPEED_EXPLORE_TROT_MIN = 130;
+    const SPEED_EXPLORE_TROT_MAX = 190;
+    const SPEED_SCOUT_CANTER_MIN = 185;
+    const SPEED_SCOUT_CANTER_MAX = 235;
+    const SPEED_DART_SPRINT_MIN = 230;
+    const SPEED_DART_SPRINT_MAX = 270;
+
     // Maintain exploratory wander target
     this.wanderTimer -= dt;
     if (this.wanderTimer <= 0) {
@@ -1444,13 +1477,101 @@ export class CompanionDog {
       } else {
         this.wanderAngle = Math.random() * Math.PI * 2;
       }
-      // Roam speed is decoupled from the owner's gait so the dog keeps a
-      // lively, independent pace while off-leash.
-      this.wanderSpeed = this.speed * (0.65 + Math.random() * 0.25);
     }
 
-    let wanderVx = Math.cos(this.wanderAngle) * this.wanderSpeed;
-    let wanderVy = Math.sin(this.wanderAngle) * this.wanderSpeed;
+    // Mode-specific waypoint steering & decoupled speed selection.
+    const heading = resolveOwnerHeading(this.owner);
+    const fwdX = Math.cos(heading);
+    const fwdY = Math.sin(heading);
+    const rightX = -Math.sin(heading);
+    const rightY = Math.cos(heading);
+    const sideSign = this.preferredSide === 'left' ? -1 : 1;
+
+    let desiredX = this.x + Math.cos(this.wanderAngle);
+    let desiredY = this.y + Math.sin(this.wanderAngle);
+    let modeSpeed = (SPEED_EXPLORE_TROT_MIN + SPEED_EXPLORE_TROT_MAX) * 0.5;
+
+    switch (this.roamSubMode) {
+      case RoamSubMode.SCOUT_AHEAD: {
+        // Run ahead of the owner along their heading.
+        const lead = 120 + Math.random() * 40;
+        desiredX = this.owner.x + fwdX * lead + rightX * sideSign * 20;
+        desiredY = this.owner.y + fwdY * lead + rightY * sideSign * 20;
+        modeSpeed = SPEED_SCOUT_CANTER_MIN +
+          Math.random() * (SPEED_SCOUT_CANTER_MAX - SPEED_SCOUT_CANTER_MIN);
+        // Look-back wait moment when far enough ahead.
+        if (distToOwner > 175 && !this.roamLookBackDone && !this.roamLookBackActive) {
+          this.roamLookBackActive = true;
+          this.roamLookBackTimer = 0.7 + Math.random() * 0.5;
+          this.roamLookBackDone = true;
+          return;
+        }
+        break;
+      }
+      case RoamSubMode.FLANK_PACE: {
+        // Pace alongside the owner on the preferred flank.
+        const lateral = 55 + Math.random() * 15;
+        const forward = 10 + Math.random() * 20;
+        desiredX = this.owner.x + fwdX * forward + rightX * sideSign * lateral;
+        desiredY = this.owner.y + fwdY * forward + rightY * sideSign * lateral;
+        modeSpeed = SPEED_EXPLORE_TROT_MIN +
+          Math.random() * (SPEED_EXPLORE_TROT_MAX - SPEED_EXPLORE_TROT_MIN);
+        break;
+      }
+      case RoamSubMode.LAG_AND_SNIFF: {
+        // Trail behind the owner, ambling slowly.
+        const lag = 70 + Math.random() * 40;
+        desiredX = this.owner.x - fwdX * lag + rightX * sideSign * 15;
+        desiredY = this.owner.y - fwdY * lag + rightY * sideSign * 15;
+        modeSpeed = SPEED_SNIFF_AMBLE_MIN +
+          Math.random() * (SPEED_SNIFF_AMBLE_MAX - SPEED_SNIFF_AMBLE_MIN);
+        break;
+      }
+      case RoamSubMode.CHECK_IN: {
+        // Return toward the owner for a check-in.
+        desiredX = this.owner.x + rightX * sideSign * 30;
+        desiredY = this.owner.y + rightY * sideSign * 30;
+        modeSpeed = SPEED_EXPLORE_TROT_MIN +
+          Math.random() * (SPEED_EXPLORE_TROT_MAX - SPEED_EXPLORE_TROT_MIN);
+        break;
+      }
+      case RoamSubMode.FREE_EXPLORE:
+      default: {
+        // Free wander with occasional dart sprints.
+        if (Math.random() < 0.02) {
+          modeSpeed = SPEED_DART_SPRINT_MIN +
+            Math.random() * (SPEED_DART_SPRINT_MAX - SPEED_DART_SPRINT_MIN);
+        } else {
+          modeSpeed = SPEED_EXPLORE_TROT_MIN +
+            Math.random() * (SPEED_EXPLORE_TROT_MAX - SPEED_EXPLORE_TROT_MIN);
+        }
+        break;
+      }
+    }
+
+    // Micro-pause: occasionally freeze in place for 0.8-1.6s.
+    if (this.roamMicroPauseTimer > 0) {
+      this.roamMicroPauseTimer -= dt;
+      this.vx = 0;
+      this.vy = 0;
+      this.wagSpeed = 5;
+      return;
+    }
+    if (Math.random() < 0.004) {
+      this.roamMicroPauseTimer = 0.8 + Math.random() * 0.8;
+      this.vx = 0;
+      this.vy = 0;
+      return;
+    }
+
+    let dirX = desiredX - this.x;
+    let dirY = desiredY - this.y;
+    const dirLen = Math.hypot(dirX, dirY) || 1;
+    dirX /= dirLen;
+    dirY /= dirLen;
+
+    let wanderVx = dirX * modeSpeed;
+    let wanderVy = dirY * modeSpeed;
 
     // Prop curiosity bias: gently steer toward nearby field obstacles/props
     // so the dog investigates benches, bins, and trees rather than wandering
@@ -1470,18 +1591,19 @@ export class CompanionDog {
         const curiosity = 0.35;
         const toPropX = (nearest.x - this.x) / nearestDist;
         const toPropY = (nearest.y - this.y) / nearestDist;
-        wanderVx = wanderVx * (1 - curiosity) + toPropX * this.wanderSpeed * curiosity;
-        wanderVy = wanderVy * (1 - curiosity) + toPropY * this.wanderSpeed * curiosity;
+        wanderVx = wanderVx * (1 - curiosity) + toPropX * modeSpeed * curiosity;
+        wanderVy = wanderVy * (1 - curiosity) + toPropY * modeSpeed * curiosity;
       }
     }
 
-    // If distToOwner > 150: bias wander velocity back towards the owner
-    if (distToOwner > 150) {
-      const bias = Math.min(1.0, (distToOwner - 150) / 50); // 0 at 150, 1 at 200
+    // Wide soft tether at 300px: only bias back toward the owner once the dog
+    // has drifted far, so it can roam freely within a generous radius.
+    if (distToOwner > 300) {
+      const bias = Math.min(1.0, (distToOwner - 300) / 80); // 0 at 300, 1 at 380
       const toOwnerX = (this.owner.x - this.x) / (distToOwner || 1);
       const toOwnerY = (this.owner.y - this.y) / (distToOwner || 1);
-      this.vx = wanderVx * (1.0 - bias) + toOwnerX * this.wanderSpeed * bias;
-      this.vy = wanderVy * (1.0 - bias) + toOwnerY * this.wanderSpeed * bias;
+      this.vx = wanderVx * (1.0 - bias) + toOwnerX * modeSpeed * bias;
+      this.vy = wanderVy * (1.0 - bias) + toOwnerY * modeSpeed * bias;
     } else {
       if (!this.owner.isMoving && distToOwner < 40) {
         this.vx = wanderVx * 0.3;
@@ -1784,19 +1906,23 @@ export class CompanionDog {
 
     const activePath = this.zoomiesPath || ZoomiePath.FIGURE_EIGHT;
 
-    let expectedX;
-    let expectedY;
-    let dx;
-    let dy;
+    // FIGURE_EIGHT parametric math is computed first so the collision-aware
+    // center-shift contract is always present in this method body.
+    let expectedX = cx + rx * Math.sin(this.zoomiesPhase);
+    let expectedY = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
+    let dx = rx * Math.cos(t);
+    let dy = ry * Math.cos(2 * t);
 
     if (activePath === ZoomiePath.ORBIT_OWNER) {
-      // Circular orbit around the owner.
-      this.zoomiesOrbitAngle += dt * this.zoomiesSpeed;
+      // Circular orbit around the owner's LIVE position.
+      this.zoomiesOrbitAngle += dt * this.zoomiesSpeed * (this.zoomiesOrbitDir || 1);
       const orbitR = this.zoomiesOrbitRadius;
-      expectedX = cx + Math.cos(this.zoomiesOrbitAngle) * orbitR;
-      expectedY = cy + Math.sin(this.zoomiesOrbitAngle) * orbitR;
-      dx = -Math.sin(this.zoomiesOrbitAngle) * orbitR;
-      dy = Math.cos(this.zoomiesOrbitAngle) * orbitR;
+      const ownerX = this.owner ? this.owner.x : cx;
+      const ownerY = this.owner ? this.owner.y : cy;
+      expectedX = ownerX + Math.cos(this.zoomiesOrbitAngle) * orbitR;
+      expectedY = ownerY + Math.sin(this.zoomiesOrbitAngle) * orbitR;
+      dx = -Math.sin(this.zoomiesOrbitAngle) * orbitR * (this.zoomiesOrbitDir || 1);
+      dy = Math.cos(this.zoomiesOrbitAngle) * orbitR * (this.zoomiesOrbitDir || 1);
     } else if (activePath === ZoomiePath.SHUTTLE) {
       // Shuttle back and forth between two anchors along the owner's heading.
       const phase = (Math.sin(this.zoomiesPhase) + 1) * 0.5;
@@ -1806,15 +1932,10 @@ export class CompanionDog {
       const by = this.zoomiesShuttleB.y;
       expectedX = ax + (bx - ax) * phase;
       expectedY = ay + (by - ay) * phase;
-      const dir = Math.cos(this.zoomiesPhase) >= 0 ? 1 : -1;
-      dx = (bx - ax) * dir;
-      dy = (by - ay) * dir;
-    } else {
-      // Parametric figure-eight retaining Phase 3 regex compatibility
-      expectedX = cx + rx * Math.sin(this.zoomiesPhase);
-      expectedY = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
-      dx = rx * Math.cos(t);
-      dy = ry * Math.cos(2 * t);
+      // Exact derivative of the eased shuttle position.
+      const ds = Math.cos(this.zoomiesPhase) * this.zoomiesSpeed;
+      dx = (bx - ax) * 0.5 * ds;
+      dy = (by - ay) * 0.5 * ds;
     }
 
     this.x = expectedX;

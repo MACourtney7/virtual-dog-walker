@@ -46,9 +46,9 @@ const PLAYER_HIT_RADIUS = 26;
 
 // Leash slot spacing constants (owner-local frame).
 // Flank clearance is measured from the owner's hip/half-width out to the dog.
-export const LEASH_FLANK_CLEARANCE_MIN_PX = 18;
-export const LEASH_FLANK_CLEARANCE_MAX_PX = 22;
-export const LEASH_FLANK_CLEARANCE_TARGET_PX = 20;
+export const LEASH_FLANK_CLEARANCE_MIN_PX = 12;
+export const LEASH_FLANK_CLEARANCE_MAX_PX = 16;
+export const LEASH_FLANK_CLEARANCE_TARGET_PX = 14;
 // Forward lead is measured ahead of the owner's transverse shoulder line.
 export const LEASH_FORWARD_LEAD_MIN_PX = 40;
 export const LEASH_FORWARD_LEAD_MAX_PX = 52;
@@ -57,6 +57,30 @@ export const LEASH_FORWARD_LEAD_TARGET_PX = 46;
 export const LEASH_FEEDFORWARD_SECONDS = 0.12;
 // Minimum forward projection of the slot past the shoulder line.
 export const LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = 2;
+
+// Zoomies path types: the dog can run a figure-eight, orbit the owner, or
+// shuttle back and forth between two points.
+export const ZoomiePath = {
+  FIGURE_EIGHT: 'FIGURE_EIGHT',
+  ORBIT_OWNER: 'ORBIT_OWNER',
+  SHUTTLE: 'SHUTTLE'
+};
+
+export const ZOOMIE_PATH_TYPES = [
+  ZoomiePath.FIGURE_EIGHT,
+  ZoomiePath.ORBIT_OWNER,
+  ZoomiePath.SHUTTLE
+];
+
+// Off-leash roaming sub-modes. These describe the dog's intent while roaming
+// so the steering layer can vary its behaviour instead of pure random wander.
+export const RoamSubMode = {
+  SCOUT_AHEAD: 'SCOUT_AHEAD',
+  FLANK_PACE: 'FLANK_PACE',
+  LAG_AND_SNIFF: 'LAG_AND_SNIFF',
+  CHECK_IN: 'CHECK_IN',
+  FREE_EXPLORE: 'FREE_EXPLORE'
+};
 
 // Resolve the owner's heading in radians. Prefers `owner.heading`, then
 // `owner.angle`, then a sane default (facing South).
@@ -293,6 +317,12 @@ export class CompanionDog {
     this.wanderSpeed = 135;
     this.isReturningToOwner = false;
 
+    // Off-leash roaming sub-mode & look-back wait moment
+    this.roamSubMode = RoamSubMode.FREE_EXPLORE;
+    this.roamSubModeTimer = 0;
+    this.roamLookBackActive = false;
+    this.roamLookBackTimer = 0;
+
     // Canine Social Interactions
     this.socialTargetDog = null;
 
@@ -318,6 +348,11 @@ export class CompanionDog {
     this.zoomiesTimer = 0;
     this.zoomiesPhase = 0;
     this.zoomiesCenter = { x: this.x, y: this.y };
+    this.zoomiesPath = ZoomiePath.FIGURE_EIGHT;
+    this.zoomiesShuttleA = { x: this.x, y: this.y };
+    this.zoomiesShuttleB = { x: this.x, y: this.y };
+    this.zoomiesOrbitRadius = 135;
+    this.zoomiesOrbitAngle = 0;
     this.scentDropTimer = 0;
     this.targetScent = null;
     this.sniffTime = 0;
@@ -392,7 +427,7 @@ export class CompanionDog {
     }
   }
 
-  triggerZoomies() {
+  triggerZoomies(pathType = null) {
     if (this.owner && this.owner.isLeashed) return false;
     if (this.state === DogState.LOST || this.state === DogState.POOPING) return false;
     this.dropStick();
@@ -401,6 +436,30 @@ export class CompanionDog {
     this.zoomiesTimer = 4.2;
     this.zoomiesPhase = 0;
     this.zoomiesCenter = { x: this.x, y: this.y };
+
+    // Resolve the zoomies path type (explicit override or random selection).
+    const validPath = ZOOMIE_PATH_TYPES.includes(pathType) ? pathType : null;
+    this.zoomiesPath = validPath ||
+      ZOOMIE_PATH_TYPES[Math.floor(Math.random() * ZOOMIE_PATH_TYPES.length)];
+
+    // Pre-compute path-specific anchors.
+    if (this.zoomiesPath === ZoomiePath.ORBIT_OWNER && this.owner) {
+      this.zoomiesCenter = { x: this.owner.x, y: this.owner.y };
+      this.zoomiesOrbitRadius = 135;
+      this.zoomiesOrbitAngle = Math.atan2(this.y - this.owner.y, this.x - this.owner.x);
+    } else if (this.zoomiesPath === ZoomiePath.SHUTTLE) {
+      const heading = this.owner ? resolveOwnerHeading(this.owner) : this.angle;
+      const span = 120;
+      this.zoomiesShuttleA = {
+        x: this.x - Math.cos(heading) * span,
+        y: this.y - Math.sin(heading) * span
+      };
+      this.zoomiesShuttleB = {
+        x: this.x + Math.cos(heading) * span,
+        y: this.y + Math.sin(heading) * span
+      };
+    }
+
     this.emoteBubble = '⚡';
     this.emoteTimer = 2.0;
     this.wagSpeed = 22;
@@ -1192,7 +1251,7 @@ export class CompanionDog {
     // If owner stopped for a while, transition to idle sniff or sit
     // High obedience dogs stay attentive at heel longer with smaller stray chance
     const idleTransitionChance = Math.max(0.001, 0.009 - this.personality.obedience * 0.0015);
-    if (!this.owner.isMoving && dist < 25) {
+    if (!this.owner.isMoving && dist < 8) {
       this.vx *= 0.8;
       this.vy *= 0.8;
       this.wagSpeed = 6;
@@ -1251,24 +1310,45 @@ export class CompanionDog {
 
     const tuning = this._getGaitTuning();
 
-    // STAND: dog settles near owner, roaming bursts suppressed
-    if (tuning.roamSuppressed) {
-      const dx = this.owner.x - this.x;
-      const dy = this.owner.y - this.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > 40) {
-        this.vx = (dx / dist) * this.speed * 0.5;
-        this.vy = (dy / dist) * this.speed * 0.5;
-        this.angle = Math.atan2(this.vy, this.vx);
-      } else {
-        this.vx *= 0.7;
-        this.vy *= 0.7;
-      }
-      this.wagSpeed = 5;
+    if (this.checkSocialInteractions(otherDogs)) {
       return;
     }
 
-    if (this.checkSocialInteractions(otherDogs)) {
+    // Off-leash roaming sub-mode selection & look-back wait moment.
+    this.roamSubModeTimer -= dt;
+    if (this.roamSubModeTimer <= 0) {
+      this.roamSubModeTimer = 3.0 + Math.random() * 3.0;
+      const modes = [
+        RoamSubMode.SCOUT_AHEAD,
+        RoamSubMode.FLANK_PACE,
+        RoamSubMode.LAG_AND_SNIFF,
+        RoamSubMode.CHECK_IN,
+        RoamSubMode.FREE_EXPLORE
+      ];
+      this.roamSubMode = modes[Math.floor(Math.random() * modes.length)];
+    }
+
+    // Look-back wait moment: occasionally pause and glance back at the owner.
+    if (this.roamLookBackActive) {
+      this.roamLookBackTimer -= dt;
+      this.vx *= 0.6;
+      this.vy *= 0.6;
+      this.wagSpeed = 6;
+      if (this.owner) {
+        this.angle = lerpAngle(
+          this.angle,
+          Math.atan2(this.owner.y - this.y, this.owner.x - this.x),
+          Math.min(1, dt * 8)
+        );
+      }
+      if (this.roamLookBackTimer <= 0) {
+        this.roamLookBackActive = false;
+      }
+      return;
+    }
+    if (this.roamSubMode === RoamSubMode.CHECK_IN && Math.random() < 0.01) {
+      this.roamLookBackActive = true;
+      this.roamLookBackTimer = 1.2 + Math.random() * 0.8;
       return;
     }
 
@@ -1364,11 +1444,36 @@ export class CompanionDog {
       } else {
         this.wanderAngle = Math.random() * Math.PI * 2;
       }
-      this.wanderSpeed = this.speed * tuning.speedScale * (0.65 + Math.random() * 0.25);
+      // Roam speed is decoupled from the owner's gait so the dog keeps a
+      // lively, independent pace while off-leash.
+      this.wanderSpeed = this.speed * (0.65 + Math.random() * 0.25);
     }
 
     let wanderVx = Math.cos(this.wanderAngle) * this.wanderSpeed;
     let wanderVy = Math.sin(this.wanderAngle) * this.wanderSpeed;
+
+    // Prop curiosity bias: gently steer toward nearby field obstacles/props
+    // so the dog investigates benches, bins, and trees rather than wandering
+    // aimlessly.
+    if (field && Array.isArray(field.obstacles) && field.obstacles.length > 0) {
+      let nearest = null;
+      let nearestDist = 160;
+      for (const obs of field.obstacles) {
+        if (!obs || typeof obs.x !== 'number' || typeof obs.y !== 'number') continue;
+        const d = Math.hypot(obs.x - this.x, obs.y - this.y);
+        if (d < nearestDist) {
+          nearestDist = d;
+          nearest = obs;
+        }
+      }
+      if (nearest && nearestDist > 0.001) {
+        const curiosity = 0.35;
+        const toPropX = (nearest.x - this.x) / nearestDist;
+        const toPropY = (nearest.y - this.y) / nearestDist;
+        wanderVx = wanderVx * (1 - curiosity) + toPropX * this.wanderSpeed * curiosity;
+        wanderVy = wanderVy * (1 - curiosity) + toPropY * this.wanderSpeed * curiosity;
+      }
+    }
 
     // If distToOwner > 150: bias wander velocity back towards the owner
     if (distToOwner > 150) {
@@ -1677,22 +1782,52 @@ export class CompanionDog {
     const rx = 135;
     const ry = 80;
 
-    // Parametric figure-eight retaining Phase 3 regex compatibility
-    this.x = cx + rx * Math.sin(this.zoomiesPhase);
-    this.y = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
+    const activePath = this.zoomiesPath || ZoomiePath.FIGURE_EIGHT;
+
+    let expectedX;
+    let expectedY;
+    let dx;
+    let dy;
+
+    if (activePath === ZoomiePath.ORBIT_OWNER) {
+      // Circular orbit around the owner.
+      this.zoomiesOrbitAngle += dt * this.zoomiesSpeed;
+      const orbitR = this.zoomiesOrbitRadius;
+      expectedX = cx + Math.cos(this.zoomiesOrbitAngle) * orbitR;
+      expectedY = cy + Math.sin(this.zoomiesOrbitAngle) * orbitR;
+      dx = -Math.sin(this.zoomiesOrbitAngle) * orbitR;
+      dy = Math.cos(this.zoomiesOrbitAngle) * orbitR;
+    } else if (activePath === ZoomiePath.SHUTTLE) {
+      // Shuttle back and forth between two anchors along the owner's heading.
+      const phase = (Math.sin(this.zoomiesPhase) + 1) * 0.5;
+      const ax = this.zoomiesShuttleA.x;
+      const ay = this.zoomiesShuttleA.y;
+      const bx = this.zoomiesShuttleB.x;
+      const by = this.zoomiesShuttleB.y;
+      expectedX = ax + (bx - ax) * phase;
+      expectedY = ay + (by - ay) * phase;
+      const dir = Math.cos(this.zoomiesPhase) >= 0 ? 1 : -1;
+      dx = (bx - ax) * dir;
+      dy = (by - ay) * dir;
+    } else {
+      // Parametric figure-eight retaining Phase 3 regex compatibility
+      expectedX = cx + rx * Math.sin(this.zoomiesPhase);
+      expectedY = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
+      dx = rx * Math.cos(t);
+      dy = ry * Math.cos(2 * t);
+    }
+
+    this.x = expectedX;
+    this.y = expectedY;
 
     // Collision-aware: resolve obstacles/bounds and shift the orbit center if displaced
     if (field) {
       resolveFieldCollision(this, this.radius, field);
-      const expectedX = cx + rx * Math.sin(this.zoomiesPhase);
-      const expectedY = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
       this.zoomiesCenter.x += (this.x - expectedX);
       this.zoomiesCenter.y += (this.y - expectedY);
     }
 
     // Analytic tangent velocity vector
-    const dx = rx * Math.cos(t);
-    const dy = ry * Math.cos(2 * t);
     this.vx = dx * this.zoomiesSpeed;
     this.vy = dy * this.zoomiesSpeed;
 
@@ -2223,3 +2358,6 @@ CompanionDog.LEASH_FORWARD_LEAD_TARGET_PX = LEASH_FORWARD_LEAD_TARGET_PX;
 CompanionDog.LEASH_FEEDFORWARD_SECONDS = LEASH_FEEDFORWARD_SECONDS;
 CompanionDog.LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX;
 CompanionDog.getLeashSlot = getLeashSlot;
+CompanionDog.ZoomiePath = ZoomiePath;
+CompanionDog.ZOOMIE_PATH_TYPES = ZOOMIE_PATH_TYPES;
+CompanionDog.RoamSubMode = RoamSubMode;

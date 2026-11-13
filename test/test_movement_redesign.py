@@ -1674,9 +1674,8 @@ class TestWanderMode(unittest.TestCase):
 
     def test_wander_speed_is_stroll(self):
         self.assertIn("WANDER_SPEED", self.owner_src)
-        self.assertIn("[Gait.STROLL]: 75", self.owner_src)
-        # WANDER_SPEED must resolve to the STROLL gait (which is 75 px/s).
-        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.STROLL")
+        self.assertIn("[Gait.WANDER]: 60", self.owner_src)
+        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.WANDER")
 
     def test_wander_cancel_on_field_click(self):
         # Field press path cancels wander mode.
@@ -1702,26 +1701,18 @@ class TestWanderMode(unittest.TestCase):
         self.assertNotIn("banner", block.lower())
 
     def test_wander_update_uses_stroll_speed(self):
-        # updateWander must force the STROLL gait while wandering.
-        # unification-022 remediation cycle 3: the raw `this.gait = WANDER_SPEED`
-        # assignment was replaced with a `setGait(Gait.STROLL)` transition so
-        # that leaving JOG starts the cooldown, isMoving is synced, and
-        # onGaitChange fires. WANDER_SPEED still resolves to Gait.STROLL.
         idx = self.owner_src.index("updateWander(dt, world)")
-        end = self.owner_src.index("// --- Heading integration ---", idx)
+        end = self.owner_src.index("this.stepOffActive = false;", idx)
         block = self.owner_src[idx:end]
-        self.assertIn("if (this.gait !== Gait.STROLL) {", block)
-        self.assertIn("this.setGait(Gait.STROLL);", block)
-        # The old raw assignment must be gone.
+        self.assertIn("if (this.gait !== Gait.WANDER) {", block)
+        self.assertIn("this.setGait(Gait.WANDER);", block)
         self.assertNotIn("this.gait = WANDER_SPEED", block)
-        # WANDER_SPEED must still resolve to the STROLL gait.
-        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.STROLL")
+        self.assertRegex(self.owner_src, r"WANDER_SPEED\s*=\s*Gait\.WANDER")
 
     def test_behavioral_wander_speed_value(self):
-        # WANDER_SPEED resolves to STROLL = 75 px/s.
-        GAIT_SPEEDS = {'STAND': 0, 'STROLL': 75, 'WALK': 100, 'JOG': 185}
-        WANDER_SPEED = 'STROLL'
-        self.assertEqual(GAIT_SPEEDS[WANDER_SPEED], 75)
+        GAIT_SPEEDS = {'STAND': 0, 'STROLL': 75, 'WALK': 100, 'JOG': 185, 'WANDER': 60}
+        WANDER_SPEED = 'WANDER'
+        self.assertEqual(GAIT_SPEEDS[WANDER_SPEED], 60)
 
 
 class TestDogSpacing(unittest.TestCase):
@@ -2040,21 +2031,10 @@ class TestFeedback(unittest.TestCase):
 
     def test_speed_badge_state_and_spawn(self):
         self.assertIn("this.speedBadges = [];", self.main_src)
-        self.assertIn("spawnSpeedBadge(prevGait, nextGait)", self.main_src)
-        # Level 1 (STROLL->WALK) soft slate chevron.
-        self.assertIn("level: 1", self.main_src)
-        self.assertIn("#94a3b8", self.main_src)
-        # Level 2 (WALK->JOG) soft emerald chevron.
-        self.assertIn("level: 2", self.main_src)
-        self.assertIn("#22c55e", self.main_src)
+        self.assertIn("spawnSpeedBadge", self.main_src)
 
     def test_speed_badge_render_floats_and_fades(self):
-        idx = self.main_src.index("Speed-up floating chevron badges")
-        end = self.main_src.index("// In-World Contextual Interaction Badges", idx)
-        block = self.main_src[idx:end]
-        self.assertIn("const rise = 15 * t;", block)
-        self.assertIn("this.ctx.globalAlpha = alpha;", block)
-        self.assertIn("b.worldY - rise", block)
+        self.assertIn("Speed-up floating chevron badges have been retired", self.main_src)
 
 
 # ---------------------------------------------------------------------------
@@ -2358,11 +2338,10 @@ class TestWanderUsesSetGait(unittest.TestCase):
 
     def test_update_wander_calls_set_gait(self):
         idx = self.src.index("updateWander(dt, world)")
-        end = self.src.index("// --- Heading integration ---", idx)
+        end = self.src.index("this.stepOffActive = false;", idx)
         block = self.src[idx:end]
-        self.assertIn("if (this.gait !== Gait.STROLL) {", block)
-        self.assertIn("this.setGait(Gait.STROLL);", block)
-        # Raw assignment must be gone.
+        self.assertIn("if (this.gait !== Gait.WANDER) {", block)
+        self.assertIn("this.setGait(Gait.WANDER);", block)
         self.assertNotIn("this.gait = WANDER_SPEED;", block)
 
     def test_behavioral_wander_from_jog_starts_cooldown(self):

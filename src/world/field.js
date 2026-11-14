@@ -1498,7 +1498,14 @@ export class Field {
     // Add dynamic entities (Owner, Companion Dogs, Tennis Balls, etc.)
     for (const ent of dynamicEntities) {
       if (!ent) continue;
-      const ey = ent.depthY !== undefined ? ent.depthY : ent.y;
+      let ey = ent.depthY !== undefined ? ent.depthY : ent.y;
+
+      // If the owner is on-leash and facing towards the camera (South),
+      // give the owner depth priority so their arm/hand renders over the dog's back
+      if (ent.isLocal && ent.isLeashed && Math.sin(ent.angle) > 0.1) {
+        ey += 48; // Push depth in front of the leading dog
+      }
+
       renderList.push({
         type: 'entity',
         y: ey,

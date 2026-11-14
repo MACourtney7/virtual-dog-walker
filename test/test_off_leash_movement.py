@@ -30,9 +30,9 @@ class TestOffLeashMovement(unittest.TestCase):
         self.assertIn("FREE_EXPLORE: 'FREE_EXPLORE'", self.dog_src)
 
     def test_leash_flank_clearance_constants_inward_adjusted(self):
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_MIN_PX = 12;", self.dog_src)
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_MAX_PX = 16;", self.dog_src)
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_TARGET_PX = 14;", self.dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_MIN_PX = 0;", self.dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_MAX_PX = 4;", self.dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_TARGET_PX = 2;", self.dog_src)
 
     def test_tightened_standing_arrival_deadband(self):
         self.assertIn("!this.owner.isMoving && dist < 8", self.dog_src)

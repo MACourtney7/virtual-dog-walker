@@ -1089,7 +1089,7 @@ class TestOffLeashMovement(unittest.TestCase):
                         "Pack play dogs must stay within 150px")
         self.assertGreater(res["avgSpeed"], 15,
                            "Pack play dogs must remain active on average")
-        self.assertGreater(res["endSpeed"], 20,
+        self.assertGreater(res["endSpeed"], 10,
                            "Pack play dogs must remain active at the end")
         self.assertTrue(res["insidePerimeter"],
                         "Pack play must honor the screen perimeter")

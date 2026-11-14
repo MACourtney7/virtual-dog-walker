@@ -10,6 +10,51 @@ def read_project_file(rel_path):
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
+
+def _run_real_js(owner_src: str, dog_src: str, snippet: str):
+    """Execute a JS snippet against the real Owner/CompanionDog classes.
+
+    Strips ESM import/export lines, provides minimal bridge stubs, wraps each
+    module in an IIFE, and runs the snippet via osascript (JavaScriptCore) or
+    node. Returns the JSON-decoded result of the snippet.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    clean_owner = re.sub(r"^\s*import\s+.*?;?\s*$", "", owner_src, flags=re.M)
+    clean_owner = re.sub(r"\bexport\s+(default\s+)?", "", clean_owner)
+    clean_dog = re.sub(r"^\s*import\s+.*?;?\s*$", "", dog_src, flags=re.M)
+    clean_dog = re.sub(r"\bexport\s+(default\s+)?", "", clean_dog)
+
+    harness = f"""
+function resolveFieldCollision(ent, r, field) {{
+  if (field && typeof field.resolveCircleCollision === "function") {{
+    const res = field.resolveCircleCollision(ent.x, ent.y, r || 12);
+    ent.x = res.x; ent.y = res.y;
+  }}
+}}
+function stepLeashConstraint(dog, owner, restLen, k, damp, dt) {{}}
+function stepEarSpringsToTargets(l, r, tl, tr, k, d, dt) {{}}
+class PoopPile {{ constructor(id, x, y) {{ this.x = x; this.y = y; }} }}
+const {{ Owner, Gait }} = (() => {{ {clean_owner}\nreturn {{ Owner, Gait }}; }})();
+const {{ CompanionDog, DogState, RoamSubMode, ZoomiePath }} = (() => {{ {clean_dog}\nreturn {{ CompanionDog, DogState, RoamSubMode, ZoomiePath }}; }})();
+const __res = (() => {{ {snippet} }})();
+JSON.stringify(__res);
+"""
+
+    if shutil.which("osascript"):
+        out = subprocess.check_output(
+            ["osascript", "-l", "JavaScript", "-e", harness], text=True
+        ).strip()
+        return json.loads(out)
+    if shutil.which("node"):
+        out = subprocess.check_output(
+            ["node", "-e", f"console.log({harness})"], text=True
+        ).strip()
+        return json.loads(out)
+    raise unittest.SkipTest("No JS runtime (osascript or node) available")
+
 class TestWalkingTweaks(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -84,6 +129,40 @@ class TestWalkingTweaks(unittest.TestCase):
             self.owner_src,
         )
 
+        # Execute the real Owner class in JS.
+        snippet = """
+        const o = new Owner(200, 300);
+        o.angle = 0.35;
+        const world = {
+          width: 3200,
+          height: 2400,
+          warpGates: [{ x: 800, y: 300, targetZoneId: 'z2' }]
+        };
+        o.enterWander(world);
+        const errors = [];
+        for (let i = 0; i < 90; i++) {
+          o.update(1 / 60, world);
+          errors.push(Math.abs(o.angle));
+        }
+        return {
+          driftAmplitude: Owner.WANDER_DRIFT_AMPLITUDE,
+          errors: errors
+        };
+        """
+        res = _run_real_js(self.owner_src, "", snippet)
+        self.assertEqual(res["driftAmplitude"], 0)
+        errors = res["errors"]
+        self.assertEqual(len(errors), 90)
+        # Angular error to the gate (0.0 rad) must decrease monotonically
+        # without sinusoidal sign reversals.
+        for i in range(1, len(errors)):
+            self.assertLessEqual(
+                errors[i],
+                errors[i - 1] + 1e-6,
+                f"Angular error increased at frame {i}: {errors[i - 1]} -> {errors[i]}",
+            )
+        self.assertLess(errors[-1], errors[0])
+
     def test_10_wander_ray_probing_and_field_obstacles(self):
         """Wander mode must ray-probe field obstacles (trees) via multi-sample rays."""
         self.assertIn("_isWanderProbeBlocked", self.owner_src)
@@ -91,66 +170,48 @@ class TestWalkingTweaks(unittest.TestCase):
         self.assertIn("getWorldObstacles", self.owner_src)
         self.assertIn("world.trees", self.owner_src)
 
-        # Behavioral simulation: a tree sits directly between the player and
-        # the warp gate. The multi-sample ray probe must detect the tree and
-        # select an unblocked deflection heading that clears the tree.
-        import math
-
-        class Owner:
-            def __init__(self, x, y):
-                self.x = x
-                self.y = y
-                self.radius = 16
-
-            def _is_wander_probe_blocked(self, px, py, world):
-                margin = self.radius + 4
-                if px < margin or py < margin or px > world["width"] - margin or py > world["height"] - margin:
-                    return True
-                for tree in world.get("trees", []):
-                    reach = tree["r"] + self.radius
-                    if (px - tree["x"]) ** 2 + (py - tree["y"]) ** 2 < reach * reach:
-                        return True
-                return False
-
-            def _is_wander_ray_blocked(self, heading, world, probe_dist=96, samples=6):
-                for i in range(1, samples + 1):
-                    t = probe_dist * (i / samples)
-                    px = self.x + math.cos(heading) * t
-                    py = self.y + math.sin(heading) * t
-                    if self._is_wander_probe_blocked(px, py, world):
-                        return True
-                return False
-
-        world = {
-            "width": 3200,
-            "height": 2400,
-            "trees": [{"x": 400.0, "y": 300.0, "r": 30.0}],
+        # Execute the real Owner class in JS against a world with a tree and
+        # a rectangular obstacle directly between the owner and the gate.
+        snippet = """
+        const world = {
+          width: 3200,
+          height: 2400,
+          trees: [{ x: 300, y: 300, trunkRadius: 24 }],
+          getWorldObstacles() {
+            return [
+              { kind: 'circle', x: 300, y: 300, r: 24 },
+              { kind: 'rect', x: 450, y: 300, hw: 30, hh: 20 }
+            ];
+          },
+          warpGates: [{ x: 700, y: 300, targetZoneId: 'z2' }]
+        };
+        const o = new Owner(200, 300);
+        const directBlocked = o._isWanderRayBlocked(0, 120, world);
+        o.enterWander(world);
+        let minTreeDist = Infinity;
+        let maxAbsY = 0;
+        for (let i = 0; i < 180; i++) {
+          o.update(1 / 60, world);
+          minTreeDist = Math.min(minTreeDist, Math.hypot(o.x - 300, o.y - 300));
+          maxAbsY = Math.max(maxAbsY, Math.abs(o.y - 300));
         }
-        owner = Owner(200.0, 300.0)
-        gate = {"x": 600.0, "y": 300.0}
-
-        direct_heading = math.atan2(gate["y"] - owner.y, gate["x"] - owner.x)
-        self.assertTrue(
-            owner._is_wander_ray_blocked(direct_heading, world),
-            "Direct ray toward the gate must be blocked by the tree",
+        return {
+          directBlocked: directBlocked,
+          minTreeDist: minTreeDist,
+          maxAbsY: maxAbsY,
+          finalX: o.x,
+          radius: o.radius
+        };
+        """
+        res = _run_real_js(self.owner_src, "", snippet)
+        self.assertTrue(res["directBlocked"], "Direct ray toward the gate must be blocked")
+        self.assertGreaterEqual(
+            res["minTreeDist"],
+            24 + res["radius"],
+            "Owner must never collide with the tree",
         )
-
-        # Multi-sample deflection search must find a clear heading.
-        offsets = [
-            math.pi / 6, -math.pi / 6,
-            math.pi / 3, -math.pi / 3,
-            math.pi / 2, -math.pi / 2,
-        ]
-        chosen = None
-        for off in offsets:
-            test_heading = direct_heading + off
-            if not owner._is_wander_ray_blocked(test_heading, world):
-                chosen = test_heading
-                break
-
-        self.assertIsNotNone(chosen, "A deflection heading around the tree must exist")
-        # The chosen heading must not collide with the tree along its ray.
-        self.assertFalse(owner._is_wander_ray_blocked(chosen, world))
+        self.assertGreater(res["maxAbsY"], 15, "Owner must steer laterally around the tree")
+        self.assertGreater(res["finalX"], 310, "Owner must make forward progress")
 
 if __name__ == '__main__':
     unittest.main()

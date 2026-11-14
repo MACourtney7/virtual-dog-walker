@@ -627,7 +627,7 @@ export class CompanionDog {
       const obedNorm = ((this.personality?.obedience || 3) - 1) / 4; // 0..1
       const shyNorm = ((this.personality?.shyness || 3) - 1) / 4; // 0..1
       const playNorm = ((this.personality?.playfulness || 3) - 1) / 4; // 0..1
-      const cd = 19.0 + obedNorm * 18.0 + shyNorm * 4.0 - playNorm * 12.0;
+      const cd = 18.0 + obedNorm * 18.0 + shyNorm * 4.0 - playNorm * 12.0;
       this.socialCooldown = Math.max(8.0, Math.min(45.0, cd));
     }
 

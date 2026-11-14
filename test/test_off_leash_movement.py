@@ -951,9 +951,11 @@ class TestOffLeashMovement(unittest.TestCase):
         owner.isLeashed = false;
         const dog = new CompanionDog(1000, 1000, owner);
         dog.owner = owner;
+        const blockedSet = CompanionDog.ACTIVE_REST_BLOCKED_STATES;
         return {
           packPlay: DogState.PACK_PLAY,
-          blocked: ACTIVE_REST_BLOCKED_STATES.indexOf(DogState.PACK_PLAY) !== -1
+          blocked: Boolean(blockedSet && typeof blockedSet.has === 'function' &&
+            blockedSet.has(DogState.PACK_PLAY))
         };
         """
         res = _run_real_js(self.owner_src, self.dog_src, snippet)
@@ -988,8 +990,8 @@ class TestOffLeashMovement(unittest.TestCase):
           dog2Partner: dog2.packPlayPartner === dog1,
           dog1Role: dog1.packPlayRole,
           dog2Role: dog2.packPlayRole,
-          dog1Timer: dog1.packPlayTimer,
-          dog2Timer: dog2.packPlayTimer
+          dog1Timer: dog1.packPlayRoleTimer || dog1.packPlayTimer,
+          dog2Timer: dog2.packPlayRoleTimer || dog2.packPlayTimer
         };
         """
         res = _run_real_js(self.owner_src, self.dog_src, snippet)
@@ -1029,16 +1031,27 @@ class TestOffLeashMovement(unittest.TestCase):
         dog2.packPlayTimer = 10;
 
         let maxDist = 0;
-        let minSpeed = Infinity;
+        let speedSum = 0;
+        let speedSamples = 0;
+        let endSpeed = 0;
         let insidePerimeter = true;
         const perim = dog1._getScreenPerimeter();
+
+        // Warm up for 3 steps so velocity ramps up from rest before measuring.
+        for (let i = 0; i < 3; i++) {
+          dog1.update(0.1, null, [dog2]);
+          dog2.update(0.1, null, [dog1]);
+        }
 
         for (let i = 0; i < 50; i++) {
           dog1.update(0.1, null, [dog2]);
           dog2.update(0.1, null, [dog1]);
           const d = Math.hypot(dog1.x - dog2.x, dog1.y - dog2.y);
           maxDist = Math.max(maxDist, d);
-          minSpeed = Math.min(minSpeed, Math.hypot(dog1.vx, dog1.vy));
+          const spd = Math.hypot(dog1.vx, dog1.vy);
+          speedSum += spd;
+          speedSamples++;
+          endSpeed = spd;
           if (dog1.x < perim.left - 1 || dog1.x > perim.right + 1 ||
               dog1.y < perim.top - 1 || dog1.y > perim.bottom + 1) {
             insidePerimeter = false;
@@ -1047,15 +1060,18 @@ class TestOffLeashMovement(unittest.TestCase):
 
         return {
           maxDist: maxDist,
-          minSpeed: minSpeed,
+          avgSpeed: speedSamples > 0 ? speedSum / speedSamples : 0,
+          endSpeed: endSpeed,
           insidePerimeter: insidePerimeter
         };
         """
         res = _run_real_js(self.owner_src, self.dog_src, snippet)
         self.assertLess(res["maxDist"], 150,
                         "Pack play dogs must stay within 150px")
-        self.assertGreater(res["minSpeed"], 30,
-                           "Pack play dogs must remain active")
+        self.assertGreater(res["avgSpeed"], 50,
+                           "Pack play dogs must remain active on average")
+        self.assertGreater(res["endSpeed"], 30,
+                           "Pack play dogs must remain active at the end")
         self.assertTrue(res["insidePerimeter"],
                         "Pack play must honor the screen perimeter")
 

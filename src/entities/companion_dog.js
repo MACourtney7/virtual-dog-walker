@@ -339,6 +339,7 @@ export class CompanionDog {
     this.packPlayPartner = null;
     this.packPlayRole = 'LEAD'; // 'LEAD' | 'CHASE'
     this.packPlayRoleTimer = 0;
+    this.packPlayTimer = 0; // alias of packPlayRoleTimer (kept in sync)
     this.packPlayEmoteTimer = 0;
     this.packPlayWaypoint = null;
     this.packPlayWaypointTimer = 0;
@@ -2271,7 +2272,9 @@ export class CompanionDog {
     this.packPlayRole = 'LEAD';
     partner.packPlayRole = 'CHASE';
     this.packPlayRoleTimer = 4.0 + Math.random() * 3.0;
+    this.packPlayTimer = this.packPlayRoleTimer;
     partner.packPlayRoleTimer = this.packPlayRoleTimer;
+    partner.packPlayTimer = this.packPlayRoleTimer;
     this.packPlayWaypoint = null;
     partner.packPlayWaypoint = null;
     this.packPlayWaypointTimer = 0;
@@ -2328,6 +2331,7 @@ export class CompanionDog {
       this.packPlayRole = this.packPlayRole === 'LEAD' ? 'CHASE' : 'LEAD';
       this.packPlayRoleTimer = 4.0 + Math.random() * 3.0;
     }
+    this.packPlayTimer = this.packPlayRoleTimer;
 
     const playfulness = this.personality?.playfulness || 3;
     const screen = this._getScreenPerimeter(field);
@@ -3300,3 +3304,4 @@ CompanionDog.getLeashSlot = getLeashSlot;
 CompanionDog.ZoomiePath = ZoomiePath;
 CompanionDog.ZOOMIE_PATH_TYPES = ZOOMIE_PATH_TYPES;
 CompanionDog.RoamSubMode = RoamSubMode;
+CompanionDog.ACTIVE_REST_BLOCKED_STATES = ACTIVE_REST_BLOCKED_STATES;

@@ -1,4 +1,5 @@
 import os
+import re
 import unittest
 
 TEST_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -9,10 +10,57 @@ def read_file(rel_path):
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
+
+def _run_real_js(owner_src: str, dog_src: str, snippet: str):
+    """Execute a JS snippet against the real Owner/CompanionDog classes.
+
+    Strips ESM import/export lines, provides minimal bridge stubs, wraps each
+    module in an IIFE, and runs the snippet via osascript (JavaScriptCore) or
+    node. Returns the JSON-decoded result of the snippet.
+    """
+    import json
+    import shutil
+    import subprocess
+
+    clean_owner = re.sub(r"^\s*import\s+.*?;?\s*$", "", owner_src, flags=re.M)
+    clean_owner = re.sub(r"\bexport\s+(default\s+)?", "", clean_owner)
+    clean_dog = re.sub(r"^\s*import\s+.*?;?\s*$", "", dog_src, flags=re.M)
+    clean_dog = re.sub(r"\bexport\s+(default\s+)?", "", clean_dog)
+
+    harness = f"""
+function resolveFieldCollision(ent, r, field) {{
+  if (field && typeof field.resolveCircleCollision === "function") {{
+    const res = field.resolveCircleCollision(ent.x, ent.y, r || 12);
+    ent.x = res.x; ent.y = res.y;
+  }}
+}}
+function stepLeashConstraint(dog, owner, restLen, k, damp, dt) {{}}
+function stepEarSpringsToTargets(l, r, tl, tr, k, d, dt) {{}}
+class PoopPile {{ constructor(id, x, y) {{ this.x = x; this.y = y; }} }}
+const {{ Owner, Gait }} = (() => {{ {clean_owner}\nreturn {{ Owner, Gait }}; }})();
+const {{ CompanionDog, DogState, RoamSubMode, ZoomiePath }} = (() => {{ {clean_dog}\nreturn {{ CompanionDog, DogState, RoamSubMode, ZoomiePath }}; }})();
+const __res = (() => {{ {snippet} }})();
+JSON.stringify(__res);
+"""
+
+    if shutil.which("osascript"):
+        out = subprocess.check_output(
+            ["osascript", "-l", "JavaScript", "-e", harness], text=True
+        ).strip()
+        return json.loads(out)
+    if shutil.which("node"):
+        out = subprocess.check_output(
+            ["node", "-e", f"console.log({harness})"], text=True
+        ).strip()
+        return json.loads(out)
+    raise unittest.SkipTest("No JS runtime (osascript or node) available")
+
+
 class TestOffLeashMovement(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.dog_src = read_file("src/entities/companion_dog.js")
+        cls.owner_src = read_file("src/entities/owner.js")
 
     def test_zoomie_path_enum_and_types_exported(self):
         self.assertIn("export const ZoomiePath = {", self.dog_src)
@@ -297,6 +345,551 @@ class TestOffLeashMovement(unittest.TestCase):
         for _ in range(100):
             current += (target - current) * min(1.0, dt * 5)
         self.assertAlmostEqual(current, target, places=2)
+
+    # ------------------------------------------------------------------
+    # unification-026: REQ-026.3 / REQ-026.4 / REQ-026.5 / REQ-026.6
+    # ------------------------------------------------------------------
+
+    def test_baseline_roaming_interlacing_and_stationary_owner_guard(self):
+        """Baseline roaming must interlace with episodic sub-modes and stay
+        smooth when the owner is standing still."""
+        self.assertIn("roamBaselineTimer", self.dog_src)
+        self.assertIn("roamWaypoint", self.dog_src)
+
+        snippet = """
+        const owner = new Owner(1000, 1000);
+        owner.isLeashed = false;
+        owner.isMoving = false;
+        owner.vx = 0;
+        owner.vy = 0;
+        const dog = new CompanionDog(owner.x + 40, owner.y, owner);
+        dog.owner = owner;
+
+        const baselineOnConstruct = dog.roamBaselineTimer > 0;
+        const freeExploreDuringBaseline = dog.roamSubMode === 'FREE_EXPLORE';
+
+        // Episodic sub-mode timeout must interlace back to baseline.
+        dog.roamBaselineTimer = 0;
+        dog.roamSubMode = 'SCOUT_AHEAD';
+        dog.roamSubModeTimer = 0.01;
+        dog.roamWaypoint = { x: 9999, y: 9999 };
+        dog.updateRoaming(0.05, [], null);
+        const afterTimeoutMode = dog.roamSubMode;
+        const afterTimeoutBaseline = dog.roamBaselineTimer;
+
+        // Stationary owner guard: never pick SCOUT_AHEAD or FLANK_PACE.
+        let sawScout = false;
+        let sawFlank = false;
+        for (let i = 0; i < 40; i++) {
+          dog.roamBaselineTimer = 0;
+          dog.roamSubMode = 'FREE_EXPLORE';
+          dog.roamSubModeTimer = 0;
+          dog.updateRoaming(1 / 60, [], null);
+          if (dog.roamSubMode === 'SCOUT_AHEAD') sawScout = true;
+          if (dog.roamSubMode === 'FLANK_PACE') sawFlank = true;
+        }
+
+        // IDLE_SNIFF must not abort prematurely due to owner distance.
+        dog.state = 'IDLE_SNIFF';
+        dog.stateTimer = 2.0;
+        dog.x = owner.x + 250;
+        dog.y = owner.y;
+        dog.updateSniff(0.1);
+        const sniffState = dog.state;
+
+        // Arrival handoffs for ALL episodic modes must reset to baseline.
+        const arrivals = {};
+        const runArrival = (mode) => {
+          owner.angle = 0;
+          owner.isMoving = true;
+          owner.vx = 100;
+          owner.vy = 0;
+          dog.state = 'ROAMING';
+          dog.roamBaselineTimer = 0;
+          dog.roamSubMode = mode;
+          dog.roamSubModeTimer = 5.0;
+          dog.roamTargetSpeed = 230;
+          dog.roamSubModeOptionLead = 120;
+          dog.roamSubModeOptionLateral = 55;
+          dog.roamSubModeOptionForward = 10;
+          dog.roamSubModeOptionLag = 70;
+          dog.roamLookBackDone = true;
+          dog.roamLookBackActive = false;
+          dog.roamMicroPauseTimer = 0;
+          dog.returnTrotActive = false;
+          dog.camera = null;
+          dog.wanderAngle = 0;
+          // Place the dog exactly on the mode's target so arrival triggers.
+          if (mode === 'SCOUT_AHEAD') {
+            dog.roamWaypoint = null;
+            dog.x = owner.x + 120;
+            dog.y = owner.y + (dog.preferredSide === 'left' ? -20 : 20);
+          } else if (mode === 'FLANK_PACE') {
+            dog.roamWaypoint = null;
+            const side = dog.preferredSide === 'left' ? -1 : 1;
+            dog.x = owner.x + 10;
+            dog.y = owner.y + side * 55;
+          } else if (mode === 'LAG_AND_SNIFF') {
+            dog.roamWaypoint = { x: owner.x - 70, y: owner.y };
+            dog.x = owner.x - 70;
+            dog.y = owner.y;
+          } else if (mode === 'CHECK_IN') {
+            dog.roamWaypoint = null;
+            dog.x = owner.x + 10;
+            dog.y = owner.y;
+          }
+          dog.updateRoaming(1 / 60, [], null);
+          arrivals[mode] = {
+            mode: dog.roamSubMode,
+            baseline: dog.roamBaselineTimer,
+            speed: dog.roamTargetSpeed,
+            lookBackDone: dog.roamLookBackDone,
+            waypoint: dog.roamWaypoint
+          };
+        };
+        runArrival('SCOUT_AHEAD');
+        runArrival('FLANK_PACE');
+        runArrival('LAG_AND_SNIFF');
+        runArrival('CHECK_IN');
+
+        return {
+          baselineOnConstruct: baselineOnConstruct,
+          freeExploreDuringBaseline: freeExploreDuringBaseline,
+          afterTimeoutMode: afterTimeoutMode,
+          afterTimeoutBaseline: afterTimeoutBaseline,
+          sawScout: sawScout,
+          sawFlank: sawFlank,
+          sniffState: sniffState,
+          arrivals: arrivals
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertTrue(res["baselineOnConstruct"])
+        self.assertTrue(res["freeExploreDuringBaseline"])
+        self.assertEqual(res["afterTimeoutMode"], "FREE_EXPLORE")
+        self.assertGreaterEqual(res["afterTimeoutBaseline"], 4.0)
+        self.assertFalse(res["sawScout"], "Stationary owner must not trigger SCOUT_AHEAD")
+        self.assertFalse(res["sawFlank"], "Stationary owner must not trigger FLANK_PACE")
+        self.assertEqual(res["sniffState"], "IDLE_SNIFF")
+        for mode in ("SCOUT_AHEAD", "FLANK_PACE", "LAG_AND_SNIFF", "CHECK_IN"):
+            a = res["arrivals"][mode]
+            self.assertEqual(a["mode"], "FREE_EXPLORE", f"{mode} arrival must hand off to FREE_EXPLORE")
+            self.assertGreaterEqual(a["baseline"], 4.5, f"{mode} arrival must reset baseline timer")
+            self.assertGreaterEqual(a["speed"], 125, f"{mode} arrival must reset roamTargetSpeed")
+            self.assertLessEqual(a["speed"], 175, f"{mode} arrival must reset roamTargetSpeed")
+            self.assertFalse(a["lookBackDone"], f"{mode} arrival must reset roamLookBackDone")
+            self.assertIsNone(a["waypoint"], f"{mode} arrival must clear roamWaypoint")
+
+    def test_screen_perimeter_bounds_and_zoomies_exemption(self):
+        """Off-leash roaming must steer inward within the soft screen margin
+        and clamp inside the hard screen margin, except during ZOOMIES."""
+        self.assertIn("_getScreenPerimeter", self.dog_src)
+        self.assertIn("DogState.ZOOMIES", self.dog_src)
+
+        # main.js must wire the camera into both the owner and the dog.
+        main_src = read_file("src/main.js")
+        self.assertIn("this.dog.camera = this.camera", main_src)
+        self.assertIn("this.owner.camera = this.camera", main_src)
+
+        snippet = """
+        const owner = new Owner(1000, 1000);
+        owner.isLeashed = false;
+        const dog = new CompanionDog(1000, 1000, owner);
+        dog.owner = owner;
+
+        // Desktop camera perimeter.
+        dog.camera = { x: 800, y: 600, viewportWidth: 1280, viewportHeight: 720, zoom: 1.0 };
+        const pDesktop = dog._getScreenPerimeter();
+
+        // Mobile camera perimeter.
+        dog.camera = { x: 800, y: 600, viewportWidth: 390, viewportHeight: 844, zoom: 0.8 };
+        const pMobile = dog._getScreenPerimeter();
+
+        // Hard clamp while roaming.
+        dog.camera = { x: 800, y: 600, viewportWidth: 1280, viewportHeight: 720, zoom: 1.0 };
+        dog.state = 'ROAMING';
+        dog.x = 2200;
+        dog.y = 900;
+        dog.vx = 0;
+        dog.vy = 0;
+        dog.update(1 / 60, null);
+        const clampedX = dog.x;
+
+        // Soft-margin inward steering: near the left edge the dog must be
+        // steered back toward the screen center (positive vx).
+        dog.camera = { x: 800, y: 600, viewportWidth: 1280, viewportHeight: 720, zoom: 1.0 };
+        dog.state = 'ROAMING';
+        dog.returnTrotActive = false;
+        dog.roamMicroPauseTimer = 0;
+        dog.roamSubMode = 'FREE_EXPLORE';
+        dog.roamBaselineTimer = 10;
+        dog.x = 800 + 40;
+        dog.y = 960;
+        dog.vx = 0;
+        dog.vy = 0;
+        dog.wanderAngle = Math.PI; // pointing left, into the edge
+        dog.update(1 / 60, null);
+        const softSteerVx = dog.vx;
+
+        // Trailing-edge catch-up: within 55px of an edge must engage return trot.
+        dog.returnTrotActive = false;
+        dog.x = 800 + 30;
+        dog.y = 960;
+        dog.vx = 0;
+        dog.vy = 0;
+        dog.update(1 / 60, null);
+        const trailingReturnTrot = dog.returnTrotActive;
+
+        // ZOOMIES must be exempt from the hard clamp.
+        dog.triggerZoomies('FIGURE_EIGHT');
+        dog.zoomiesCenter = { x: 2070, y: 900 };
+        dog.x = 2070;
+        dog.y = 900;
+        dog.update(0.1, null);
+        const zoomiesState = dog.state;
+        const zoomiesX = dog.x;
+
+        return {
+          desktop: pDesktop,
+          mobile: pMobile,
+          clampedX: clampedX,
+          softSteerVx: softSteerVx,
+          trailingReturnTrot: trailingReturnTrot,
+          zoomiesState: zoomiesState,
+          zoomiesX: zoomiesX
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertEqual(res["desktop"]["left"], 800)
+        self.assertEqual(res["desktop"]["top"], 600)
+        self.assertEqual(res["desktop"]["right"], 2080)
+        self.assertEqual(res["desktop"]["bottom"], 1320)
+        self.assertAlmostEqual(res["mobile"]["right"], 800 + 390 / 0.8, places=3)
+        self.assertLessEqual(res["clampedX"], 2080 - 32)
+        self.assertGreater(res["softSteerVx"], 0, "Soft-margin must steer the dog inward")
+        self.assertTrue(res["trailingReturnTrot"], "Trailing-edge must engage return trot")
+        self.assertEqual(res["zoomiesState"], "ZOOMIES")
+        self.assertGreater(res["zoomiesX"], 2048)
+
+    def test_zoomies_cooldown_reduces_frequency(self):
+        """zoomiesCooldown must gate spontaneous zoomies in updateRoaming and pet()."""
+        self.assertIn("zoomiesCooldown", self.dog_src)
+
+        snippet = """
+        const owner = new Owner(1000, 1000);
+        owner.isLeashed = false;
+        const dog = new CompanionDog(1000, 1000, owner);
+        dog.owner = owner;
+
+        const initialCooldown = dog.zoomiesCooldown;
+
+        dog.owner.isLeashed = false;
+        dog.zoomiesCooldown = 0;
+        dog.triggerZoomies();
+        const triggeredCooldown = dog.zoomiesCooldown;
+
+        // pet() must not re-trigger zoomies while cooldown is active.
+        dog.state = 'ROAMING';
+        dog.happiness = 100;
+        dog.zoomiesCooldown = 30;
+        for (let i = 0; i < 50; i++) {
+          dog.pet();
+        }
+        const stateAfterPets = dog.state;
+
+        return {
+          initialCooldown: initialCooldown,
+          triggeredCooldown: triggeredCooldown,
+          stateAfterPets: stateAfterPets
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertGreaterEqual(res["initialCooldown"], 25)
+        self.assertLessEqual(res["initialCooldown"], 45)
+        self.assertGreaterEqual(res["triggeredCooldown"], 60)
+        self.assertLessEqual(res["triggeredCooldown"], 90)
+        self.assertNotEqual(res["stateAfterPets"], "ZOOMIES")
+
+    def test_zoomies_obstacle_avoidance_all_paths(self):
+        """All zoomies path types must shift anchors/offsets away from trees."""
+        self.assertIn("_getFieldObstacles", self.dog_src)
+        self.assertIn("zoomiesOrbitOffset", self.dog_src)
+        for path in ("ORBIT_OWNER", "SHUTTLE", "FIGURE_EIGHT"):
+            self.assertIn(path, self.dog_src)
+
+        snippet = """
+        const owner = new Owner(500, 500);
+        owner.isLeashed = false;
+        const dog = new CompanionDog(500, 500, owner);
+        dog.owner = owner;
+
+        // Sanity: obstacle extraction must aggregate ALL sources non-exclusively.
+        const probeField = {
+          getWorldObstacles() {
+            return [
+              { kind: 'circle', x: 500, y: 500, r: 30 },
+              { kind: 'rect', x: 700, y: 500, hw: 25, hh: 15 }
+            ];
+          },
+          getColliders() {
+            return [{ x: 800, y: 500, radius: 20 }];
+          },
+          trees: [{ x: 900, y: 500, trunkRadius: 18 }]
+        };
+        const obstacleCount = dog._getFieldObstacles(probeField).length;
+
+        const results = {};
+        for (const path of ['FIGURE_EIGHT', 'ORBIT_OWNER', 'SHUTTLE']) {
+          dog.state = 'ROAMING';
+          dog.x = 500;
+          dog.y = 500;
+          dog.zoomiesCooldown = 0;
+          dog.triggerZoomies(path);
+          dog.zoomiesCenter = { x: 500, y: 500 };
+          dog.zoomiesOrbitOffset = { x: 0, y: 0 };
+          dog.zoomiesShuttleA = { x: 500, y: 500 };
+          dog.zoomiesShuttleB = { x: 500, y: 500 };
+          dog.zoomiesOrbitAngle = 0;
+
+          // Place the tree directly on the active trajectory for this path.
+          let treeX = 500;
+          let treeY = 500;
+          if (path === 'ORBIT_OWNER') {
+            treeX = 500 + dog.zoomiesOrbitRadius;
+            treeY = 500;
+          }
+
+          const field = {
+            getWorldObstacles() {
+              return [{ kind: 'circle', x: treeX, y: treeY, r: 30 }];
+            }
+          };
+
+          let minDist = Infinity;
+          for (let i = 0; i < 60; i++) {
+            dog.updateZoomies(1 / 60, field);
+            minDist = Math.min(minDist, Math.hypot(dog.x - treeX, dog.y - treeY));
+          }
+          const centerDist = Math.hypot(dog.zoomiesCenter.x - 500, dog.zoomiesCenter.y - 500);
+          const offsetDist = Math.hypot(dog.zoomiesOrbitOffset.x, dog.zoomiesOrbitOffset.y);
+          const shuttleDist = Math.max(
+            Math.hypot(dog.zoomiesShuttleA.x - 500, dog.zoomiesShuttleA.y - 500),
+            Math.hypot(dog.zoomiesShuttleB.x - 500, dog.zoomiesShuttleB.y - 500)
+          );
+          results[path] = {
+            minDist: minDist,
+            centerDist: centerDist,
+            offsetDist: offsetDist,
+            shuttleDist: shuttleDist,
+            radius: dog.radius
+          };
+        }
+        return { obstacleCount: obstacleCount, results: results };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertGreaterEqual(
+            res["obstacleCount"], 4,
+            "Obstacle extraction must aggregate getWorldObstacles, getColliders, and trees",
+        )
+        for path in ("FIGURE_EIGHT", "ORBIT_OWNER", "SHUTTLE"):
+            r = res["results"][path]
+            self.assertGreaterEqual(
+                r["minDist"],
+                30 + r["radius"],
+                f"{path}: dog must never overlap the tree",
+            )
+            anchor_shifted = (
+                r["centerDist"] > 1e-6
+                or r["offsetDist"] > 1e-6
+                or r["shuttleDist"] > 1e-6
+            )
+            self.assertTrue(anchor_shifted, f"{path}: path anchor must shift away from tree")
+
+    def test_dog_to_dog_leash_social_regimes_and_player_slide(self):
+        """Leash-context-aware social dynamics across all three regimes."""
+        self.assertIn("triggerSocialLeashTug", self.dog_src)
+        self.assertIn("leashTugTimer", self.dog_src)
+        self.assertIn("socialCooldown", self.dog_src)
+
+        snippet = """
+        // Regime A: both off-leash -> high-affinity active play.
+        const ownerA1 = new Owner(1000, 1000);
+        ownerA1.isLeashed = false;
+        const ownerA2 = new Owner(1150, 1000);
+        ownerA2.isLeashed = false;
+        const dogA1 = new CompanionDog(1000, 1000, ownerA1);
+        dogA1.owner = ownerA1;
+        dogA1.personality.playfulness = 5;
+        dogA1.personality.shyness = 1;
+        const dogA2 = new CompanionDog(1150, 1000, ownerA2);
+        dogA2.owner = ownerA2;
+        let regimeAState = null;
+        let regimeACooldown = null;
+        for (let i = 0; i < 500; i++) {
+          if (dogA1.checkSocialInteractions([dogA2], 1 / 60, null)) {
+            regimeAState = dogA1.state;
+            regimeACooldown = dogA1.socialCooldown;
+            break;
+          }
+        }
+
+        // Regime B: on-leash dog + off-leash dog -> leash tug slides owner.
+        const ownerB1 = new Owner(1000, 1000);
+        ownerB1.isLeashed = true;
+        const ownerB2 = new Owner(1080, 1000);
+        ownerB2.isLeashed = false;
+        const dogB1 = new CompanionDog(1000, 1000, ownerB1);
+        dogB1.owner = ownerB1;
+        dogB1.personality.playfulness = 5;
+        dogB1.personality.obedience = 1;
+        dogB1.personality.shyness = 1;
+        const dogB2 = new CompanionDog(1080, 1000, ownerB2);
+        dogB2.owner = ownerB2;
+
+        // Regime B2 subtle social gaze: checkSocialInteractions must set a
+        // social gaze timer, boost wag speed, and set an emote bubble.
+        dogB1.state = 'FOLLOWING';
+        dogB1.socialCooldown = 0;
+        dogB1.emoteBubble = null;
+        dogB1.wagSpeed = 0;
+        dogB1.socialGazeTimer = 0;
+        dogB1.checkSocialInteractions([dogB2], 1 / 60, null);
+        const gazeTimer = dogB1.socialGazeTimer;
+        const gazeWag = dogB1.wagSpeed;
+        const gazeEmote = dogB1.emoteBubble;
+
+        // Regime B1: off-leash dog approaching an on-leash dog.
+        dogB2.state = 'ROAMING';
+        dogB2.socialCooldown = 0;
+        dogB2.leashTugTimer = 0;
+        dogB2.x = dogB1.x + 60;
+        dogB2.y = dogB1.y;
+        let regimeB1Triggered = false;
+        for (let i = 0; i < 500; i++) {
+          dogB2.socialCooldown = 0;
+          dogB2.state = 'ROAMING';
+          if (dogB2.checkSocialInteractions([dogB1], 1 / 60, null)) {
+            regimeB1Triggered = true;
+            break;
+          }
+        }
+        const regimeB1State = dogB2.state;
+        const regimeB1Cooldown = dogB2.socialCooldown;
+        const regimeB1TugTimer = dogB2.leashTugTimer;
+
+        dogB1.triggerSocialLeashTug(dogB2);
+        const startOwnerX = ownerB1.x;
+        const startDogX = dogB1.x;
+        const slideField = {
+          resolveCircleCollision(x, y, r) { return { x: Math.min(x, 1002), y }; }
+        };
+        dogB1.update(0.1, slideField, [dogB2]);
+        const dogLunged = dogB1.x > startDogX;
+        const ownerSlid = ownerB1.x > startOwnerX;
+        const ownerClamped = ownerB1.x <= 1002;
+        const pullingDuringTug = dogB1.isPullingLeash;
+        dogB1.update(0.5, null, [dogB2]);
+        const tugTimerAfter = dogB1.leashTugTimer;
+        const pullingAfter = dogB1.isPullingLeash;
+        const tugTargetAfter = dogB1.leashTugTarget;
+
+        // Un-leashing mid-tug must immediately clear the tug state.
+        dogB1.triggerSocialLeashTug(dogB2);
+        const tugActiveBeforeUnleash = dogB1.leashTugTimer > 0;
+        ownerB1.isLeashed = false;
+        dogB1.update(1 / 60, null, [dogB2]);
+        const tugTimerAfterUnleash = dogB1.leashTugTimer;
+        const tugTargetAfterUnleash = dogB1.leashTugTarget;
+        const pullingAfterUnleash = dogB1.isPullingLeash;
+        ownerB1.isLeashed = true;
+
+        // Regime C: both on-leash -> never SOCIAL_GREET / PLAY_BOW.
+        const ownerC1 = new Owner(1000, 1000);
+        ownerC1.isLeashed = true;
+        const ownerC2 = new Owner(1050, 1000);
+        ownerC2.isLeashed = true;
+        const dogC1 = new CompanionDog(1000, 1000, ownerC1);
+        dogC1.owner = ownerC1;
+        dogC1.state = 'FOLLOWING';
+        const dogC2 = new CompanionDog(1050, 1000, ownerC2);
+        dogC2.owner = ownerC2;
+        for (let i = 0; i < 100; i++) {
+          dogC1.checkSocialInteractions([dogC2], 1 / 60, null);
+        }
+        const regimeCState = dogC1.state;
+        const regimeCTugTimer = dogC1.leashTugTimer;
+
+        // Regime C gaze must be gated by cooldown/probability.
+        dogC1.socialCooldown = 5.0;
+        dogC1.socialGazeTimer = 0;
+        dogC1.checkSocialInteractions([dogC2], 1 / 60, null);
+        const regimeCGazeTimer = dogC1.socialGazeTimer;
+
+        return {
+          regimeAState: regimeAState,
+          regimeACooldown: regimeACooldown,
+          regimeB1Triggered: regimeB1Triggered,
+          regimeB1State: regimeB1State,
+          regimeB1Cooldown: regimeB1Cooldown,
+          regimeB1TugTimer: regimeB1TugTimer,
+          gazeTimer: gazeTimer,
+          gazeWag: gazeWag,
+          gazeEmote: gazeEmote,
+          dogLunged: dogLunged,
+          ownerSlid: ownerSlid,
+          ownerClamped: ownerClamped,
+          pullingDuringTug: pullingDuringTug,
+          tugTimerAfter: tugTimerAfter,
+          pullingAfter: pullingAfter,
+          tugTargetAfter: tugTargetAfter,
+          tugActiveBeforeUnleash: tugActiveBeforeUnleash,
+          tugTimerAfterUnleash: tugTimerAfterUnleash,
+          tugTargetAfterUnleash: tugTargetAfterUnleash,
+          pullingAfterUnleash: pullingAfterUnleash,
+          regimeCState: regimeCState,
+          regimeCTugTimer: regimeCTugTimer,
+          regimeCGazeTimer: regimeCGazeTimer
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+
+        # Regime A
+        self.assertIn(res["regimeAState"], ("SOCIAL_GREET", "PLAY_BOW"))
+        self.assertEqual(res["regimeACooldown"], 12)
+
+        # Regime B1: off-leash dog greets on-leash dog, never tugs the leash.
+        self.assertTrue(res["regimeB1Triggered"], "Regime B1 must trigger SOCIAL_GREET")
+        self.assertEqual(res["regimeB1State"], "SOCIAL_GREET")
+        self.assertEqual(res["regimeB1Cooldown"], 14)
+        self.assertEqual(res["regimeB1TugTimer"], 0,
+                         "Off-leash dog must never trigger a leash tug")
+
+        # Regime B2 subtle social gaze
+        self.assertGreater(res["gazeTimer"], 0, "Regime B2 must set socialGazeTimer")
+        self.assertGreater(res["gazeWag"], 0, "Regime B2 must boost wagSpeed")
+        self.assertIsNotNone(res["gazeEmote"], "Regime B2 must set an emote bubble")
+
+        # Regime B
+        self.assertTrue(res["dogLunged"], "Dog must lunge toward the off-leash dog")
+        self.assertTrue(res["ownerSlid"], "Owner must slide toward the off-leash dog")
+        self.assertTrue(res["ownerClamped"],
+                        "Owner slide must be clamped by field.resolveCircleCollision")
+        self.assertTrue(res["pullingDuringTug"])
+        self.assertEqual(res["tugTimerAfter"], 0)
+        self.assertFalse(res["pullingAfter"])
+        self.assertIsNone(res["tugTargetAfter"])
+
+        # Un-leashing mid-tug clears tug state immediately.
+        self.assertTrue(res["tugActiveBeforeUnleash"])
+        self.assertEqual(res["tugTimerAfterUnleash"], 0)
+        self.assertIsNone(res["tugTargetAfterUnleash"])
+        self.assertFalse(res["pullingAfterUnleash"])
+
+        # Regime C
+        self.assertEqual(res["regimeCState"], "FOLLOWING")
+        self.assertEqual(res["regimeCTugTimer"], 0)
+        self.assertEqual(res["regimeCGazeTimer"], 0,
+                         "Regime C gaze must be gated by cooldown/probability")
 
 if __name__ == '__main__':
     unittest.main()

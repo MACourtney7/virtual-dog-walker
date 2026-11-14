@@ -372,7 +372,7 @@ export class Owner {
     const w = (typeof world.width === 'number') ? world.width : null;
     const h = (typeof world.height === 'number') ? world.height : null;
     if (w !== null && h !== null) {
-      const margin = Math.max(selfRadius + 4, 56 + selfRadius);
+      const margin = selfRadius + 16;
       if (px < margin || py < margin || px > w - margin || py > h - margin) {
         return true;
       }
@@ -383,16 +383,19 @@ export class Owner {
       const worldObs = world.getWorldObstacles();
       if (Array.isArray(worldObs)) {
         for (const o of worldObs) {
-          if (!o) continue;
-          if (o.kind === 'circle' && typeof o.x === 'number' && typeof o.y === 'number') {
-            const reach = (typeof o.r === 'number' ? o.r : 0) + selfRadius + clearancePad;
+          if (!o || typeof o.x !== 'number' || typeof o.y !== 'number') continue;
+          if (o.kind === 'rect' || o.type === 'rect' || o.shape === 'rect') {
+            const baseHw = typeof o.hw === 'number' ? o.hw : (typeof o.w === 'number' ? o.w / 2 : 20);
+            const baseHh = typeof o.hh === 'number' ? o.hh : (typeof o.h === 'number' ? o.h / 2 : 15);
+            const hw = baseHw + selfRadius + clearancePad;
+            const hh = baseHh + selfRadius + clearancePad;
+            if (Math.abs(px - o.x) < hw && Math.abs(py - o.y) < hh) return true;
+          } else {
+            const baseR = typeof o.r === 'number' ? o.r : (typeof o.radius === 'number' ? o.radius : 20);
+            const reach = baseR + selfRadius + clearancePad;
             const dx = px - o.x;
             const dy = py - o.y;
             if (dx * dx + dy * dy < reach * reach) return true;
-          } else if (o.kind === 'rect' && typeof o.x === 'number' && typeof o.y === 'number') {
-            const hw = (typeof o.hw === 'number' ? o.hw : 0) + selfRadius + clearancePad;
-            const hh = (typeof o.hh === 'number' ? o.hh : 0) + selfRadius + clearancePad;
-            if (Math.abs(px - o.x) < hw && Math.abs(py - o.y) < hh) return true;
           }
         }
       }
@@ -497,14 +500,20 @@ export class Owner {
   // Multi-sample corridor check: probes several points along a ray from the
   // owner's current position in the given heading. Returns true if any sample
   // is blocked.
-  _isWanderRayBlocked(heading, maxDist, world) {
-    if (!world) return false;
+  _isWanderRayBlocked(heading, maxDist = WANDER_LOOKAHEAD_PX, world = null, sampleCount = 4) {
+    let resolvedWorld = world;
+    let resolvedDist = maxDist;
+    if (typeof maxDist === 'object' && maxDist !== null) {
+      resolvedWorld = maxDist;
+      resolvedDist = (typeof world === 'number') ? world : WANDER_LOOKAHEAD_PX;
+    }
+    if (!resolvedWorld) return false;
     const cosH = Math.cos(heading);
     const sinH = Math.sin(heading);
-    const samples = [0.25, 0.5, 0.75, 1.0];
-    for (const s of samples) {
-      const dist = maxDist * s;
-      if (this._isWanderProbeBlocked(this.x + cosH * dist, this.y + sinH * dist, world)) {
+    const count = (typeof sampleCount === 'number' && sampleCount > 0) ? Math.floor(sampleCount) : 4;
+    for (let i = 1; i <= count; i++) {
+      const dist = resolvedDist * (i / count);
+      if (this._isWanderProbeBlocked(this.x + cosH * dist, this.y + sinH * dist, resolvedWorld)) {
         return true;
       }
     }

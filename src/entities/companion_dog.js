@@ -965,23 +965,8 @@ export class CompanionDog {
       this.isPullingLeash = true;
     }
 
-    // 3. Movement integration
-    // Zoomies set x/y directly from the parametric curve; skip integration to avoid double movement.
-    if (this.state !== DogState.ZOOMIES) {
-      this.x += this.vx * dt;
-      this.y += this.vy * dt;
-    }
-
-    // Screen-space perimeter clamp for off-leash free movement
-    if (!isLeashed && this.state !== DogState.ZOOMIES && this.state !== DogState.FETCHING && this.state !== DogState.LOST) {
-      const screen = this._getScreenPerimeter(field);
-      if (screen) {
-        this.x = Math.max(screen.left + 32, Math.min(screen.right - 32, this.x));
-        this.y = Math.max(screen.top + 32, Math.min(screen.bottom - 32, this.y));
-      }
-    }
-
-    // Stat-driven social leash tug: pull dog toward target & slide the player
+    // Stat-driven social leash tug: pull dog toward target & slide the player.
+    // Runs BEFORE movement integration so the tug velocity is applied this frame.
     if (this.leashTugTimer > 0 && this.leashTugTarget && this.owner && this.owner.isLeashed) {
       this.leashTugTimer = Math.max(0, this.leashTugTimer - dt);
       const tdx = this.leashTugTarget.x - this.owner.x;
@@ -999,7 +984,7 @@ export class CompanionDog {
       this.angle = Math.atan2(uy, ux);
       this.isPullingLeash = true;
 
-      const slideSpeed = 28 + 32 * pullFactor;
+      const slideSpeed = 28 + 27 * pullFactor;
       this.owner.x += ux * slideSpeed * dt;
       this.owner.y += uy * slideSpeed * dt;
       if (field && typeof field.resolveCircleCollision === 'function') {
@@ -1008,6 +993,27 @@ export class CompanionDog {
         this.owner.y = resolved.y;
       }
       this.owner.depthY = this.owner.y + 12;
+
+      if (this.leashTugTimer <= 0) {
+        this.isPullingLeash = false;
+        this.leashTugTarget = null;
+      }
+    }
+
+    // 3. Movement integration
+    // Zoomies set x/y directly from the parametric curve; skip integration to avoid double movement.
+    if (this.state !== DogState.ZOOMIES) {
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+    }
+
+    // Screen-space perimeter clamp for off-leash free movement
+    if (!isLeashed && this.state !== DogState.ZOOMIES && this.state !== DogState.FETCHING && this.state !== DogState.LOST) {
+      const screen = this._getScreenPerimeter(field);
+      if (screen) {
+        this.x = Math.max(screen.left + 32, Math.min(screen.right - 32, this.x));
+        this.y = Math.max(screen.top + 32, Math.min(screen.bottom - 32, this.y));
+      }
     }
 
     // Sync carried stick position
@@ -1235,7 +1241,7 @@ export class CompanionDog {
             this.emoteTimer = 2.5;
           }
           this.socialTargetDog = other;
-          this.socialCooldown = 10.0;
+          this.socialCooldown = 12.0;
           return true;
         }
         continue;
@@ -1322,10 +1328,12 @@ export class CompanionDog {
       if (Array.isArray(list)) {
         for (const o of list) {
           if (!o || typeof o.x !== 'number' || typeof o.y !== 'number') continue;
-          if (o.type === 'rect' || o.shape === 'rect') {
-            out.push({ x: o.x, y: o.y, r: Math.hypot(o.hw || 20, o.hh || 15) });
+          if (o.kind === 'rect' || o.type === 'rect' || o.shape === 'rect') {
+            const hw = typeof o.hw === 'number' ? o.hw : (typeof o.w === 'number' ? o.w / 2 : 20);
+            const hh = typeof o.hh === 'number' ? o.hh : (typeof o.h === 'number' ? o.h / 2 : 15);
+            out.push({ x: o.x, y: o.y, r: Math.hypot(hw, hh), kind: 'rect', hw, hh });
           } else {
-            out.push({ x: o.x, y: o.y, r: o.r || 20 });
+            out.push({ x: o.x, y: o.y, r: typeof o.r === 'number' ? o.r : (o.radius || 20), kind: 'circle' });
           }
         }
       }
@@ -1575,6 +1583,16 @@ export class CompanionDog {
     if (this.roamBaselineTimer <= 0) {
       this.roamSubModeTimer -= dt;
       if (this.roamSubModeTimer <= 0) {
+        // Episodic sub-mode timeout: interlace back to baseline FREE_EXPLORE
+        // instead of chaining another episode back-to-back.
+        if (this.roamSubMode !== RoamSubMode.FREE_EXPLORE) {
+          this.roamSubMode = RoamSubMode.FREE_EXPLORE;
+          this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
+          this.roamWaypoint = null;
+          this.roamTargetSpeed = 125 + Math.random() * 50;
+          this.roamSubModeTimer = 3.0 + Math.random() * 3.0;
+          this.roamLookBackDone = false;
+        } else {
         this.roamSubModeTimer = 3.0 + Math.random() * 3.0;
         const energy = Number(this.personality?.energy ?? 3);
         const curiosity = Number(this.personality?.curiosity ?? 3);
@@ -1697,6 +1715,7 @@ export class CompanionDog {
               };
             }
           }
+        }
         }
       }
     }
@@ -2090,6 +2109,7 @@ export class CompanionDog {
     this.stateTimer -= dt;
 
     if (this.stateTimer <= 0) {
+      const wasBothOffLeash = Boolean(!this.owner?.isLeashed && this.socialTargetDog && !this.socialTargetDog.owner?.isLeashed);
       this.socialTargetDog = null;
       // Playfulness modifies play-bow transition chance
       const playBowChance = 0.15 + (this.personality.playfulness / 5) * 0.45;
@@ -2099,6 +2119,8 @@ export class CompanionDog {
         this.emoteBubble = '🐾';
         this.emoteTimer = 2.0;
         this.wagSpeed = 14 + this.personality.playfulness * 2;
+      } else if (wasBothOffLeash && this.zoomiesCooldown <= 0 && Math.random() < 0.25) {
+        this.triggerZoomies();
       } else {
         this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
       }
@@ -2266,8 +2288,6 @@ export class CompanionDog {
     }
     if (this.owner && this.owner.isMoving && this.owner.isLeashed) {
       this.state = DogState.FOLLOWING;
-    } else if (this.owner && !this.owner.isLeashed && Math.hypot(this.x - this.owner.x, this.y - this.owner.y) > 320) {
-      this.state = DogState.ROAMING;
     } else if (this.stateTimer <= 0) {
       this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
     }
@@ -2284,8 +2304,6 @@ export class CompanionDog {
     }
     if (this.owner && this.owner.isMoving && this.owner.isLeashed) {
       this.state = DogState.FOLLOWING;
-    } else if (this.owner && !this.owner.isLeashed && Math.hypot(this.x - this.owner.x, this.y - this.owner.y) > 320) {
-      this.state = DogState.ROAMING;
     } else if (this.stateTimer <= 0) {
       this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
     }

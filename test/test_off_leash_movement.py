@@ -1617,5 +1617,159 @@ class TestOffLeashMovement(unittest.TestCase):
             self.assertGreaterEqual(res[key], 8.0)
             self.assertLessEqual(res[key], 45.0)
 
+    # ------------------------------------------------------------------
+    # unification-027 remediation cycle 4
+    # ------------------------------------------------------------------
+
+    def test_leashing_active_dog_transitions_to_following(self):
+        """Leashing a dog mid-pack-play must dissolve the bond and route each
+        dog to FOLLOWING (leashed) or ROAMING (off-leash)."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayRoleTimer = 10;
+        dog2.packPlayRoleTimer = 10;
+
+        // Leash dog1 mid-play.
+        owner1.isLeashed = true;
+        dog1.update(1 / 60, null, [dog2]);
+        dog2.update(1 / 60, null, [dog1]);
+
+        return {
+          dog1Partner: dog1.packPlayPartner,
+          dog2Partner: dog2.packPlayPartner,
+          dog1State: dog1.state,
+          dog2State: dog2.state
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertIsNone(res["dog1Partner"], "Leashing must dissolve dog1's bond")
+        self.assertIsNone(res["dog2Partner"], "Leashing must dissolve dog2's bond")
+        self.assertEqual(res["dog1State"], "FOLLOWING",
+                         "Leashed dog must transition to FOLLOWING")
+        self.assertEqual(res["dog2State"], "ROAMING",
+                         "Off-leash partner must transition to ROAMING")
+
+    def test_post_collision_32px_hard_clamp(self):
+        """After collision resolution, pack-play dogs must stay inside the
+        32px-inset screen perimeter."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        const camera = { x: 800, y: 600, viewportWidth: 1280, viewportHeight: 720, zoom: 1.0 };
+        dog1.camera = camera;
+        dog2.camera = camera;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayRoleTimer = 10;
+        dog2.packPlayRoleTimer = 10;
+
+        // Place a tree right at the right screen edge so collision pushback
+        // would shove the dog outward past the inset.
+        const perim = dog1._getScreenPerimeter();
+        const edgeTreeX = perim.right - 10;
+        const edgeTreeY = perim.centerY;
+        const field = {
+          getWorldObstacles() {
+            return [{ kind: 'circle', x: edgeTreeX, y: edgeTreeY, r: 40 }];
+          }
+        };
+
+        // Force the lead dog's waypoint toward the edge tree.
+        dog1.packPlayWaypoint = { x: edgeTreeX, y: edgeTreeY };
+        dog1.packPlayWaypointTimer = 10;
+        dog1.x = perim.right - 40;
+        dog1.y = edgeTreeY;
+        dog2.x = perim.right - 80;
+        dog2.y = edgeTreeY;
+
+        let inside = true;
+        for (let i = 0; i < 120; i++) {
+          dog1.updatePackPlay(1 / 60, field);
+          dog2.updatePackPlay(1 / 60, field);
+          for (const d of [dog1, dog2]) {
+            if (d.x < perim.left + 32 - 1e-6 || d.x > perim.right - 32 + 1e-6 ||
+                d.y < perim.top + 32 - 1e-6 || d.y > perim.bottom - 32 + 1e-6) {
+              inside = false;
+            }
+          }
+        }
+        return {
+          inside: inside,
+          dog1X: dog1.x,
+          dog2X: dog2.x,
+          left: perim.left,
+          right: perim.right,
+          top: perim.top,
+          bottom: perim.bottom
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertTrue(res["inside"],
+                        "Pack-play dogs must stay inside the 32px-inset perimeter")
+        self.assertGreaterEqual(res["dog1X"], res["left"] + 32 - 1e-6)
+        self.assertLessEqual(res["dog1X"], res["right"] - 32 + 1e-6)
+        self.assertGreaterEqual(res["dog2X"], res["left"] + 32 - 1e-6)
+        self.assertLessEqual(res["dog2X"], res["right"] - 32 + 1e-6)
+
+    def test_shyness_stat_scaling(self):
+        """Higher shyness must increase the post-whistle social cooldown."""
+        snippet = """
+        const make = (shy) => {
+          const owner = new Owner(1000, 1000);
+          owner.isLeashed = false;
+          const partnerOwner = new Owner(1060, 1000);
+          partnerOwner.isLeashed = false;
+          const dog = new CompanionDog(1000, 1000, owner);
+          dog.owner = owner;
+          dog.personality = { obedience: 3, playfulness: 3, shyness: shy, energy: 3, curiosity: 3 };
+          const partner = new CompanionDog(1060, 1000, partnerOwner);
+          partner.owner = partnerOwner;
+          dog.state = DogState.PACK_PLAY;
+          partner.state = DogState.PACK_PLAY;
+          dog.packPlayPartner = partner;
+          partner.packPlayPartner = dog;
+          dog.packPlayRole = 'LEAD';
+          partner.packPlayRole = 'CHASE';
+          dog.packPlayRoleTimer = 10;
+          partner.packPlayRoleTimer = 10;
+          dog.whistleRecall();
+          return dog.socialCooldown;
+        };
+        return { shy: make(5), bold: make(1) };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertGreater(res["shy"], res["bold"],
+                           "Shy dog must receive a higher post-whistle cooldown")
+        for key in ("shy", "bold"):
+            self.assertGreaterEqual(res[key], 8.0)
+            self.assertLessEqual(res[key], 45.0)
+
+
 if __name__ == '__main__':
     unittest.main()

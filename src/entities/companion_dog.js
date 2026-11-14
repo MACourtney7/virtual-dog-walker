@@ -619,14 +619,15 @@ export class CompanionDog {
       this._breakPackPlay();
     }
 
-    // Stat-driven social cool-off post-whistle: high obedience increases the
-    // cool-off (up to 45s), high playfulness decreases it (down to 8s).
-    // Normalised 1..5 -> 0..1 so the bands are exact:
-    //   (5,1) -> 40s, (3,3) -> 24s, (2,4) -> 16s, (1,5) -> 8s
+    // Stat-driven social cool-off post-whistle: high obedience and shyness
+    // increase the cool-off (up to 45s), high playfulness decreases it
+    // (down to 8s). Normalised 1..5 -> 0..1 so the bands are exact:
+    //   (5,1,5) -> 41s, (3,3,3) -> 23s, (2,4,1) -> 13.5s, (1,5,1) -> 8s
     if (wasInPackPlay) {
       const obedNorm = ((this.personality?.obedience || 3) - 1) / 4; // 0..1
+      const shyNorm = ((this.personality?.shyness || 3) - 1) / 4; // 0..1
       const playNorm = ((this.personality?.playfulness || 3) - 1) / 4; // 0..1
-      const cd = 20.0 + obedNorm * 20.0 - playNorm * 12.0;
+      const cd = 19.0 + obedNorm * 18.0 + shyNorm * 4.0 - playNorm * 12.0;
       this.socialCooldown = Math.max(8.0, Math.min(45.0, cd));
     }
 
@@ -2336,6 +2337,12 @@ export class CompanionDog {
         partner.idleRestTimer = 0;
       }
     }
+    // Transition this dog out of PACK_PLAY based on its own leash state.
+    if (this.state === DogState.PACK_PLAY) {
+      const selfLeashed = Boolean(this.owner && this.owner.isLeashed);
+      this.transitionTo(selfLeashed ? DogState.FOLLOWING : DogState.ROAMING);
+      this.idleRestTimer = 0;
+    }
   }
 
   updatePackPlay(dt, field = null) {
@@ -2347,7 +2354,7 @@ export class CompanionDog {
         (this.owner && this.owner.isLeashed) ||
         (partner.owner && partner.owner.isLeashed)) {
       this._breakPackPlay();
-      this.transitionTo(DogState.ROAMING);
+      this.transitionTo((this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING);
       return;
     }
 
@@ -2548,13 +2555,13 @@ export class CompanionDog {
       resolveFieldCollision(this, this.radius, field);
     }
 
-    // Re-apply the screen hard clamp so collision pushback never pushes the
-    // dog off-screen.
+    // Re-apply the screen hard clamp (32px inset) so collision pushback never
+    // pushes the dog off-screen or into the edge band.
     if (this.camera) {
       const perim = this._getScreenPerimeter();
       if (perim) {
-        this.x = Math.max(perim.left, Math.min(perim.right, this.x));
-        this.y = Math.max(perim.top, Math.min(perim.bottom, this.y));
+        this.x = Math.max(perim.left + 32, Math.min(perim.right - 32, this.x));
+        this.y = Math.max(perim.top + 32, Math.min(perim.bottom - 32, this.y));
       }
     }
 

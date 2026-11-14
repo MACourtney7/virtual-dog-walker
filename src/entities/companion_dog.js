@@ -17,7 +17,8 @@ export const DogState = {
   LOST: 'LOST',
   POOPING: 'POOPING',
   ZOOMIES: 'ZOOMIES',
-  SNIFFING_TRAIL: 'SNIFFING_TRAIL'
+  SNIFFING_TRAIL: 'SNIFFING_TRAIL',
+  PACK_PLAY: 'PACK_PLAY'
 };
 
 function lerpAngle(a, b, t) {
@@ -179,7 +180,8 @@ const ACTIVE_REST_BLOCKED_STATES = new Set([
   DogState.ROLLING,
   DogState.LYING_DOWN,
   DogState.SNIFFING_TRAIL,
-  DogState.SOCIAL_GREET
+  DogState.SOCIAL_GREET,
+  DogState.PACK_PLAY
 ]);
 
 export const CoatPreset = {
@@ -333,6 +335,14 @@ export class CompanionDog {
     // Canine Social Interactions
     this.socialTargetDog = null;
 
+    // Sustained multi-dog pack play (coordinated romping)
+    this.packPlayPartner = null;
+    this.packPlayRole = 'LEAD'; // 'LEAD' | 'CHASE'
+    this.packPlayRoleTimer = 0;
+    this.packPlayEmoteTimer = 0;
+    this.packPlayWaypoint = null;
+    this.packPlayWaypointTimer = 0;
+
     // Whistle Recall & Timed Heel state
     this.isRecalledToHeel = false;
     this.recallHeelTimer = 0;
@@ -456,6 +466,11 @@ export class CompanionDog {
     // Lock rolling duration so callers cannot overwrite it with random roaming timers
     if (this.state === DogState.ROLLING) {
       this.stateTimer = 2.5;
+    }
+    // Ambient resting is never permanent: give LYING_DOWN a bounded duration so
+    // an off-leash dog with a stationary owner wakes up and resumes roaming.
+    if (this.state === DogState.LYING_DOWN) {
+      this.stateTimer = 2.5 + Math.random() * 2.5;
     }
   }
 
@@ -587,6 +602,19 @@ export class CompanionDog {
 
   whistleRecall() {
     const wasLost = this.state === DogState.LOST || this.isLost;
+
+    // Whistle is the play breaker: dissolve any active pack-play bond.
+    if (this.packPlayPartner) {
+      this._breakPackPlay();
+    }
+
+    // Stat-driven social cool-off post-whistle: high obedience increases the
+    // cool-off (up to 45s), high playfulness decreases it (down to 8s).
+    const obedience = this.personality?.obedience || 3;
+    const playfulness = this.personality?.playfulness || 3;
+    const baseCooldown = 20.0 + (obedience / 5) * 20.0 - (playfulness / 5) * 14.0;
+    this.socialCooldown = Math.max(8.0, Math.min(45.0, baseCooldown));
+
     this.state = DogState.RECALLED;
     this.isLost = false;
     this.ownerStillTimer = 0;
@@ -780,6 +808,8 @@ export class CompanionDog {
       this.idleRestTimer += dt;
       if (this.idleRestTimer > 15) {
         this.transitionTo(DogState.LYING_DOWN);
+        // Bounded rest: never freeze permanently while off-leash.
+        this.stateTimer = 2.5 + Math.random() * 2.5;
         this.restStartAt = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       }
     } else if (ownerSpeed > 5) {
@@ -900,7 +930,11 @@ export class CompanionDog {
         break;
 
       case DogState.SOCIAL_GREET:
-        this.updateSocialGreet(dt);
+        this.updateSocialGreet(dt, otherDogs);
+        break;
+
+      case DogState.PACK_PLAY:
+        this.updatePackPlay(dt, field);
         break;
 
       case DogState.ROAMING:
@@ -924,8 +958,15 @@ export class CompanionDog {
         this.vy = 0;
         this.wagSpeed = 3;
         if (this.owner && Math.hypot(this.owner.vx || 0, this.owner.vy || 0) > 5) {
-          this.state = DogState.ROAMING;
+          this.transitionTo(DogState.ROAMING);
           this.idleRestTimer = 0;
+        } else if (!this.owner?.isLeashed) {
+          // Off-leash resting is bounded: wake up and resume roaming indefinitely.
+          this.stateTimer -= dt;
+          if (this.stateTimer <= 0) {
+            this.transitionTo(DogState.ROAMING);
+            this.idleRestTimer = 0;
+          }
         }
         break;
 
@@ -2134,7 +2175,7 @@ export class CompanionDog {
     }
   }
 
-  updateSocialGreet(dt) {
+  updateSocialGreet(dt, otherDogs = []) {
     if (!this.socialTargetDog || this.socialTargetDog.state === DogState.FETCHING) {
       this.socialTargetDog = null;
       this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
@@ -2188,9 +2229,13 @@ export class CompanionDog {
 
     if (this.stateTimer <= 0) {
       const wasBothOffLeash = Boolean(!this.owner?.isLeashed && this.socialTargetDog && !this.socialTargetDog.owner?.isLeashed);
+      const partner = this.socialTargetDog;
       this.socialTargetDog = null;
       // Playfulness modifies play-bow transition chance
       const playBowChance = 0.15 + (this.personality.playfulness / 5) * 0.45;
+      if (wasBothOffLeash && this._tryStartPackPlay(partner)) {
+        return;
+      }
       if (Math.random() < playBowChance) {
         this.state = DogState.PLAY_BOW;
         this.stateTimer = 2.2;
@@ -2202,6 +2247,216 @@ export class CompanionDog {
       } else {
         this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
       }
+    }
+  }
+
+  // Attempt to pair up with a partner dog for sustained pack play.
+  // Returns true when the pack-play bond was established.
+  _tryStartPackPlay(partner) {
+    if (!partner || partner === this) return false;
+    if (this.owner && this.owner.isLeashed) return false;
+    if (partner.owner && partner.owner.isLeashed) return false;
+    if (partner.state === DogState.LOST || partner.state === DogState.POOPING ||
+        partner.state === DogState.RECALLED || partner.state === DogState.FETCHING) {
+      return false;
+    }
+    if (this.state === DogState.LOST || this.state === DogState.POOPING ||
+        this.state === DogState.RECALLED) {
+      return false;
+    }
+    if (this.socialCooldown > 0 || partner.socialCooldown > 0) return false;
+
+    this.packPlayPartner = partner;
+    partner.packPlayPartner = this;
+    this.packPlayRole = 'LEAD';
+    partner.packPlayRole = 'CHASE';
+    this.packPlayRoleTimer = 4.0 + Math.random() * 3.0;
+    partner.packPlayRoleTimer = this.packPlayRoleTimer;
+    this.packPlayWaypoint = null;
+    partner.packPlayWaypoint = null;
+    this.packPlayWaypointTimer = 0;
+    partner.packPlayWaypointTimer = 0;
+    this.packPlayEmoteTimer = 2.5;
+    partner.packPlayEmoteTimer = 2.5;
+    this.state = DogState.PACK_PLAY;
+    partner.state = DogState.PACK_PLAY;
+    partner.socialTargetDog = null;
+    this.emoteBubble = '🐾';
+    partner.emoteBubble = '🐶';
+    this.emoteTimer = 2.5;
+    partner.emoteTimer = 2.5;
+    this.wagSpeed = 16 + (this.personality?.playfulness || 3) * 2;
+    partner.wagSpeed = 16 + (partner.personality?.playfulness || 3) * 2;
+    return true;
+  }
+
+  // Break the pack-play bond cleanly (both sides).
+  _breakPackPlay() {
+    const partner = this.packPlayPartner;
+    this.packPlayPartner = null;
+    this.packPlayWaypoint = null;
+    if (partner && partner.packPlayPartner === this) {
+      partner.packPlayPartner = null;
+      partner.packPlayWaypoint = null;
+      if (partner.state === DogState.PACK_PLAY) {
+        partner.transitionTo(DogState.ROAMING);
+        partner.idleRestTimer = 0;
+      }
+    }
+  }
+
+  updatePackPlay(dt, field = null) {
+    const partner = this.packPlayPartner;
+
+    // Safety: break the bond if the partner vanished, left pack play, or either
+    // dog became leashed.
+    if (!partner || partner.state !== DogState.PACK_PLAY ||
+        (this.owner && this.owner.isLeashed) ||
+        (partner.owner && partner.owner.isLeashed)) {
+      this._breakPackPlay();
+      this.transitionTo(DogState.ROAMING);
+      return;
+    }
+
+    const dx = partner.x - this.x;
+    const dy = partner.y - this.y;
+    const dist = Math.hypot(dx, dy) || 1;
+
+    // Role swapping timer.
+    this.packPlayRoleTimer -= dt;
+    if (this.packPlayRoleTimer <= 0) {
+      this.packPlayRole = this.packPlayRole === 'LEAD' ? 'CHASE' : 'LEAD';
+      this.packPlayRoleTimer = 4.0 + Math.random() * 3.0;
+    }
+
+    const playfulness = this.personality?.playfulness || 3;
+    const screen = this._getScreenPerimeter(field);
+
+    let desiredX;
+    let desiredY;
+    let modeSpeed;
+
+    if (this.packPlayRole === 'LEAD') {
+      // Lead dog canters toward a looping waypoint around the owner/field.
+      this.packPlayWaypointTimer -= dt;
+      if (!this.packPlayWaypoint || this.packPlayWaypointTimer <= 0 ||
+          Math.hypot(this.packPlayWaypoint.x - this.x, this.packPlayWaypoint.y - this.y) < 30) {
+        this.packPlayWaypointTimer = 2.5 + Math.random() * 2.0;
+        const anchorX = this.owner ? this.owner.x : this.x;
+        const anchorY = this.owner ? this.owner.y : this.y;
+        const angle = Math.random() * Math.PI * 2;
+        const radius = 90 + Math.random() * 110;
+        this.packPlayWaypoint = {
+          x: anchorX + Math.cos(angle) * radius,
+          y: anchorY + Math.sin(angle) * radius
+        };
+      }
+      desiredX = this.packPlayWaypoint.x;
+      desiredY = this.packPlayWaypoint.y;
+      modeSpeed = 150 + Math.random() * 60; // 150-210 px/s
+    } else {
+      // Chase dog pursues the lead dog, flanking when close.
+      if (dist > 75) {
+        desiredX = partner.x;
+        desiredY = partner.y;
+        modeSpeed = 170 + Math.random() * 50; // 170-220 px/s
+      } else if (dist < 35) {
+        // Veer/flank alongside at matching speed.
+        const tangentX = -dy / dist;
+        const tangentY = dx / dist;
+        desiredX = this.x + tangentX * 60;
+        desiredY = this.y + tangentY * 60;
+        modeSpeed = 150 + Math.random() * 40;
+      } else {
+        desiredX = partner.x;
+        desiredY = partner.y;
+        modeSpeed = 150 + Math.random() * 40;
+      }
+    }
+
+    let dirX = desiredX - this.x;
+    let dirY = desiredY - this.y;
+    const dirLen = Math.hypot(dirX, dirY) || 1;
+    dirX /= dirLen;
+    dirY /= dirLen;
+
+    let vx = dirX * modeSpeed;
+    let vy = dirY * modeSpeed;
+
+    // Obstacle avoidance: skirt around trunks/props.
+    const obstacles = this._getFieldObstacles(field);
+    for (const obs of obstacles) {
+      const odx = this.x - obs.x;
+      const ody = this.y - obs.y;
+      const odist = Math.hypot(odx, ody);
+      const avoidRadius = (obs.r || 18) + this.radius + 18;
+      if (odist < avoidRadius && odist > 0.001) {
+        const nx = odx / odist;
+        const ny = ody / odist;
+        const strength = (avoidRadius - odist) / avoidRadius;
+        vx += (nx * 0.7 + -ny * 0.6) * modeSpeed * strength;
+        vy += (ny * 0.7 + nx * 0.6) * modeSpeed * strength;
+      }
+    }
+
+    // Screen perimeter steering (soft margin 85px, hard clamp 32px).
+    if (screen) {
+      const softMargin = 85;
+      let inwardX = 0;
+      let inwardY = 0;
+      if (this.x < screen.left + softMargin) inwardX += 1;
+      if (this.x > screen.right - softMargin) inwardX -= 1;
+      if (this.y < screen.top + softMargin) inwardY += 1;
+      if (this.y > screen.bottom - softMargin) inwardY -= 1;
+      if (inwardX !== 0 || inwardY !== 0) {
+        const toCenterX = screen.centerX - this.x;
+        const toCenterY = screen.centerY - this.y;
+        const toCenterLen = Math.hypot(toCenterX, toCenterY) || 1;
+        const blend = 0.55;
+        vx = vx * (1 - blend) + (toCenterX / toCenterLen) * modeSpeed * blend;
+        vy = vy * (1 - blend) + (toCenterY / toCenterLen) * modeSpeed * blend;
+      }
+    }
+
+    // Owner-distance tether: keep within max roam distance of the owner.
+    if (this.owner) {
+      const distToOwner = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
+      if (distToOwner > 320) {
+        const bias = Math.min(1.0, (distToOwner - 320) / 80);
+        const toOwnerX = (this.owner.x - this.x) / (distToOwner || 1);
+        const toOwnerY = (this.owner.y - this.y) / (distToOwner || 1);
+        vx = vx * (1.0 - bias) + toOwnerX * modeSpeed * bias;
+        vy = vy * (1.0 - bias) + toOwnerY * modeSpeed * bias;
+      }
+    }
+
+    this.vx = vx;
+    this.vy = vy;
+
+    if (Math.hypot(this.vx, this.vy) > 8) {
+      this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 12));
+    }
+
+    this.wagSpeed = 16 + playfulness * 2;
+
+    // Occasional playful emotes every 5-8s.
+    this.packPlayEmoteTimer -= dt;
+    if (this.packPlayEmoteTimer <= 0) {
+      this.packPlayEmoteTimer = 5.0 + Math.random() * 3.0;
+      const emotes = ['🐾', '🐶', '❤️'];
+      this.emoteBubble = emotes[Math.floor(Math.random() * emotes.length)];
+      this.emoteTimer = 1.8;
+    }
+
+    // Hard clamp to the visible screen perimeter.
+    if (screen) {
+      this.x = Math.max(screen.left + 32, Math.min(screen.right - 32, this.x));
+      this.y = Math.max(screen.top + 32, Math.min(screen.bottom - 32, this.y));
+    }
+
+    // Obstacle and world boundary collisions.
+    if (field) {
+      resolveFieldCollision(this, this.radius, field);
     }
   }
 
@@ -2351,6 +2606,13 @@ export class CompanionDog {
     this.stateTimer -= dt;
     this.wagSpeed = 14 + this.personality.playfulness * 2;
     if (this.stateTimer <= 0) {
+      // Both off-leash: escalate into sustained pack play when a partner is available.
+      const partner = this.socialTargetDog;
+      const wasBothOffLeash = Boolean(!this.owner?.isLeashed && partner && !partner.owner?.isLeashed);
+      if (wasBothOffLeash && this._tryStartPackPlay(partner)) {
+        this.socialTargetDog = null;
+        return;
+      }
       this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
     }
   }

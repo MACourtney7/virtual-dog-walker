@@ -6922,13 +6922,13 @@ const PLAYER_HIT_RADIUS = 26;
 
 // Leash slot spacing constants (owner-local frame).
 // Flank clearance is measured from the owner's hip/half-width out to the dog.
-export const LEASH_FLANK_CLEARANCE_MIN_PX = 12;
-export const LEASH_FLANK_CLEARANCE_MAX_PX = 16;
-export const LEASH_FLANK_CLEARANCE_TARGET_PX = 14;
+export const LEASH_FLANK_CLEARANCE_MIN_PX = 0;
+export const LEASH_FLANK_CLEARANCE_MAX_PX = 4;
+export const LEASH_FLANK_CLEARANCE_TARGET_PX = 2;
 // Forward lead is measured ahead of the owner's transverse shoulder line.
-export const LEASH_FORWARD_LEAD_MIN_PX = 40;
-export const LEASH_FORWARD_LEAD_MAX_PX = 52;
-export const LEASH_FORWARD_LEAD_TARGET_PX = 46;
+export const LEASH_FORWARD_LEAD_MIN_PX = 38;
+export const LEASH_FORWARD_LEAD_MAX_PX = 50;
+export const LEASH_FORWARD_LEAD_TARGET_PX = 48;
 // Velocity feed-forward horizon (seconds) so the dog leads rather than trails.
 export const LEASH_FEEDFORWARD_SECONDS = 0.12;
 // Minimum forward projection of the slot past the shoulder line.
@@ -8144,6 +8144,9 @@ export class CompanionDog {
       this.vx *= 0.8;
       this.vy *= 0.8;
       this.wagSpeed = 6;
+      // Smoothly align with owner heading while standing still
+      const ownerHeading = resolveOwnerHeading(this.owner);
+      this.angle = lerpAngle(this.angle, ownerHeading, Math.min(1, dt * 10));
       if (Math.random() < idleTransitionChance) {
         this.transitionTo(Math.random() < 0.5 ? DogState.IDLE_SNIFF : DogState.SITTING);
         if (this.state !== DogState.ROLLING) {
@@ -8166,12 +8169,16 @@ export class CompanionDog {
     if (dist > arrivalDeadband) {
       this.vx = (dx / dist) * targetSpeed;
       this.vy = (dy / dist) * targetSpeed;
-      this.angle = Math.atan2(this.vy, this.vx);
+      // When owner is moving, face travel direction; when owner stops, align to owner's heading
+      const targetAngle = (!this.owner.isMoving) ? resolveOwnerHeading(this.owner) : Math.atan2(this.vy, this.vx);
+      this.angle = lerpAngle(this.angle, targetAngle, Math.min(1, dt * 12));
       this.wagSpeed = 10;
     } else {
       this.vx = 0;
       this.vy = 0;
       this.wagSpeed = 6;
+      const ownerHeading = resolveOwnerHeading(this.owner);
+      this.angle = lerpAngle(this.angle, ownerHeading, Math.min(1, dt * 10));
     }
 
     // Rendered-position shoulder-line clamp: after arrival damping, the dog's
@@ -8962,12 +8969,7 @@ export class CompanionDog {
   draw(ctx) {
     ctx.save();
 
-    // 1. Draw Leash if leashed to owner
-    if (this.owner && this.owner.isLeashed && this.state !== DogState.FETCHING) {
-      this.drawLeash(ctx);
-    }
-
-    // 2. Soft ground shadow
+    // 1. Soft ground shadow
     ctx.fillStyle = 'rgba(20, 35, 15, 0.32)';
     ctx.beginPath();
     ctx.ellipse(this.x, this.y + 7, 16, 8, 0, 0, Math.PI * 2);
@@ -9248,6 +9250,11 @@ export class CompanionDog {
 
     ctx.restore(); // Restore orientation transform
 
+    // Draw leash on top of the dog's body & collar
+    if (this.owner && this.owner.isLeashed && this.state !== DogState.FETCHING) {
+      this.drawLeash(ctx);
+    }
+
     // 5. Floating Hearts
     for (const h of this.hearts) {
       ctx.save();
@@ -9330,26 +9337,11 @@ export class CompanionDog {
     const sagCap = Math.min(2.0, leashLen * 0.03);
     const sag = Math.min(sagCap, this.leashSagPx || 0);
 
-    ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
-    ctx.lineWidth = this.isPullingLeash ? 2.0 : 1.8;
+    ctx.strokeStyle = '#dc2626'; // Vivid crimson red nylon
+    ctx.lineWidth = this.isPullingLeash ? 2.6 : 2.2;
     ctx.beginPath();
     ctx.moveTo(handX, handY);
-    if (sag > 0.01) {
-      // Very shallow sag curve, pushed outward so it never dips inside the body.
-      let midX = (handX + collarX) / 2 + jitterX;
-      let midY = (handY + collarY) / 2 + sag + jitterY;
-      const midDx = midX - this.owner.x;
-      const midDy = midY - this.owner.y;
-      const midDist = Math.hypot(midDx, midDy);
-      if (midDist < PLAYER_HIT_RADIUS + 2 && midDist > 0.001) {
-        const push = (PLAYER_HIT_RADIUS + 2) / midDist;
-        midX = this.owner.x + midDx * push;
-        midY = this.owner.y + midDy * push;
-      }
-      ctx.quadraticCurveTo(midX, midY, collarX + jitterX, collarY + jitterY);
-    } else {
-      ctx.lineTo(collarX + jitterX, collarY + jitterY);
-    }
+    ctx.lineTo(collarX, collarY);
     ctx.stroke();
     ctx.restore();
   }
@@ -10564,8 +10556,8 @@ export const WANDER_LOOKAHEAD_PX = 96;
 
 // Leash arm pose constants (exported for tests/tooling)
 export const LEASH_ARM_SWING_SCALE = 0.15;
-export const LEASH_ARM_BASE_REACH_PX = 18;
-export const LEASH_ARM_MAX_REACH_PX = 34;
+export const LEASH_ARM_BASE_REACH_PX = 14;
+export const LEASH_ARM_MAX_REACH_PX = 30;
 export const LEASH_ARM_TENSION_RAMP_PX = 140; // distance that maps to tension = 1
 export const LEASH_ARM_SHOULDER_OFFSET_PX = 8;
 export const LEASH_ARM_HAND_RADIUS_PX = 3.5;
@@ -10705,7 +10697,7 @@ export class Owner {
     const reach = lerpNum(LEASH_ARM_BASE_REACH_PX, LEASH_ARM_MAX_REACH_PX, tension);
 
     // Aim forward with a slight outward bias toward the dog's flank.
-    let armAngle = sideSign * (0.35 + 0.25 * (1 - tension));
+    let armAngle = sideSign * (0.08 + 0.10 * (1 - tension));
 
     // Reduced stride oscillation on the holding arm only.
     // NOTE: armAngle is in RADIANS, so the swing must be an angular amplitude
@@ -11437,10 +11429,14 @@ export class Owner {
     // --- DEPTH LAYER 1: Far Arm & Far Leg (behind torso) ---
     if (leftIsFar) {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, true);
-      drawArm(leftShoulderX, leftShoulderY, -armSwing, true, leftIsLeashArm);
+      if (!leftIsLeashArm || sinA < -0.2) {
+        drawArm(leftShoulderX, leftShoulderY, -armSwing, true, leftIsLeashArm);
+      }
     } else {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, true);
-      drawArm(rightShoulderX, rightShoulderY, armSwing, true, rightIsLeashArm);
+      if (!rightIsLeashArm || sinA < -0.2) {
+        drawArm(rightShoulderX, rightShoulderY, armSwing, true, rightIsLeashArm);
+      }
     }
 
     // --- DEPTH LAYER 2: Accessory (Backpack when facing South / from front) ---
@@ -11541,9 +11537,16 @@ export class Owner {
     if (leftIsFar) {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, false);
       drawArm(rightShoulderX, rightShoulderY, armSwing, false, rightIsLeashArm);
+      if (leftIsLeashArm && sinA >= -0.2) {
+        drawArm(leftShoulderX, leftShoulderY, -armSwing, false, true);
+      }
     } else {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, false);
-      drawArm(leftShoulderX, leftShoulderY, -armSwing, false, leftIsLeashArm);
+      if (rightIsLeashArm && sinA >= -0.2) {
+        drawArm(rightShoulderX, rightShoulderY, armSwing, false, true);
+      } else {
+        drawArm(leftShoulderX, leftShoulderY, -armSwing, false, leftIsLeashArm);
+      }
     }
 
     // --- DEPTH LAYER 6: Head, Face, Ears & Hairstyle ---
@@ -27756,7 +27759,14 @@ export class Field {
     // Add dynamic entities (Owner, Companion Dogs, Tennis Balls, etc.)
     for (const ent of dynamicEntities) {
       if (!ent) continue;
-      const ey = ent.depthY !== undefined ? ent.depthY : ent.y;
+      let ey = ent.depthY !== undefined ? ent.depthY : ent.y;
+
+      // If the owner is on-leash and facing towards the camera (South),
+      // give the owner depth priority so their arm/hand renders over the dog's back
+      if (ent.isLocal && ent.isLeashed && Math.sin(ent.angle) > 0.1) {
+        ey += 48; // Push depth in front of the leading dog
+      }
+
       renderList.push({
         type: 'entity',
         y: ey,
@@ -36199,8 +36209,8 @@ class TestDogSpacing(unittest.TestCase):
         forward = (math.cos(heading), math.sin(heading))
         right = (-math.sin(heading), math.cos(heading))
         flank_sign = -1 if side == 'left' else 1
-        lateral = max(half_width + 12, min(half_width + 16, half_width + 14))
-        forward_lead = max(40, min(52, 46))
+        lateral = max(half_width + 0, min(half_width + 4, half_width + 2))
+        forward_lead = max(38, min(50, 48))
         sx = owner_x + forward[0] * forward_lead + right[0] * flank_sign * lateral
         sy = owner_y + forward[1] * forward_lead + right[1] * flank_sign * lateral
         sx += vx * 0.12
@@ -36209,15 +36219,15 @@ class TestDogSpacing(unittest.TestCase):
         rel_x = sx - owner_x
         rel_y = sy - owner_y
         proj = rel_x * forward[0] + rel_y * forward[1]
-        if proj > 52:
-            pull = proj - 52
+        if proj > 50:
+            pull = proj - 50
             sx -= forward[0] * pull
             sy -= forward[1] * pull
             rel_x = sx - owner_x
             rel_y = sy - owner_y
             proj = rel_x * forward[0] + rel_y * forward[1]
-        elif proj < 40:
-            push = 40 - proj
+        elif proj < 38:
+            push = 38 - proj
             sx += forward[0] * push
             sy += forward[1] * push
             rel_x = sx - owner_x
@@ -36231,35 +36241,35 @@ class TestDogSpacing(unittest.TestCase):
         return sx, sy
 
     def test_flank_clearance_bounds(self):
-        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 12", self.src)
-        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 16", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 0", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 4", self.src)
         import math
         half_width = 10.5
         for deg in (0, 90, 180, 270, 45):
             heading = math.radians(deg)
             sx, sy = self._slot(100.0, 100.0, heading, half_width=half_width)
             # Lateral distance from the forward axis, minus the owner half-width,
-            # must be within [12, 16] (the flank clearance band).
+            # must be within [0, 4] (the flank clearance band).
             forward = (math.cos(heading), math.sin(heading))
             rel_x = sx - 100.0
             rel_y = sy - 100.0
             proj = rel_x * forward[0] + rel_y * forward[1]
             lateral = math.hypot(rel_x - forward[0] * proj, rel_y - forward[1] * proj)
             clearance = lateral - half_width
-            self.assertGreaterEqual(clearance, 12 - 1e-6)
-            self.assertLessEqual(clearance, 16 + 1e-6)
+            self.assertGreaterEqual(clearance, 0 - 1e-6)
+            self.assertLessEqual(clearance, 4 + 1e-6)
 
     def test_forward_lead_bounds(self):
-        self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 40", self.src)
-        self.assertIn("LEASH_FORWARD_LEAD_MAX_PX = 52", self.src)
+        self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 38", self.src)
+        self.assertIn("LEASH_FORWARD_LEAD_MAX_PX = 50", self.src)
         import math
         for deg in (0, 90, 180, 270, 45):
             heading = math.radians(deg)
             sx, sy = self._slot(100.0, 100.0, heading)
             forward = (math.cos(heading), math.sin(heading))
             proj = (sx - 100.0) * forward[0] + (sy - 100.0) * forward[1]
-            self.assertGreaterEqual(proj, 40 - 1e-6)
-            self.assertLessEqual(proj, 52 + 1e-6)
+            self.assertGreaterEqual(proj, 38 - 1e-6)
+            self.assertLessEqual(proj, 50 + 1e-6)
 
     def test_dog_never_behind_shoulder_line(self):
         self.assertIn("LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = 2", self.src)
@@ -36295,7 +36305,7 @@ class TestDogSpacing(unittest.TestCase):
         self.assertIn("LEASH_FEEDFORWARD_SECONDS", block)
 
     def test_forward_lead_clamped_after_feedforward(self):
-        """Forward lead must stay <= 52px even with high feed-forward velocity."""
+        """Forward lead must stay <= 50px even with high feed-forward velocity."""
         import math
         for speed in (0.0, 100.0, 185.0, 400.0):
             for deg in (0, 45, 90, 135, 180, 225, 270, 315):
@@ -36305,10 +36315,10 @@ class TestDogSpacing(unittest.TestCase):
                 sx, sy = self._slot(100.0, 100.0, heading, vx=vx, vy=vy)
                 forward = (math.cos(heading), math.sin(heading))
                 proj = (sx - 100.0) * forward[0] + (sy - 100.0) * forward[1]
-                self.assertLessEqual(proj, 52 + 1e-6,
-                                     f"forward lead {proj} exceeds 52 at speed {speed}")
-                self.assertGreaterEqual(proj, 40 - 1e-6,
-                                        f"forward lead {proj} below 40 at speed {speed}")
+                self.assertLessEqual(proj, 50 + 1e-6,
+                                     f"forward lead {proj} exceeds 50 at speed {speed}")
+                self.assertGreaterEqual(proj, 38 - 1e-6,
+                                        f"forward lead {proj} below 38 at speed {speed}")
 
     def test_rendered_position_shoulder_line_clamp_present(self):
         """updateFollowing must clamp the rendered position to the shoulder line."""
@@ -36705,8 +36715,8 @@ class TestForwardLeadBoundsAllGaits(unittest.TestCase):
         self.src = read("src/entities/companion_dog.js")
 
     def test_constants(self):
-        self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 40", self.src)
-        self.assertIn("LEASH_FORWARD_LEAD_MAX_PX = 52", self.src)
+        self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 38", self.src)
+        self.assertIn("LEASH_FORWARD_LEAD_MAX_PX = 50", self.src)
 
     def test_behavioral_forward_lead_all_gaits(self):
         import math
@@ -40334,9 +40344,9 @@ class TestOffLeashMovement(unittest.TestCase):
         self.assertIn("FREE_EXPLORE: 'FREE_EXPLORE'", self.dog_src)
 
     def test_leash_flank_clearance_constants_inward_adjusted(self):
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_MIN_PX = 12;", self.dog_src)
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_MAX_PX = 16;", self.dog_src)
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_TARGET_PX = 14;", self.dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_MIN_PX = 0;", self.dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_MAX_PX = 4;", self.dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_TARGET_PX = 2;", self.dog_src)
 
     def test_tightened_standing_arrival_deadband(self):
         self.assertIn("!this.owner.isMoving && dist < 8", self.dog_src)
@@ -43544,9 +43554,9 @@ class TestWalkingTweaks(unittest.TestCase):
         cls.touch_src = read_project_file("src/ui/touch_controls.js")
 
     def test_01_leash_flank_clearance_constants(self):
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_MIN_PX = 12;", self.companion_dog_src)
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_MAX_PX = 16;", self.companion_dog_src)
-        self.assertIn("export const LEASH_FLANK_CLEARANCE_TARGET_PX = 14;", self.companion_dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_MIN_PX = 0;", self.companion_dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_MAX_PX = 4;", self.companion_dog_src)
+        self.assertIn("export const LEASH_FLANK_CLEARANCE_TARGET_PX = 2;", self.companion_dog_src)
 
     def test_02_straight_locked_elbow_arm(self):
         # Verify elbow bend offset is eliminated in drawArm when isLeashed

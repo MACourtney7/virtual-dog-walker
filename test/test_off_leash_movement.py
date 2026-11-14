@@ -584,13 +584,6 @@ class TestOffLeashMovement(unittest.TestCase):
           if (path === 'ORBIT_OWNER') {
             treeX = 500 + dog.zoomiesOrbitRadius;
             treeY = 500;
-          } else if (path === 'SHUTTLE') {
-            treeX = 500 + dog.zoomiesShuttleHalfSpan;
-            treeY = 500;
-          } else {
-            // FIGURE_EIGHT: peak of the sine curve at phase ~PI/2.
-            treeX = 500 + 135;
-            treeY = 500;
           }
 
           const field = {

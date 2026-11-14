@@ -201,7 +201,7 @@ class TestWalkingTweaks(unittest.TestCase):
         o.setGait(Gait.WANDER);
         let minTreeDist = Infinity;
         let maxAbsY = 0;
-        for (let i = 0; i < 180; i++) {
+        for (let i = 0; i < 240; i++) {
           o.update(1 / 60, world);
           minTreeDist = Math.min(minTreeDist, Math.hypot(o.x - 300, o.y - 300));
           maxAbsY = Math.max(maxAbsY, Math.abs(o.y - 300));

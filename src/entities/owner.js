@@ -44,9 +44,9 @@ const JOG_COOLDOWN = 2.0;
 // Wander mode (KeyW autopilot stroll) constants
 export const WANDER_SPEED = Gait.WANDER;            // 60 px/s (20% slower than STROLL)
 export const WANDER_MAX_TURN_RATE = Math.PI * 1.4;  // rad/s
-export const WANDER_DRIFT_AMPLITUDE = 0.55;         // rad
+export const WANDER_DRIFT_AMPLITUDE = 0;            // 0 rad (smooth path to warp, no weaving)
 export const WANDER_DRIFT_FREQUENCY = 0.35;         // Hz
-export const WANDER_LOOKAHEAD_PX = 96;
+export const WANDER_LOOKAHEAD_PX = 120;
 
 // Leash arm pose constants (exported for tests/tooling)
 export const LEASH_ARM_SWING_SCALE = 0.15;
@@ -365,13 +365,96 @@ export class Owner {
   _isWanderProbeBlocked(px, py, world) {
     if (!world) return false;
 
+    const selfRadius = (this.radius || 16);
+    const clearancePad = 8;
+
     // World bounds check (respect owner radius + small margin)
     const w = (typeof world.width === 'number') ? world.width : null;
     const h = (typeof world.height === 'number') ? world.height : null;
     if (w !== null && h !== null) {
-      const margin = (this.radius || 16) + 4;
+      const margin = Math.max(selfRadius + 4, 56 + selfRadius);
       if (px < margin || py < margin || px > w - margin || py > h - margin) {
         return true;
+      }
+    }
+
+    // Real Field getWorldObstacles() check (circles & rects)
+    if (typeof world.getWorldObstacles === 'function') {
+      const worldObs = world.getWorldObstacles();
+      if (Array.isArray(worldObs)) {
+        for (const o of worldObs) {
+          if (!o) continue;
+          if (o.kind === 'circle' && typeof o.x === 'number' && typeof o.y === 'number') {
+            const reach = (typeof o.r === 'number' ? o.r : 0) + selfRadius + clearancePad;
+            const dx = px - o.x;
+            const dy = py - o.y;
+            if (dx * dx + dy * dy < reach * reach) return true;
+          } else if (o.kind === 'rect' && typeof o.x === 'number' && typeof o.y === 'number') {
+            const hw = (typeof o.hw === 'number' ? o.hw : 0) + selfRadius + clearancePad;
+            const hh = (typeof o.hh === 'number' ? o.hh : 0) + selfRadius + clearancePad;
+            if (Math.abs(px - o.x) < hw && Math.abs(py - o.y) < hh) return true;
+          }
+        }
+      }
+    }
+
+    // Direct Field scenery arrays check (trees, benches, bins, waterTower, rockOutcrops, landmarks)
+    if (Array.isArray(world.trees)) {
+      for (const t of world.trees) {
+        if (!t || typeof t.x !== 'number') continue;
+        const ty = (typeof t.depthY === 'number') ? t.depthY : t.y;
+        if (typeof ty !== 'number') continue;
+        const tr = (typeof t.trunkRadius === 'number') ? t.trunkRadius : ((typeof t.radius === 'number') ? t.radius * 0.28 : 18);
+        const reach = tr + selfRadius + clearancePad;
+        const dx = px - t.x;
+        const dy = py - ty;
+        if (dx * dx + dy * dy < reach * reach) return true;
+      }
+    }
+    if (Array.isArray(world.benches)) {
+      for (const b of world.benches) {
+        if (!b || typeof b.x !== 'number' || typeof b.y !== 'number') continue;
+        const isVertical = b.angle && Math.abs(Math.sin(b.angle)) > 0.7;
+        const hw = ((isVertical ? b.h : b.w) || 64) / 2 + selfRadius + clearancePad;
+        const hh = ((isVertical ? b.w : b.h) || 26) / 2 + selfRadius + clearancePad;
+        if (Math.abs(px - b.x) < hw && Math.abs(py - b.y) < hh) return true;
+      }
+    }
+    if (Array.isArray(world.bins)) {
+      for (const b of world.bins) {
+        if (!b || typeof b.x !== 'number' || typeof b.y !== 'number') continue;
+        const reach = (typeof b.radius === 'number' ? b.radius : 12) + selfRadius + clearancePad;
+        const dx = px - b.x;
+        const dy = py - b.y;
+        if (dx * dx + dy * dy < reach * reach) return true;
+      }
+    }
+    if (world.waterTower && typeof world.waterTower.x === 'number' && typeof world.waterTower.y === 'number') {
+      const reach = (typeof world.waterTower.radius === 'number' ? world.waterTower.radius : 42) + selfRadius + clearancePad;
+      const dx = px - world.waterTower.x;
+      const dy = py - world.waterTower.y;
+      if (dx * dx + dy * dy < reach * reach) return true;
+    }
+    if (Array.isArray(world.rockOutcrops)) {
+      for (const r of world.rockOutcrops) {
+        if (!r || typeof r.x !== 'number') continue;
+        const ry = (typeof r.depthY === 'number') ? (r.depthY - 8) : r.y;
+        if (typeof ry !== 'number') continue;
+        const reach = (typeof r.r === 'number' ? r.r : 24) + selfRadius + clearancePad;
+        const dx = px - r.x;
+        const dy = py - ry;
+        if (dx * dx + dy * dy < reach * reach) return true;
+      }
+    }
+    if (Array.isArray(world.landmarks)) {
+      for (const l of world.landmarks) {
+        if (!l || typeof l.x !== 'number') continue;
+        const ly = (typeof l.depthY === 'number') ? l.depthY : l.y;
+        if (typeof ly !== 'number') continue;
+        const reach = (typeof l.radius === 'number' ? l.radius : 32) + selfRadius + clearancePad;
+        const dx = px - l.x;
+        const dy = py - ly;
+        if (dx * dx + dy * dy < reach * reach) return true;
       }
     }
 
@@ -411,6 +494,23 @@ export class Owner {
     return false;
   }
 
+  // Multi-sample corridor check: probes several points along a ray from the
+  // owner's current position in the given heading. Returns true if any sample
+  // is blocked.
+  _isWanderRayBlocked(heading, maxDist, world) {
+    if (!world) return false;
+    const cosH = Math.cos(heading);
+    const sinH = Math.sin(heading);
+    const samples = [0.25, 0.5, 0.75, 1.0];
+    for (const s of samples) {
+      const dist = maxDist * s;
+      if (this._isWanderProbeBlocked(this.x + cosH * dist, this.y + sinH * dist, world)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   // Per-frame autopilot stepper. Advances a smooth meandering heading at
   // Gait.STROLL speed, steering away from obstacles and world boundaries.
   updateWander(dt, world) {
@@ -419,53 +519,60 @@ export class Owner {
     // Advance drift phase
     this.wanderPhase += WANDER_DRIFT_FREQUENCY * Math.PI * 2 * dt;
 
-    // Base meandering target heading
-    let targetHeading = this.wanderBaseHeading +
-      Math.sin(this.wanderPhase) * WANDER_DRIFT_AMPLITUDE;
+    const probeDist = WANDER_LOOKAHEAD_PX;
 
     // Warp-journey steering: bias the base heading toward the next warp gate.
     const gate = this._pickWanderWarpGate(world);
     if (gate) {
       const gateAngle = Math.atan2(gate.y - this.y, gate.x - this.x);
-      const gateDelta = angleDelta(this.wanderBaseHeading, gateAngle);
-      // Smoothly rotate the base heading toward the gate (bounded per frame).
-      const gateTurn = Math.min(Math.abs(gateDelta), 1.2 * dt);
-      this.wanderBaseHeading += Math.sign(gateDelta) * gateTurn;
-      // Recompute the meandering target from the updated base heading.
-      targetHeading = this.wanderBaseHeading +
-        Math.sin(this.wanderPhase) * WANDER_DRIFT_AMPLITUDE;
+      if (!this._isWanderRayBlocked(gateAngle, probeDist, world)) {
+        // Direct corridor to the gate is clear: smoothly rotate toward it.
+        const gateDelta = angleDelta(this.wanderBaseHeading, gateAngle);
+        const gateTurn = Math.min(Math.abs(gateDelta), 1.8 * dt);
+        this.wanderBaseHeading += Math.sign(gateDelta) * gateTurn;
+      }
+      // Else: keep the current base heading steady until clear of the
+      // obstacle so we do not pull back into the tree.
     }
 
-    // Forward probe: if blocked, search for a clear side.
-    const probeDist = WANDER_LOOKAHEAD_PX;
-    const probeX = this.x + Math.cos(targetHeading) * probeDist;
-    const probeY = this.y + Math.sin(targetHeading) * probeDist;
+    // Base target heading (no sinusoidal weaving).
+    let targetHeading = this.wanderBaseHeading;
 
-    if (this._isWanderProbeBlocked(probeX, probeY, world)) {
+    // Multi-sample corridor check: if the base heading is blocked, search a
+    // fan of candidate offsets and pick the unblocked one closest to the
+    // owner's current heading (prevents left/right oscillation).
+    if (this._isWanderRayBlocked(targetHeading, probeDist, world)) {
       const offsets = [
+        Math.PI / 12, -Math.PI / 12,
         Math.PI / 6, -Math.PI / 6,
+        Math.PI / 4, -Math.PI / 4,
         Math.PI / 3, -Math.PI / 3,
-        Math.PI / 2, -Math.PI / 2
+        Math.PI / 2, -Math.PI / 2,
+        (2 * Math.PI) / 3, -(2 * Math.PI) / 3
       ];
       let chosen = null;
+      let bestAngularDist = Infinity;
       for (const off of offsets) {
         const testHeading = targetHeading + off;
-        const tx = this.x + Math.cos(testHeading) * probeDist;
-        const ty = this.y + Math.sin(testHeading) * probeDist;
-        if (!this._isWanderProbeBlocked(tx, ty, world)) {
-          chosen = testHeading;
-          break;
+        if (!this._isWanderRayBlocked(testHeading, probeDist, world)) {
+          const angDist = Math.abs(angleDelta(this.angle, testHeading));
+          if (angDist < bestAngularDist) {
+            bestAngularDist = angDist;
+            chosen = testHeading;
+          }
         }
       }
       if (chosen !== null) {
         targetHeading = chosen;
-        // Slowly rotate the base heading away from the obstacle so we do not
-        // re-target it every frame.
+        // Steer the base heading toward the chosen tangent at the max turn
+        // rate so we do not re-target the obstacle every frame.
         const baseDelta = angleDelta(this.wanderBaseHeading, chosen);
-        this.wanderBaseHeading += Math.sign(baseDelta) * Math.min(Math.abs(baseDelta), 0.6 * dt);
+        this.wanderBaseHeading += Math.sign(baseDelta) *
+          Math.min(Math.abs(baseDelta), WANDER_MAX_TURN_RATE * dt);
       } else {
         // Fully boxed in: reverse the base heading to escape.
         this.wanderBaseHeading += Math.PI;
+        targetHeading = this.wanderBaseHeading;
       }
     }
 

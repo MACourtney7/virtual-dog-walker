@@ -46,6 +46,12 @@ export class CliftonDownGame {
 
     this.camera.follow(this.owner);
 
+    // Wire the physical screen viewport (Camera) into the entities so the
+    // CompanionDog can bound itself to the visible screen perimeter when
+    // off-leash.
+    this.owner.camera = this.camera;
+    this.dog.camera = this.camera;
+
     // Speed-up floating chevron badges have been retired (unification-023).
     // Kept as an empty array for backwards compatibility with any external
     // inspection code; nothing is ever pushed into it.

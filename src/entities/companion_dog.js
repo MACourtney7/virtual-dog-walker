@@ -1001,7 +1001,7 @@ export class CompanionDog {
         this.isPullingLeash = false;
         this.leashTugTarget = null;
       }
-    } else if (this.leashTugTimer > 0 && (!this.owner || !this.owner.isLeashed)) {
+    } else if (this.leashTugTimer > 0 && (!this.leashTugTarget || !this.owner || !this.owner.isLeashed)) {
       this.leashTugTimer = 0;
       this.leashTugTarget = null;
       this.isPullingLeash = false;
@@ -1367,12 +1367,14 @@ export class CompanionDog {
     if (Array.isArray(field.trees)) {
       for (const t of field.trees) {
         if (!t || typeof t.x !== 'number') continue;
-        out.push({ x: t.x, y: t.depthY ?? t.y, r: t.trunkRadius || 18 });
+        const ty = (typeof t.depthY === 'number') ? t.depthY : t.y;
+        if (typeof ty !== 'number') continue;
+        out.push({ x: t.x, y: ty, r: t.trunkRadius || 18 });
       }
     }
     if (Array.isArray(field.benches)) {
       for (const b of field.benches) {
-        if (!b || typeof b.x !== 'number') continue;
+        if (!b || typeof b.x !== 'number' || typeof b.y !== 'number') continue;
         out.push({
           x: b.x,
           y: b.y,
@@ -1382,11 +1384,11 @@ export class CompanionDog {
     }
     if (Array.isArray(field.bins)) {
       for (const b of field.bins) {
-        if (!b || typeof b.x !== 'number') continue;
+        if (!b || typeof b.x !== 'number' || typeof b.y !== 'number') continue;
         out.push({ x: b.x, y: b.y, r: b.r || b.radius || 16 });
       }
     }
-    if (field.waterTower && typeof field.waterTower.x === 'number') {
+    if (field.waterTower && typeof field.waterTower.x === 'number' && typeof field.waterTower.y === 'number') {
       out.push({
         x: field.waterTower.x,
         y: field.waterTower.y,
@@ -1396,9 +1398,11 @@ export class CompanionDog {
     if (Array.isArray(field.rockOutcrops)) {
       for (const r of field.rockOutcrops) {
         if (!r || typeof r.x !== 'number') continue;
+        const ry = (typeof r.depthY === 'number') ? (r.depthY - 8) : r.y;
+        if (typeof ry !== 'number') continue;
         out.push({
           x: r.x,
-          y: (typeof r.depthY === 'number') ? (r.depthY - 8) : r.y,
+          y: ry,
           r: r.r || r.radius || 26
         });
       }
@@ -1406,9 +1410,11 @@ export class CompanionDog {
     if (Array.isArray(field.landmarks)) {
       for (const l of field.landmarks) {
         if (!l || typeof l.x !== 'number') continue;
+        const ly = (typeof l.depthY === 'number') ? l.depthY : l.y;
+        if (typeof ly !== 'number') continue;
         out.push({
           x: l.x,
-          y: (typeof l.depthY === 'number') ? l.depthY : l.y,
+          y: ly,
           r: l.r || l.radius || 32
         });
       }
@@ -1913,9 +1919,15 @@ export class CompanionDog {
     switch (this.roamSubMode) {
       case RoamSubMode.SCOUT_AHEAD: {
         // Run ahead of the owner along their heading (stored lead, no jitter).
-        const lead = this.roamSubModeOptionLead || (120 + Math.random() * 40);
-        desiredX = this.owner.x + fwdX * lead + rightX * sideSign * 20;
-        desiredY = this.owner.y + fwdY * lead + rightY * sideSign * 20;
+        // Prefer the stored waypoint when present so the target is stable.
+        if (this.roamWaypoint) {
+          desiredX = this.roamWaypoint.x;
+          desiredY = this.roamWaypoint.y;
+        } else {
+          const lead = this.roamSubModeOptionLead || (120 + Math.random() * 40);
+          desiredX = this.owner.x + fwdX * lead + rightX * sideSign * 20;
+          desiredY = this.owner.y + fwdY * lead + rightY * sideSign * 20;
+        }
         // Look-back wait moment when far enough ahead.
         if (distToOwner > 175 && !this.roamLookBackDone && !this.roamLookBackActive) {
           this.roamLookBackActive = true;
@@ -1927,9 +1939,9 @@ export class CompanionDog {
         if (Math.hypot(desiredX - this.x, desiredY - this.y) < 24) {
           this.roamSubMode = RoamSubMode.FREE_EXPLORE;
           this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
+          this.roamSubModeTimer = 0;
           this.roamTargetSpeed = 125 + Math.random() * 50;
           this.roamLookBackDone = false;
-          this.roamSubModeTimer = 0;
           this.roamWaypoint = null;
           desiredX = this.x + Math.cos(this.wanderAngle) * 100;
           desiredY = this.y + Math.sin(this.wanderAngle) * 100;
@@ -1938,17 +1950,23 @@ export class CompanionDog {
       }
       case RoamSubMode.FLANK_PACE: {
         // Pace alongside the owner on the preferred flank (stored offsets).
-        const lateral = this.roamSubModeOptionLateral || (55 + Math.random() * 15);
-        const forward = this.roamSubModeOptionForward || (10 + Math.random() * 20);
-        desiredX = this.owner.x + fwdX * forward + rightX * sideSign * lateral;
-        desiredY = this.owner.y + fwdY * forward + rightY * sideSign * lateral;
+        // Prefer the stored waypoint when present so the target is stable.
+        if (this.roamWaypoint) {
+          desiredX = this.roamWaypoint.x;
+          desiredY = this.roamWaypoint.y;
+        } else {
+          const lateral = this.roamSubModeOptionLateral || (55 + Math.random() * 15);
+          const forward = this.roamSubModeOptionForward || (10 + Math.random() * 20);
+          desiredX = this.owner.x + fwdX * forward + rightX * sideSign * lateral;
+          desiredY = this.owner.y + fwdY * forward + rightY * sideSign * lateral;
+        }
         // Arrival or stationary owner: hand off back to baseline.
         if (!this.owner.isMoving || Math.hypot(desiredX - this.x, desiredY - this.y) < 24) {
           this.roamSubMode = RoamSubMode.FREE_EXPLORE;
           this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
+          this.roamSubModeTimer = 0;
           this.roamTargetSpeed = 125 + Math.random() * 50;
           this.roamLookBackDone = false;
-          this.roamSubModeTimer = 0;
           this.roamWaypoint = null;
           desiredX = this.x + Math.cos(this.wanderAngle) * 100;
           desiredY = this.y + Math.sin(this.wanderAngle) * 100;
@@ -1973,9 +1991,9 @@ export class CompanionDog {
           }
           this.roamSubMode = RoamSubMode.FREE_EXPLORE;
           this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
+          this.roamSubModeTimer = 0;
           this.roamTargetSpeed = 125 + Math.random() * 50;
           this.roamLookBackDone = false;
-          this.roamSubModeTimer = 0;
           this.roamWaypoint = null;
           return;
         }
@@ -1988,12 +2006,11 @@ export class CompanionDog {
         // Arrival: hand off to baseline free exploration immediately.
         if (distToOwner < 48) {
           this.wagSpeed = 16;
-          this.roamSubModeTimer = 0;
           this.roamSubMode = RoamSubMode.FREE_EXPLORE;
           this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
+          this.roamSubModeTimer = 0;
           this.roamTargetSpeed = 125 + Math.random() * 50;
           this.roamLookBackDone = false;
-          this.roamSubModeTimer = 0;
           this.roamWaypoint = null;
         }
         break;

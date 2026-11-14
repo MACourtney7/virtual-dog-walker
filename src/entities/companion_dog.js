@@ -619,10 +619,12 @@ export class CompanionDog {
 
     // Stat-driven social cool-off post-whistle: high obedience increases the
     // cool-off (up to 45s), high playfulness decreases it (down to 8s).
-    const obedience = this.personality?.obedience || 3;
-    const playfulness = this.personality?.playfulness || 3;
-    const baseCooldown = 20.0 + (obedience / 5) * 20.0 - (playfulness / 5) * 14.0;
-    this.socialCooldown = Math.max(8.0, Math.min(45.0, baseCooldown));
+    // Normalised 1..5 -> 0..1 so the bands are exact:
+    //   (5,1) -> 40s, (3,3) -> 24s, (2,4) -> 16s, (1,5) -> 8s
+    const obedNorm = ((this.personality?.obedience || 3) - 1) / 4; // 0..1
+    const playNorm = ((this.personality?.playfulness || 3) - 1) / 4; // 0..1
+    const cd = 20.0 + obedNorm * 20.0 - playNorm * 12.0;
+    this.socialCooldown = Math.max(8.0, Math.min(45.0, cd));
 
     this.state = DogState.RECALLED;
     this.isLost = false;
@@ -2273,10 +2275,15 @@ export class CompanionDog {
       return false;
     }
     if (this.state === DogState.LOST || this.state === DogState.POOPING ||
-        this.state === DogState.RECALLED) {
+        this.state === DogState.RECALLED || this.state === DogState.FETCHING) {
       return false;
     }
     if (this.socialCooldown > 0 || partner.socialCooldown > 0) return false;
+
+    // Third-dog hijack guard: never steal a partner that is already engaged
+    // with another dog (greeting or bonded in pack play).
+    if (partner.socialTargetDog && partner.socialTargetDog !== this) return false;
+    if (partner.state === DogState.PACK_PLAY || partner.packPlayPartner !== null) return false;
 
     // Mutual pairing interest: the partner must be receptive. Either it is
     // actively greeting/bowing, or it is roaming and (optionally) already
@@ -2306,8 +2313,8 @@ export class CompanionDog {
     partner.emoteBubble = '🐶';
     this.emoteTimer = 2.5;
     partner.emoteTimer = 2.5;
-    this.wagSpeed = 16 + (this.personality?.playfulness || 3) * 2;
-    partner.wagSpeed = 16 + (partner.personality?.playfulness || 3) * 2;
+    this.wagSpeed = Math.min(22, Math.max(16, 16 + (this.personality?.playfulness || 3)));
+    partner.wagSpeed = Math.min(22, Math.max(16, 16 + (partner.personality?.playfulness || 3)));
     return true;
   }
 
@@ -2343,11 +2350,19 @@ export class CompanionDog {
     const dy = partner.y - this.y;
     const dist = Math.hypot(dx, dy) || 1;
 
-    // Role swapping timer.
-    this.packPlayRoleTimer -= dt;
-    if (this.packPlayRoleTimer <= 0) {
-      this.packPlayRole = this.packPlayRole === 'LEAD' ? 'CHASE' : 'LEAD';
-      this.packPlayRoleTimer = 4.0 + Math.random() * 3.0;
+    // Coordinated role swapping: only the LEAD dog drives the swap so both
+    // dogs always hold complementary roles (never two LEADs / two CHASEs).
+    if (this.packPlayRole === 'LEAD') {
+      this.packPlayRoleTimer -= dt;
+      if (this.packPlayRoleTimer <= 0) {
+        this.packPlayRole = 'CHASE';
+        if (this.packPlayPartner) this.packPlayPartner.packPlayRole = 'LEAD';
+        this.packPlayRoleTimer = 4.0 + Math.random() * 3.0;
+        if (this.packPlayPartner) this.packPlayPartner.packPlayRoleTimer = this.packPlayRoleTimer;
+      }
+    } else if (this.packPlayPartner) {
+      // CHASE dog mirrors the partner's role to stay strictly complementary.
+      this.packPlayRole = (this.packPlayPartner.packPlayRole === 'LEAD') ? 'CHASE' : 'LEAD';
     }
     this.packPlayTimer = this.packPlayRoleTimer;
 
@@ -2355,15 +2370,19 @@ export class CompanionDog {
     const screen = this._getScreenPerimeter(field);
 
     // Shared landmark exploration: bias the lead waypoint toward the nearest
-    // obstacle/prop within 180px so both dogs explore it together.
-    const nearbyObstacles = this._getFieldObstacles(field);
+    // tree within 220px so both dogs investigate it together.
     let nearestLandmark = null;
     let nearestLandmarkDist = Infinity;
-    for (const obs of nearbyObstacles) {
-      const d = Math.hypot(obs.x - this.x, obs.y - this.y);
-      if (d < 180 && d < nearestLandmarkDist) {
-        nearestLandmark = obs;
-        nearestLandmarkDist = d;
+    if (field && Array.isArray(field.trees) && field.trees.length > 0) {
+      for (const tree of field.trees) {
+        if (!tree || typeof tree.x !== 'number') continue;
+        const ty = (typeof tree.depthY === 'number') ? tree.depthY : tree.y;
+        if (typeof ty !== 'number') continue;
+        const d = Math.hypot(tree.x - this.x, ty - this.y);
+        if (d < 220 && d < nearestLandmarkDist) {
+          nearestLandmark = { x: tree.x, y: ty, r: tree.trunkRadius || 18 };
+          nearestLandmarkDist = d;
+        }
       }
     }
 
@@ -2382,7 +2401,7 @@ export class CompanionDog {
           const dxL = nearestLandmark.x - this.x;
           const dyL = nearestLandmark.y - this.y;
           const dL = Math.hypot(dxL, dyL) || 1;
-          const skirt = (nearestLandmark.r || 20) + 30;
+          const skirt = (nearestLandmark.r || 20) + 40;
           this.packPlayWaypoint = {
             x: nearestLandmark.x - (dxL / dL) * skirt,
             y: nearestLandmark.y - (dyL / dL) * skirt
@@ -2420,6 +2439,8 @@ export class CompanionDog {
         modeSpeed = Math.min(210, Math.max(150, 150 + Math.random() * 40));
       }
     }
+    // Final clamp: chase speed must never exceed 210 px/s.
+    modeSpeed = Math.min(210, Math.max(150, modeSpeed));
 
     let dirX = desiredX - this.x;
     let dirY = desiredY - this.y;

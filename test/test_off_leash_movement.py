@@ -1572,14 +1572,34 @@ class TestOffLeashMovement(unittest.TestCase):
         dogB.owner = ownerB;
         dogB.personality = { obedience: 1, playfulness: 5, energy: 3, curiosity: 3 };
 
+        // Give each dog its own separate partner so that recalling dogA does
+        // not clear dogB's pack-play state (which would zero its cooldown).
+        const ownerPA = new Owner(1120, 1000);
+        ownerPA.isLeashed = false;
+        const partnerA = new CompanionDog(1120, 1000, ownerPA);
+        partnerA.owner = ownerPA;
+        const ownerPB = new Owner(1180, 1000);
+        ownerPB.isLeashed = false;
+        const partnerB = new CompanionDog(1180, 1000, ownerPB);
+        partnerB.owner = ownerPB;
+
         dogA.state = DogState.PACK_PLAY;
-        dogB.state = DogState.PACK_PLAY;
-        dogA.packPlayPartner = dogB;
-        dogB.packPlayPartner = dogA;
+        partnerA.state = DogState.PACK_PLAY;
+        dogA.packPlayPartner = partnerA;
+        partnerA.packPlayPartner = dogA;
         dogA.packPlayRole = 'LEAD';
-        dogB.packPlayRole = 'CHASE';
+        partnerA.packPlayRole = 'CHASE';
         dogA.packPlayTimer = 10;
+        partnerA.packPlayTimer = 10;
+
+        dogB.state = DogState.PACK_PLAY;
+        partnerB.state = DogState.PACK_PLAY;
+        dogB.packPlayPartner = partnerB;
+        partnerB.packPlayPartner = dogB;
+        dogB.packPlayRole = 'LEAD';
+        partnerB.packPlayRole = 'CHASE';
         dogB.packPlayTimer = 10;
+        partnerB.packPlayTimer = 10;
 
         dogA.whistleRecall();
         dogB.whistleRecall();

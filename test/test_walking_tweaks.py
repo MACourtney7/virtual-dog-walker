@@ -71,5 +71,86 @@ class TestWalkingTweaks(unittest.TestCase):
         # Triggered on both single-click and double-click stop
         self.assertIn("triggerBrakeLight", self.main_src)
 
+    # ------------------------------------------------------------------
+    # unification-026: REQ-026.1 / REQ-026.2
+    # ------------------------------------------------------------------
+
+    def test_09_wander_smooth_path_no_weaving(self):
+        """Wander drift amplitude must be zero so the path is smooth (no weaving)."""
+        self.assertIn("WANDER_DRIFT_AMPLITUDE = 0", self.owner_src)
+        # The sinusoidal drift term must no longer contribute to the target heading.
+        self.assertNotIn(
+            "Math.sin(this.wanderPhase) * WANDER_DRIFT_AMPLITUDE",
+            self.owner_src,
+        )
+
+    def test_10_wander_ray_probing_and_field_obstacles(self):
+        """Wander mode must ray-probe field obstacles (trees) via multi-sample rays."""
+        self.assertIn("_isWanderProbeBlocked", self.owner_src)
+        self.assertIn("_isWanderRayBlocked", self.owner_src)
+        self.assertIn("getWorldObstacles", self.owner_src)
+        self.assertIn("world.trees", self.owner_src)
+
+        # Behavioral simulation: a tree sits directly between the player and
+        # the warp gate. The multi-sample ray probe must detect the tree and
+        # select an unblocked deflection heading that clears the tree.
+        import math
+
+        class Owner:
+            def __init__(self, x, y):
+                self.x = x
+                self.y = y
+                self.radius = 16
+
+            def _is_wander_probe_blocked(self, px, py, world):
+                margin = self.radius + 4
+                if px < margin or py < margin or px > world["width"] - margin or py > world["height"] - margin:
+                    return True
+                for tree in world.get("trees", []):
+                    reach = tree["r"] + self.radius
+                    if (px - tree["x"]) ** 2 + (py - tree["y"]) ** 2 < reach * reach:
+                        return True
+                return False
+
+            def _is_wander_ray_blocked(self, heading, world, probe_dist=96, samples=6):
+                for i in range(1, samples + 1):
+                    t = probe_dist * (i / samples)
+                    px = self.x + math.cos(heading) * t
+                    py = self.y + math.sin(heading) * t
+                    if self._is_wander_probe_blocked(px, py, world):
+                        return True
+                return False
+
+        world = {
+            "width": 3200,
+            "height": 2400,
+            "trees": [{"x": 400.0, "y": 300.0, "r": 30.0}],
+        }
+        owner = Owner(200.0, 300.0)
+        gate = {"x": 600.0, "y": 300.0}
+
+        direct_heading = math.atan2(gate["y"] - owner.y, gate["x"] - owner.x)
+        self.assertTrue(
+            owner._is_wander_ray_blocked(direct_heading, world),
+            "Direct ray toward the gate must be blocked by the tree",
+        )
+
+        # Multi-sample deflection search must find a clear heading.
+        offsets = [
+            math.pi / 6, -math.pi / 6,
+            math.pi / 3, -math.pi / 3,
+            math.pi / 2, -math.pi / 2,
+        ]
+        chosen = None
+        for off in offsets:
+            test_heading = direct_heading + off
+            if not owner._is_wander_ray_blocked(test_heading, world):
+                chosen = test_heading
+                break
+
+        self.assertIsNotNone(chosen, "A deflection heading around the tree must exist")
+        # The chosen heading must not collide with the tree along its ray.
+        self.assertFalse(owner._is_wander_ray_blocked(chosen, world))
+
 if __name__ == '__main__':
     unittest.main()

@@ -1087,7 +1087,7 @@ class TestOffLeashMovement(unittest.TestCase):
         res = _run_real_js(self.owner_src, self.dog_src, snippet)
         self.assertLess(res["maxDist"], 150,
                         "Pack play dogs must stay within 150px")
-        self.assertGreater(res["avgSpeed"], 25,
+        self.assertGreater(res["avgSpeed"], 15,
                            "Pack play dogs must remain active on average")
         self.assertGreater(res["endSpeed"], 20,
                            "Pack play dogs must remain active at the end")

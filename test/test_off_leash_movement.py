@@ -891,5 +891,884 @@ class TestOffLeashMovement(unittest.TestCase):
         self.assertEqual(res["regimeCGazeTimer"], 0,
                          "Regime C gaze must be gated by cooldown/probability")
 
+    # ------------------------------------------------------------------
+    # unification-027: REQ-027.1 / REQ-027.2 / REQ-027.3 / REQ-027.4
+    # ------------------------------------------------------------------
+
+    def test_standing_owner_indefinite_roaming_no_permanent_freeze(self):
+        """Off-leash dog must keep roaming indefinitely around a standing owner."""
+        snippet = """
+        const owner = new Owner(1000, 1000);
+        owner.isLeashed = false;
+        owner.isMoving = false;
+        owner.vx = 0;
+        owner.vy = 0;
+        const dog = new CompanionDog(owner.x + 40, owner.y, owner);
+        dog.owner = owner;
+        dog.camera = null;
+
+        const dt = 0.1;
+        const steps = 600;
+        let roamTime = 0;
+        let roamTransitions = 0;
+        let prevState = dog.state;
+        let sawResting = false;
+        let continuousRest = 0;
+        let maxContinuousRest = 0;
+        const restingStates = ['LYING_DOWN', 'SITTING', 'IDLE_SNIFF'];
+
+        for (let i = 0; i < steps; i++) {
+          owner.isMoving = false;
+          owner.vx = 0;
+          owner.vy = 0;
+          dog.update(dt, null, []);
+          if (dog.state === 'ROAMING') roamTime += dt;
+          if (restingStates.indexOf(dog.state) !== -1) {
+            sawResting = true;
+            continuousRest += dt;
+            if (continuousRest > maxContinuousRest) maxContinuousRest = continuousRest;
+          } else {
+            continuousRest = 0;
+          }
+          if (dog.state === 'ROAMING' && prevState !== 'ROAMING') roamTransitions++;
+          prevState = dog.state;
+        }
+
+        return {
+          roamTime: roamTime,
+          roamTransitions: roamTransitions,
+          sawResting: sawResting,
+          maxContinuousRest: maxContinuousRest,
+          finalState: dog.state,
+          finalSubMode: dog.roamSubMode
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertGreater(res["roamTime"], 20.0,
+                           "Dog must spend substantial time roaming")
+        self.assertGreaterEqual(res["roamTransitions"], 2,
+                                "Dog must return to ROAMING at least twice")
+        self.assertTrue(res["sawResting"], "Dog must enter resting state during 60s")
+        self.assertLess(res["maxContinuousRest"], 6.0,
+                        "Dog must never freeze permanently in a resting state")
+        self.assertIn(res["finalState"], (
+            "ROAMING", "LYING_DOWN", "SITTING", "BARKING",
+            "IDLE_SNIFF", "PLAY_BOW", "ROLLING", "LOST",
+        ))
+
+    def test_pack_play_enum_and_active_rest_blocked(self):
+        """DogState.PACK_PLAY must be exported and block ambient resting."""
+        self.assertIn("PACK_PLAY: 'PACK_PLAY'", self.dog_src)
+        self.assertIn("ACTIVE_REST_BLOCKED_STATES", self.dog_src)
+
+        snippet = """
+        const owner = new Owner(1000, 1000);
+        owner.isLeashed = false;
+        const dog = new CompanionDog(1000, 1000, owner);
+        dog.owner = owner;
+        const blockedSet = CompanionDog.ACTIVE_REST_BLOCKED_STATES;
+        return {
+          packPlay: DogState.PACK_PLAY,
+          blocked: Boolean(blockedSet && typeof blockedSet.has === 'function' &&
+            blockedSet.has(DogState.PACK_PLAY))
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertEqual(res["packPlay"], "PACK_PLAY")
+        self.assertTrue(res["blocked"],
+                        "PACK_PLAY must be in ACTIVE_REST_BLOCKED_STATES")
+
+    def test_two_off_leash_dogs_enter_pack_play_after_greeting(self):
+        """Two off-leash dogs must enter PACK_PLAY after SOCIAL_GREET."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        dog1.socialTargetDog = dog2;
+        dog1.state = DogState.SOCIAL_GREET;
+        dog1.stateTimer = 0.05;
+        dog1.socialCooldown = 0;
+        dog2.socialCooldown = 0;
+        // dog2 must be receptive for mutual pairing.
+        dog2.socialTargetDog = dog1;
+        dog2.state = DogState.SOCIAL_GREET;
+
+        dog1.update(0.1, null, [dog2]);
+
+        return {
+          dog1State: dog1.state,
+          dog2State: dog2.state,
+          dog1Partner: dog1.packPlayPartner === dog2,
+          dog2Partner: dog2.packPlayPartner === dog1,
+          dog1Role: dog1.packPlayRole,
+          dog2Role: dog2.packPlayRole,
+          dog1Timer: dog1.packPlayRoleTimer || dog1.packPlayTimer,
+          dog2Timer: dog2.packPlayRoleTimer || dog2.packPlayTimer
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertEqual(res["dog1State"], "PACK_PLAY")
+        self.assertEqual(res["dog2State"], "PACK_PLAY")
+        self.assertTrue(res["dog1Partner"])
+        self.assertTrue(res["dog2Partner"])
+        self.assertIn(res["dog1Role"], ("LEAD", "CHASE"))
+        self.assertIn(res["dog2Role"], ("LEAD", "CHASE"))
+        self.assertNotEqual(res["dog1Role"], res["dog2Role"])
+        self.assertGreater(res["dog1Timer"], 0)
+        self.assertGreater(res["dog2Timer"], 0)
+
+    def test_pack_play_romping_coordination_and_proximity(self):
+        """Pack play must keep dogs close, active, and inside the screen."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        const camera = { x: 1000, y: 1000, viewportWidth: 1280, viewportHeight: 720, zoom: 1.0 };
+        dog1.camera = camera;
+        dog2.camera = camera;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayTimer = 10;
+        dog2.packPlayTimer = 10;
+
+        let maxDist = 0;
+        let speedSum = 0;
+        let speedSamples = 0;
+        let endSpeed = 0;
+        let insidePerimeter = true;
+        const perim = dog1._getScreenPerimeter();
+
+        // Warm up for 3 steps so velocity ramps up from rest before measuring.
+        for (let i = 0; i < 3; i++) {
+          dog1.update(0.1, null, [dog2]);
+          dog2.update(0.1, null, [dog1]);
+        }
+
+        for (let i = 0; i < 50; i++) {
+          dog1.update(0.1, null, [dog2]);
+          dog2.update(0.1, null, [dog1]);
+          const d = Math.hypot(dog1.x - dog2.x, dog1.y - dog2.y);
+          maxDist = Math.max(maxDist, d);
+          const spd = Math.hypot(dog1.vx, dog1.vy);
+          speedSum += spd;
+          speedSamples++;
+          endSpeed = spd;
+          if (dog1.x < perim.left - 1 || dog1.x > perim.right + 1 ||
+              dog1.y < perim.top - 1 || dog1.y > perim.bottom + 1) {
+            insidePerimeter = false;
+          }
+        }
+
+        return {
+          maxDist: maxDist,
+          avgSpeed: speedSamples > 0 ? speedSum / speedSamples : 0,
+          endSpeed: endSpeed,
+          insidePerimeter: insidePerimeter
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertLess(res["maxDist"], 150,
+                        "Pack play dogs must stay within 150px")
+        self.assertGreater(res["avgSpeed"], 15,
+                           "Pack play dogs must remain active on average")
+        self.assertGreater(res["endSpeed"], 10,
+                           "Pack play dogs must remain active at the end")
+        self.assertTrue(res["insidePerimeter"],
+                        "Pack play must honor the screen perimeter")
+
+    def test_whistle_recall_breaks_pack_play(self):
+        """Whistle recall must break pack play for both dogs."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayTimer = 10;
+        dog2.packPlayTimer = 10;
+
+        dog1.whistleRecall();
+
+        return {
+          dog1State: dog1.state,
+          dog1Partner: dog1.packPlayPartner,
+          dog2Partner: dog2.packPlayPartner,
+          dog2State: dog2.state
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertEqual(res["dog1State"], "RECALLED")
+        self.assertIsNone(res["dog1Partner"])
+        self.assertIsNone(res["dog2Partner"])
+        self.assertEqual(res["dog2State"], "ROAMING")
+
+    def test_three_dogs_prevents_hijacking_existing_pack_play(self):
+        """A third dog must not hijack an existing pack-play bond."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const owner3 = new Owner(1120, 1000);
+        owner3.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+        const dog3 = new CompanionDog(1120, 1000, owner3);
+        dog3.owner = owner3;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayRoleTimer = 10;
+        dog2.packPlayRoleTimer = 10;
+
+        // dog3 greets dog2 and tries to start pack play.
+        dog3.state = DogState.SOCIAL_GREET;
+        dog3.socialTargetDog = dog2;
+        dog3.socialCooldown = 0;
+        dog2.socialCooldown = 0;
+        const started = dog3._tryStartPackPlay(dog2);
+
+        return {
+          started: started,
+          dog2PartnerIsDog1: dog2.packPlayPartner === dog1,
+          dog3Partner: dog3.packPlayPartner,
+          dog2State: dog2.state
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertFalse(res["started"], "Third dog must not hijack existing pack play")
+        self.assertTrue(res["dog2PartnerIsDog1"], "dog2 must remain bonded to dog1")
+        self.assertIsNone(res["dog3Partner"])
+        self.assertEqual(res["dog2State"], "PACK_PLAY")
+
+    def test_pack_play_role_swap_over_time(self):
+        """Roles must swap after the role timer elapses."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayRoleTimer = 5.0;
+        dog2.packPlayRoleTimer = 5.0;
+
+        const before1 = dog1.packPlayRole;
+        const before2 = dog2.packPlayRole;
+
+        // Step in small increments past the role timer, verifying roles stay
+        // strictly complementary at every step.
+        let desync = false;
+        const dt = 0.1;
+        for (let i = 0; i < 55; i++) {
+          dog1.updatePackPlay(dt, null);
+          dog2.updatePackPlay(dt, null);
+          if (dog1.packPlayRole === dog2.packPlayRole) desync = true;
+        }
+
+        return {
+          before1: before1,
+          before2: before2,
+          after1: dog1.packPlayRole,
+          after2: dog2.packPlayRole,
+          desync: desync
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertEqual(res["before1"], "LEAD")
+        self.assertEqual(res["before2"], "CHASE")
+        self.assertEqual(res["after1"], "CHASE")
+        self.assertEqual(res["after2"], "LEAD")
+        self.assertFalse(res["desync"], "Roles must remain strictly complementary")
+
+    def test_social_cooldown_blocks_reengagement(self):
+        """A dog with an active social cooldown must reject pack play."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        dog1.state = DogState.SOCIAL_GREET;
+        dog1.socialTargetDog = dog2;
+        dog1.socialCooldown = 10;
+        dog2.state = DogState.SOCIAL_GREET;
+        dog2.socialTargetDog = dog1;
+        dog2.socialCooldown = 0;
+
+        const started = dog1._tryStartPackPlay(dog2);
+
+        return {
+          started: started,
+          dog1Partner: dog1.packPlayPartner,
+          dog2Partner: dog2.packPlayPartner
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertFalse(res["started"], "Active social cooldown must block pack play")
+        self.assertIsNone(res["dog1Partner"])
+        self.assertIsNone(res["dog2Partner"])
+
+    def test_three_dogs_hijack_guard_during_greeting(self):
+        """A third dog must not steal a partner that is greeting another dog."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const owner3 = new Owner(1120, 1000);
+        owner3.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+        const dog3 = new CompanionDog(1120, 1000, owner3);
+        dog3.owner = owner3;
+
+        // dog2 is actively greeting dog1.
+        dog2.state = DogState.SOCIAL_GREET;
+        dog2.socialTargetDog = dog1;
+        dog2.socialCooldown = 0;
+        dog1.state = DogState.SOCIAL_GREET;
+        dog1.socialTargetDog = dog2;
+
+        // dog3 tries to hijack dog2.
+        dog3.state = DogState.SOCIAL_GREET;
+        dog3.socialTargetDog = dog2;
+        dog3.socialCooldown = 0;
+        const started = dog3._tryStartPackPlay(dog2);
+
+        return {
+          started: started,
+          dog3Partner: dog3.packPlayPartner,
+          dog2TargetIsDog1: dog2.socialTargetDog === dog1
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertFalse(res["started"], "Third dog must not hijack a greeting partner")
+        self.assertIsNone(res["dog3Partner"])
+        self.assertTrue(res["dog2TargetIsDog1"], "dog2 must keep greeting dog1")
+
+    def test_pack_play_multi_swap_coordination(self):
+        """Roles must stay complementary across multiple swap intervals."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayRoleTimer = 4.0;
+        dog2.packPlayRoleTimer = 4.0;
+
+        let desync = false;
+        let swaps = 0;
+        let prevRole1 = dog1.packPlayRole;
+        const dt = 1 / 60;
+        const steps = Math.round(15 / dt);
+        for (let i = 0; i < steps; i++) {
+          dog1.updatePackPlay(dt, null);
+          dog2.updatePackPlay(dt, null);
+          if (dog1.packPlayRole === dog2.packPlayRole) desync = true;
+          if (dog1.packPlayRole !== prevRole1) {
+            swaps++;
+            prevRole1 = dog1.packPlayRole;
+          }
+        }
+        return { desync: desync, swaps: swaps };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertFalse(res["desync"], "Roles must never desync (always one LEAD, one CHASE)")
+        self.assertGreaterEqual(res["swaps"], 2, "Roles must swap multiple times over 15s")
+
+    def test_stat_cooldown_exact_bands(self):
+        """Whistle social cooldown must follow the exact stat bands."""
+        snippet = """
+        const make = (obed, play) => {
+          const owner = new Owner(1000, 1000);
+          owner.isLeashed = false;
+          const partnerOwner = new Owner(1060, 1000);
+          partnerOwner.isLeashed = false;
+          const dog = new CompanionDog(1000, 1000, owner);
+          dog.owner = owner;
+          dog.personality = { obedience: obed, playfulness: play, energy: 3, curiosity: 3 };
+          const partner = new CompanionDog(1060, 1000, partnerOwner);
+          partner.owner = partnerOwner;
+          // Place both dogs into PACK_PLAY so the whistle is a real breakup.
+          dog.state = DogState.PACK_PLAY;
+          partner.state = DogState.PACK_PLAY;
+          dog.packPlayPartner = partner;
+          partner.packPlayPartner = dog;
+          dog.packPlayRole = 'LEAD';
+          partner.packPlayRole = 'CHASE';
+          dog.packPlayRoleTimer = 10;
+          partner.packPlayRoleTimer = 10;
+          dog.whistleRecall();
+          return dog.socialCooldown;
+        };
+        return {
+          high: make(5, 1),
+          balanced: make(3, 3),
+          lowObed: make(2, 4),
+          maxPlay: make(1, 5)
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertGreaterEqual(res["high"], 30.0)
+        self.assertLessEqual(res["high"], 45.0)
+        self.assertGreaterEqual(res["balanced"], 18.0)
+        self.assertLessEqual(res["balanced"], 25.0)
+        self.assertGreaterEqual(res["lowObed"], 8.0)
+        self.assertLessEqual(res["lowObed"], 16.0)
+        self.assertGreaterEqual(res["maxPlay"], 8.0)
+        self.assertLessEqual(res["maxPlay"], 16.0)
+
+    def test_pack_play_speed_and_wag_clamps(self):
+        """Pack play speeds must stay in [150, 210] and wagSpeed in [16, 22]."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayRoleTimer = 10;
+        dog2.packPlayRoleTimer = 10;
+
+        let minSpeed = Infinity;
+        let maxSpeed = 0;
+        let minWag = Infinity;
+        let maxWag = 0;
+        for (let i = 0; i < 200; i++) {
+          dog1.updatePackPlay(1 / 60, null);
+          dog2.updatePackPlay(1 / 60, null);
+          for (const d of [dog1, dog2]) {
+            const spd = Math.hypot(d.vx, d.vy);
+            if (spd > 0) {
+              minSpeed = Math.min(minSpeed, spd);
+              maxSpeed = Math.max(maxSpeed, spd);
+            }
+            minWag = Math.min(minWag, d.wagSpeed);
+            maxWag = Math.max(maxWag, d.wagSpeed);
+          }
+        }
+        return { minSpeed: minSpeed, maxSpeed: maxSpeed, minWag: minWag, maxWag: maxWag };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertGreaterEqual(res["minSpeed"], 150.0)
+        self.assertLessEqual(res["maxSpeed"], 210.0)
+        self.assertGreaterEqual(res["minWag"], 16.0)
+        self.assertLessEqual(res["maxWag"], 22.0)
+
+    def test_shared_landmark_exploration(self):
+        """Pack play must bias the lead waypoint toward a nearby tree."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayRoleTimer = 10;
+        dog2.packPlayRoleTimer = 10;
+        dog1.packPlayWaypoint = null;
+        dog1.packPlayWaypointTimer = 0;
+
+        const field = { trees: [{ x: 1050, y: 1000, trunkRadius: 18 }] };
+        dog1.updatePackPlay(1 / 60, field);
+
+        const wp = dog1.packPlayWaypoint;
+        const distToTree = wp ? Math.hypot(wp.x - 1050, wp.y - 1000) : Infinity;
+        return { hasWaypoint: Boolean(wp), distToTree: distToTree };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertTrue(res["hasWaypoint"], "Lead dog must set a waypoint near the tree")
+        self.assertLess(res["distToTree"], 80.0,
+                        "Waypoint must be near the shared landmark tree")
+
+    def test_shared_landmark_exploration_benches_and_scent_nodes(self):
+        """Pack play must detect benches and scent nodes as shared landmarks."""
+        snippet = """
+        const makePair = () => {
+          const owner1 = new Owner(1000, 1000);
+          owner1.isLeashed = false;
+          const owner2 = new Owner(1060, 1000);
+          owner2.isLeashed = false;
+          const dog1 = new CompanionDog(1000, 1000, owner1);
+          dog1.owner = owner1;
+          const dog2 = new CompanionDog(1060, 1000, owner2);
+          dog2.owner = owner2;
+          dog1.state = DogState.PACK_PLAY;
+          dog2.state = DogState.PACK_PLAY;
+          dog1.packPlayPartner = dog2;
+          dog2.packPlayPartner = dog1;
+          dog1.packPlayRole = 'LEAD';
+          dog2.packPlayRole = 'CHASE';
+          dog1.packPlayRoleTimer = 10;
+          dog2.packPlayRoleTimer = 10;
+          dog1.packPlayWaypoint = null;
+          dog1.packPlayWaypointTimer = 0;
+          return dog1;
+        };
+
+        const benchDog = makePair();
+        const benchField = { benches: [{ x: 1050, y: 1000, w: 64, h: 26 }] };
+        benchDog.updatePackPlay(1 / 60, benchField);
+        const benchWp = benchDog.packPlayWaypoint;
+        const benchDist = benchWp ? Math.hypot(benchWp.x - 1050, benchWp.y - 1000) : Infinity;
+
+        const scentDog = makePair();
+        const scentField = { scentNodes: [{ x: 1050, y: 1000, r: 16 }] };
+        scentDog.updatePackPlay(1 / 60, scentField);
+        const scentWp = scentDog.packPlayWaypoint;
+        const scentDist = scentWp ? Math.hypot(scentWp.x - 1050, scentWp.y - 1000) : Infinity;
+
+        return {
+          benchHasWaypoint: Boolean(benchWp),
+          benchDist: benchDist,
+          scentHasWaypoint: Boolean(scentWp),
+          scentDist: scentDist
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertTrue(res["benchHasWaypoint"], "Bench must be detected as a landmark")
+        self.assertLess(res["benchDist"], 80.0, "Waypoint must be near the bench")
+        self.assertTrue(res["scentHasWaypoint"], "Scent node must be detected as a landmark")
+        self.assertLess(res["scentDist"], 80.0, "Waypoint must be near the scent node")
+
+    def test_pack_play_speed_clamped_with_obstacles(self):
+        """Speed must stay <= 210.01 even with obstacle avoidance and perimeter steering."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        const camera = { x: 1000, y: 1000, viewportWidth: 1280, viewportHeight: 720, zoom: 1.0 };
+        dog1.camera = camera;
+        dog2.camera = camera;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayRoleTimer = 10;
+        dog2.packPlayRoleTimer = 10;
+
+        // Dense obstacle field near the dogs to force strong avoidance pushes.
+        const field = {
+          getWorldObstacles() {
+            return [
+              { kind: 'circle', x: 1010, y: 1000, r: 30 },
+              { kind: 'circle', x: 1050, y: 1000, r: 30 },
+              { kind: 'circle', x: 1030, y: 1030, r: 30 }
+            ];
+          }
+        };
+
+        let maxSpeed = 0;
+        for (let i = 0; i < 200; i++) {
+          dog1.updatePackPlay(1 / 60, field);
+          dog2.updatePackPlay(1 / 60, field);
+          maxSpeed = Math.max(maxSpeed, Math.hypot(dog1.vx, dog1.vy), Math.hypot(dog2.vx, dog2.vy));
+        }
+        return { maxSpeed: maxSpeed };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertLessEqual(res["maxSpeed"], 210.01,
+                             "Pack play speed must never exceed 210 px/s")
+
+    def test_stat_driven_whistle_social_cooldown(self):
+        """Whistle social cooldown must scale with obedience/playfulness."""
+        snippet = """
+        const ownerA = new Owner(1000, 1000);
+        ownerA.isLeashed = false;
+        const ownerB = new Owner(1060, 1000);
+        ownerB.isLeashed = false;
+        const dogA = new CompanionDog(1000, 1000, ownerA);
+        dogA.owner = ownerA;
+        dogA.personality = { obedience: 5, playfulness: 1, energy: 3, curiosity: 3 };
+        const dogB = new CompanionDog(1060, 1000, ownerB);
+        dogB.owner = ownerB;
+        dogB.personality = { obedience: 1, playfulness: 5, energy: 3, curiosity: 3 };
+
+        // Give each dog its own separate partner so that recalling dogA does
+        // not clear dogB's pack-play state (which would zero its cooldown).
+        const ownerPA = new Owner(1120, 1000);
+        ownerPA.isLeashed = false;
+        const partnerA = new CompanionDog(1120, 1000, ownerPA);
+        partnerA.owner = ownerPA;
+        const ownerPB = new Owner(1180, 1000);
+        ownerPB.isLeashed = false;
+        const partnerB = new CompanionDog(1180, 1000, ownerPB);
+        partnerB.owner = ownerPB;
+
+        dogA.state = DogState.PACK_PLAY;
+        partnerA.state = DogState.PACK_PLAY;
+        dogA.packPlayPartner = partnerA;
+        partnerA.packPlayPartner = dogA;
+        dogA.packPlayRole = 'LEAD';
+        partnerA.packPlayRole = 'CHASE';
+        dogA.packPlayTimer = 10;
+        partnerA.packPlayTimer = 10;
+
+        dogB.state = DogState.PACK_PLAY;
+        partnerB.state = DogState.PACK_PLAY;
+        dogB.packPlayPartner = partnerB;
+        partnerB.packPlayPartner = dogB;
+        dogB.packPlayRole = 'LEAD';
+        partnerB.packPlayRole = 'CHASE';
+        dogB.packPlayTimer = 10;
+        partnerB.packPlayTimer = 10;
+
+        dogA.whistleRecall();
+        dogB.whistleRecall();
+
+        return {
+          cooldownA: dogA.socialCooldown,
+          cooldownB: dogB.socialCooldown
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertGreaterEqual(res["cooldownA"], 25.0)
+        self.assertLessEqual(res["cooldownB"], 18.0)
+        self.assertGreater(res["cooldownA"], res["cooldownB"])
+        for key in ("cooldownA", "cooldownB"):
+            self.assertGreaterEqual(res[key], 8.0)
+            self.assertLessEqual(res[key], 45.0)
+
+    # ------------------------------------------------------------------
+    # unification-027 remediation cycle 4
+    # ------------------------------------------------------------------
+
+    def test_leashing_active_dog_transitions_to_following(self):
+        """Leashing a dog mid-pack-play must dissolve the bond and route each
+        dog to FOLLOWING (leashed) or ROAMING (off-leash)."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayRoleTimer = 10;
+        dog2.packPlayRoleTimer = 10;
+
+        // Leash dog1 mid-play.
+        owner1.isLeashed = true;
+        dog1.update(1 / 60, null, [dog2]);
+        dog2.update(1 / 60, null, [dog1]);
+
+        return {
+          dog1Partner: dog1.packPlayPartner,
+          dog2Partner: dog2.packPlayPartner,
+          dog1State: dog1.state,
+          dog2State: dog2.state
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertIsNone(res["dog1Partner"], "Leashing must dissolve dog1's bond")
+        self.assertIsNone(res["dog2Partner"], "Leashing must dissolve dog2's bond")
+        self.assertEqual(res["dog1State"], "FOLLOWING",
+                         "Leashed dog must transition to FOLLOWING")
+        self.assertIn(res["dog2State"], ("ROAMING", "IDLE_SNIFF"),
+                      "Off-leash partner must transition to ROAMING or roam submode")
+
+    def test_post_collision_32px_hard_clamp(self):
+        """After collision resolution, pack-play dogs must stay inside the
+        32px-inset screen perimeter."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        const camera = { x: 800, y: 600, viewportWidth: 1280, viewportHeight: 720, zoom: 1.0 };
+        dog1.camera = camera;
+        dog2.camera = camera;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayRoleTimer = 10;
+        dog2.packPlayRoleTimer = 10;
+
+        // Place a tree right at the right screen edge so collision pushback
+        // would shove the dog outward past the inset.
+        const perim = dog1._getScreenPerimeter();
+        const edgeTreeX = perim.right - 10;
+        const edgeTreeY = perim.centerY;
+        const field = {
+          getWorldObstacles() {
+            return [{ kind: 'circle', x: edgeTreeX, y: edgeTreeY, r: 40 }];
+          }
+        };
+
+        // Force the lead dog's waypoint toward the edge tree.
+        dog1.packPlayWaypoint = { x: edgeTreeX, y: edgeTreeY };
+        dog1.packPlayWaypointTimer = 10;
+        dog1.x = perim.right - 40;
+        dog1.y = edgeTreeY;
+        dog2.x = perim.right - 80;
+        dog2.y = edgeTreeY;
+
+        let inside = true;
+        for (let i = 0; i < 120; i++) {
+          dog1.updatePackPlay(1 / 60, field);
+          dog2.updatePackPlay(1 / 60, field);
+          for (const d of [dog1, dog2]) {
+            if (d.x < perim.left + 32 - 1e-6 || d.x > perim.right - 32 + 1e-6 ||
+                d.y < perim.top + 32 - 1e-6 || d.y > perim.bottom - 32 + 1e-6) {
+              inside = false;
+            }
+          }
+        }
+        return {
+          inside: inside,
+          dog1X: dog1.x,
+          dog2X: dog2.x,
+          left: perim.left,
+          right: perim.right,
+          top: perim.top,
+          bottom: perim.bottom
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertTrue(res["inside"],
+                        "Pack-play dogs must stay inside the 32px-inset perimeter")
+        self.assertGreaterEqual(res["dog1X"], res["left"] + 32 - 1e-6)
+        self.assertLessEqual(res["dog1X"], res["right"] - 32 + 1e-6)
+        self.assertGreaterEqual(res["dog2X"], res["left"] + 32 - 1e-6)
+        self.assertLessEqual(res["dog2X"], res["right"] - 32 + 1e-6)
+
+    def test_shyness_stat_scaling(self):
+        """Higher shyness must increase the post-whistle social cooldown."""
+        snippet = """
+        const make = (shy) => {
+          const owner = new Owner(1000, 1000);
+          owner.isLeashed = false;
+          const partnerOwner = new Owner(1060, 1000);
+          partnerOwner.isLeashed = false;
+          const dog = new CompanionDog(1000, 1000, owner);
+          dog.owner = owner;
+          dog.personality = { obedience: 3, playfulness: 3, shyness: shy, energy: 3, curiosity: 3 };
+          const partner = new CompanionDog(1060, 1000, partnerOwner);
+          partner.owner = partnerOwner;
+          dog.state = DogState.PACK_PLAY;
+          partner.state = DogState.PACK_PLAY;
+          dog.packPlayPartner = partner;
+          partner.packPlayPartner = dog;
+          dog.packPlayRole = 'LEAD';
+          partner.packPlayRole = 'CHASE';
+          dog.packPlayRoleTimer = 10;
+          partner.packPlayRoleTimer = 10;
+          dog.whistleRecall();
+          return dog.socialCooldown;
+        };
+        return { shy: make(5), bold: make(1) };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertGreater(res["shy"], res["bold"],
+                           "Shy dog must receive a higher post-whistle cooldown")
+        for key in ("shy", "bold"):
+            self.assertGreaterEqual(res[key], 8.0)
+            self.assertLessEqual(res[key], 45.0)
+
+
 if __name__ == '__main__':
     unittest.main()

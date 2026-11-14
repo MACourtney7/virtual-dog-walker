@@ -425,6 +425,8 @@ export class CompanionDog {
     this.leashPullCooldown = 0;
     this.leashTugTimer = 0;
     this.leashTugTarget = null;
+    this.socialGazeTimer = 0;
+    this.socialGazeAngle = 0;
   }
 
   // Lazy audio getter: resolves dynamically from window.audioEngine / window.sound
@@ -709,6 +711,7 @@ export class CompanionDog {
     // Social / leash tug cooldown ticks
     if (this.socialCooldown > 0) this.socialCooldown = Math.max(0, this.socialCooldown - dt);
     if (this.leashPullCooldown > 0) this.leashPullCooldown = Math.max(0, this.leashPullCooldown - dt);
+    if (this.socialGazeTimer > 0) this.socialGazeTimer = Math.max(0, this.socialGazeTimer - dt);
 
     // Idle Tracking & Whistle/Leash Reset
     if (this.owner && !isLeashed && this.state !== DogState.LOST) {
@@ -1041,7 +1044,7 @@ export class CompanionDog {
             this.isPullingLeash = true;
           }
         }
-      } else if (dist < 48 || (!this.owner.isMoving && Math.hypot(this.vx, this.vy) < 12)) {
+      } else if (this.leashTugTimer <= 0 && (dist < 48 || (!this.owner.isMoving && Math.hypot(this.vx, this.vy) < 12))) {
         // Dog is at heel or owner stopped and dog is resting
         this.isPullingLeash = false;
       }
@@ -1270,6 +1273,8 @@ export class CompanionDog {
         if (dogDist < 150 || other.socialTargetDog === this) {
           this.angle = lerpAngle(this.angle, Math.atan2(other.y - this.y, other.x - this.x), Math.min(1, dt * 8));
           this.wagSpeed = Math.max(this.wagSpeed, 14 + (this.personality.playfulness || 3) * 2);
+          this.socialGazeAngle = Math.atan2(other.y - this.y, other.x - this.x);
+          this.socialGazeTimer = 0.5;
           if (!this.emoteBubble && this.socialCooldown <= 0) {
             this.emoteBubble = Math.random() < 0.5 ? '🐾' : '🐶';
             this.emoteTimer = 2.0;
@@ -1294,6 +1299,10 @@ export class CompanionDog {
           this.angle = lerpAngle(this.angle, Math.atan2(other.y - this.y, other.x - this.x), Math.min(1, dt * 5));
           this.wagSpeed = Math.max(this.wagSpeed, 11);
           this.socialCooldown = 10.0;
+        }
+        if (dogDist < 90) {
+          this.socialGazeAngle = Math.atan2(other.y - this.y, other.x - this.x);
+          this.socialGazeTimer = 0.5;
         }
         continue;
       }
@@ -1347,28 +1356,44 @@ export class CompanionDog {
       if (Array.isArray(field.benches)) {
         for (const b of field.benches) {
           if (!b || typeof b.x !== 'number') continue;
-          out.push({ x: b.x, y: b.y, r: b.r || 22 });
+          out.push({
+            x: b.x,
+            y: b.y,
+            r: b.r || b.radius || Math.hypot((b.w || 64) / 2, (b.h || 26) / 2)
+          });
         }
       }
       if (Array.isArray(field.bins)) {
         for (const b of field.bins) {
           if (!b || typeof b.x !== 'number') continue;
-          out.push({ x: b.x, y: b.y, r: b.r || 16 });
+          out.push({ x: b.x, y: b.y, r: b.r || b.radius || 16 });
         }
       }
       if (field.waterTower && typeof field.waterTower.x === 'number') {
-        out.push({ x: field.waterTower.x, y: field.waterTower.y, r: field.waterTower.r || 40 });
+        out.push({
+          x: field.waterTower.x,
+          y: field.waterTower.y,
+          r: field.waterTower.r || field.waterTower.radius || 42
+        });
       }
       if (Array.isArray(field.rockOutcrops)) {
         for (const r of field.rockOutcrops) {
           if (!r || typeof r.x !== 'number') continue;
-          out.push({ x: r.x, y: r.y, r: r.r || 26 });
+          out.push({
+            x: r.x,
+            y: (typeof r.depthY === 'number') ? (r.depthY - 8) : r.y,
+            r: r.r || r.radius || 26
+          });
         }
       }
       if (Array.isArray(field.landmarks)) {
         for (const l of field.landmarks) {
           if (!l || typeof l.x !== 'number') continue;
-          out.push({ x: l.x, y: l.y, r: l.r || 24 });
+          out.push({
+            x: l.x,
+            y: (typeof l.depthY === 'number') ? l.depthY : l.y,
+            r: l.r || l.radius || 32
+          });
         }
       }
     }
@@ -1506,8 +1531,9 @@ export class CompanionDog {
       this.vx *= 0.8;
       this.vy *= 0.8;
       this.wagSpeed = 6;
-      // Smoothly align with owner heading while standing still
-      const ownerHeading = resolveOwnerHeading(this.owner);
+      // Smoothly align with owner heading while standing still (or hold a
+      // brief social gaze toward a nearby dog).
+      const ownerHeading = this.socialGazeTimer > 0 ? this.socialGazeAngle : resolveOwnerHeading(this.owner);
       this.angle = lerpAngle(this.angle, ownerHeading, Math.min(1, dt * 10));
       if (Math.random() < idleTransitionChance) {
         this.transitionTo(Math.random() < 0.5 ? DogState.IDLE_SNIFF : DogState.SITTING);
@@ -1539,7 +1565,7 @@ export class CompanionDog {
       this.vx = 0;
       this.vy = 0;
       this.wagSpeed = 6;
-      const ownerHeading = resolveOwnerHeading(this.owner);
+      const ownerHeading = this.socialGazeTimer > 0 ? this.socialGazeAngle : resolveOwnerHeading(this.owner);
       this.angle = lerpAngle(this.angle, ownerHeading, Math.min(1, dt * 10));
     }
 
@@ -1590,7 +1616,7 @@ export class CompanionDog {
           this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
           this.roamWaypoint = null;
           this.roamTargetSpeed = 125 + Math.random() * 50;
-          this.roamSubModeTimer = 3.0 + Math.random() * 3.0;
+          this.roamSubModeTimer = 0;
           this.roamLookBackDone = false;
         } else {
         this.roamSubModeTimer = 3.0 + Math.random() * 3.0;
@@ -1778,6 +1804,15 @@ export class CompanionDog {
     const fromOwnerY = this.y - this.owner.y;
     const distToOwner = Math.hypot(fromOwnerX, fromOwnerY);
 
+    // Resolve the visible screen perimeter once for catch-up + tether logic.
+    const screen = this._getScreenPerimeter(field);
+
+    // Trailing-edge catch-up: engage return trot near any screen edge.
+    if (screen && (this.x < screen.left + 55 || this.x > screen.right - 55 ||
+        this.y < screen.top + 55 || this.y > screen.bottom - 55)) {
+      this.returnTrotActive = true;
+    }
+
     // Distance-scaled catch-up: probabilistic return-trot when the dog drifts far from owner
     if (distToOwner > 220) {
       this.catchUpTimer += dt;
@@ -1795,14 +1830,21 @@ export class CompanionDog {
     }
 
     if (this.returnTrotActive) {
-      if (distToOwner <= 110) {
+      const insideScreenSafe = screen
+        ? (this.x > screen.left + 120 && this.x < screen.right - 120 &&
+           this.y > screen.top + 120 && this.y < screen.bottom - 120)
+        : false;
+      if ((screen && insideScreenSafe) || (!screen && distToOwner <= 110)) {
         this.returnTrotActive = false;
       } else {
-        const toOwnerX = this.owner.x - this.x;
-        const toOwnerY = this.owner.y - this.y;
-        const dirDist = Math.hypot(toOwnerX, toOwnerY) || 1;
-        this.vx = (toOwnerX / dirDist) * this.speed;
-        this.vy = (toOwnerY / dirDist) * this.speed;
+        const targetX = screen ? screen.centerX : this.owner.x;
+        const targetY = screen ? screen.centerY : this.owner.y;
+        const toTargetX = targetX - this.x;
+        const toTargetY = targetY - this.y;
+        const dirDist = Math.hypot(toTargetX, toTargetY) || 1;
+        const catchUpSpeed = screen ? Math.max(this.speed, 195) : this.speed;
+        this.vx = (toTargetX / dirDist) * catchUpSpeed;
+        this.vy = (toTargetY / dirDist) * catchUpSpeed;
         this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 12));
         this.wagSpeed = 10;
         return;
@@ -1869,6 +1911,7 @@ export class CompanionDog {
         if (Math.hypot(desiredX - this.x, desiredY - this.y) < 28) {
           this.roamSubMode = RoamSubMode.FREE_EXPLORE;
           this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
+          this.roamSubModeTimer = 0;
           this.roamWaypoint = null;
           desiredX = this.x + Math.cos(this.wanderAngle) * 100;
           desiredY = this.y + Math.sin(this.wanderAngle) * 100;
@@ -1885,6 +1928,7 @@ export class CompanionDog {
         if (!this.owner.isMoving || Math.hypot(desiredX - this.x, desiredY - this.y) < 24) {
           this.roamSubMode = RoamSubMode.FREE_EXPLORE;
           this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
+          this.roamSubModeTimer = 0;
           this.roamWaypoint = null;
           desiredX = this.x + Math.cos(this.wanderAngle) * 100;
           desiredY = this.y + Math.sin(this.wanderAngle) * 100;
@@ -1909,6 +1953,7 @@ export class CompanionDog {
           }
           this.roamSubMode = RoamSubMode.FREE_EXPLORE;
           this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
+          this.roamSubModeTimer = 0;
           this.roamWaypoint = null;
           return;
         }
@@ -1924,6 +1969,7 @@ export class CompanionDog {
           this.roamSubModeTimer = 0;
           this.roamSubMode = RoamSubMode.FREE_EXPLORE;
           this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
+          this.roamSubModeTimer = 0;
           this.roamWaypoint = null;
         }
         break;
@@ -1991,7 +2037,6 @@ export class CompanionDog {
     }
 
     // Screen-space perimeter steering (physical viewport) with headless fallback.
-    const screen = this._getScreenPerimeter(field);
     if (screen) {
       const softMargin = 85;
       let inwardX = 0;
@@ -2013,29 +2058,21 @@ export class CompanionDog {
         this.wanderAngle = lerpAngle(this.wanderAngle, centerAngle, Math.min(1, dt * 3));
       }
 
-      // Trailing-edge catch-up: engage return trot near any screen edge.
-      if (this.x < screen.left + 55 || this.x > screen.right - 55 ||
-          this.y < screen.top + 55 || this.y > screen.bottom - 55) {
-        this.returnTrotActive = true;
-      }
-      // Release once comfortably inside all four edges (or near the owner).
-      if (this.returnTrotActive) {
-        const insideAll = this.x > screen.left + 120 && this.x < screen.right - 120 &&
-                          this.y > screen.top + 120 && this.y < screen.bottom - 120;
-        if (insideAll || distToOwner <= 110) {
-          this.returnTrotActive = false;
-        }
-      }
     }
 
     // Wide soft tether at 300px (headless fallback when no camera is present):
     // only bias back toward the owner once the dog has drifted far.
-    if (!screen && distToOwner > 300) {
-      const bias = Math.min(1.0, (distToOwner - 300) / 80); // 0 at 300, 1 at 380
-      const toOwnerX = (this.owner.x - this.x) / (distToOwner || 1);
-      const toOwnerY = (this.owner.y - this.y) / (distToOwner || 1);
-      this.vx = wanderVx * (1.0 - bias) + toOwnerX * modeSpeed * bias;
-      this.vy = wanderVy * (1.0 - bias) + toOwnerY * modeSpeed * bias;
+    if (!screen) {
+      if (distToOwner > 300) {
+        const bias = Math.min(1.0, (distToOwner - 300) / 80); // 0 at 300, 1 at 380
+        const toOwnerX = (this.owner.x - this.x) / (distToOwner || 1);
+        const toOwnerY = (this.owner.y - this.y) / (distToOwner || 1);
+        this.vx = wanderVx * (1.0 - bias) + toOwnerX * modeSpeed * bias;
+        this.vy = wanderVy * (1.0 - bias) + toOwnerY * modeSpeed * bias;
+      } else {
+        this.vx = wanderVx;
+        this.vy = wanderVy;
+      }
     } else {
       this.vx = wanderVx;
       this.vy = wanderVy;

@@ -446,6 +446,31 @@ class TestOffLeashMovement(unittest.TestCase):
         dog.update(1 / 60, null);
         const clampedX = dog.x;
 
+        // Soft-margin inward steering: near the left edge the dog must be
+        // steered back toward the screen center (positive vx).
+        dog.camera = { x: 800, y: 600, viewportWidth: 1280, viewportHeight: 720, zoom: 1.0 };
+        dog.state = 'ROAMING';
+        dog.returnTrotActive = false;
+        dog.roamMicroPauseTimer = 0;
+        dog.roamSubMode = 'FREE_EXPLORE';
+        dog.roamBaselineTimer = 10;
+        dog.x = 800 + 40;
+        dog.y = 960;
+        dog.vx = 0;
+        dog.vy = 0;
+        dog.wanderAngle = Math.PI; // pointing left, into the edge
+        dog.update(1 / 60, null);
+        const softSteerVx = dog.vx;
+
+        // Trailing-edge catch-up: within 55px of an edge must engage return trot.
+        dog.returnTrotActive = false;
+        dog.x = 800 + 30;
+        dog.y = 960;
+        dog.vx = 0;
+        dog.vy = 0;
+        dog.update(1 / 60, null);
+        const trailingReturnTrot = dog.returnTrotActive;
+
         // ZOOMIES must be exempt from the hard clamp.
         dog.triggerZoomies('FIGURE_EIGHT');
         dog.zoomiesCenter = { x: 2070, y: 900 };
@@ -459,6 +484,8 @@ class TestOffLeashMovement(unittest.TestCase):
           desktop: pDesktop,
           mobile: pMobile,
           clampedX: clampedX,
+          softSteerVx: softSteerVx,
+          trailingReturnTrot: trailingReturnTrot,
           zoomiesState: zoomiesState,
           zoomiesX: zoomiesX
         };
@@ -470,6 +497,8 @@ class TestOffLeashMovement(unittest.TestCase):
         self.assertEqual(res["desktop"]["bottom"], 1320)
         self.assertAlmostEqual(res["mobile"]["right"], 800 + 390 / 0.8, places=3)
         self.assertLessEqual(res["clampedX"], 2080 - 32)
+        self.assertGreater(res["softSteerVx"], 0, "Soft-margin must steer the dog inward")
+        self.assertTrue(res["trailingReturnTrot"], "Trailing-edge must engage return trot")
         self.assertEqual(res["zoomiesState"], "ZOOMIES")
         self.assertGreater(res["zoomiesX"], 2048)
 
@@ -520,7 +549,13 @@ class TestOffLeashMovement(unittest.TestCase):
             self.assertIn(path, self.dog_src)
 
         snippet = """
-        const field = {
+        const owner = new Owner(500, 500);
+        owner.isLeashed = false;
+        const dog = new CompanionDog(500, 500, owner);
+        dog.owner = owner;
+
+        // Sanity: obstacle extraction from a field with a circle + rect.
+        const probeField = {
           getWorldObstacles() {
             return [
               { kind: 'circle', x: 500, y: 500, r: 30 },
@@ -528,12 +563,7 @@ class TestOffLeashMovement(unittest.TestCase):
             ];
           }
         };
-        const owner = new Owner(500, 500);
-        owner.isLeashed = false;
-        const dog = new CompanionDog(500, 500, owner);
-        dog.owner = owner;
-
-        const obstacleCount = dog._getFieldObstacles(field).length;
+        const obstacleCount = dog._getFieldObstacles(probeField).length;
 
         const results = {};
         for (const path of ['FIGURE_EIGHT', 'ORBIT_OWNER', 'SHUTTLE']) {
@@ -546,10 +576,33 @@ class TestOffLeashMovement(unittest.TestCase):
           dog.zoomiesOrbitOffset = { x: 0, y: 0 };
           dog.zoomiesShuttleA = { x: 500, y: 500 };
           dog.zoomiesShuttleB = { x: 500, y: 500 };
+          dog.zoomiesOrbitAngle = 0;
+
+          // Place the tree directly on the active trajectory for this path.
+          let treeX = 500;
+          let treeY = 500;
+          if (path === 'ORBIT_OWNER') {
+            treeX = 500 + dog.zoomiesOrbitRadius;
+            treeY = 500;
+          } else if (path === 'SHUTTLE') {
+            treeX = 500 + dog.zoomiesShuttleHalfSpan;
+            treeY = 500;
+          } else {
+            // FIGURE_EIGHT: peak of the sine curve at phase ~PI/2.
+            treeX = 500 + 135;
+            treeY = 500;
+          }
+
+          const field = {
+            getWorldObstacles() {
+              return [{ kind: 'circle', x: treeX, y: treeY, r: 30 }];
+            }
+          };
+
           let minDist = Infinity;
-          for (let i = 0; i < 25; i++) {
+          for (let i = 0; i < 60; i++) {
             dog.updateZoomies(1 / 60, field);
-            minDist = Math.min(minDist, Math.hypot(dog.x - 500, dog.y - 500));
+            minDist = Math.min(minDist, Math.hypot(dog.x - treeX, dog.y - treeY));
           }
           const centerDist = Math.hypot(dog.zoomiesCenter.x - 500, dog.zoomiesCenter.y - 500);
           const offsetDist = Math.hypot(dog.zoomiesOrbitOffset.x, dog.zoomiesOrbitOffset.y);
@@ -623,6 +676,19 @@ class TestOffLeashMovement(unittest.TestCase):
         dogB1.personality.shyness = 1;
         const dogB2 = new CompanionDog(1080, 1000, ownerB2);
         dogB2.owner = ownerB2;
+
+        // Regime B2 subtle social gaze: checkSocialInteractions must set a
+        // social gaze timer, boost wag speed, and set an emote bubble.
+        dogB1.state = 'FOLLOWING';
+        dogB1.socialCooldown = 0;
+        dogB1.emoteBubble = null;
+        dogB1.wagSpeed = 0;
+        dogB1.socialGazeTimer = 0;
+        dogB1.checkSocialInteractions([dogB2], 1 / 60, null);
+        const gazeTimer = dogB1.socialGazeTimer;
+        const gazeWag = dogB1.wagSpeed;
+        const gazeEmote = dogB1.emoteBubble;
+
         dogB1.triggerSocialLeashTug(dogB2);
         const startOwnerX = ownerB1.x;
         const startDogX = dogB1.x;
@@ -654,6 +720,9 @@ class TestOffLeashMovement(unittest.TestCase):
         return {
           regimeAState: regimeAState,
           regimeACooldown: regimeACooldown,
+          gazeTimer: gazeTimer,
+          gazeWag: gazeWag,
+          gazeEmote: gazeEmote,
           dogLunged: dogLunged,
           ownerSlid: ownerSlid,
           pullingDuringTug: pullingDuringTug,
@@ -669,6 +738,11 @@ class TestOffLeashMovement(unittest.TestCase):
         # Regime A
         self.assertIn(res["regimeAState"], ("SOCIAL_GREET", "PLAY_BOW"))
         self.assertEqual(res["regimeACooldown"], 12)
+
+        # Regime B2 subtle social gaze
+        self.assertGreater(res["gazeTimer"], 0, "Regime B2 must set socialGazeTimer")
+        self.assertGreater(res["gazeWag"], 0, "Regime B2 must boost wagSpeed")
+        self.assertIsNotNone(res["gazeEmote"], "Regime B2 must set an emote bubble")
 
         # Regime B
         self.assertTrue(res["dogLunged"], "Dog must lunge toward the off-leash dog")

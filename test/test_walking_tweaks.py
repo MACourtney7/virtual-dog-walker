@@ -27,6 +27,13 @@ def _run_real_js(owner_src: str, dog_src: str, snippet: str):
     clean_dog = re.sub(r"^\s*import\s+.*?;?\s*$", "", dog_src, flags=re.M)
     clean_dog = re.sub(r"\bexport\s+(default\s+)?", "", clean_dog)
 
+    dog_iife = ""
+    if clean_dog.strip():
+        dog_iife = (
+            "const { CompanionDog, DogState, RoamSubMode, ZoomiePath } = "
+            f"(() => {{ {clean_dog}\nreturn {{ CompanionDog, DogState, RoamSubMode, ZoomiePath }}; }})();"
+        )
+
     harness = f"""
 function resolveFieldCollision(ent, r, field) {{
   if (field && typeof field.resolveCircleCollision === "function") {{
@@ -38,7 +45,7 @@ function stepLeashConstraint(dog, owner, restLen, k, damp, dt) {{}}
 function stepEarSpringsToTargets(l, r, tl, tr, k, d, dt) {{}}
 class PoopPile {{ constructor(id, x, y) {{ this.x = x; this.y = y; }} }}
 const {{ Owner, Gait }} = (() => {{ {clean_owner}\nreturn {{ Owner, Gait }}; }})();
-const {{ CompanionDog, DogState, RoamSubMode, ZoomiePath }} = (() => {{ {clean_dog}\nreturn {{ CompanionDog, DogState, RoamSubMode, ZoomiePath }}; }})();
+{dog_iife}
 const __res = (() => {{ {snippet} }})();
 JSON.stringify(__res);
 """
@@ -138,7 +145,9 @@ class TestWalkingTweaks(unittest.TestCase):
           height: 2400,
           warpGates: [{ x: 800, y: 300, targetZoneId: 'z2' }]
         };
-        o.enterWander(world);
+        o.wanderMode = true;
+        o.wanderBaseHeading = o.angle;
+        o.setGait(Gait.WANDER);
         const errors = [];
         for (let i = 0; i < 90; i++) {
           o.update(1 / 60, world);
@@ -187,7 +196,9 @@ class TestWalkingTweaks(unittest.TestCase):
         };
         const o = new Owner(200, 300);
         const directBlocked = o._isWanderRayBlocked(0, 120, world);
-        o.enterWander(world);
+        o.wanderMode = true;
+        o.wanderBaseHeading = o.angle;
+        o.setGait(Gait.WANDER);
         let minTreeDist = Infinity;
         let maxAbsY = 0;
         for (let i = 0; i < 180; i++) {

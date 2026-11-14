@@ -426,14 +426,14 @@ export class Owner {
     if (Array.isArray(world.bins)) {
       for (const b of world.bins) {
         if (!b || typeof b.x !== 'number' || typeof b.y !== 'number') continue;
-        const reach = (typeof b.radius === 'number' ? b.radius : 12) + selfRadius + clearancePad;
+        const reach = (typeof b.radius === 'number' ? b.radius : (typeof b.r === 'number' ? b.r : 12)) + selfRadius + clearancePad;
         const dx = px - b.x;
         const dy = py - b.y;
         if (dx * dx + dy * dy < reach * reach) return true;
       }
     }
     if (world.waterTower && typeof world.waterTower.x === 'number' && typeof world.waterTower.y === 'number') {
-      const reach = (typeof world.waterTower.radius === 'number' ? world.waterTower.radius : 42) + selfRadius + clearancePad;
+      const reach = (typeof world.waterTower.radius === 'number' ? world.waterTower.radius : (typeof world.waterTower.r === 'number' ? world.waterTower.r : 42)) + selfRadius + clearancePad;
       const dx = px - world.waterTower.x;
       const dy = py - world.waterTower.y;
       if (dx * dx + dy * dy < reach * reach) return true;
@@ -443,7 +443,7 @@ export class Owner {
         if (!r || typeof r.x !== 'number') continue;
         const ry = (typeof r.depthY === 'number') ? (r.depthY - 8) : r.y;
         if (typeof ry !== 'number') continue;
-        const reach = (typeof r.r === 'number' ? r.r : 24) + selfRadius + clearancePad;
+        const reach = (typeof r.r === 'number' ? r.r : (typeof r.radius === 'number' ? r.radius : 24)) + selfRadius + clearancePad;
         const dx = px - r.x;
         const dy = py - ry;
         if (dx * dx + dy * dy < reach * reach) return true;
@@ -454,7 +454,7 @@ export class Owner {
         if (!l || typeof l.x !== 'number') continue;
         const ly = (typeof l.depthY === 'number') ? l.depthY : l.y;
         if (typeof ly !== 'number') continue;
-        const reach = (typeof l.radius === 'number' ? l.radius : 32) + selfRadius + clearancePad;
+        const reach = (typeof l.radius === 'number' ? l.radius : (typeof l.r === 'number' ? l.r : 32)) + selfRadius + clearancePad;
         const dx = px - l.x;
         const dy = py - ly;
         if (dx * dx + dy * dy < reach * reach) return true;

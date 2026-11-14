@@ -339,7 +339,6 @@ export class CompanionDog {
     this.packPlayPartner = null;
     this.packPlayRole = 'LEAD'; // 'LEAD' | 'CHASE'
     this.packPlayRoleTimer = 0;
-    this.packPlayTimer = 0; // alias of packPlayRoleTimer (kept in sync)
     this.packPlayEmoteTimer = 0;
     this.packPlayWaypoint = null;
     this.packPlayWaypointTimer = 0;
@@ -438,6 +437,15 @@ export class CompanionDog {
     this.leashTugTarget = null;
     this.socialGazeTimer = 0;
     this.socialGazeAngle = 0;
+  }
+
+  // packPlayTimer is an alias of packPlayRoleTimer (kept in sync via accessor).
+  get packPlayTimer() {
+    return this.packPlayRoleTimer;
+  }
+
+  set packPlayTimer(v) {
+    this.packPlayRoleTimer = v;
   }
 
   // Lazy audio getter: resolves dynamically from window.audioEngine / window.sound
@@ -2255,6 +2263,9 @@ export class CompanionDog {
   // Returns true when the pack-play bond was established.
   _tryStartPackPlay(partner) {
     if (!partner || partner === this) return false;
+    // Mutual pairing guard: never hijack an existing pack-play bond.
+    if (this.packPlayPartner !== null || partner.packPlayPartner !== null) return false;
+    if (this.state === DogState.PACK_PLAY || partner.state === DogState.PACK_PLAY) return false;
     if (this.owner && this.owner.isLeashed) return false;
     if (partner.owner && partner.owner.isLeashed) return false;
     if (partner.state === DogState.LOST || partner.state === DogState.POOPING ||
@@ -2267,14 +2278,21 @@ export class CompanionDog {
     }
     if (this.socialCooldown > 0 || partner.socialCooldown > 0) return false;
 
+    // Mutual pairing interest: the partner must be receptive. Either it is
+    // actively greeting/bowing, or it is roaming and (optionally) already
+    // targeting this dog.
+    const partnerReceptive =
+      partner.state === DogState.SOCIAL_GREET ||
+      partner.state === DogState.PLAY_BOW ||
+      partner.state === DogState.ROAMING;
+    if (!partnerReceptive) return false;
+
     this.packPlayPartner = partner;
     partner.packPlayPartner = this;
     this.packPlayRole = 'LEAD';
     partner.packPlayRole = 'CHASE';
     this.packPlayRoleTimer = 4.0 + Math.random() * 3.0;
-    this.packPlayTimer = this.packPlayRoleTimer;
     partner.packPlayRoleTimer = this.packPlayRoleTimer;
-    partner.packPlayTimer = this.packPlayRoleTimer;
     this.packPlayWaypoint = null;
     partner.packPlayWaypoint = null;
     this.packPlayWaypointTimer = 0;
@@ -2336,6 +2354,19 @@ export class CompanionDog {
     const playfulness = this.personality?.playfulness || 3;
     const screen = this._getScreenPerimeter(field);
 
+    // Shared landmark exploration: bias the lead waypoint toward the nearest
+    // obstacle/prop within 180px so both dogs explore it together.
+    const nearbyObstacles = this._getFieldObstacles(field);
+    let nearestLandmark = null;
+    let nearestLandmarkDist = Infinity;
+    for (const obs of nearbyObstacles) {
+      const d = Math.hypot(obs.x - this.x, obs.y - this.y);
+      if (d < 180 && d < nearestLandmarkDist) {
+        nearestLandmark = obs;
+        nearestLandmarkDist = d;
+      }
+    }
+
     let desiredX;
     let desiredY;
     let modeSpeed;
@@ -2346,35 +2377,47 @@ export class CompanionDog {
       if (!this.packPlayWaypoint || this.packPlayWaypointTimer <= 0 ||
           Math.hypot(this.packPlayWaypoint.x - this.x, this.packPlayWaypoint.y - this.y) < 30) {
         this.packPlayWaypointTimer = 2.5 + Math.random() * 2.0;
-        const anchorX = this.owner ? this.owner.x : this.x;
-        const anchorY = this.owner ? this.owner.y : this.y;
-        const angle = Math.random() * Math.PI * 2;
-        const radius = 90 + Math.random() * 110;
-        this.packPlayWaypoint = {
-          x: anchorX + Math.cos(angle) * radius,
-          y: anchorY + Math.sin(angle) * radius
-        };
+        if (nearestLandmark) {
+          // Skirt the landmark so both dogs converge on it together.
+          const dxL = nearestLandmark.x - this.x;
+          const dyL = nearestLandmark.y - this.y;
+          const dL = Math.hypot(dxL, dyL) || 1;
+          const skirt = (nearestLandmark.r || 20) + 30;
+          this.packPlayWaypoint = {
+            x: nearestLandmark.x - (dxL / dL) * skirt,
+            y: nearestLandmark.y - (dyL / dL) * skirt
+          };
+        } else {
+          const anchorX = this.owner ? this.owner.x : this.x;
+          const anchorY = this.owner ? this.owner.y : this.y;
+          const angle = Math.random() * Math.PI * 2;
+          const radius = 90 + Math.random() * 110;
+          this.packPlayWaypoint = {
+            x: anchorX + Math.cos(angle) * radius,
+            y: anchorY + Math.sin(angle) * radius
+          };
+        }
       }
       desiredX = this.packPlayWaypoint.x;
       desiredY = this.packPlayWaypoint.y;
-      modeSpeed = 150 + Math.random() * 60; // 150-210 px/s
+      modeSpeed = Math.min(200, Math.max(150, 150 + Math.random() * 60)); // [150, 200] px/s
     } else {
       // Chase dog pursues the lead dog, flanking when close.
       if (dist > 75) {
         desiredX = partner.x;
         desiredY = partner.y;
-        modeSpeed = 170 + Math.random() * 50; // 170-220 px/s
+        modeSpeed = Math.min(210, Math.max(150, 170 + Math.random() * 50)); // [150, 210] px/s
       } else if (dist < 35) {
         // Veer/flank alongside at matching speed.
         const tangentX = -dy / dist;
         const tangentY = dx / dist;
         desiredX = this.x + tangentX * 60;
         desiredY = this.y + tangentY * 60;
-        modeSpeed = 150 + Math.random() * 40;
+        modeSpeed = Math.min(210, Math.max(150, 150 + Math.random() * 40));
       } else {
         desiredX = partner.x;
         desiredY = partner.y;
-        modeSpeed = 150 + Math.random() * 40;
+        modeSpeed = Math.min(210, Math.max(150, 150 + Math.random() * 40));
       }
     }
 
@@ -2441,15 +2484,18 @@ export class CompanionDog {
       this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 12));
     }
 
-    this.wagSpeed = 16 + playfulness * 2;
+    this.wagSpeed = Math.min(22, Math.max(16, 16 + playfulness));
 
-    // Occasional playful emotes every 5-8s.
+    // Periodic playful emote/pant burst every 6-8s.
     this.packPlayEmoteTimer -= dt;
     if (this.packPlayEmoteTimer <= 0) {
-      this.packPlayEmoteTimer = 5.0 + Math.random() * 3.0;
+      this.packPlayEmoteTimer = 6.0 + Math.random() * 2.0;
       const emotes = ['🐾', '🐶', '❤️'];
       this.emoteBubble = emotes[Math.floor(Math.random() * emotes.length)];
       this.emoteTimer = 1.8;
+      if (this.audio && typeof this.audio.playPant === 'function') {
+        this.audio.playPant();
+      }
     }
 
     // Hard clamp to the visible screen perimeter.
@@ -3304,4 +3350,4 @@ CompanionDog.getLeashSlot = getLeashSlot;
 CompanionDog.ZoomiePath = ZoomiePath;
 CompanionDog.ZOOMIE_PATH_TYPES = ZOOMIE_PATH_TYPES;
 CompanionDog.RoamSubMode = RoamSubMode;
-CompanionDog.ACTIVE_REST_BLOCKED_STATES = ACTIVE_REST_BLOCKED_STATES;
+CompanionDog.ACTIVE_REST_BLOCKED_STATES = Object.freeze(new Set([...ACTIVE_REST_BLOCKED_STATES]));

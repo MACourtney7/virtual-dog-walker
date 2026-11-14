@@ -913,6 +913,8 @@ class TestOffLeashMovement(unittest.TestCase):
         let roamTransitions = 0;
         let prevState = dog.state;
         let sawResting = false;
+        let continuousRest = 0;
+        let maxContinuousRest = 0;
         const restingStates = ['LYING_DOWN', 'SITTING'];
 
         for (let i = 0; i < steps; i++) {
@@ -921,7 +923,13 @@ class TestOffLeashMovement(unittest.TestCase):
           owner.vy = 0;
           dog.update(dt, null, []);
           if (dog.state === 'ROAMING') roamTime += dt;
-          if (restingStates.indexOf(dog.state) !== -1) sawResting = true;
+          if (restingStates.indexOf(dog.state) !== -1) {
+            sawResting = true;
+            continuousRest += dt;
+            if (continuousRest > maxContinuousRest) maxContinuousRest = continuousRest;
+          } else {
+            continuousRest = 0;
+          }
           if (dog.state === 'ROAMING' && prevState !== 'ROAMING') roamTransitions++;
           prevState = dog.state;
         }
@@ -930,6 +938,7 @@ class TestOffLeashMovement(unittest.TestCase):
           roamTime: roamTime,
           roamTransitions: roamTransitions,
           sawResting: sawResting,
+          maxContinuousRest: maxContinuousRest,
           finalState: dog.state,
           finalSubMode: dog.roamSubMode
         };
@@ -939,6 +948,8 @@ class TestOffLeashMovement(unittest.TestCase):
                            "Dog must spend substantial time roaming")
         self.assertGreaterEqual(res["roamTransitions"], 2,
                                 "Dog must return to ROAMING at least twice")
+        self.assertLess(res["maxContinuousRest"], 6.0,
+                        "Dog must never freeze permanently in a resting state")
         self.assertIn(res["finalState"], ("ROAMING", "LYING_DOWN", "SITTING"))
 
     def test_pack_play_enum_and_active_rest_blocked(self):
@@ -980,6 +991,9 @@ class TestOffLeashMovement(unittest.TestCase):
         dog1.stateTimer = 0.05;
         dog1.socialCooldown = 0;
         dog2.socialCooldown = 0;
+        // dog2 must be receptive for mutual pairing.
+        dog2.socialTargetDog = dog1;
+        dog2.state = DogState.SOCIAL_GREET;
 
         dog1.update(0.1, null, [dog2]);
 
@@ -1110,6 +1124,124 @@ class TestOffLeashMovement(unittest.TestCase):
         self.assertIsNone(res["dog1Partner"])
         self.assertIsNone(res["dog2Partner"])
         self.assertEqual(res["dog2State"], "ROAMING")
+
+    def test_three_dogs_prevents_hijacking_existing_pack_play(self):
+        """A third dog must not hijack an existing pack-play bond."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const owner3 = new Owner(1120, 1000);
+        owner3.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+        const dog3 = new CompanionDog(1120, 1000, owner3);
+        dog3.owner = owner3;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayRoleTimer = 10;
+        dog2.packPlayRoleTimer = 10;
+
+        // dog3 greets dog2 and tries to start pack play.
+        dog3.state = DogState.SOCIAL_GREET;
+        dog3.socialTargetDog = dog2;
+        dog3.socialCooldown = 0;
+        dog2.socialCooldown = 0;
+        const started = dog3._tryStartPackPlay(dog2);
+
+        return {
+          started: started,
+          dog2PartnerIsDog1: dog2.packPlayPartner === dog1,
+          dog3Partner: dog3.packPlayPartner,
+          dog2State: dog2.state
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertFalse(res["started"], "Third dog must not hijack existing pack play")
+        self.assertTrue(res["dog2PartnerIsDog1"], "dog2 must remain bonded to dog1")
+        self.assertIsNone(res["dog3Partner"])
+        self.assertEqual(res["dog2State"], "PACK_PLAY")
+
+    def test_pack_play_role_swap_over_time(self):
+        """Roles must swap after the role timer elapses."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayRoleTimer = 5.0;
+        dog2.packPlayRoleTimer = 5.0;
+
+        const before1 = dog1.packPlayRole;
+        const before2 = dog2.packPlayRole;
+
+        // Advance past the role timer.
+        dog1.updatePackPlay(5.1, null);
+        dog2.updatePackPlay(5.1, null);
+
+        return {
+          before1: before1,
+          before2: before2,
+          after1: dog1.packPlayRole,
+          after2: dog2.packPlayRole
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertEqual(res["before1"], "LEAD")
+        self.assertEqual(res["before2"], "CHASE")
+        self.assertEqual(res["after1"], "CHASE")
+        self.assertEqual(res["after2"], "LEAD")
+
+    def test_social_cooldown_blocks_reengagement(self):
+        """A dog with an active social cooldown must reject pack play."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        dog1.state = DogState.SOCIAL_GREET;
+        dog1.socialTargetDog = dog2;
+        dog1.socialCooldown = 10;
+        dog2.state = DogState.SOCIAL_GREET;
+        dog2.socialTargetDog = dog1;
+        dog2.socialCooldown = 0;
+
+        const started = dog1._tryStartPackPlay(dog2);
+
+        return {
+          started: started,
+          dog1Partner: dog1.packPlayPartner,
+          dog2Partner: dog2.packPlayPartner
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertFalse(res["started"], "Active social cooldown must block pack play")
+        self.assertIsNone(res["dog1Partner"])
+        self.assertIsNone(res["dog2Partner"])
 
     def test_stat_driven_whistle_social_cooldown(self):
         """Whistle social cooldown must scale with obedience/playfulness."""

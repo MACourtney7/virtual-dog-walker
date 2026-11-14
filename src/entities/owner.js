@@ -366,7 +366,7 @@ export class Owner {
     if (!world) return false;
 
     const selfRadius = (this.radius || 16);
-    const clearancePad = 8;
+    const clearancePad = 10;
 
     // World bounds check (respect owner radius + small margin)
     const w = (typeof world.width === 'number') ? world.width : null;
@@ -461,20 +461,25 @@ export class Owner {
       }
     }
 
-    // Obstacle colliders check
-    const colliders = Array.isArray(world.colliders) ? world.colliders : null;
-    if (colliders) {
-      for (const c of colliders) {
-        if (!c) continue;
-        const cx = (typeof c.x === 'number') ? c.x : null;
-        const cy = (typeof c.y === 'number') ? c.y : null;
-        if (cx === null || cy === null) continue;
-        const cr = (typeof c.radius === 'number') ? c.radius : 0;
-        const reach = cr + (this.radius || 16);
-        const dx = px - cx;
-        const dy = py - cy;
-        if (dx * dx + dy * dy < reach * reach) return true;
-      }
+    // Obstacle colliders check (world.getColliders() and/or world.colliders)
+    const collidersList = [];
+    if (typeof world.getColliders === 'function') {
+      const gc = world.getColliders();
+      if (Array.isArray(gc)) collidersList.push(...gc);
+    }
+    if (Array.isArray(world.colliders)) {
+      collidersList.push(...world.colliders);
+    }
+    for (const c of collidersList) {
+      if (!c) continue;
+      const cx = (typeof c.x === 'number') ? c.x : null;
+      const cy = (typeof c.y === 'number') ? c.y : null;
+      if (cx === null || cy === null) continue;
+      const cr = (typeof c.radius === 'number') ? c.radius : (typeof c.r === 'number' ? c.r : 0);
+      const reach = cr + selfRadius + clearancePad;
+      const dx = px - cx;
+      const dy = py - cy;
+      if (dx * dx + dy * dy < reach * reach) return true;
     }
 
     // World obstacles (rectangular) check

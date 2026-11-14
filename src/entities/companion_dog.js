@@ -1001,6 +1001,10 @@ export class CompanionDog {
         this.isPullingLeash = false;
         this.leashTugTarget = null;
       }
+    } else if (this.leashTugTimer > 0 && (!this.owner || !this.owner.isLeashed)) {
+      this.leashTugTimer = 0;
+      this.leashTugTarget = null;
+      this.isPullingLeash = false;
     }
 
     // 3. Movement integration
@@ -1296,13 +1300,11 @@ export class CompanionDog {
       // Regime C: both on-leash -> minimal passing glance
       if (selfLeashed && otherLeashed) {
         if (dogDist < 90 && this.socialCooldown <= 0 && Math.random() < baseProb * 0.15) {
-          this.angle = lerpAngle(this.angle, Math.atan2(other.y - this.y, other.x - this.x), Math.min(1, dt * 5));
-          this.wagSpeed = Math.max(this.wagSpeed, 11);
-          this.socialCooldown = 10.0;
-        }
-        if (dogDist < 90) {
           this.socialGazeAngle = Math.atan2(other.y - this.y, other.x - this.x);
           this.socialGazeTimer = 0.5;
+          this.angle = lerpAngle(this.angle, this.socialGazeAngle, Math.min(1, dt * 5));
+          this.wagSpeed = Math.max(this.wagSpeed, 11);
+          this.socialCooldown = 10.0;
         }
         continue;
       }
@@ -1346,55 +1348,69 @@ export class CompanionDog {
           }
         }
       }
-    } else {
-      if (Array.isArray(field.trees)) {
-        for (const t of field.trees) {
-          if (!t || typeof t.x !== 'number') continue;
-          out.push({ x: t.x, y: t.depthY ?? t.y, r: t.trunkRadius || 18 });
-        }
+    }
+
+    // Collider sources (non-exclusive with getWorldObstacles).
+    const colliders = [];
+    if (typeof field.getColliders === 'function') {
+      const gc = field.getColliders();
+      if (Array.isArray(gc)) colliders.push(...gc);
+    }
+    if (Array.isArray(field.colliders)) {
+      colliders.push(...field.colliders);
+    }
+    for (const c of colliders) {
+      if (!c || typeof c.x !== 'number' || typeof c.y !== 'number') continue;
+      out.push({ x: c.x, y: c.y, r: typeof c.r === 'number' ? c.r : (c.radius || 20) });
+    }
+
+    if (Array.isArray(field.trees)) {
+      for (const t of field.trees) {
+        if (!t || typeof t.x !== 'number') continue;
+        out.push({ x: t.x, y: t.depthY ?? t.y, r: t.trunkRadius || 18 });
       }
-      if (Array.isArray(field.benches)) {
-        for (const b of field.benches) {
-          if (!b || typeof b.x !== 'number') continue;
-          out.push({
-            x: b.x,
-            y: b.y,
-            r: b.r || b.radius || Math.hypot((b.w || 64) / 2, (b.h || 26) / 2)
-          });
-        }
-      }
-      if (Array.isArray(field.bins)) {
-        for (const b of field.bins) {
-          if (!b || typeof b.x !== 'number') continue;
-          out.push({ x: b.x, y: b.y, r: b.r || b.radius || 16 });
-        }
-      }
-      if (field.waterTower && typeof field.waterTower.x === 'number') {
+    }
+    if (Array.isArray(field.benches)) {
+      for (const b of field.benches) {
+        if (!b || typeof b.x !== 'number') continue;
         out.push({
-          x: field.waterTower.x,
-          y: field.waterTower.y,
-          r: field.waterTower.r || field.waterTower.radius || 42
+          x: b.x,
+          y: b.y,
+          r: b.r || b.radius || Math.hypot((b.w || 64) / 2, (b.h || 26) / 2)
         });
       }
-      if (Array.isArray(field.rockOutcrops)) {
-        for (const r of field.rockOutcrops) {
-          if (!r || typeof r.x !== 'number') continue;
-          out.push({
-            x: r.x,
-            y: (typeof r.depthY === 'number') ? (r.depthY - 8) : r.y,
-            r: r.r || r.radius || 26
-          });
-        }
+    }
+    if (Array.isArray(field.bins)) {
+      for (const b of field.bins) {
+        if (!b || typeof b.x !== 'number') continue;
+        out.push({ x: b.x, y: b.y, r: b.r || b.radius || 16 });
       }
-      if (Array.isArray(field.landmarks)) {
-        for (const l of field.landmarks) {
-          if (!l || typeof l.x !== 'number') continue;
-          out.push({
-            x: l.x,
-            y: (typeof l.depthY === 'number') ? l.depthY : l.y,
-            r: l.r || l.radius || 32
-          });
-        }
+    }
+    if (field.waterTower && typeof field.waterTower.x === 'number') {
+      out.push({
+        x: field.waterTower.x,
+        y: field.waterTower.y,
+        r: field.waterTower.r || field.waterTower.radius || 42
+      });
+    }
+    if (Array.isArray(field.rockOutcrops)) {
+      for (const r of field.rockOutcrops) {
+        if (!r || typeof r.x !== 'number') continue;
+        out.push({
+          x: r.x,
+          y: (typeof r.depthY === 'number') ? (r.depthY - 8) : r.y,
+          r: r.r || r.radius || 26
+        });
+      }
+    }
+    if (Array.isArray(field.landmarks)) {
+      for (const l of field.landmarks) {
+        if (!l || typeof l.x !== 'number') continue;
+        out.push({
+          x: l.x,
+          y: (typeof l.depthY === 'number') ? l.depthY : l.y,
+          r: l.r || l.radius || 32
+        });
       }
     }
 
@@ -1908,9 +1924,11 @@ export class CompanionDog {
           return;
         }
         // Arrival: hand off back to baseline free exploration.
-        if (Math.hypot(desiredX - this.x, desiredY - this.y) < 28) {
+        if (Math.hypot(desiredX - this.x, desiredY - this.y) < 24) {
           this.roamSubMode = RoamSubMode.FREE_EXPLORE;
           this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
+          this.roamTargetSpeed = 125 + Math.random() * 50;
+          this.roamLookBackDone = false;
           this.roamSubModeTimer = 0;
           this.roamWaypoint = null;
           desiredX = this.x + Math.cos(this.wanderAngle) * 100;
@@ -1928,6 +1946,8 @@ export class CompanionDog {
         if (!this.owner.isMoving || Math.hypot(desiredX - this.x, desiredY - this.y) < 24) {
           this.roamSubMode = RoamSubMode.FREE_EXPLORE;
           this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
+          this.roamTargetSpeed = 125 + Math.random() * 50;
+          this.roamLookBackDone = false;
           this.roamSubModeTimer = 0;
           this.roamWaypoint = null;
           desiredX = this.x + Math.cos(this.wanderAngle) * 100;
@@ -1953,6 +1973,8 @@ export class CompanionDog {
           }
           this.roamSubMode = RoamSubMode.FREE_EXPLORE;
           this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
+          this.roamTargetSpeed = 125 + Math.random() * 50;
+          this.roamLookBackDone = false;
           this.roamSubModeTimer = 0;
           this.roamWaypoint = null;
           return;
@@ -1969,6 +1991,8 @@ export class CompanionDog {
           this.roamSubModeTimer = 0;
           this.roamSubMode = RoamSubMode.FREE_EXPLORE;
           this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
+          this.roamTargetSpeed = 125 + Math.random() * 50;
+          this.roamLookBackDone = false;
           this.roamSubModeTimer = 0;
           this.roamWaypoint = null;
         }
@@ -1980,7 +2004,7 @@ export class CompanionDog {
         if (this.roamWaypoint) {
           desiredX = this.roamWaypoint.x;
           desiredY = this.roamWaypoint.y;
-          if (Math.hypot(desiredX - this.x, desiredY - this.y) < 28) {
+          if (Math.hypot(desiredX - this.x, desiredY - this.y) < 24) {
             this.roamWaypoint = null;
           }
         } else {

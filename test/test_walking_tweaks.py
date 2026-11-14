@@ -192,10 +192,14 @@ class TestWalkingTweaks(unittest.TestCase):
               { kind: 'rect', x: 450, y: 300, hw: 30, hh: 20 }
             ];
           },
+          getColliders() {
+            return [{ x: 350, y: 500, radius: 20 }];
+          },
           warpGates: [{ x: 700, y: 300, targetZoneId: 'z2' }]
         };
         const o = new Owner(200, 300);
         const directBlocked = o._isWanderRayBlocked(0, 120, world);
+        const colliderBlocked = o._isWanderProbeBlocked(350, 500, world);
         o.wanderMode = true;
         o.wanderBaseHeading = o.angle;
         o.setGait(Gait.WANDER);
@@ -208,6 +212,7 @@ class TestWalkingTweaks(unittest.TestCase):
         }
         return {
           directBlocked: directBlocked,
+          colliderBlocked: colliderBlocked,
           minTreeDist: minTreeDist,
           maxAbsY: maxAbsY,
           finalX: o.x,
@@ -216,6 +221,7 @@ class TestWalkingTweaks(unittest.TestCase):
         """
         res = _run_real_js(self.owner_src, "", snippet)
         self.assertTrue(res["directBlocked"], "Direct ray toward the gate must be blocked")
+        self.assertTrue(res["colliderBlocked"], "getColliders() collider must block the probe")
         self.assertGreaterEqual(
             res["minTreeDist"],
             24 + res["radius"],

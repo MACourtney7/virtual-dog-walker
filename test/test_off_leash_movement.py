@@ -397,6 +397,23 @@ class TestOffLeashMovement(unittest.TestCase):
         dog.updateSniff(0.1);
         const sniffState = dog.state;
 
+        // SCOUT_AHEAD arrival must hand off to baseline and reset roamTargetSpeed.
+        dog.roamBaselineTimer = 0;
+        dog.roamSubMode = 'SCOUT_AHEAD';
+        dog.roamTargetSpeed = 230;
+        dog.roamSubModeOptionLead = 120;
+        dog.roamLookBackDone = true;
+        dog.roamLookBackActive = false;
+        dog.roamMicroPauseTimer = 0;
+        dog.returnTrotActive = false;
+        dog.camera = null;
+        dog.x = owner.x + 120;
+        dog.y = owner.y;
+        dog.updateRoaming(1 / 60, [], null);
+        const scoutArrivalMode = dog.roamSubMode;
+        const scoutArrivalBaseline = dog.roamBaselineTimer;
+        const scoutArrivalSpeed = dog.roamTargetSpeed;
+
         return {
           baselineOnConstruct: baselineOnConstruct,
           freeExploreDuringBaseline: freeExploreDuringBaseline,
@@ -404,7 +421,10 @@ class TestOffLeashMovement(unittest.TestCase):
           afterTimeoutBaseline: afterTimeoutBaseline,
           sawScout: sawScout,
           sawFlank: sawFlank,
-          sniffState: sniffState
+          sniffState: sniffState,
+          scoutArrivalMode: scoutArrivalMode,
+          scoutArrivalBaseline: scoutArrivalBaseline,
+          scoutArrivalSpeed: scoutArrivalSpeed
         };
         """
         res = _run_real_js(self.owner_src, self.dog_src, snippet)
@@ -415,12 +435,21 @@ class TestOffLeashMovement(unittest.TestCase):
         self.assertFalse(res["sawScout"], "Stationary owner must not trigger SCOUT_AHEAD")
         self.assertFalse(res["sawFlank"], "Stationary owner must not trigger FLANK_PACE")
         self.assertEqual(res["sniffState"], "IDLE_SNIFF")
+        self.assertEqual(res["scoutArrivalMode"], "FREE_EXPLORE")
+        self.assertGreaterEqual(res["scoutArrivalBaseline"], 4.5)
+        self.assertGreaterEqual(res["scoutArrivalSpeed"], 125)
+        self.assertLessEqual(res["scoutArrivalSpeed"], 175)
 
     def test_screen_perimeter_bounds_and_zoomies_exemption(self):
         """Off-leash roaming must steer inward within the soft screen margin
         and clamp inside the hard screen margin, except during ZOOMIES."""
         self.assertIn("_getScreenPerimeter", self.dog_src)
         self.assertIn("DogState.ZOOMIES", self.dog_src)
+
+        # main.js must wire the camera into both the owner and the dog.
+        main_src = read_file("src/main.js")
+        self.assertIn("this.dog.camera = this.camera", main_src)
+        self.assertIn("this.owner.camera = this.camera", main_src)
 
         snippet = """
         const owner = new Owner(1000, 1000);
@@ -554,14 +583,18 @@ class TestOffLeashMovement(unittest.TestCase):
         const dog = new CompanionDog(500, 500, owner);
         dog.owner = owner;
 
-        // Sanity: obstacle extraction from a field with a circle + rect.
+        // Sanity: obstacle extraction must aggregate ALL sources non-exclusively.
         const probeField = {
           getWorldObstacles() {
             return [
               { kind: 'circle', x: 500, y: 500, r: 30 },
               { kind: 'rect', x: 700, y: 500, hw: 25, hh: 15 }
             ];
-          }
+          },
+          getColliders() {
+            return [{ x: 800, y: 500, radius: 20 }];
+          },
+          trees: [{ x: 900, y: 500, trunkRadius: 18 }]
         };
         const obstacleCount = dog._getFieldObstacles(probeField).length;
 
@@ -614,7 +647,10 @@ class TestOffLeashMovement(unittest.TestCase):
         return { obstacleCount: obstacleCount, results: results };
         """
         res = _run_real_js(self.owner_src, self.dog_src, snippet)
-        self.assertEqual(res["obstacleCount"], 2)
+        self.assertGreaterEqual(
+            res["obstacleCount"], 4,
+            "Obstacle extraction must aggregate getWorldObstacles, getColliders, and trees",
+        )
         for path in ("FIGURE_EIGHT", "ORBIT_OWNER", "SHUTTLE"):
             r = res["results"][path]
             self.assertGreaterEqual(
@@ -694,6 +730,16 @@ class TestOffLeashMovement(unittest.TestCase):
         const pullingAfter = dogB1.isPullingLeash;
         const tugTargetAfter = dogB1.leashTugTarget;
 
+        // Un-leashing mid-tug must immediately clear the tug state.
+        dogB1.triggerSocialLeashTug(dogB2);
+        const tugActiveBeforeUnleash = dogB1.leashTugTimer > 0;
+        ownerB1.isLeashed = false;
+        dogB1.update(1 / 60, null, [dogB2]);
+        const tugTimerAfterUnleash = dogB1.leashTugTimer;
+        const tugTargetAfterUnleash = dogB1.leashTugTarget;
+        const pullingAfterUnleash = dogB1.isPullingLeash;
+        ownerB1.isLeashed = true;
+
         // Regime C: both on-leash -> never SOCIAL_GREET / PLAY_BOW.
         const ownerC1 = new Owner(1000, 1000);
         ownerC1.isLeashed = true;
@@ -710,6 +756,12 @@ class TestOffLeashMovement(unittest.TestCase):
         const regimeCState = dogC1.state;
         const regimeCTugTimer = dogC1.leashTugTimer;
 
+        // Regime C gaze must be gated by cooldown/probability.
+        dogC1.socialCooldown = 5.0;
+        dogC1.socialGazeTimer = 0;
+        dogC1.checkSocialInteractions([dogC2], 1 / 60, null);
+        const regimeCGazeTimer = dogC1.socialGazeTimer;
+
         return {
           regimeAState: regimeAState,
           regimeACooldown: regimeACooldown,
@@ -722,8 +774,13 @@ class TestOffLeashMovement(unittest.TestCase):
           tugTimerAfter: tugTimerAfter,
           pullingAfter: pullingAfter,
           tugTargetAfter: tugTargetAfter,
+          tugActiveBeforeUnleash: tugActiveBeforeUnleash,
+          tugTimerAfterUnleash: tugTimerAfterUnleash,
+          tugTargetAfterUnleash: tugTargetAfterUnleash,
+          pullingAfterUnleash: pullingAfterUnleash,
           regimeCState: regimeCState,
-          regimeCTugTimer: regimeCTugTimer
+          regimeCTugTimer: regimeCTugTimer,
+          regimeCGazeTimer: regimeCGazeTimer
         };
         """
         res = _run_real_js(self.owner_src, self.dog_src, snippet)
@@ -745,9 +802,17 @@ class TestOffLeashMovement(unittest.TestCase):
         self.assertFalse(res["pullingAfter"])
         self.assertIsNone(res["tugTargetAfter"])
 
+        # Un-leashing mid-tug clears tug state immediately.
+        self.assertTrue(res["tugActiveBeforeUnleash"])
+        self.assertEqual(res["tugTimerAfterUnleash"], 0)
+        self.assertIsNone(res["tugTargetAfterUnleash"])
+        self.assertFalse(res["pullingAfterUnleash"])
+
         # Regime C
         self.assertEqual(res["regimeCState"], "FOLLOWING")
         self.assertEqual(res["regimeCTugTimer"], 0)
+        self.assertEqual(res["regimeCGazeTimer"], 0,
+                         "Regime C gaze must be gated by cooldown/probability")
 
 if __name__ == '__main__':
     unittest.main()

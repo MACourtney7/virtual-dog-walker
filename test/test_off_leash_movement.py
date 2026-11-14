@@ -398,8 +398,10 @@ class TestOffLeashMovement(unittest.TestCase):
         const sniffState = dog.state;
 
         // SCOUT_AHEAD arrival must hand off to baseline and reset roamTargetSpeed.
+        owner.angle = 0;
         dog.roamBaselineTimer = 0;
         dog.roamSubMode = 'SCOUT_AHEAD';
+        dog.roamSubModeTimer = 5.0;
         dog.roamTargetSpeed = 230;
         dog.roamSubModeOptionLead = 120;
         dog.roamLookBackDone = true;
@@ -408,7 +410,7 @@ class TestOffLeashMovement(unittest.TestCase):
         dog.returnTrotActive = false;
         dog.camera = null;
         dog.x = owner.x + 120;
-        dog.y = owner.y;
+        dog.y = owner.y + (dog.preferredSide === 'left' ? -20 : 20);
         dog.updateRoaming(1 / 60, [], null);
         const scoutArrivalMode = dog.roamSubMode;
         const scoutArrivalBaseline = dog.roamBaselineTimer;

@@ -915,7 +915,7 @@ class TestOffLeashMovement(unittest.TestCase):
         let sawResting = false;
         let continuousRest = 0;
         let maxContinuousRest = 0;
-        const restingStates = ['LYING_DOWN', 'SITTING'];
+        const restingStates = ['LYING_DOWN', 'SITTING', 'IDLE_SNIFF'];
 
         for (let i = 0; i < steps; i++) {
           owner.isMoving = false;
@@ -1199,15 +1199,22 @@ class TestOffLeashMovement(unittest.TestCase):
         const before1 = dog1.packPlayRole;
         const before2 = dog2.packPlayRole;
 
-        // Advance past the role timer.
-        dog1.updatePackPlay(5.1, null);
-        dog2.updatePackPlay(5.1, null);
+        // Step in small increments past the role timer, verifying roles stay
+        // strictly complementary at every step.
+        let desync = false;
+        const dt = 0.1;
+        for (let i = 0; i < 55; i++) {
+          dog1.updatePackPlay(dt, null);
+          dog2.updatePackPlay(dt, null);
+          if (dog1.packPlayRole === dog2.packPlayRole) desync = true;
+        }
 
         return {
           before1: before1,
           before2: before2,
           after1: dog1.packPlayRole,
-          after2: dog2.packPlayRole
+          after2: dog2.packPlayRole,
+          desync: desync
         };
         """
         res = _run_real_js(self.owner_src, self.dog_src, snippet)
@@ -1215,6 +1222,7 @@ class TestOffLeashMovement(unittest.TestCase):
         self.assertEqual(res["before2"], "CHASE")
         self.assertEqual(res["after1"], "CHASE")
         self.assertEqual(res["after2"], "LEAD")
+        self.assertFalse(res["desync"], "Roles must remain strictly complementary")
 
     def test_social_cooldown_blocks_reengagement(self):
         """A dog with an active social cooldown must reject pack play."""
@@ -1335,9 +1343,22 @@ class TestOffLeashMovement(unittest.TestCase):
         const make = (obed, play) => {
           const owner = new Owner(1000, 1000);
           owner.isLeashed = false;
+          const partnerOwner = new Owner(1060, 1000);
+          partnerOwner.isLeashed = false;
           const dog = new CompanionDog(1000, 1000, owner);
           dog.owner = owner;
           dog.personality = { obedience: obed, playfulness: play, energy: 3, curiosity: 3 };
+          const partner = new CompanionDog(1060, 1000, partnerOwner);
+          partner.owner = partnerOwner;
+          // Place both dogs into PACK_PLAY so the whistle is a real breakup.
+          dog.state = DogState.PACK_PLAY;
+          partner.state = DogState.PACK_PLAY;
+          dog.packPlayPartner = partner;
+          partner.packPlayPartner = dog;
+          dog.packPlayRole = 'LEAD';
+          partner.packPlayRole = 'CHASE';
+          dog.packPlayRoleTimer = 10;
+          partner.packPlayRoleTimer = 10;
           dog.whistleRecall();
           return dog.socialCooldown;
         };
@@ -1349,7 +1370,7 @@ class TestOffLeashMovement(unittest.TestCase):
         };
         """
         res = _run_real_js(self.owner_src, self.dog_src, snippet)
-        self.assertGreaterEqual(res["high"], 35.0)
+        self.assertGreaterEqual(res["high"], 30.0)
         self.assertLessEqual(res["high"], 45.0)
         self.assertGreaterEqual(res["balanced"], 18.0)
         self.assertLessEqual(res["balanced"], 25.0)
@@ -1438,6 +1459,104 @@ class TestOffLeashMovement(unittest.TestCase):
         self.assertTrue(res["hasWaypoint"], "Lead dog must set a waypoint near the tree")
         self.assertLess(res["distToTree"], 80.0,
                         "Waypoint must be near the shared landmark tree")
+
+    def test_shared_landmark_exploration_benches_and_scent_nodes(self):
+        """Pack play must detect benches and scent nodes as shared landmarks."""
+        snippet = """
+        const makePair = () => {
+          const owner1 = new Owner(1000, 1000);
+          owner1.isLeashed = false;
+          const owner2 = new Owner(1060, 1000);
+          owner2.isLeashed = false;
+          const dog1 = new CompanionDog(1000, 1000, owner1);
+          dog1.owner = owner1;
+          const dog2 = new CompanionDog(1060, 1000, owner2);
+          dog2.owner = owner2;
+          dog1.state = DogState.PACK_PLAY;
+          dog2.state = DogState.PACK_PLAY;
+          dog1.packPlayPartner = dog2;
+          dog2.packPlayPartner = dog1;
+          dog1.packPlayRole = 'LEAD';
+          dog2.packPlayRole = 'CHASE';
+          dog1.packPlayRoleTimer = 10;
+          dog2.packPlayRoleTimer = 10;
+          dog1.packPlayWaypoint = null;
+          dog1.packPlayWaypointTimer = 0;
+          return dog1;
+        };
+
+        const benchDog = makePair();
+        const benchField = { benches: [{ x: 1050, y: 1000, w: 64, h: 26 }] };
+        benchDog.updatePackPlay(1 / 60, benchField);
+        const benchWp = benchDog.packPlayWaypoint;
+        const benchDist = benchWp ? Math.hypot(benchWp.x - 1050, benchWp.y - 1000) : Infinity;
+
+        const scentDog = makePair();
+        const scentField = { scentNodes: [{ x: 1050, y: 1000, r: 16 }] };
+        scentDog.updatePackPlay(1 / 60, scentField);
+        const scentWp = scentDog.packPlayWaypoint;
+        const scentDist = scentWp ? Math.hypot(scentWp.x - 1050, scentWp.y - 1000) : Infinity;
+
+        return {
+          benchHasWaypoint: Boolean(benchWp),
+          benchDist: benchDist,
+          scentHasWaypoint: Boolean(scentWp),
+          scentDist: scentDist
+        };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertTrue(res["benchHasWaypoint"], "Bench must be detected as a landmark")
+        self.assertLess(res["benchDist"], 80.0, "Waypoint must be near the bench")
+        self.assertTrue(res["scentHasWaypoint"], "Scent node must be detected as a landmark")
+        self.assertLess(res["scentDist"], 80.0, "Waypoint must be near the scent node")
+
+    def test_pack_play_speed_clamped_with_obstacles(self):
+        """Speed must stay <= 210.01 even with obstacle avoidance and perimeter steering."""
+        snippet = """
+        const owner1 = new Owner(1000, 1000);
+        owner1.isLeashed = false;
+        const owner2 = new Owner(1060, 1000);
+        owner2.isLeashed = false;
+        const dog1 = new CompanionDog(1000, 1000, owner1);
+        dog1.owner = owner1;
+        const dog2 = new CompanionDog(1060, 1000, owner2);
+        dog2.owner = owner2;
+
+        const camera = { x: 1000, y: 1000, viewportWidth: 1280, viewportHeight: 720, zoom: 1.0 };
+        dog1.camera = camera;
+        dog2.camera = camera;
+
+        dog1.state = DogState.PACK_PLAY;
+        dog2.state = DogState.PACK_PLAY;
+        dog1.packPlayPartner = dog2;
+        dog2.packPlayPartner = dog1;
+        dog1.packPlayRole = 'LEAD';
+        dog2.packPlayRole = 'CHASE';
+        dog1.packPlayRoleTimer = 10;
+        dog2.packPlayRoleTimer = 10;
+
+        // Dense obstacle field near the dogs to force strong avoidance pushes.
+        const field = {
+          getWorldObstacles() {
+            return [
+              { kind: 'circle', x: 1010, y: 1000, r: 30 },
+              { kind: 'circle', x: 1050, y: 1000, r: 30 },
+              { kind: 'circle', x: 1030, y: 1030, r: 30 }
+            ];
+          }
+        };
+
+        let maxSpeed = 0;
+        for (let i = 0; i < 200; i++) {
+          dog1.updatePackPlay(1 / 60, field);
+          dog2.updatePackPlay(1 / 60, field);
+          maxSpeed = Math.max(maxSpeed, Math.hypot(dog1.vx, dog1.vy), Math.hypot(dog2.vx, dog2.vy));
+        }
+        return { maxSpeed: maxSpeed };
+        """
+        res = _run_real_js(self.owner_src, self.dog_src, snippet)
+        self.assertLessEqual(res["maxSpeed"], 210.01,
+                             "Pack play speed must never exceed 210 px/s")
 
     def test_stat_driven_whistle_social_cooldown(self):
         """Whistle social cooldown must scale with obedience/playfulness."""

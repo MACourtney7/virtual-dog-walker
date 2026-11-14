@@ -613,6 +613,8 @@ export class CompanionDog {
     const wasLost = this.state === DogState.LOST || this.isLost;
 
     // Whistle is the play breaker: dissolve any active pack-play bond.
+    // Only an actual pack-play breakup applies the stat-driven social cool-off.
+    const wasInPackPlay = Boolean(this.packPlayPartner || this.state === DogState.PACK_PLAY);
     if (this.packPlayPartner) {
       this._breakPackPlay();
     }
@@ -621,10 +623,12 @@ export class CompanionDog {
     // cool-off (up to 45s), high playfulness decreases it (down to 8s).
     // Normalised 1..5 -> 0..1 so the bands are exact:
     //   (5,1) -> 40s, (3,3) -> 24s, (2,4) -> 16s, (1,5) -> 8s
-    const obedNorm = ((this.personality?.obedience || 3) - 1) / 4; // 0..1
-    const playNorm = ((this.personality?.playfulness || 3) - 1) / 4; // 0..1
-    const cd = 20.0 + obedNorm * 20.0 - playNorm * 12.0;
-    this.socialCooldown = Math.max(8.0, Math.min(45.0, cd));
+    if (wasInPackPlay) {
+      const obedNorm = ((this.personality?.obedience || 3) - 1) / 4; // 0..1
+      const playNorm = ((this.personality?.playfulness || 3) - 1) / 4; // 0..1
+      const cd = 20.0 + obedNorm * 20.0 - playNorm * 12.0;
+      this.socialCooldown = Math.max(8.0, Math.min(45.0, cd));
+    }
 
     this.state = DogState.RECALLED;
     this.isLost = false;
@@ -2327,7 +2331,8 @@ export class CompanionDog {
       partner.packPlayPartner = null;
       partner.packPlayWaypoint = null;
       if (partner.state === DogState.PACK_PLAY) {
-        partner.transitionTo(DogState.ROAMING);
+        const partnerLeashed = Boolean(partner.owner && partner.owner.isLeashed);
+        partner.transitionTo(partnerLeashed ? DogState.FOLLOWING : DogState.ROAMING);
         partner.idleRestTimer = 0;
       }
     }
@@ -2370,19 +2375,32 @@ export class CompanionDog {
     const screen = this._getScreenPerimeter(field);
 
     // Shared landmark exploration: bias the lead waypoint toward the nearest
-    // tree within 220px so both dogs investigate it together.
+    // landmark (tree, bench, or scent node/prop) within 220px so both dogs
+    // investigate it together.
     let nearestLandmark = null;
     let nearestLandmarkDist = Infinity;
-    if (field && Array.isArray(field.trees) && field.trees.length > 0) {
-      for (const tree of field.trees) {
-        if (!tree || typeof tree.x !== 'number') continue;
-        const ty = (typeof tree.depthY === 'number') ? tree.depthY : tree.y;
-        if (typeof ty !== 'number') continue;
-        const d = Math.hypot(tree.x - this.x, ty - this.y);
-        if (d < 220 && d < nearestLandmarkDist) {
-          nearestLandmark = { x: tree.x, y: ty, r: tree.trunkRadius || 18 };
-          nearestLandmarkDist = d;
-        }
+    const considerLandmark = (lm, defaultR) => {
+      if (!lm || typeof lm.x !== 'number') return;
+      const ly = (typeof lm.depthY === 'number') ? lm.depthY : lm.y;
+      if (typeof ly !== 'number') return;
+      const d = Math.hypot(lm.x - this.x, ly - this.y);
+      if (d < 220 && d < nearestLandmarkDist) {
+        nearestLandmark = { x: lm.x, y: ly, r: lm.r || lm.radius || lm.trunkRadius || defaultR };
+        nearestLandmarkDist = d;
+      }
+    };
+    if (field) {
+      if (Array.isArray(field.trees)) {
+        for (const tree of field.trees) considerLandmark(tree, 18);
+      }
+      if (Array.isArray(field.benches)) {
+        for (const bench of field.benches) considerLandmark(bench, 32);
+      }
+      const scentNodes = Array.isArray(field.scentNodes)
+        ? field.scentNodes
+        : (Array.isArray(field.props) ? field.props : null);
+      if (scentNodes) {
+        for (const node of scentNodes) considerLandmark(node, 16);
       }
     }
 
@@ -2528,6 +2546,25 @@ export class CompanionDog {
     // Obstacle and world boundary collisions.
     if (field) {
       resolveFieldCollision(this, this.radius, field);
+    }
+
+    // Re-apply the screen hard clamp so collision pushback never pushes the
+    // dog off-screen.
+    if (this.camera) {
+      const perim = this._getScreenPerimeter();
+      if (perim) {
+        this.x = Math.max(perim.left, Math.min(perim.right, this.x));
+        this.y = Math.max(perim.top, Math.min(perim.bottom, this.y));
+      }
+    }
+
+    // Final speed magnitude clamp: obstacle avoidance and perimeter steering
+    // must never push the pack-play speed above 210 px/s.
+    const currentSpeed = Math.hypot(this.vx, this.vy);
+    if (currentSpeed > 210) {
+      const scale = 210 / currentSpeed;
+      this.vx *= scale;
+      this.vy *= scale;
     }
   }
 

@@ -50,8 +50,8 @@ export const WANDER_LOOKAHEAD_PX = 96;
 
 // Leash arm pose constants (exported for tests/tooling)
 export const LEASH_ARM_SWING_SCALE = 0.15;
-export const LEASH_ARM_BASE_REACH_PX = 18;
-export const LEASH_ARM_MAX_REACH_PX = 34;
+export const LEASH_ARM_BASE_REACH_PX = 14;
+export const LEASH_ARM_MAX_REACH_PX = 30;
 export const LEASH_ARM_TENSION_RAMP_PX = 140; // distance that maps to tension = 1
 export const LEASH_ARM_SHOULDER_OFFSET_PX = 8;
 export const LEASH_ARM_HAND_RADIUS_PX = 3.5;
@@ -191,7 +191,7 @@ export class Owner {
     const reach = lerpNum(LEASH_ARM_BASE_REACH_PX, LEASH_ARM_MAX_REACH_PX, tension);
 
     // Aim forward with a slight outward bias toward the dog's flank.
-    let armAngle = sideSign * (0.35 + 0.25 * (1 - tension));
+    let armAngle = sideSign * (0.08 + 0.10 * (1 - tension));
 
     // Reduced stride oscillation on the holding arm only.
     // NOTE: armAngle is in RADIANS, so the swing must be an angular amplitude
@@ -923,10 +923,14 @@ export class Owner {
     // --- DEPTH LAYER 1: Far Arm & Far Leg (behind torso) ---
     if (leftIsFar) {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, true);
-      drawArm(leftShoulderX, leftShoulderY, -armSwing, true, leftIsLeashArm);
+      if (!leftIsLeashArm || sinA < -0.2) {
+        drawArm(leftShoulderX, leftShoulderY, -armSwing, true, leftIsLeashArm);
+      }
     } else {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, true);
-      drawArm(rightShoulderX, rightShoulderY, armSwing, true, rightIsLeashArm);
+      if (!rightIsLeashArm || sinA < -0.2) {
+        drawArm(rightShoulderX, rightShoulderY, armSwing, true, rightIsLeashArm);
+      }
     }
 
     // --- DEPTH LAYER 2: Accessory (Backpack when facing South / from front) ---
@@ -1027,9 +1031,16 @@ export class Owner {
     if (leftIsFar) {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, false);
       drawArm(rightShoulderX, rightShoulderY, armSwing, false, rightIsLeashArm);
+      if (leftIsLeashArm && sinA >= -0.2) {
+        drawArm(leftShoulderX, leftShoulderY, -armSwing, false, true);
+      }
     } else {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, false);
-      drawArm(leftShoulderX, leftShoulderY, -armSwing, false, leftIsLeashArm);
+      if (rightIsLeashArm && sinA >= -0.2) {
+        drawArm(rightShoulderX, rightShoulderY, armSwing, false, true);
+      } else {
+        drawArm(leftShoulderX, leftShoulderY, -armSwing, false, leftIsLeashArm);
+      }
     }
 
     // --- DEPTH LAYER 6: Head, Face, Ears & Hairstyle ---

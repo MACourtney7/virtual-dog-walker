@@ -1727,8 +1727,8 @@ class TestDogSpacing(unittest.TestCase):
         forward = (math.cos(heading), math.sin(heading))
         right = (-math.sin(heading), math.cos(heading))
         flank_sign = -1 if side == 'left' else 1
-        lateral = max(half_width + 12, min(half_width + 16, half_width + 14))
-        forward_lead = max(40, min(52, 46))
+        lateral = max(half_width + 0, min(half_width + 4, half_width + 2))
+        forward_lead = max(38, min(50, 48))
         sx = owner_x + forward[0] * forward_lead + right[0] * flank_sign * lateral
         sy = owner_y + forward[1] * forward_lead + right[1] * flank_sign * lateral
         sx += vx * 0.12
@@ -1737,15 +1737,15 @@ class TestDogSpacing(unittest.TestCase):
         rel_x = sx - owner_x
         rel_y = sy - owner_y
         proj = rel_x * forward[0] + rel_y * forward[1]
-        if proj > 52:
-            pull = proj - 52
+        if proj > 50:
+            pull = proj - 50
             sx -= forward[0] * pull
             sy -= forward[1] * pull
             rel_x = sx - owner_x
             rel_y = sy - owner_y
             proj = rel_x * forward[0] + rel_y * forward[1]
-        elif proj < 40:
-            push = 40 - proj
+        elif proj < 38:
+            push = 38 - proj
             sx += forward[0] * push
             sy += forward[1] * push
             rel_x = sx - owner_x
@@ -1759,35 +1759,35 @@ class TestDogSpacing(unittest.TestCase):
         return sx, sy
 
     def test_flank_clearance_bounds(self):
-        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 12", self.src)
-        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 16", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MIN_PX = 0", self.src)
+        self.assertIn("LEASH_FLANK_CLEARANCE_MAX_PX = 4", self.src)
         import math
         half_width = 10.5
         for deg in (0, 90, 180, 270, 45):
             heading = math.radians(deg)
             sx, sy = self._slot(100.0, 100.0, heading, half_width=half_width)
             # Lateral distance from the forward axis, minus the owner half-width,
-            # must be within [12, 16] (the flank clearance band).
+            # must be within [0, 4] (the flank clearance band).
             forward = (math.cos(heading), math.sin(heading))
             rel_x = sx - 100.0
             rel_y = sy - 100.0
             proj = rel_x * forward[0] + rel_y * forward[1]
             lateral = math.hypot(rel_x - forward[0] * proj, rel_y - forward[1] * proj)
             clearance = lateral - half_width
-            self.assertGreaterEqual(clearance, 12 - 1e-6)
-            self.assertLessEqual(clearance, 16 + 1e-6)
+            self.assertGreaterEqual(clearance, 0 - 1e-6)
+            self.assertLessEqual(clearance, 4 + 1e-6)
 
     def test_forward_lead_bounds(self):
-        self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 40", self.src)
-        self.assertIn("LEASH_FORWARD_LEAD_MAX_PX = 52", self.src)
+        self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 38", self.src)
+        self.assertIn("LEASH_FORWARD_LEAD_MAX_PX = 50", self.src)
         import math
         for deg in (0, 90, 180, 270, 45):
             heading = math.radians(deg)
             sx, sy = self._slot(100.0, 100.0, heading)
             forward = (math.cos(heading), math.sin(heading))
             proj = (sx - 100.0) * forward[0] + (sy - 100.0) * forward[1]
-            self.assertGreaterEqual(proj, 40 - 1e-6)
-            self.assertLessEqual(proj, 52 + 1e-6)
+            self.assertGreaterEqual(proj, 38 - 1e-6)
+            self.assertLessEqual(proj, 50 + 1e-6)
 
     def test_dog_never_behind_shoulder_line(self):
         self.assertIn("LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = 2", self.src)
@@ -1823,7 +1823,7 @@ class TestDogSpacing(unittest.TestCase):
         self.assertIn("LEASH_FEEDFORWARD_SECONDS", block)
 
     def test_forward_lead_clamped_after_feedforward(self):
-        """Forward lead must stay <= 52px even with high feed-forward velocity."""
+        """Forward lead must stay <= 50px even with high feed-forward velocity."""
         import math
         for speed in (0.0, 100.0, 185.0, 400.0):
             for deg in (0, 45, 90, 135, 180, 225, 270, 315):
@@ -1833,10 +1833,10 @@ class TestDogSpacing(unittest.TestCase):
                 sx, sy = self._slot(100.0, 100.0, heading, vx=vx, vy=vy)
                 forward = (math.cos(heading), math.sin(heading))
                 proj = (sx - 100.0) * forward[0] + (sy - 100.0) * forward[1]
-                self.assertLessEqual(proj, 52 + 1e-6,
-                                     f"forward lead {proj} exceeds 52 at speed {speed}")
-                self.assertGreaterEqual(proj, 40 - 1e-6,
-                                        f"forward lead {proj} below 40 at speed {speed}")
+                self.assertLessEqual(proj, 50 + 1e-6,
+                                     f"forward lead {proj} exceeds 50 at speed {speed}")
+                self.assertGreaterEqual(proj, 38 - 1e-6,
+                                        f"forward lead {proj} below 38 at speed {speed}")
 
     def test_rendered_position_shoulder_line_clamp_present(self):
         """updateFollowing must clamp the rendered position to the shoulder line."""
@@ -2233,8 +2233,8 @@ class TestForwardLeadBoundsAllGaits(unittest.TestCase):
         self.src = read("src/entities/companion_dog.js")
 
     def test_constants(self):
-        self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 40", self.src)
-        self.assertIn("LEASH_FORWARD_LEAD_MAX_PX = 52", self.src)
+        self.assertIn("LEASH_FORWARD_LEAD_MIN_PX = 38", self.src)
+        self.assertIn("LEASH_FORWARD_LEAD_MAX_PX = 50", self.src)
 
     def test_behavioral_forward_lead_all_gaits(self):
         import math

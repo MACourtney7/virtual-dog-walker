@@ -46,13 +46,13 @@ const PLAYER_HIT_RADIUS = 26;
 
 // Leash slot spacing constants (owner-local frame).
 // Flank clearance is measured from the owner's hip/half-width out to the dog.
-export const LEASH_FLANK_CLEARANCE_MIN_PX = 12;
-export const LEASH_FLANK_CLEARANCE_MAX_PX = 16;
-export const LEASH_FLANK_CLEARANCE_TARGET_PX = 14;
+export const LEASH_FLANK_CLEARANCE_MIN_PX = 0;
+export const LEASH_FLANK_CLEARANCE_MAX_PX = 4;
+export const LEASH_FLANK_CLEARANCE_TARGET_PX = 2;
 // Forward lead is measured ahead of the owner's transverse shoulder line.
-export const LEASH_FORWARD_LEAD_MIN_PX = 40;
-export const LEASH_FORWARD_LEAD_MAX_PX = 52;
-export const LEASH_FORWARD_LEAD_TARGET_PX = 46;
+export const LEASH_FORWARD_LEAD_MIN_PX = 38;
+export const LEASH_FORWARD_LEAD_MAX_PX = 50;
+export const LEASH_FORWARD_LEAD_TARGET_PX = 48;
 // Velocity feed-forward horizon (seconds) so the dog leads rather than trails.
 export const LEASH_FEEDFORWARD_SECONDS = 0.12;
 // Minimum forward projection of the slot past the shoulder line.
@@ -1268,6 +1268,9 @@ export class CompanionDog {
       this.vx *= 0.8;
       this.vy *= 0.8;
       this.wagSpeed = 6;
+      // Smoothly align with owner heading while standing still
+      const ownerHeading = resolveOwnerHeading(this.owner);
+      this.angle = lerpAngle(this.angle, ownerHeading, Math.min(1, dt * 10));
       if (Math.random() < idleTransitionChance) {
         this.transitionTo(Math.random() < 0.5 ? DogState.IDLE_SNIFF : DogState.SITTING);
         if (this.state !== DogState.ROLLING) {
@@ -1290,12 +1293,16 @@ export class CompanionDog {
     if (dist > arrivalDeadband) {
       this.vx = (dx / dist) * targetSpeed;
       this.vy = (dy / dist) * targetSpeed;
-      this.angle = Math.atan2(this.vy, this.vx);
+      // When owner is moving, face travel direction; when owner stops, align to owner's heading
+      const targetAngle = (!this.owner.isMoving) ? resolveOwnerHeading(this.owner) : Math.atan2(this.vy, this.vx);
+      this.angle = lerpAngle(this.angle, targetAngle, Math.min(1, dt * 12));
       this.wagSpeed = 10;
     } else {
       this.vx = 0;
       this.vy = 0;
       this.wagSpeed = 6;
+      const ownerHeading = resolveOwnerHeading(this.owner);
+      this.angle = lerpAngle(this.angle, ownerHeading, Math.min(1, dt * 10));
     }
 
     // Rendered-position shoulder-line clamp: after arrival damping, the dog's
@@ -2086,12 +2093,7 @@ export class CompanionDog {
   draw(ctx) {
     ctx.save();
 
-    // 1. Draw Leash if leashed to owner
-    if (this.owner && this.owner.isLeashed && this.state !== DogState.FETCHING) {
-      this.drawLeash(ctx);
-    }
-
-    // 2. Soft ground shadow
+    // 1. Soft ground shadow
     ctx.fillStyle = 'rgba(20, 35, 15, 0.32)';
     ctx.beginPath();
     ctx.ellipse(this.x, this.y + 7, 16, 8, 0, 0, Math.PI * 2);
@@ -2372,6 +2374,11 @@ export class CompanionDog {
 
     ctx.restore(); // Restore orientation transform
 
+    // Draw leash on top of the dog's body & collar
+    if (this.owner && this.owner.isLeashed && this.state !== DogState.FETCHING) {
+      this.drawLeash(ctx);
+    }
+
     // 5. Floating Hearts
     for (const h of this.hearts) {
       ctx.save();
@@ -2454,26 +2461,11 @@ export class CompanionDog {
     const sagCap = Math.min(2.0, leashLen * 0.03);
     const sag = Math.min(sagCap, this.leashSagPx || 0);
 
-    ctx.strokeStyle = '#991b1b'; // Classic crimson red nylon lead
-    ctx.lineWidth = this.isPullingLeash ? 2.0 : 1.8;
+    ctx.strokeStyle = '#dc2626'; // Vivid crimson red nylon
+    ctx.lineWidth = this.isPullingLeash ? 2.6 : 2.2;
     ctx.beginPath();
     ctx.moveTo(handX, handY);
-    if (sag > 0.01) {
-      // Very shallow sag curve, pushed outward so it never dips inside the body.
-      let midX = (handX + collarX) / 2 + jitterX;
-      let midY = (handY + collarY) / 2 + sag + jitterY;
-      const midDx = midX - this.owner.x;
-      const midDy = midY - this.owner.y;
-      const midDist = Math.hypot(midDx, midDy);
-      if (midDist < PLAYER_HIT_RADIUS + 2 && midDist > 0.001) {
-        const push = (PLAYER_HIT_RADIUS + 2) / midDist;
-        midX = this.owner.x + midDx * push;
-        midY = this.owner.y + midDy * push;
-      }
-      ctx.quadraticCurveTo(midX, midY, collarX + jitterX, collarY + jitterY);
-    } else {
-      ctx.lineTo(collarX + jitterX, collarY + jitterY);
-    }
+    ctx.lineTo(collarX, collarY);
     ctx.stroke();
     ctx.restore();
   }

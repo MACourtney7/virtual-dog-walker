@@ -56,7 +56,6 @@
 
   var dog = null;
   var activeDogSlot = null;
-  var liveDogEntity = null; // optional real CompanionDog instance
   var pose = 'auto'; // 'auto' | 'camera'
   var stateTimer = 0;
   var forcedState = null; // when set via setDogState, holds until cleared
@@ -251,6 +250,7 @@
       coatColor: appearance.coat,
       coatColorDark: appearance.coatDark,
       coatSecondary: appearance.coatSecondary,
+      coatKey: appearance.coatKey,
       collar: appearance.collar,
       x: fieldWidth / 2,
       y: fieldHeight / 2,
@@ -258,7 +258,11 @@
       state: 'wander',
       targetX: fieldWidth / 2,
       targetY: fieldHeight / 2,
-      bob: 0
+      bob: 0,
+      // The sanctuary dog is always off-leash and fully self-contained.
+      isLeashed: false,
+      leash: null,
+      leashActive: false
     };
   }
 
@@ -482,41 +486,6 @@
     return entity;
   }
 
-  // Build a render-only adapter that copies visual properties from a live
-  // CompanionDog entity WITHOUT mutating it. The live entity is treated as
-  // strictly read-only.
-  function buildRenderAdapter(live) {
-    var coatObj = live.coat && typeof live.coat === 'object'
-      ? Object.assign({}, live.coat)
-      : {
-          bodyColor: live.coatColor || live.coat || DEFAULT_COAT,
-          tanColor: live.coatColorDark || live.coatDark || DEFAULT_COAT_DARK,
-          bibColor: '#f5f0e6',
-          darkColor: live.coatColorDark || live.coatDark || DEFAULT_COAT_DARK
-        };
-    // Prototype-chain the live entity so its prototype methods remain
-    // available, then shadow only the render-time fields. The live entity
-    // itself is never written to.
-    var adapter = Object.create(live);
-    adapter.x = dog.x;
-    adapter.y = dog.y;
-    adapter.angle = pose === 'camera' ? Math.PI / 2 : dog.facing;
-    adapter.tailAngle = Math.sin((dog.bob || 0) * 1.6) * 0.5;
-    adapter.legPhase = dog.bob;
-    adapter.gaitMode = dog.state === 'wander' ? 'walk' : 'idle';
-    adapter.gaitPhase = dog.bob;
-    adapter.isSitting = dog.state === 'sit';
-    adapter.isSniffing = dog.state === 'sniff';
-    adapter.coat = coatObj;
-    adapter.coatColor = live.coatColor || dog.coatColor;
-    adapter.coatColorDark = live.coatColorDark || dog.coatColorDark;
-    adapter.coatDark = live.coatDark || dog.coatDark;
-    adapter.collarColor = live.collarColor || dog.collar;
-    adapter.name = live.name || dog.name;
-    adapter.state = dog.state;
-    return adapter;
-  }
-
   // Draw the articulated top-down canine body (CompanionDog-style).
   function drawArticulatedDog(entity) {
     var coatObj = entity.coat && typeof entity.coat === 'object' ? entity.coat : null;
@@ -672,15 +641,15 @@
   function drawDog() {
     if (!ctx || !dog) return;
 
-    // Prefer a real CompanionDog entity when available, but never mutate it:
-    // build a render-only adapter that copies visual properties.
-    var entity = liveDogEntity ? buildRenderAdapter(liveDogEntity) : buildDogEntity();
+    // The sanctuary dog is fully self-contained: build a clean visual entity
+    // from the sanctuary's own state. No world dog entity is ever consulted,
+    // so there is zero prototype or world-state leakage.
+    var entity = buildDogEntity();
 
     var CompanionDogClass = getCompanionDogClass();
-    var drawFn = (typeof entity.draw === 'function' ? entity.draw : null) ||
-                 (CompanionDogClass && typeof CompanionDogClass.prototype.draw === 'function'
-                   ? CompanionDogClass.prototype.draw
-                   : null);
+    var drawFn = (CompanionDogClass && typeof CompanionDogClass.prototype.draw === 'function')
+      ? CompanionDogClass.prototype.draw
+      : null;
     if (drawFn) {
       try {
         drawFn.call(entity, ctx);
@@ -810,9 +779,22 @@
   function resizeCanvas() {
     if (!canvas) return;
 
+    // Prefer the parent container's layout box so the canvas fills it
+    // seamlessly; fall back to the canvas's own measured size.
+    var parent = canvas.parentElement || null;
     var rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : null;
-    var cssWidth = (rect && rect.width) || canvas.clientWidth || canvas.width || 320;
-    var cssHeight = (rect && rect.height) || canvas.clientHeight || canvas.height || 240;
+    var cssWidth =
+      (parent && parent.clientWidth) ||
+      (rect && rect.width) ||
+      canvas.clientWidth ||
+      canvas.width ||
+      320;
+    var cssHeight =
+      (parent && parent.clientHeight) ||
+      (rect && rect.height) ||
+      canvas.clientHeight ||
+      canvas.height ||
+      240;
 
     var dpr = global.devicePixelRatio || 1;
 
@@ -822,9 +804,9 @@
     canvas.width = Math.round(fieldWidth * dpr);
     canvas.height = Math.round(fieldHeight * dpr);
 
-    // Pin the CSS layout box so DPR scaling never expands the DOM element.
-    canvas.style.width = fieldWidth + 'px';
-    canvas.style.height = fieldHeight + 'px';
+    // Fill the container seamlessly; never pin fixed pixel dimensions.
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
 
     if (ctx) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -845,7 +827,7 @@
   // Public API
   // ---------------------------------------------------------------------------
 
-  function mount(canvasEl, explicitDogSlot, liveDog) {
+  function mount(canvasEl, explicitDogSlot) {
     if (mounted) return;
 
     var el = canvasEl || (global.document && global.document.getElementById(CANVAS_ID));
@@ -868,9 +850,6 @@
       slot = readProfile();
     }
     activeDogSlot = slot || null;
-
-    // Accept an explicit live CompanionDog entity, else a globally published one.
-    liveDogEntity = liveDog || global.__vdwLiveDog || null;
 
     var appearance = resolveAppearance(activeDogSlot);
     dog = createDog(appearance);
@@ -913,7 +892,6 @@
     ctx = null;
     dog = null;
     activeDogSlot = null;
-    liveDogEntity = null;
     forcedState = null;
     grassBlades = [];
     particles = [];
@@ -943,7 +921,11 @@
       facing: dog.facing,
       state: dog.state,
       coatColor: dog.coatColor,
-      coatColorDark: dog.coatColorDark
+      coatColorDark: dog.coatColorDark,
+      coatKey: dog.coatKey,
+      collar: dog.collar,
+      isLeashed: dog.isLeashed,
+      leash: dog.leash
     };
   }
 

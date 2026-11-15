@@ -272,8 +272,6 @@ class TestHomeSanctuaryStatic(unittest.TestCase):
         )
 
     def test_live_dog_entity_not_mutated_static(self):
-        self.assertIn("buildRenderAdapter", self.sanctuary_js,
-                      "HomeSanctuary must use a non-mutating render adapter")
         # The old mutation pattern must be gone.
         self.assertNotIn("entity.x = dog.x", self.sanctuary_js,
                          "drawDog must not mutate the live entity's x")
@@ -289,6 +287,67 @@ class TestHomeSanctuaryStatic(unittest.TestCase):
                          "home_feeding.js must not reference bare window.HomeSanctuary")
         self.assertNotIn("window.HomeFeeding", self.feeding_js,
                          "home_feeding.js must not reference bare window.HomeFeeding")
+
+
+class TestSquareLayoutAndOffLeashStatic(unittest.TestCase):
+    """unification-031: Seamless grass & dedicated off-leash dog contracts."""
+
+    def setUp(self):
+        self.sanctuary_js = read("src/ui/home_sanctuary.js")
+
+    def test_resize_canvas_is_dynamic(self):
+        self.assertIn("resizeCanvas", self.sanctuary_js,
+                      "HomeSanctuary must define resizeCanvas()")
+        idx = self.sanctuary_js.find("resizeCanvas")
+        self.assertNotEqual(idx, -1, "Missing resizeCanvas()")
+        # resizeCanvas must not pin fixed inline pixel styles.
+        block = self.sanctuary_js[idx:idx + 1200]
+        self.assertNotIn("canvas.style.width = '340px'", block,
+                         "resizeCanvas must not pin a fixed 340px inline width")
+        self.assertNotIn("canvas.style.height = '220px'", block,
+                         "resizeCanvas must not pin a fixed 220px inline height")
+
+    def test_draw_field_fills_full_canvas(self):
+        self.assertIn("drawField", self.sanctuary_js,
+                      "HomeSanctuary must define drawField()")
+        self.assertRegex(
+            self.sanctuary_js,
+            r"fillRect\s*\(\s*0\s*,\s*0\s*,\s*fieldWidth\s*,\s*fieldHeight\s*\)",
+            "drawField must fill (0, 0, fieldWidth, fieldHeight)"
+        )
+        self.assertIn("#3e6b2c", self.sanctuary_js,
+                      "drawField must use the 'The Downs' turf base #3e6b2c")
+
+    def test_sanctuary_dog_is_off_leash(self):
+        self.assertIn("isLeashed", self.sanctuary_js,
+                      "Sanctuary dog must declare isLeashed")
+        self.assertRegex(
+            self.sanctuary_js,
+            r"isLeashed\s*[:=]\s*false",
+            "Sanctuary dog must set isLeashed = false"
+        )
+        self.assertRegex(
+            self.sanctuary_js,
+            r"leash\s*[:=]\s*null",
+            "Sanctuary dog must set leash = null"
+        )
+
+    def test_no_leash_rendering(self):
+        # No red leash stroke should be drawn in the sanctuary.
+        self.assertNotRegex(
+            self.sanctuary_js,
+            r"strokeStyle\s*=\s*['\"]#(?:ff0000|f00|dc2626|ef4444)['\"]",
+            "HomeSanctuary must not render a red leash stroke"
+        )
+        self.assertNotIn("drawLeash", self.sanctuary_js,
+                         "HomeSanctuary must not define a drawLeash renderer")
+
+    def test_mount_creates_autonomous_entity_without_live_dog(self):
+        self.assertIn("mount", self.sanctuary_js,
+                      "HomeSanctuary must expose mount()")
+        # mount must not require window.__vdwLiveDog.
+        self.assertNotIn("__vdwLiveDog", self.sanctuary_js,
+                         "HomeSanctuary must not depend on window.__vdwLiveDog")
 
 
 @unittest.skipUnless(
@@ -857,7 +916,7 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
         self.assertNotIn(res["dogStateAfterEating"], ("bowl", "eating"),
                          "clearBowl() must reset the dog out of eating state")
 
-    def test_exec_draw_delegates_to_live_dog_draw_method(self):
+    def test_exec_draw_uses_self_contained_entity_not_live_dog(self):
         snippet = """
         const sanctuary = document.createElement('div');
         sanctuary.id = 'home-view-sanctuary';
@@ -870,24 +929,24 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
         window.cancelAnimationFrame = function () {};
         window.devicePixelRatio = 1;
 
-        let drawCalled = false;
+        let liveDrawCalled = false;
         const live = {
           x: 10, y: 10, angle: 0, legPhase: 0,
           isSitting: false, isSniffing: false,
           coat: { bodyColor: '#111111', tanColor: '#222222', bibColor: '#333333' },
           collarColor: '#444444', name: 'LiveDog',
-          draw: function (ctx) { drawCalled = true; }
+          draw: function (ctx) { liveDrawCalled = true; }
         };
 
         const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
         window.HomeSanctuary.mount(canvas, slot, live);
         window.HomeSanctuary.__testHooks.render();
 
-        return { drawCalled: drawCalled };
+        return { liveDrawCalled: liveDrawCalled };
         """
         res = _run_js(snippet)
-        self.assertTrue(res["drawCalled"],
-                        "drawDog must delegate to the live entity's draw(ctx) method")
+        self.assertFalse(res["liveDrawCalled"],
+                         "drawDog must not delegate to a passed-in live dog's draw method")
 
     def test_home_feeding_no_dom_bowl_created(self):
         snippet = """
@@ -924,6 +983,367 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
                          "home_feeding must not inject a #home-food-bowl DOM element")
         self.assertFalse(res["byClass"],
                          "home_feeding must not inject a .home-food-bowl DOM element")
+
+    def test_exec_mount_creates_off_leash_dog_from_slot(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        // Ensure no live dog is present.
+        window.__vdwLiveDog = undefined;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        const dog = window.HomeSanctuary.getCompanionDog();
+
+        return {
+          hasDog: Boolean(dog),
+          name: dog ? dog.name : null,
+          isLeashed: dog ? dog.isLeashed : null,
+          leash: dog ? dog.leash : 'MISSING'
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["hasDog"],
+                        "mount(canvas, slot) must create an autonomous dog entity")
+        self.assertEqual(res["name"], "Ziggy",
+                         "Autonomous dog must use the slot name")
+        self.assertFalse(res["isLeashed"],
+                         "Sanctuary dog must be off-leash (isLeashed === false)")
+        self.assertIsNone(res["leash"],
+                          "Sanctuary dog must have leash === null")
+
+    def test_exec_mount_with_leashed_world_dog_remains_off_leash(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        // A leashed world dog present on the global scope must be ignored.
+        window.__vdwLiveDog = { isLeashed: true, leash: { x: 50, y: 50 }, name: 'WorldDog' };
+
+        const slot = { id: 'dog-1', name: 'SanctuaryZiggy', coatKey: 'GOLDEN', collar: '#ff0000' };
+        window.HomeSanctuary.mount(canvas, slot);
+        const dog = window.HomeSanctuary.getCompanionDog();
+
+        return {
+          isSame: dog === window.__vdwLiveDog,
+          isLeashed: dog.isLeashed,
+          leash: dog.leash,
+          name: dog.name,
+          coatKey: dog.coatKey,
+          collar: dog.collar,
+          worldIsLeashed: window.__vdwLiveDog.isLeashed
+        };
+        """
+        res = _run_js(snippet)
+        self.assertFalse(res["isSame"],
+                         "Sanctuary dog must not be the world dog entity")
+        self.assertFalse(res["isLeashed"],
+                         "Sanctuary dog must be off-leash")
+        self.assertIsNone(res["leash"],
+                          "Sanctuary dog must have leash === null")
+        self.assertEqual(res["name"], "SanctuaryZiggy",
+                         "Sanctuary dog must use the slot name")
+        self.assertEqual(res["coatKey"], "GOLDEN",
+                         "Sanctuary dog must expose the slot coatKey")
+        self.assertEqual(res["collar"], "#ff0000",
+                         "Sanctuary dog must expose the slot collar")
+        self.assertTrue(res["worldIsLeashed"],
+                        "The world dog must remain unmodified (still leashed)")
+
+    def test_social_hud_mounts_sanctuary_without_world_dog(self):
+        hud_js = read("src/ui/social_hud.js")
+        self.assertRegex(
+            hud_js,
+            r"HomeSanctuary\?\.mount\?\.\(\s*canvas\s*,\s*this\.dogSlot\s*\)",
+            "social_hud must call HomeSanctuary.mount(canvas, this.dogSlot)"
+        )
+        self.assertNotRegex(
+            hud_js,
+            r"HomeSanctuary\?\.mount\?\.\([^)]*this\.dog\b",
+            "social_hud must not pass this.dog to HomeSanctuary.mount"
+        )
+
+    def test_exec_resize_canvas_backing_store_and_transform(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 2;
+
+        const transforms = [];
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          const originalSetTransform = ctx.setTransform.bind(ctx);
+          ctx.setTransform = function (a, b, c, d, e, f) {
+            transforms.push([a, b, c, d, e, f]);
+            return originalSetTransform(a, b, c, d, e, f);
+          };
+          return ctx;
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+
+        return {
+          width: canvas.width,
+          height: canvas.height,
+          transforms: transforms
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["width"], 800,
+                         "DPR=2 with a 400px container must set canvas.width = 800")
+        self.assertEqual(res["height"], 800,
+                         "DPR=2 with a 400px container must set canvas.height = 800")
+        self.assertTrue(
+            any(t == [2, 0, 0, 2, 0, 0] for t in res["transforms"]),
+            "resizeCanvas must call ctx.setTransform(2, 0, 0, 2, 0, 0) at DPR=2"
+        )
+
+    def test_exec_draw_field_full_canvas_coverage(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const fills = [];
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          const originalFillRect = ctx.fillRect.bind(ctx);
+          let currentFill = null;
+          return new Proxy(ctx, {
+            set(target, prop, value) {
+              if (prop === 'fillStyle') { currentFill = value; }
+              target[prop] = value;
+              return true;
+            },
+            get(target, prop) {
+              if (prop === 'fillRect') {
+                return function (x, y, w, h) {
+                  fills.push({ x: x, y: y, w: w, h: h, fill: currentFill });
+                  return originalFillRect(x, y, w, h);
+                };
+              }
+              const v = target[prop];
+              return typeof v === 'function' ? v.bind(target) : v;
+            }
+          });
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.__testHooks.render();
+
+        return { fills: fills };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(
+            any(f["x"] == 0 and f["y"] == 0 and f["w"] == 400 and f["h"] == 400
+                and f["fill"] == "#3e6b2c" for f in res["fills"]),
+            "drawField must fill (0, 0, 400, 400) with the turf base #3e6b2c"
+        )
+
+    def test_exec_mount_with_leashed_world_dog_remains_off_leash(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        // A leashed world dog present on the global scope must be ignored.
+        window.__vdwLiveDog = { isLeashed: true, leash: { x: 50, y: 50 }, name: 'WorldDog' };
+
+        const slot = { id: 'dog-1', name: 'SanctuaryZiggy', coatKey: 'GOLDEN', collar: '#ff0000' };
+        window.HomeSanctuary.mount(canvas, slot);
+        const dog = window.HomeSanctuary.getCompanionDog();
+
+        return {
+          isSame: dog === window.__vdwLiveDog,
+          isLeashed: dog.isLeashed,
+          leash: dog.leash,
+          name: dog.name,
+          coatKey: dog.coatKey,
+          collar: dog.collar,
+          worldIsLeashed: window.__vdwLiveDog.isLeashed
+        };
+        """
+        res = _run_js(snippet)
+        self.assertFalse(res["isSame"],
+                         "Sanctuary dog must not be the world dog entity")
+        self.assertFalse(res["isLeashed"],
+                         "Sanctuary dog must be off-leash")
+        self.assertIsNone(res["leash"],
+                          "Sanctuary dog must have leash === null")
+        self.assertEqual(res["name"], "SanctuaryZiggy",
+                         "Sanctuary dog must use the slot name")
+        self.assertEqual(res["coatKey"], "GOLDEN",
+                         "Sanctuary dog must expose the slot coatKey")
+        self.assertEqual(res["collar"], "#ff0000",
+                         "Sanctuary dog must expose the slot collar")
+        self.assertTrue(res["worldIsLeashed"],
+                        "The world dog must remain unmodified (still leashed)")
+
+    def test_social_hud_mounts_sanctuary_without_world_dog(self):
+        hud_js = read("src/ui/social_hud.js")
+        self.assertRegex(
+            hud_js,
+            r"HomeSanctuary\?\.mount\?\.\(\s*canvas\s*,\s*this\.dogSlot\s*\)",
+            "social_hud must call HomeSanctuary.mount(canvas, this.dogSlot)"
+        )
+        self.assertNotRegex(
+            hud_js,
+            r"HomeSanctuary\?\.mount\?\.\([^)]*this\.dog\b",
+            "social_hud must not pass this.dog to HomeSanctuary.mount"
+        )
+
+    def test_exec_resize_canvas_backing_store_and_transform(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 2;
+
+        const transforms = [];
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          const originalSetTransform = ctx.setTransform.bind(ctx);
+          ctx.setTransform = function (a, b, c, d, e, f) {
+            transforms.push([a, b, c, d, e, f]);
+            return originalSetTransform(a, b, c, d, e, f);
+          };
+          return ctx;
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+
+        return {
+          width: canvas.width,
+          height: canvas.height,
+          transforms: transforms
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["width"], 800,
+                         "DPR=2 with a 400px container must set canvas.width = 800")
+        self.assertEqual(res["height"], 800,
+                         "DPR=2 with a 400px container must set canvas.height = 800")
+        self.assertTrue(
+            any(t == [2, 0, 0, 2, 0, 0] for t in res["transforms"]),
+            "resizeCanvas must call ctx.setTransform(2, 0, 0, 2, 0, 0) at DPR=2"
+        )
+
+    def test_exec_draw_field_full_canvas_coverage(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const fills = [];
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          const originalFillRect = ctx.fillRect.bind(ctx);
+          let currentFill = null;
+          return new Proxy(ctx, {
+            set(target, prop, value) {
+              if (prop === 'fillStyle') { currentFill = value; }
+              target[prop] = value;
+              return true;
+            },
+            get(target, prop) {
+              if (prop === 'fillRect') {
+                return function (x, y, w, h) {
+                  fills.push({ x: x, y: y, w: w, h: h, fill: currentFill });
+                  return originalFillRect(x, y, w, h);
+                };
+              }
+              const v = target[prop];
+              return typeof v === 'function' ? v.bind(target) : v;
+            }
+          });
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.__testHooks.render();
+
+        return { fills: fills };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(
+            any(f["x"] == 0 and f["y"] == 0 and f["w"] == 400 and f["h"] == 400
+                and f["fill"] == "#3e6b2c" for f in res["fills"]),
+            "drawField must fill (0, 0, 400, 400) with the turf base #3e6b2c"
+        )
 
     def test_exec_second_click_while_feeding_ignored(self):
         snippet = """

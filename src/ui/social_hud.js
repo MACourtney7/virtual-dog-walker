@@ -408,6 +408,7 @@ export class SocialHUD {
         jacketColor: this.owner.jacketColor,
         coatName: '',
         dogName: '',
+        hasDog: false,
         collarColor: '#0d9488',
         personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 }
       });
@@ -417,9 +418,14 @@ export class SocialHUD {
           this.owner.name,
           this.owner.jacketColor,
           '',
-          { dogName: '', collarColor: '#0d9488' }
+          { dogName: '', hasDog: false, collarColor: '#0d9488' }
         ));
       }
+    }
+
+    // Broadcast an explicit profile_update so peers can clear the ghost dog.
+    if (this.net && typeof this.net.broadcast === 'function') {
+      this.net.broadcast({ type: 'profile_update', dogName: '', hasDog: false });
     }
   }
 
@@ -664,10 +670,13 @@ export class SocialHUD {
           if (!this.dog.personality) {
             this.dog.personality = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
           }
+          this.dog.name = '';
         }
         this.dogSlot = null;
         this.isHomeLocked = true;
-        this.renderDogSlot();
+        if (this.net && typeof this.net.setLocalMeta === 'function') {
+          this.net.setLocalMeta({ dogName: '', hasDog: false });
+        }
         this.updateModalActiveSelections();
         this.openModal();
         this.updateCloseButtonState();
@@ -679,9 +688,14 @@ export class SocialHUD {
         if (this.dog && !this.dog.personality) {
           this.dog.personality = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
         }
+        if (this.dog) {
+          this.dog.name = '';
+        }
         this.dogSlot = null;
         this.isHomeLocked = true;
-        this.renderDogSlot();
+        if (this.net && typeof this.net.setLocalMeta === 'function') {
+          this.net.setLocalMeta({ dogName: '', hasDog: false });
+        }
         this.updateModalActiveSelections();
         this.openModal();
         this.updateCloseButtonState();
@@ -727,7 +741,12 @@ export class SocialHUD {
       if (saved.dogSlot === null) {
         this.dogSlot = null;
         this.isHomeLocked = true;
-        this.renderDogSlot();
+        if (this.dog) {
+          this.dog.name = '';
+        }
+        if (this.net && typeof this.net.setLocalMeta === 'function') {
+          this.net.setLocalMeta({ dogName: '', hasDog: false });
+        }
         this.updateCloseButtonState();
         this.updateModalActiveSelections();
         this.openModal();
@@ -793,6 +812,8 @@ export class SocialHUD {
           collarColor: this.dog.collarColor,
           personality
         });
+        // Explicitly advertise the occupied dog slot to peers.
+        this.net.setLocalMeta({ dogName: this.dog.name || 'Ziggy', hasDog: true });
       }
     } catch (e) {
       console.warn('Could not load saved walker profile from localStorage:', e);

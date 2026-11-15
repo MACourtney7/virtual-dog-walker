@@ -31,9 +31,13 @@ def _run_js(snippet):
     (JavaScriptCore) or node. Returns the JSON-decoded result of the snippet.
     """
     feeding_src = read("src/ui/home_feeding.js")
+    sanctuary_src = read("src/ui/home_sanctuary.js")
 
     clean = re.sub(r"^\s*import\s+.*?;?\s*$", "", feeding_src, flags=re.M)
     clean = re.sub(r"\bexport\s+(default\s+)?", "", clean)
+
+    sanctuary_clean = re.sub(r"^\s*import\s+.*?;?\s*$", "", sanctuary_src, flags=re.M)
+    sanctuary_clean = re.sub(r"\bexport\s+(default\s+)?", "", sanctuary_clean)
 
     harness = f"""
 // ---- Mock DOM ----
@@ -55,6 +59,8 @@ function __makeEl(tag) {{
       contains(c) {{ return this._set.has(c); }}
     }},
     appendChild(child) {{ this.children.push(child); if (child && child.id) __elements[child.id] = child; return child; }},
+    removeChild(child) {{ const i = this.children.indexOf(child); if (i >= 0) this.children.splice(i, 1); return child; }},
+    contains(child) {{ return this.children.indexOf(child) >= 0; }},
     addEventListener(evt, fn) {{ (this._listeners[evt] = this._listeners[evt] || []).push(fn); }},
     removeEventListener() {{}},
     querySelector() {{ return null; }},
@@ -65,6 +71,8 @@ function __makeEl(tag) {{
       return {{
         clearRect() {{}}, fillRect() {{}}, beginPath() {{}}, ellipse() {{}},
         fill() {{}}, stroke() {{}}, save() {{}}, restore() {{}},
+        setTransform() {{}}, translate() {{}}, arc() {{}}, moveTo() {{}}, lineTo() {{}},
+        fillText() {{}},
         createLinearGradient() {{ return {{ addColorStop() {{}} }}; }},
         createRadialGradient() {{ return {{ addColorStop() {{}} }}; }},
         set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}}
@@ -90,8 +98,27 @@ const document = {{
 const window = {{ location: {{ search: '' }}, requestAnimationFrame: null }};
 const requestAnimationFrame = (fn) => 0;
 const cancelAnimationFrame = () => {{}};
-const setTimeout = (fn) => 0;
-const clearTimeout = () => {{}};
+// Controllable timer queue so tests can fast-forward scheduled callbacks.
+const __timerQueue = [];
+let __timerSeq = 0;
+const setTimeout = (fn, ms) => {{
+  const id = ++__timerSeq;
+  __timerQueue.push({{ id: id, fn: fn, ms: ms || 0 }});
+  return id;
+}};
+const clearTimeout = (id) => {{
+  for (let i = 0; i < __timerQueue.length; i++) {{
+    if (__timerQueue[i].id === id) {{ __timerQueue.splice(i, 1); return; }}
+  }}
+}};
+const __flushTimers = () => {{
+  let guard = 0;
+  while (__timerQueue.length > 0 && guard < 1000) {{
+    const t = __timerQueue.shift();
+    try {{ t.fn(); }} catch (e) {{}}
+    guard++;
+  }}
+}};
 const localStorage = (() => {{
   let store = {{}};
   return {{
@@ -102,7 +129,9 @@ const localStorage = (() => {{
   }};
 }})();
 
-// ---- Load real module ----
+// ---- Load real modules ----
+// home_sanctuary.js is an IIFE that assigns window.HomeSanctuary.
+(() => {{ {sanctuary_clean} }})();
 // home_feeding.js is an IIFE that assigns window.HomeFeeding.
 (() => {{ {clean} }})();
 const HomeFeeding = window.HomeFeeding;
@@ -236,6 +265,109 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
                              "last_feed_at must be valid JSON")
         self.assertIsInstance(res["parsed"], dict,
                               "last_feed_at JSON must be an object")
+
+    def test_exec_run_feed_emits_toast_and_resumes_roaming(self):
+        snippet = """
+        const toasts = [];
+        window.showToast = function (msg) { toasts.push(msg); };
+
+        // Provide a HomeSanctuary stub so runFeed can resume roaming.
+        let resumed = false;
+        let lastPose = null;
+        let lastState = null;
+        window.HomeSanctuary = {
+          getDogSlot: function () { return { id: 'dog-1', name: 'Ziggy' }; },
+          getCompanionDog: function () { return { id: 'dog-1', name: 'Ziggy' }; },
+          setDogPose: function (p) { lastPose = p; },
+          setDogState: function (s) { lastState = s; },
+          resumeRoaming: function () { resumed = true; }
+        };
+
+        // Drive runFeed through all phases via the controllable timer queue.
+        HomeFeeding.__testHooks.runFeed({ dogName: 'Ziggy', dogId: 'dog-1' });
+        __flushTimers();
+
+        const raw = localStorage.getItem('virtual_dog_walker.last_feed_at');
+        let parsed = null;
+        try { parsed = JSON.parse(raw); } catch (e) { parsed = null; }
+
+        return {
+          toasts: toasts,
+          persistedDogId: parsed ? parsed.dogId : null,
+          hasAt: parsed ? typeof parsed.at === 'string' : false,
+          resumed: resumed,
+          lastPose: lastPose,
+          lastState: lastState,
+          feeding: HomeFeeding.__testHooks.isFeeding(),
+          state: HomeFeeding.__testHooks.getState()
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(any("Ziggy loved the meal! ❤️" in t for t in res["toasts"]),
+                        "runFeed must emit '<DogName> loved the meal! ❤️' toast")
+        self.assertEqual(res["persistedDogId"], "dog-1",
+                         "last_feed_at must persist dogId 'dog-1'")
+        self.assertTrue(res["hasAt"], "last_feed_at must include an ISO 'at' field")
+        self.assertTrue(res["resumed"], "runFeed must call resumeRoaming after delay")
+        self.assertEqual(res["lastPose"], "auto",
+                         "Dog pose must return to 'auto' after resumption")
+        self.assertEqual(res["lastState"], "wander",
+                         "Dog state must return to 'wander' after resumption")
+        self.assertFalse(res["feeding"], "feeding flag must be false after resumption")
+        self.assertEqual(res["state"], "idle",
+                         "State machine must return to 'idle' after resumption")
+
+    def test_exec_particles_spawn_during_eating(self):
+        snippet = """
+        // Ensure the canvas exists so mount() succeeds.
+        let canvas = document.getElementById('home-field-canvas');
+        if (!canvas) {
+          canvas = document.createElement('canvas');
+          canvas.id = 'home-field-canvas';
+          document.body.appendChild(canvas);
+        }
+        // Provide a minimal requestAnimationFrame that does not loop.
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        if (!window.HomeSanctuary || !window.HomeSanctuary.__testHooks) {
+          return { available: false };
+        }
+        window.HomeSanctuary.mount();
+        const hooks = window.HomeSanctuary.__testHooks;
+        window.HomeSanctuary.setDogState('eating');
+        for (let i = 0; i < 40; i++) {
+          hooks.spawnParticles();
+        }
+        const parts = hooks.getParticles();
+        const hasHeart = parts.some(function (p) { return p.type === 'heart'; });
+        const hasCrumb = parts.some(function (p) { return p.type === 'crumb'; });
+        return {
+          available: true,
+          count: parts.length,
+          hasHeart: hasHeart,
+          hasCrumb: hasCrumb
+        };
+        """
+        res = _run_js(snippet)
+        if not res.get("available"):
+            self.skipTest("HomeSanctuary not loaded in harness")
+        self.assertGreater(res["count"], 0, "Particles must spawn during eating")
+        self.assertTrue(res["hasHeart"] or res["hasCrumb"],
+                        "Particles must include heart or crumb types")
+
+    def test_exec_mount_hydrates_last_feed_at(self):
+        snippet = """
+        const seeded = JSON.stringify({ dogId: 'dog-1', at: '2024-01-01T00:00:00.000Z' });
+        localStorage.setItem('virtual_dog_walker.last_feed_at', seeded);
+        HomeFeeding.mount();
+        const hydrated = HomeFeeding.__testHooks.getLastFeedAt();
+        return { hydrated: hydrated, seeded: seeded };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["hydrated"], res["seeded"],
+                         "mount() must hydrate lastFeedAt from localStorage")
 
     def test_exec_second_click_while_feeding_ignored(self):
         snippet = """

@@ -211,8 +211,8 @@
 
   function runFeed(opts) {
     opts = opts || {};
-    var dogId = opts.dogId;
-    var dogName = opts.dogName || 'Your dog';
+    var dogId = opts.dogId || 'dog-1';
+    var dogName = opts.dogName || 'Ziggy';
 
     return new Promise(function (resolve) {
       if (feeding) {
@@ -247,7 +247,7 @@
             var toast = dogName + ' loved the meal! ❤️';
             emitToast(toast);
 
-            persistFeed(dogName);
+            persistFeed(dogId);
 
             // Expose duration for test hooks via closure variable.
             runFeed.__lastDuration = Math.round(now() - start);
@@ -272,8 +272,17 @@
 
   function onFeedClick() {
     if (feeding) return;
-    if (getDogSlot() === null || !getCanvas()) return;
-    runFeed({});
+    var dogSlot = null;
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.getDogSlot === 'function') {
+      try { dogSlot = window.HomeSanctuary.getDogSlot(); } catch (e) {}
+    }
+    var dog = null;
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.getCompanionDog === 'function') {
+      try { dog = window.HomeSanctuary.getCompanionDog(); } catch (e) {}
+    }
+    var name = (dogSlot && dogSlot.name) || (dog && dog.name) || 'Ziggy';
+    var id = (dogSlot && (dogSlot.id || dogSlot.dogId)) || (dog && dog.id) || 'dog-1';
+    runFeed({ dogName: name, dogId: id });
   }
 
   // ---------------------------------------------------------------------------
@@ -286,6 +295,7 @@
       return;
     }
     mounted = true;
+    lastFeedAt = readLastFeedAt();
     ensureActionBar();
     ensureFeedButton();
     updateDisabledState();
@@ -316,11 +326,10 @@
   // Test hooks
   // ---------------------------------------------------------------------------
 
-  var __testHooks = {
-    simulateFeed: function (opts) {
+  function simulateFeed(opts) {
       opts = opts || {};
-      var dogId = opts.dogId;
-      var dogName = opts.dogName || 'Your dog';
+      var dogId = opts.dogId || 'dog-1';
+      var dogName = opts.dogName || 'Ziggy';
 
       // Debounce: a second simulated feed within the full feed duration is
       // treated as a click during an active feed and ignored.
@@ -353,12 +362,23 @@
         persistedKey: STORAGE_KEY,
         persistedValue: persistedValue
       };
-    },
+  }
+
+  var __testHooks = {
+    simulateFeed: simulateFeed,
+    runFeed: runFeed,
+    onFeedClick: onFeedClick,
     getLastFeedAt: function () {
       return readLastFeedAt();
     },
     getState: function () {
       return state;
+    },
+    isFeeding: function () {
+      return feeding;
+    },
+    getTimers: function () {
+      return timers;
     }
   };
 

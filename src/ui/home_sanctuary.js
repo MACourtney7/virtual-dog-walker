@@ -682,7 +682,13 @@
     setDogPose: setDogPose,
     setDogState: setDogState,
     resumeRoaming: resumeRoaming,
-    getFieldSize: getFieldSize
+    getFieldSize: getFieldSize,
+    __testHooks: {
+      getParticles: function () { return particles; },
+      spawnParticles: spawnParticles,
+      getForcedState: function () { return forcedState; },
+      getPose: function () { return pose; }
+    }
   };
 
   global.HomeSanctuary = HomeSanctuary;

@@ -386,13 +386,16 @@ body {
 
 .home-field-preview {
   width: 100%;
-  height: 220px;
+  aspect-ratio: 1 / 1;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.12);
   background: #3e6b2c;
   position: relative;
   box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 #home-field-canvas {

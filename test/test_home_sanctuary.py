@@ -137,7 +137,6 @@ const localStorage = (() => {{
   }};
 }})();
 window.localStorage = localStorage;
-window.localStorage = localStorage;
 
 // ---- Load real modules ----
 // home_sanctuary.js is an IIFE that assigns window.HomeSanctuary.

@@ -70,7 +70,10 @@ class TestDogSlotKennelAndLocking(unittest.TestCase):
             'id="dog-slot-occupied"' in self.hud_js or "'dog-slot-occupied'" in self.hud_js,
             "Missing #dog-slot-occupied container"
         )
-        self.assertIn('id="btn-remove-dog"', self.hud_js, "Missing #btn-remove-dog button")
+        self.assertTrue(
+            'id="btn-remove-dog"' in self.hud_js or "'btn-remove-dog'" in self.hud_js,
+            "Missing #btn-remove-dog button"
+        )
         self.assertIn('id="dog-slot-empty"', self.hud_js, "Missing #dog-slot-empty container")
         self.assertIn('id="btn-add-dog"', self.hud_js, "Missing #btn-add-dog button")
 

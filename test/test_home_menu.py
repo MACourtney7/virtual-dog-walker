@@ -764,6 +764,55 @@ class TestHomeViewSplitBehavioral(unittest.TestCase):
         self.assertFalse(res["isHomeLocked"],
                          "Adopting a dog must release the Home lock")
 
+    def test_exec_reopen_home_always_shows_sanctuary(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const modal = document.getElementById('customizer-modal');
+        modal.style.display = 'block';
+        hud.setHomeView('sanctuary');
+        hud.setHomeView('settings');
+        hud.closeModal();
+        hud.openModal();
+
+        return { homeView: hud.currentHomeView };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["homeView"], "sanctuary",
+                         "Reopening Home with a dog must always show the sanctuary view")
+
+    def test_exec_dogs_tab_click_syncs_active_tab(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        // Simulate the Dogs tab button click handler.
+        const dogBtn = document.getElementById('tab-btn-dog');
+        if (dogBtn && dogBtn._listeners && dogBtn._listeners.click) {
+          dogBtn._listeners.click.forEach(function (fn) { fn(); });
+        }
+
+        return { activeTab: hud.activeTab };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["activeTab"], "dog",
+                         "Clicking the Dogs tab must sync hud.activeTab to 'dog'")
+
     def test_exec_split_stage_preview_draws_only_active_tab(self):
         snippet = """
         localStorage.setItem('clifton_walker_profile', JSON.stringify({

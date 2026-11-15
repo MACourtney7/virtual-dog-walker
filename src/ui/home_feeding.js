@@ -27,6 +27,7 @@
   var feedBtnEl = null;
   var bowlEl = null;
   var lastFeedAt = null;
+  var pendingResolve = null;
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -197,7 +198,7 @@
 
   function updateDisabledState() {
     if (!feedBtnEl) return;
-    var disabled = getDogSlot() === null;
+    var disabled = getDogSlot() === null || !getCanvas();
     feedBtnEl.disabled = !!disabled;
     feedBtnEl.setAttribute('aria-disabled', disabled ? 'true' : 'false');
   }
@@ -246,6 +247,7 @@
       }
       feeding = true;
       clearTimers();
+      pendingResolve = resolve;
 
       var start = now();
 
@@ -286,6 +288,7 @@
                 try { window.HomeSanctuary.resumeRoaming(); } catch (e) {}
               }
               updateDisabledState();
+              pendingResolve = null;
               resolve();
             }, RESUME_DELAY_MS);
           }, EATING_MS);
@@ -331,6 +334,12 @@
     clearBowl();
     feeding = false;
     setState('idle');
+    // Resolve any in-flight runFeed promise so callers are never left dangling.
+    if (pendingResolve) {
+      var r = pendingResolve;
+      pendingResolve = null;
+      try { r(); } catch (e) { /* ignore */ }
+    }
     if (feedBtnEl && feedBtnEl.__homeFeedingBound) {
       feedBtnEl.removeEventListener('click', onFeedClick);
       feedBtnEl.__homeFeedingBound = false;

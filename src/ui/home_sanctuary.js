@@ -174,6 +174,15 @@
     return null;
   }
 
+  // Known breed coat keys mapped to a primary / dark / secondary color trio.
+  var COAT_KEY_COLORS = {
+    CHOCOLATE_TAN: { primary: '#3e2723', dark: '#2b1712', secondary: '#d7ccc8' },
+    GOLDEN: { primary: '#eab308', dark: '#ca8a04', secondary: '#fef08a' },
+    BLACK_LAB: { primary: '#1e293b', dark: '#0f172a', secondary: '#475569' },
+    BEAGLE: { primary: '#b45309', dark: '#78350f', secondary: '#ffffff' },
+    DALMATIAN: { primary: '#f8fafc', dark: '#0f172a', secondary: '#0f172a' }
+  };
+
   function resolveAppearance(profile) {
     var appearance = {
       coat: DEFAULT_COAT,
@@ -189,18 +198,27 @@
     if (profile.name) appearance.name = String(profile.name);
     if (profile.coatKey) appearance.coatKey = String(profile.coatKey);
 
+    // Breed coat-key mapping takes precedence so breed choices render
+    // accurately regardless of any stale explicit color fields.
+    var mapped = appearance.coatKey ? COAT_KEY_COLORS[appearance.coatKey] : null;
+    if (mapped) {
+      appearance.coat = mapped.primary;
+      appearance.coatDark = mapped.dark;
+      appearance.coatSecondary = mapped.secondary;
+    }
+
     var coat =
       profile.coat ||
       profile.coatColor ||
       profile.color ||
       (profile.appearance && (profile.appearance.coat || profile.appearance.color));
-    if (coat) appearance.coat = String(coat);
+    if (coat && !mapped) appearance.coat = String(coat);
 
     var coatDark =
       profile.coatDark ||
       profile.coatSecondary ||
       (profile.appearance && (profile.appearance.coatDark || profile.appearance.coatSecondary));
-    if (coatDark) appearance.coatDark = String(coatDark);
+    if (coatDark && !mapped) appearance.coatDark = String(coatDark);
 
     var collar =
       profile.collar ||
@@ -221,6 +239,9 @@
       name: appearance.name,
       coat: appearance.coat,
       coatDark: appearance.coatDark,
+      coatColor: appearance.coat,
+      coatColorDark: appearance.coatDark,
+      coatSecondary: appearance.coatSecondary,
       collar: appearance.collar,
       x: fieldWidth / 2,
       y: fieldHeight / 2,
@@ -293,7 +314,8 @@
           pickWanderTarget();
         }
       } else {
-        var step = WANDER_SPEED * dt;
+        // dt is in milliseconds; WANDER_SPEED is px/second.
+        var step = WANDER_SPEED * (dt / 1000);
         var nx = dx / dist;
         var ny = dy / dist;
         dog.x += nx * step;
@@ -683,7 +705,9 @@
       x: dog.x,
       y: dog.y,
       facing: dog.facing,
-      state: dog.state
+      state: dog.state,
+      coatColor: dog.coatColor,
+      coatColorDark: dog.coatColorDark
     };
   }
 
@@ -739,7 +763,13 @@
       getParticles: function () { return particles; },
       spawnParticles: spawnParticles,
       getForcedState: function () { return forcedState; },
-      getPose: function () { return pose; }
+      getPose: function () { return pose; },
+      updateDog: function (dt) { updateDog(dt); },
+      setWanderTarget: function (x, y) {
+        if (!dog) return;
+        dog.targetX = x;
+        dog.targetY = y;
+      }
     }
   };
 

@@ -1163,8 +1163,9 @@ export class SocialHUD {
 
     modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
     if (modal.style.display === 'block') {
-      // With a dog present, opening Home defaults to the sanctuary view.
-      this.setHomeView(this.currentHomeView === 'settings' ? 'settings' : 'sanctuary');
+      // With a dog present, reopening Home always lands on the sanctuary view
+      // (never a stale 'settings' view from a previous session).
+      this.setHomeView('sanctuary');
     } else {
       this.stopStageAnimation();
       if (typeof window !== 'undefined') {
@@ -1175,6 +1176,7 @@ export class SocialHUD {
   }
 
   _forceDogTab() {
+    this.activeTab = 'dog';
     const tabBtns = document.querySelectorAll('.customizer-tab-btn');
     tabBtns.forEach(b => b.classList.remove('active'));
     const dogBtn = document.getElementById('tab-btn-dog');
@@ -1275,6 +1277,8 @@ export class SocialHUD {
       btn.addEventListener('click', () => {
         tabBtns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
+        this.activeTab = btn.getAttribute('data-tab') ||
+          (btn.id === 'tab-btn-dog' ? 'dog' : 'walker');
         const targetTabId = btn.getAttribute('data-tab');
         document.querySelectorAll('.customizer-tab-pane').forEach(pane => {
           pane.classList.remove('active');

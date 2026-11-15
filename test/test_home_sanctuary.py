@@ -525,6 +525,64 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
         self.assertEqual(res["ariaDisabled"], "true",
                          "#btn-action-feed must set aria-disabled='true' when dogSlot is null")
 
+    def test_exec_update_dog_moves_at_plausible_speed(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        const hooks = window.HomeSanctuary.__testHooks;
+
+        // Force a wander target far from the dog's current position.
+        const before = window.HomeSanctuary.getCompanionDog();
+        hooks.setWanderTarget(before.x + 200, before.y);
+        hooks.updateDog(1000); // one second
+        const after = window.HomeSanctuary.getCompanionDog();
+
+        return {
+          dx: Math.abs(after.x - before.x),
+          dy: Math.abs(after.y - before.y)
+        };
+        """
+        res = _run_js(snippet)
+        # WANDER_SPEED is 42 px/s; one second of motion must be ~42px, not 42000px.
+        self.assertGreater(res["dx"], 0, "Dog must move toward its wander target")
+        self.assertLess(res["dx"], 100,
+                        "Dog must move at px/second speed (dt/1000), not px/millisecond")
+
+    def test_exec_golden_coat_key_maps_to_golden_color(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'GOLDEN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        const dog = window.HomeSanctuary.getCompanionDog();
+        return { coatColor: dog.coatColor, coatColorDark: dog.coatColorDark };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["coatColor"], "#eab308",
+                         "GOLDEN coatKey must map to the golden primary color")
+        self.assertEqual(res["coatColorDark"], "#ca8a04",
+                         "GOLDEN coatKey must map to the golden dark color")
+
     def test_exec_second_click_while_feeding_ignored(self):
         snippet = """
         const feeding = HomeFeeding;

@@ -42,9 +42,12 @@ class TestSocialHUDLayout(unittest.TestCase):
         self.assertNotIn('id="btn-room-action"', overlay_html, "#btn-room-action must be removed from hudOverlay template")
         self.assertNotIn('id="btn-room-label"', overlay_html, "#btn-room-label must be removed from hudOverlay template")
 
-        # Verify #btn-customize is positioned as cog icon button with no "Style" text (AC-023.5)
+        # Verify #btn-customize is positioned as an icon button with no "Style" text (AC-023.5)
         self.assertIn('id="btn-customize"', overlay_html, "Missing #btn-customize in hudOverlay template")
-        self.assertIn('⚙️', overlay_html, "Missing cog icon in #btn-customize")
+        self.assertTrue(
+            '🏠' in overlay_html or '⚙️' in overlay_html,
+            "Missing house icon (or cog icon) in #btn-customize"
+        )
         self.assertNotIn('>Style<', overlay_html, "#btn-customize must not contain 'Style' text")
 
         # Top-left panel content

@@ -942,6 +942,7 @@
       getForcedState: function () { return forcedState; },
       getPose: function () { return pose; },
       updateDog: function (dt) { updateDog(dt); },
+      render: function () { render(); },
       setWanderTarget: function (x, y) {
         if (!dog) return;
         dog.targetX = x;

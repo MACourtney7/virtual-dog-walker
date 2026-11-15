@@ -228,6 +228,23 @@ class TestHomeSanctuaryStatic(unittest.TestCase):
         self.assertIn('window.showToast', self.hud_js,
                       "SocialHUD must bridge window.showToast")
 
+    def test_downs_grass_palette_constants(self):
+        for color in ("#3e6b2c", "#335824", "#4c8237", "#5da347"):
+            self.assertIn(color, self.sanctuary_js,
+                          f"Missing 'The Downs' turf palette constant {color}")
+
+    def test_canvas_style_dimensions_pinned(self):
+        self.assertIn('canvas.style.width', self.sanctuary_js,
+                      "Canvas CSS width must be pinned via canvas.style.width")
+        self.assertIn('canvas.style.height', self.sanctuary_js,
+                      "Canvas CSS height must be pinned via canvas.style.height")
+
+    def test_food_bowl_rendering(self):
+        self.assertIn('drawFoodBowl', self.sanctuary_js,
+                      "Missing drawFoodBowl renderer")
+        self.assertIn('kibbles', self.sanctuary_js,
+                      "Food bowl must render kibbles")
+
 
 @unittest.skipUnless(
     shutil.which("node") or shutil.which("osascript"),
@@ -582,6 +599,44 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
                          "GOLDEN coatKey must map to the golden primary color")
         self.assertEqual(res["coatColorDark"], "#ca8a04",
                          "GOLDEN coatKey must map to the golden dark color")
+
+    def test_exec_mount_draws_downs_turf(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        // Instrument the 2D context to record fillStyle assignments.
+        const fills = [];
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          return new Proxy(ctx, {
+            set(target, prop, value) {
+              if (prop === 'fillStyle') { fills.push(value); }
+              target[prop] = value;
+              return true;
+            }
+          });
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.__testHooks.render();
+
+        return { fills: fills };
+        """
+        res = _run_js(snippet)
+        self.assertIn("#3e6b2c", res["fills"],
+                      "render() must fill the field with the 'The Downs' turf base #3e6b2c")
 
     def test_exec_second_click_while_feeding_ignored(self):
         snippet = """

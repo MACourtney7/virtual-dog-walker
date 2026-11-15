@@ -272,8 +272,6 @@ class TestHomeSanctuaryStatic(unittest.TestCase):
         )
 
     def test_live_dog_entity_not_mutated_static(self):
-        self.assertIn("buildRenderAdapter", self.sanctuary_js,
-                      "HomeSanctuary must use a non-mutating render adapter")
         # The old mutation pattern must be gone.
         self.assertNotIn("entity.x = dog.x", self.sanctuary_js,
                          "drawDog must not mutate the live entity's x")

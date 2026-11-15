@@ -1277,8 +1277,10 @@ export class SocialHUD {
       btn.addEventListener('click', () => {
         tabBtns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        this.activeTab = btn.getAttribute('data-tab') ||
-          (btn.id === 'tab-btn-dog' ? 'dog' : 'walker');
+        const dataTab = btn.getAttribute('data-tab');
+        this.activeTab = (dataTab === 'cust-tab-dog' || btn.id === 'tab-btn-dog')
+          ? 'dog'
+          : 'walker';
         const targetTabId = btn.getAttribute('data-tab');
         document.querySelectorAll('.customizer-tab-pane').forEach(pane => {
           pane.classList.remove('active');

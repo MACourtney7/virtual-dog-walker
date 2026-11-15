@@ -494,24 +494,27 @@
           bibColor: '#f5f0e6',
           darkColor: live.coatColorDark || live.coatDark || DEFAULT_COAT_DARK
         };
-    return {
-      x: dog.x,
-      y: dog.y,
-      angle: pose === 'camera' ? Math.PI / 2 : dog.facing,
-      tailAngle: live.tailAngle || 0,
-      legPhase: dog.bob,
-      gaitMode: dog.state === 'wander' ? 'walk' : 'idle',
-      gaitPhase: dog.bob,
-      isSitting: dog.state === 'sit',
-      isSniffing: dog.state === 'sniff',
-      coat: coatObj,
-      coatColor: live.coatColor || dog.coatColor,
-      coatColorDark: live.coatColorDark || dog.coatColorDark,
-      coatDark: live.coatDark || dog.coatDark,
-      collarColor: live.collarColor || dog.collar,
-      name: live.name || dog.name,
-      state: dog.state
-    };
+    // Prototype-chain the live entity so its prototype methods remain
+    // available, then shadow only the render-time fields. The live entity
+    // itself is never written to.
+    var adapter = Object.create(live);
+    adapter.x = dog.x;
+    adapter.y = dog.y;
+    adapter.angle = pose === 'camera' ? Math.PI / 2 : dog.facing;
+    adapter.tailAngle = live.tailAngle || 0;
+    adapter.legPhase = dog.bob;
+    adapter.gaitMode = dog.state === 'wander' ? 'walk' : 'idle';
+    adapter.gaitPhase = dog.bob;
+    adapter.isSitting = dog.state === 'sit';
+    adapter.isSniffing = dog.state === 'sniff';
+    adapter.coat = coatObj;
+    adapter.coatColor = live.coatColor || dog.coatColor;
+    adapter.coatColorDark = live.coatColorDark || dog.coatColorDark;
+    adapter.coatDark = live.coatDark || dog.coatDark;
+    adapter.collarColor = live.collarColor || dog.collar;
+    adapter.name = live.name || dog.name;
+    adapter.state = dog.state;
+    return adapter;
   }
 
   // Draw the articulated top-down canine body (CompanionDog-style).
@@ -534,7 +537,10 @@
     ctx.ellipse(0, R * 0.85, R * 1.05, R * 0.45, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    ctx.rotate(angle);
+    // Local geometry has the head along +Y and the tail along -Y.
+    // Canvas angles are standard math orientation (0 = +X, PI/2 = +Y),
+    // so subtract PI/2 to align the head with the entity's heading.
+    ctx.rotate(angle - Math.PI / 2);
 
     // Legs (articulated paws with leg cycling while walking).
     var legSwing = Math.sin(entity.legPhase || 0) * (entity.isSitting ? 0 : 3);
@@ -630,7 +636,7 @@
   function drawFoodBowl() {
     if (!ctx || !dog) return;
     var bx = dog.x;
-    var by = dog.y + 16;
+    var by = dog.y + 18;
 
     // Bowl body.
     ctx.save();

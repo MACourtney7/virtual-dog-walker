@@ -289,8 +289,9 @@ export class SocialHUD {
     if (target === 'sanctuary') {
       if (typeof window !== 'undefined') {
         window.__vdwActiveDogSlot = this.dogSlot;
+        window.__vdwLiveDog = this.dog;
         const canvas = document.getElementById('home-field-canvas');
-        window.HomeSanctuary?.mount?.(canvas, this.dogSlot);
+        window.HomeSanctuary?.mount?.(canvas, this.dogSlot, this.dog);
         window.HomeFeeding?.mount?.();
       }
       this.stopStageAnimation();

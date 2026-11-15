@@ -696,15 +696,44 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
         window.cancelAnimationFrame = function () {};
         window.devicePixelRatio = 1;
 
+        // Instrument ctx.rotate so we can observe the effective rotation
+        // applied by drawArticulatedDog during render().
+        const rotations = [];
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          const originalRotate = ctx.rotate.bind(ctx);
+          ctx.rotate = function (angle) {
+            rotations.push(angle);
+            return originalRotate(angle);
+          };
+          return ctx;
+        };
+
         const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
         window.HomeSanctuary.mount(canvas, slot);
         window.HomeSanctuary.setDogPose('camera');
         const dog = window.HomeSanctuary.getCompanionDog();
-        return { facing: dog.facing, expected: Math.PI / 2 };
+
+        rotations.length = 0;
+        window.HomeSanctuary.__testHooks.render();
+
+        return {
+          facing: dog.facing,
+          expected: Math.PI / 2,
+          rotations: rotations
+        };
         """
         res = _run_js(snippet)
         self.assertAlmostEqual(res["facing"], res["expected"], places=6,
                                msg="Camera pose must face down (angle = Math.PI / 2)")
+        self.assertTrue(len(res["rotations"]) > 0,
+                        "render() must rotate the dog body via ctx.rotate")
+        # drawArticulatedDog rotates by (angle - PI/2); with angle = PI/2 the
+        # effective rotation must be 0 so the head points down at +Y.
+        self.assertAlmostEqual(res["rotations"][0], 0.0, places=6,
+                               msg="Camera pose must rotate by 0 (head faces +Y)")
 
     def test_exec_live_dog_entity_not_mutated(self):
         snippet = """
@@ -730,9 +759,11 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
         const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
         window.HomeSanctuary.mount(canvas, slot, live);
 
-        // Force a render pass through the public test hook path.
+        // Force a full render pass (drawDog -> buildRenderAdapter) through the
+        // public test hook path.
         const hooks = window.HomeSanctuary.__testHooks;
         hooks.updateDog(16);
+        hooks.render();
         return {
           before: snapshot,
           after: JSON.stringify(live),

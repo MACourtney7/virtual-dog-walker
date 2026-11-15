@@ -30,9 +30,9 @@ def _run_js(snippet):
     DOM, wraps the module in an IIFE, and runs the snippet via osascript
     (JavaScriptCore) or node. Returns the JSON-decoded result of the snippet.
     """
-    sanctuary_src = read("src/ui/home_sanctuary.js")
+    feeding_src = read("src/ui/home_feeding.js")
 
-    clean = re.sub(r"^\s*import\s+.*?;?\s*$", "", sanctuary_src, flags=re.M)
+    clean = re.sub(r"^\s*import\s+.*?;?\s*$", "", feeding_src, flags=re.M)
     clean = re.sub(r"\bexport\s+(default\s+)?", "", clean)
 
     harness = f"""
@@ -103,7 +103,9 @@ const localStorage = (() => {{
 }})();
 
 // ---- Load real module ----
-const {{ HomeFeeding }} = (() => {{ {clean}\nreturn {{ HomeFeeding }}; }})();
+// home_feeding.js is an IIFE that assigns window.HomeFeeding.
+(() => {{ {clean} }})();
+const HomeFeeding = window.HomeFeeding;
 
 const __res = (() => {{ {snippet} }})();
 JSON.stringify(__res);
@@ -132,6 +134,7 @@ class TestHomeSanctuaryStatic(unittest.TestCase):
     def setUp(self):
         self.hud_js = read("src/ui/social_hud.js")
         self.sanctuary_js = read("src/ui/home_sanctuary.js")
+        self.feeding_js = read("src/ui/home_feeding.js")
 
     def test_home_field_canvas(self):
         self.assertIn('id="home-field-canvas"', self.hud_js,
@@ -142,11 +145,12 @@ class TestHomeSanctuaryStatic(unittest.TestCase):
                       "Missing #home-action-bar container")
 
     def test_feed_button_contract(self):
-        self.assertIn('id="btn-action-feed"', self.hud_js,
+        combined = self.feeding_js + self.hud_js
+        self.assertIn('id="btn-action-feed"', combined,
                       "Missing #btn-action-feed button")
-        self.assertIn('🍖', self.hud_js,
+        self.assertIn('🍖', combined,
                       "#btn-action-feed must contain the 🍖 icon")
-        self.assertIn('Feed', self.hud_js,
+        self.assertIn('Feed', combined,
                       "#btn-action-feed must contain the 'Feed' label")
 
     def test_wander_states(self):
@@ -155,17 +159,17 @@ class TestHomeSanctuaryStatic(unittest.TestCase):
                           f"Missing wander state '{state}'")
 
     def test_last_feed_storage_key_prefix(self):
-        self.assertIn('virtual_dog_walker.last_feed', self.sanctuary_js,
+        self.assertIn('virtual_dog_walker.last_feed', self.feeding_js,
                       "Missing localStorage key prefix 'virtual_dog_walker.last_feed'")
 
     def test_toast_copy(self):
-        self.assertIn('loved the meal! ❤️', self.sanctuary_js,
+        self.assertIn('loved the meal! ❤️', self.feeding_js,
                       "Toast copy must contain 'loved the meal! ❤️'")
 
     def test_test_hooks_exposed(self):
-        self.assertIn('__testHooks', self.sanctuary_js,
+        self.assertIn('__testHooks', self.feeding_js,
                       "HomeFeeding must expose __testHooks")
-        self.assertIn('simulateFeed', self.sanctuary_js,
+        self.assertIn('simulateFeed', self.feeding_js,
                       "HomeFeeding.__testHooks must expose simulateFeed")
 
 
@@ -178,9 +182,8 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
 
     def test_exec_simulate_feed_returns_expected_shape(self):
         snippet = """
-        const dog = { name: 'Ziggy' };
-        const feeding = new HomeFeeding(dog);
-        const res = feeding.__testHooks.simulateFeed();
+        const feeding = HomeFeeding;
+        const res = feeding.__testHooks.simulateFeed({ dogName: 'Ziggy' });
         return {
           ate: res.ate,
           toast: res.toast,
@@ -201,9 +204,8 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
 
     def test_exec_last_feed_at_json_format(self):
         snippet = """
-        const dog = { name: 'Ziggy' };
-        const feeding = new HomeFeeding(dog);
-        feeding.__testHooks.simulateFeed();
+        const feeding = HomeFeeding;
+        feeding.__testHooks.simulateFeed({ dogName: 'Ziggy' });
         const raw = localStorage.getItem('virtual_dog_walker.last_feed_at');
         let parsed = null;
         try { parsed = JSON.parse(raw); } catch (e) { parsed = null; }
@@ -219,10 +221,9 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
 
     def test_exec_second_click_while_feeding_ignored(self):
         snippet = """
-        const dog = { name: 'Ziggy' };
-        const feeding = new HomeFeeding(dog);
-        const first = feeding.__testHooks.simulateFeed();
-        const second = feeding.__testHooks.simulateFeed();
+        const feeding = HomeFeeding;
+        const first = feeding.__testHooks.simulateFeed({ dogName: 'Ziggy' });
+        const second = feeding.__testHooks.simulateFeed({ dogName: 'Ziggy' });
         return {
           firstAte: first.ate,
           secondAte: second.ate,

@@ -34,8 +34,21 @@ export class SocialHUD {
   }
 
   // Resolve the effective Home view, honoring the empty-kennel lock.
-  resolveHomeView() {
-    if (this.dogSlot === null) return 'settings';
+  // Supports both signatures:
+  //   resolveHomeView('settings' | 'sanctuary')
+  //   resolveHomeView({ dogSlot, requestedView, currentTab })
+  resolveHomeView(requestedView, opts = {}) {
+    let req = requestedView;
+    let slot = this.dogSlot;
+    if (typeof requestedView === 'object' && requestedView !== null) {
+      req = requestedView.requestedView;
+      if ('dogSlot' in requestedView) slot = requestedView.dogSlot;
+    } else if (opts && 'dogSlot' in opts) {
+      slot = opts.dogSlot;
+    }
+    if (slot === null) return 'settings';
+    if (req === 'settings') return 'settings';
+    if (req === 'sanctuary') return 'sanctuary';
     return this.currentHomeView === 'settings' ? 'settings' : 'sanctuary';
   }
 
@@ -44,10 +57,20 @@ export class SocialHUD {
     return this.dogSlot !== null && !this.isHomeLocked;
   }
 
+  // Alias: open the Home modal (used by tests and external callers).
+  openHome() {
+    return this.openModal();
+  }
+
+  // Alias: draw the stage preview (used by tests and external callers).
+  drawStagePreview(ctx) {
+    return this.renderHomeStage(ctx);
+  }
+
   exposeTestHooks() {
     if (typeof window === 'undefined') return;
     window.__vdwHomeTestHooks = {
-      resolveHomeView: () => this.resolveHomeView(),
+      resolveHomeView: (req, opts) => this.resolveHomeView(req, opts),
       canWalkInPark: () => this.canWalkInPark()
     };
   }
@@ -696,12 +719,21 @@ export class SocialHUD {
     ctx.stroke();
 
     // Determine which tab is active so we render only one subject.
+    // Prefer the explicit `activeTab` field when set (test hook / external
+    // callers), otherwise fall back to the DOM tab button state.
     const dogTabBtn = document.getElementById('tab-btn-dog');
     const walkerTabBtn = document.getElementById('tab-btn-walker');
     const isDogTab = Boolean(dogTabBtn && dogTabBtn.classList.contains('active'));
     const isWalkerTab = Boolean(walkerTabBtn && walkerTabBtn.classList.contains('active'));
-    // Default to walker when neither is explicitly active.
-    const showDog = isDogTab && !isWalkerTab;
+    let showDog;
+    if (this.activeTab === 'dog') {
+      showDog = true;
+    } else if (this.activeTab === 'walker') {
+      showDog = false;
+    } else {
+      // Default to walker when neither is explicitly active.
+      showDog = isDogTab && !isWalkerTab;
+    }
 
     const centerX = stageW / 2;
     const centerY = stageH * 0.62;

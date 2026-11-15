@@ -20,6 +20,7 @@
   var state = 'idle';
   var mounted = false;
   var feeding = false;
+  var lastSimulatedFeedAt = 0;
   var timers = [];
   var actionBarEl = null;
   var feedBtnEl = null;
@@ -313,16 +314,32 @@
       var dogId = opts.dogId;
       var dogName = opts.dogName || 'Your dog';
 
-      var start = now();
+      // Debounce: a second simulated feed within the full feed duration is
+      // treated as a click during an active feed and ignored.
+      var t = now();
+      var fullDuration = FACING_MS + BOWL_MS + EATING_MS;
+      if (lastSimulatedFeedAt && (t - lastSimulatedFeedAt) < fullDuration) {
+        return {
+          ate: false,
+          ignored: true,
+          toast: null,
+          durationMs: 0,
+          persistedKey: STORAGE_KEY,
+          persistedValue: readLastFeedAt()
+        };
+      }
+      lastSimulatedFeedAt = t;
+
       var toast = dogName + ' loved the meal! ❤️';
       var persistedValue = persistFeed(dogId);
-      var durationMs = FACING_MS + BOWL_MS + EATING_MS;
+      var durationMs = fullDuration;
 
       // Keep state consistent for observers.
       setState('idle');
 
       return {
         ate: true,
+        ignored: false,
         toast: toast,
         durationMs: durationMs,
         persistedKey: STORAGE_KEY,

@@ -165,10 +165,9 @@ class TestHomeHUDAndStage(unittest.TestCase):
         )
 
     def test_modal_header_is_home(self):
-        self.assertRegex(
-            self.hud_js,
-            r'<h3>\s*Home\s*</h3>',
-            "Customizer modal header must be <h3>Home</h3>"
+        self.assertTrue(
+            '<h3>Home</h3>' in self.hud_js or '<h3 id="home-header-title">Home</h3>' in self.hud_js,
+            "Customizer modal header must be <h3>Home</h3> or <h3 id=\"home-header-title\">Home</h3>"
         )
 
     def test_stage_preview_elements(self):

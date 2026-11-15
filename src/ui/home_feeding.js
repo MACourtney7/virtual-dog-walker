@@ -28,7 +28,6 @@
   var timers = [];
   var actionBarEl = null;
   var feedBtnEl = null;
-  var bowlEl = null;
   var lastFeedAt = null;
   var pendingResolve = null;
 
@@ -206,27 +205,13 @@
     feedBtnEl.setAttribute('aria-disabled', disabled ? 'true' : 'false');
   }
 
+  // The food bowl is rendered natively on the canvas by
+  // HomeSanctuary.drawFoodBowl(); no DOM element is ever injected.
   function showBowl() {
-    if (bowlEl && document.body.contains(bowlEl)) return bowlEl;
-    bowlEl = document.createElement('div');
-    bowlEl.id = 'home-food-bowl';
-    bowlEl.className = 'home-food-bowl';
-    bowlEl.textContent = '🥣';
-    bowlEl.setAttribute('aria-hidden', 'true');
-    var canvas = getCanvas();
-    if (canvas && canvas.parentNode) {
-      canvas.parentNode.appendChild(bowlEl);
-    } else {
-      document.body.appendChild(bowlEl);
-    }
-    return bowlEl;
+    // No-op: bowl rendering is owned by HomeSanctuary.
   }
 
   function clearBowl() {
-    if (bowlEl && bowlEl.parentNode) {
-      bowlEl.parentNode.removeChild(bowlEl);
-    }
-    bowlEl = null;
     // Notify the sanctuary so any state-driven bowl rendering is cleared too.
     if (root.HomeSanctuary && typeof root.HomeSanctuary.clearBowl === 'function') {
       try { root.HomeSanctuary.clearBowl(); } catch (e) { /* ignore */ }

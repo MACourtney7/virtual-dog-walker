@@ -487,7 +487,7 @@
   // strictly read-only.
   function buildRenderAdapter(live) {
     var coatObj = live.coat && typeof live.coat === 'object'
-      ? live.coat
+      ? Object.assign({}, live.coat)
       : {
           bodyColor: live.coatColor || live.coat || DEFAULT_COAT,
           tanColor: live.coatColorDark || live.coatDark || DEFAULT_COAT_DARK,
@@ -501,7 +501,7 @@
     adapter.x = dog.x;
     adapter.y = dog.y;
     adapter.angle = pose === 'camera' ? Math.PI / 2 : dog.facing;
-    adapter.tailAngle = live.tailAngle || 0;
+    adapter.tailAngle = Math.sin((dog.bob || 0) * 1.6) * 0.5;
     adapter.legPhase = dog.bob;
     adapter.gaitMode = dog.state === 'wander' ? 'walk' : 'idle';
     adapter.gaitPhase = dog.bob;
@@ -677,9 +677,13 @@
     var entity = liveDogEntity ? buildRenderAdapter(liveDogEntity) : buildDogEntity();
 
     var CompanionDogClass = getCompanionDogClass();
-    if (CompanionDogClass && typeof CompanionDogClass.prototype.draw === 'function') {
+    var drawFn = (typeof entity.draw === 'function' ? entity.draw : null) ||
+                 (CompanionDogClass && typeof CompanionDogClass.prototype.draw === 'function'
+                   ? CompanionDogClass.prototype.draw
+                   : null);
+    if (drawFn) {
       try {
-        CompanionDogClass.prototype.draw.call(entity, ctx);
+        drawFn.call(entity, ctx);
       } catch (e) {
         drawArticulatedDog(entity);
       }
@@ -984,7 +988,7 @@
 
   // Clear any state-driven bowl rendering (called by HomeFeeding on completion).
   function clearBowl() {
-    if (dog && dog.state === 'eating') {
+    if (dog && (dog.state === 'eating' || dog.state === 'bowl')) {
       dog.state = 'wander';
     }
     forcedState = null;

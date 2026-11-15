@@ -810,6 +810,121 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
         self.assertEqual(res["eatingForced"], "eating",
                          "setDogState('eating') must set forcedState to 'eating'")
 
+    def test_exec_clear_bowl_resets_bowl_and_eating_state(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+
+        window.HomeSanctuary.setDogState('bowl');
+        const forcedBefore = window.HomeSanctuary.__testHooks.getForcedState();
+        window.HomeSanctuary.clearBowl();
+        const forcedAfter = window.HomeSanctuary.__testHooks.getForcedState();
+        const dogAfter = window.HomeSanctuary.getCompanionDog();
+
+        window.HomeSanctuary.setDogState('eating');
+        window.HomeSanctuary.clearBowl();
+        const forcedAfterEating = window.HomeSanctuary.__testHooks.getForcedState();
+        const dogAfterEating = window.HomeSanctuary.getCompanionDog();
+
+        return {
+          forcedBefore: forcedBefore,
+          forcedAfter: forcedAfter,
+          dogStateAfter: dogAfter.state,
+          forcedAfterEating: forcedAfterEating,
+          dogStateAfterEating: dogAfterEating.state
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["forcedBefore"], "bowl",
+                         "setDogState('bowl') must set forcedState to 'bowl'")
+        self.assertIsNone(res["forcedAfter"],
+                          "clearBowl() must clear forcedState from 'bowl'")
+        self.assertNotIn(res["dogStateAfter"], ("bowl", "eating"),
+                         "clearBowl() must reset the dog out of bowl/eating state")
+        self.assertIsNone(res["forcedAfterEating"],
+                          "clearBowl() must clear forcedState from 'eating'")
+        self.assertNotIn(res["dogStateAfterEating"], ("bowl", "eating"),
+                         "clearBowl() must reset the dog out of eating state")
+
+    def test_exec_draw_delegates_to_live_dog_draw_method(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        let drawCalled = false;
+        const live = {
+          x: 10, y: 10, angle: 0, legPhase: 0,
+          isSitting: false, isSniffing: false,
+          coat: { bodyColor: '#111111', tanColor: '#222222', bibColor: '#333333' },
+          collarColor: '#444444', name: 'LiveDog',
+          draw: function (ctx) { drawCalled = true; }
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot, live);
+        window.HomeSanctuary.__testHooks.render();
+
+        return { drawCalled: drawCalled };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["drawCalled"],
+                        "drawDog must delegate to the live entity's draw(ctx) method")
+
+    def test_home_feeding_no_dom_bowl_created(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+        const bar = document.createElement('div');
+        bar.id = 'home-action-bar';
+        sanctuary.appendChild(bar);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        HomeFeeding.mount();
+
+        HomeFeeding.__testHooks.runFeed({ dogName: 'Ziggy', dogId: 'dog-1' });
+        __flushTimers();
+
+        const byId = document.getElementById('home-food-bowl');
+        const byClass = document.querySelector('.home-food-bowl');
+        return {
+          byId: Boolean(byId),
+          byClass: Boolean(byClass)
+        };
+        """
+        res = _run_js(snippet)
+        self.assertFalse(res["byId"],
+                         "home_feeding must not inject a #home-food-bowl DOM element")
+        self.assertFalse(res["byClass"],
+                         "home_feeding must not inject a .home-food-bowl DOM element")
+
     def test_exec_second_click_while_feeding_ignored(self):
         snippet = """
         const feeding = HomeFeeding;

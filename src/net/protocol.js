@@ -22,12 +22,24 @@ export const PacketType = {
 
 export class Protocol {
   static createHello(peerId, name, jacketColor, dogCoatName, extraMeta = {}) {
+    const meta = extraMeta || {};
+    // Honor an explicitly provided dogName verbatim (including the empty string).
+    // Only fall back to the default 'Ziggy' when no dogName key is supplied at all.
+    const resolvedDogName = (typeof meta.dogName === 'string')
+      ? meta.dogName
+      : 'Ziggy';
+    // Honor an explicit hasDog boolean; otherwise derive it from the dog name/coat.
+    const resolvedHasDog = (typeof meta.hasDog === 'boolean')
+      ? meta.hasDog
+      : ((typeof resolvedDogName === 'string' && resolvedDogName.length > 0) || Boolean(dogCoatName));
     return {
       type: PacketType.HELLO,
       senderId: peerId,
       name,
       jacketColor,
       dogCoatName,
+      dogName: resolvedDogName,
+      hasDog: resolvedHasDog,
       hairStyle: extraMeta.hairStyle,
       hairColor: extraMeta.hairColor,
       pantsColor: extraMeta.pantsColor,
@@ -40,11 +52,16 @@ export class Protocol {
   }
 
   static createWelcome(hostId, hostMeta, peersList = [], ballState = null) {
+    const meta = hostMeta || {};
+    const resolvedDogName = (typeof meta.dogName === 'string') ? meta.dogName : 'Ziggy';
+    const resolvedHasDog = (typeof meta.hasDog === 'boolean')
+      ? meta.hasDog
+      : ((typeof resolvedDogName === 'string' && resolvedDogName.length > 0) || Boolean(meta.dogCoatName || meta.coatName));
     return {
       type: PacketType.WELCOME,
       senderId: hostId,
       hostId: hostId,
-      hostMeta: hostMeta,
+      hostMeta: { ...meta, dogName: resolvedDogName, hasDog: resolvedHasDog },
       peers: peersList,
       ball: ballState,
       timestamp: Date.now()

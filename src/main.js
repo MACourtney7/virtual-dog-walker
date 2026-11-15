@@ -2,7 +2,7 @@
 
 import { Field, Camera } from './world/field.js';
 import { Owner, Gait } from './entities/owner.js';
-import { CompanionDog, CoatPreset, DogState } from './entities/companion_dog.js';
+import { CompanionDog, CoatPreset, DogState, resolveCoatPresetByName } from './entities/companion_dog.js';
 import { TennisBall } from './entities/toy.js';
 import { NetworkManager, NetStatus } from './net/network.js';
 import { Protocol, PacketType } from './net/protocol.js';
@@ -105,7 +105,7 @@ export class CliftonDownGame {
 
     // Dog Stray Run-Off and Waste Drop Event Callbacks
     this.dog.onStrayTriggered = (dog) => {
-      this.hud.showToast('Your dog ran off! Check the compass arrow 🐕');
+      this.hud.showToast(`${this.dog.name || 'Your dog'} ran off! Check the compass arrow 🐕`);
       this.navArrow.setTarget(dog.x, dog.y, 'DOG', 'Find your dog!', '#f59e0b');
     };
 
@@ -113,14 +113,14 @@ export class CliftonDownGame {
       if (this.navArrow.target && this.navArrow.target.type === 'DOG') {
         this.navArrow.clearTarget();
       }
-      this.hud.showToast('Reunited with your dog! ❤️');
+      this.hud.showToast(`Reunited with ${this.dog.name || 'your dog'}! ❤️`);
     };
 
     this.dog.onPoopDropped = (dog, poopPile) => {
       if (this.field && typeof this.field.addPoopPile === 'function') {
         this.field.addPoopPile(poopPile);
       }
-      this.hud.showToast('Your dog did a poop! Please pick it up 🟤');
+      this.hud.showToast(`${this.dog.name || 'Your dog'} did a poop! Please pick it up 🟤`);
     };
 
     // Proximity Chat HUD & Dynamic Spatial Clustering
@@ -325,16 +325,11 @@ export class CliftonDownGame {
       }
     }
 
-    // Helper to resolve CoatPreset from coatName or coatKey
+    // Helper to resolve CoatPreset from coatName or coatKey. Delegates to the
+    // shared resolveCoatPresetByName so legacy labels resolve consistently.
     const resolveCoat = (coatName) => {
       if (!coatName) return CoatPreset.CHOCOLATE_TAN;
-      const cn = String(coatName).toLowerCase();
-      if (cn.includes('golden')) return CoatPreset.GOLDEN;
-      if (cn.includes('black')) return CoatPreset.BLACK_LAB;
-      if (cn.includes('jack') || cn.includes('russell')) return CoatPreset.JACK_RUSSELL || CoatPreset.CHOCOLATE_TAN;
-      if (cn.includes('setter') || cn.includes('red')) return CoatPreset.RED_SETTER || CoatPreset.CHOCOLATE_TAN;
-      if (cn.includes('chocolate') || cn.includes('ziggy')) return CoatPreset.CHOCOLATE_TAN;
-      return CoatPreset.CHOCOLATE_TAN;
+      return resolveCoatPresetByName(coatName) || CoatPreset.CHOCOLATE_TAN;
     };
 
     // When a peer connects or updates appearance
@@ -353,6 +348,7 @@ export class CliftonDownGame {
         if (meta.accessory !== undefined) existing.owner.accessory = meta.accessory || 'NONE';
         if (meta.skinTone) existing.owner.skinTone = meta.skinTone;
         if (meta.collarColor) existing.dog.collarColor = meta.collarColor;
+        this.applyRemoteDogPresence(existing, meta);
         if (meta.personality) {
           if (typeof existing.dog.setPersonality === 'function') {
             existing.dog.setPersonality(meta.personality);
@@ -373,6 +369,7 @@ export class CliftonDownGame {
       if (meta?.skinTone) remoteOwner.skinTone = meta.skinTone;
 
       const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
+      remoteDog.name = (meta && meta.dogName) ? meta.dogName : 'Ziggy';
       if (meta?.collarColor) remoteDog.collarColor = meta.collarColor;
       if (meta?.personality) {
         if (typeof remoteDog.setPersonality === 'function') {
@@ -382,7 +379,9 @@ export class CliftonDownGame {
         }
       }
 
-      this.remotePlayers.set(peerId, { owner: remoteOwner, dog: remoteDog });
+      const remoteEntry = { owner: remoteOwner, dog: remoteDog, hasDog: true };
+      this.applyRemoteDogPresence(remoteEntry, meta);
+      this.remotePlayers.set(peerId, remoteEntry);
 
       this.hud.updatePlayerCount(this.remotePlayers.size + 1);
       this.hud.showToast(`👋 ${remoteOwner.name} joined the field!`);
@@ -454,6 +453,14 @@ export class CliftonDownGame {
       }
     };
 
+    // Explicit profile_update broadcasts (e.g. dog removal) clear ghost dogs.
+    this.net.onProfileUpdate = (peerId, data) => {
+      const p = this.remotePlayers.get(peerId);
+      if (p && data) {
+        this.applyRemoteDogPresence(p, data);
+      }
+    };
+
     // Proximity Chat Handlers
     this.net.onProximityChat = (data) => {
       if (!data) return;
@@ -489,6 +496,16 @@ export class CliftonDownGame {
           if (packet.type === PacketType.PROXIMITY_CHAT || packet.type === 'PROXIMITY_CHAT') {
             const data = { ...packet, senderId: packet.senderId || senderId };
             this.net.onProximityChat(data);
+            if (this.net.isHost && typeof this.net.relayToOthers === 'function') {
+              this.net.relayToOthers(senderId, packet);
+            }
+            return;
+          }
+          if (packet.type === 'profile_update' || packet.type === 'PROFILE_UPDATE') {
+            const data = { ...packet, senderId: packet.senderId || senderId };
+            if (typeof this.net.onProfileUpdate === 'function') {
+              this.net.onProfileUpdate(data.senderId, data);
+            }
             if (this.net.isHost && typeof this.net.relayToOthers === 'function') {
               this.net.relayToOthers(senderId, packet);
             }
@@ -853,6 +870,30 @@ export class CliftonDownGame {
         }, DOUBLE_CLICK_MS);
       }
     });
+  }
+
+  /**
+   * Apply a peer's dog-presence metadata to a remote player entry.
+   * When the peer has no dog (hasDog === false or empty dogName), the dog
+   * entity is hidden (name cleared + hasDog flag) so no ghost dog or name
+   * tag renders. When a dog is present, its name is restored.
+   */
+  applyRemoteDogPresence(entry, meta) {
+    if (!entry || !entry.dog) return;
+    const hasDogFlag = meta ? meta.hasDog : undefined;
+    const dogName = meta ? meta.dogName : undefined;
+    const noDog = hasDogFlag === false || dogName === '';
+    if (noDog) {
+      entry.dog.name = '';
+      entry.hasDog = false;
+      return;
+    }
+    if (typeof dogName === 'string' && dogName.length > 0) {
+      entry.dog.name = dogName;
+      entry.hasDog = true;
+    } else if (hasDogFlag === true) {
+      entry.hasDog = true;
+    }
   }
 
   handleJoystickMove(vec) {
@@ -1264,6 +1305,24 @@ export class CliftonDownGame {
   }
 
   update(dt) {
+    // Home lock: strictly freeze the player in place until a dog is added.
+    if (this.hud && this.hud.isHomeLocked) {
+      if (this.owner) {
+        this.owner.vx = 0;
+        this.owner.vy = 0;
+        this.owner.isMoving = false;
+        if (this.owner.keys) {
+          this.owner.keys.up = false;
+          this.owner.keys.down = false;
+          this.owner.keys.left = false;
+          this.owner.keys.right = false;
+        }
+        if (typeof this.owner.setGait === 'function') {
+          this.owner.setGait('STAND');
+        }
+      }
+    }
+
     // Zone Warp Cooldown & Crossfade Fade
     if (this.warpCooldown > 0) this.warpCooldown = Math.max(0, this.warpCooldown - dt);
     if (this.warpFadeAlpha > 0) this.warpFadeAlpha = Math.max(0, this.warpFadeAlpha - dt * 1.5);
@@ -1302,7 +1361,9 @@ export class CliftonDownGame {
     // 2. Gather all other dogs for social play-bow reactions
     const allDogs = [this.dog];
     for (const p of this.remotePlayers.values()) {
-      allDogs.push(p.dog);
+      if (p.hasDog !== false) {
+        allDogs.push(p.dog);
+      }
     }
 
     // 1. Update Field & Ambient Particles with dynamic entities for leaf scattering
@@ -1317,7 +1378,9 @@ export class CliftonDownGame {
     const avoidanceEntities = [this.owner, this.dog, ...npcList];
     for (const p of this.remotePlayers.values()) {
       avoidanceEntities.push(p.owner);
-      avoidanceEntities.push(p.dog);
+      if (p.hasDog !== false) {
+        avoidanceEntities.push(p.dog);
+      }
     }
 
     // Update ambient NPCs
@@ -1403,17 +1466,17 @@ export class CliftonDownGame {
 
       let remote = this.remotePlayers.get(peerId);
       const meta = interpolatorData.meta || {};
-      let coat = CoatPreset.CHOCOLATE_TAN;
       const coatName = (meta && meta.coatName) ? meta.coatName : '';
-      if (coatName.includes('Golden')) coat = CoatPreset.GOLDEN;
-      else if (coatName.includes('Black')) coat = CoatPreset.BLACK_LAB;
+      const coat = resolveCoatPresetByName(coatName) || CoatPreset.CHOCOLATE_TAN;
 
       if (!remote) {
         // Auto-create remote player if not yet instantiated
         const remoteOwner = new Owner(this.owner.x, this.owner.y, meta.name || 'Walker', false);
         remoteOwner.jacketColor = meta.jacketColor || '#1e3a8a';
         const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
-        remote = { owner: remoteOwner, dog: remoteDog };
+        remoteDog.name = (meta && meta.dogName) ? meta.dogName : 'Ziggy';
+        remote = { owner: remoteOwner, dog: remoteDog, hasDog: true };
+        this.applyRemoteDogPresence(remote, meta);
         this.remotePlayers.set(peerId, remote);
         this.hud.updatePlayerCount(this.remotePlayers.size + 1);
       } else {
@@ -1427,6 +1490,7 @@ export class CliftonDownGame {
         if (meta.coatName && remote.dog.coat !== coat) {
           remote.dog.coat = coat;
         }
+        this.applyRemoteDogPresence(remote, meta);
         if (meta.personality) {
           if (typeof remote.dog.setPersonality === 'function') {
             remote.dog.setPersonality(meta.personality);
@@ -1566,7 +1630,9 @@ export class CliftonDownGame {
 
     for (const p of this.remotePlayers.values()) {
       dynamicEntities.push(p.owner);
-      dynamicEntities.push(p.dog);
+      if (p.hasDog !== false) {
+        dynamicEntities.push(p.dog);
+      }
     }
 
     // Field renders background turf, then Y-sorts trees, benches, owners, dogs, and balls
@@ -1627,7 +1693,10 @@ export class CliftonDownGame {
     if (this.environment) {
       const players = [this.owner, this.dog];
       for (const p of this.remotePlayers.values()) {
-        players.push(p.owner, p.dog);
+        players.push(p.owner);
+        if (p.hasDog !== false) {
+          players.push(p.dog);
+        }
       }
       for (const npc of this.npcs.values()) {
         players.push(npc);

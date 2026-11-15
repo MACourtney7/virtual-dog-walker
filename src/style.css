@@ -263,9 +263,7 @@ body {
 }
 
 @keyframes pulseContextualBtn {
-
-  0%,
-  100% {
+  0%, 100% {
     transform: scale(1);
   }
 
@@ -563,6 +561,111 @@ body {
   justify-content: center;
 }
 
+/* Home Stage Preview */
+.home-stage-preview {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: #090e17;
+  box-shadow: inset 0 0 24px rgba(56, 189, 248, 0.08);
+}
+
+#home-stage-canvas {
+  display: block;
+  width: 100%;
+  max-width: 340px;
+  height: auto;
+  border-radius: 12px;
+}
+
+/* Single-Slot Kennel Card */
+.dog-slot-card {
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 14px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.dog-slot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.dog-slot-name {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.dog-slot-collar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+.dog-slot-breed {
+  font-size: 0.82rem;
+  color: #94a3b8;
+  margin-bottom: 12px;
+}
+
+.dog-slot-traits {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.dog-slot-trait {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.82rem;
+  color: #cbd5e1;
+  padding: 4px 8px;
+  background: rgba(30, 41, 59, 0.5);
+  border-radius: 6px;
+}
+
+.dog-slot-trait strong {
+  color: #38bdf8;
+  font-weight: 700;
+}
+
+.btn-remove-dog {
+  width: 100%;
+  padding: 9px;
+  background: linear-gradient(135deg, #be123c, #9f1239);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 0.88rem;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.18s ease;
+  box-shadow: 0 4px 12px rgba(190, 18, 60, 0.35);
+}
+
+.btn-remove-dog:hover {
+  background: linear-gradient(135deg, #e11d48, #be123c);
+  transform: translateY(-1px);
+}
+
+.btn-remove-dog:active {
+  transform: translateY(0);
+}
+
 #chat-toggle-btn {
   position: fixed;
   top: 16px;
@@ -631,9 +734,7 @@ body {
 }
 
 @keyframes pulseBadge {
-
-  0%,
-  100% {
+  0%, 100% {
     transform: scale(1);
   }
 

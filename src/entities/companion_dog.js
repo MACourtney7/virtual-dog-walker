@@ -168,6 +168,20 @@ export function getLeashSlot(owner) {
   return { x: slotX, y: slotY };
 }
 
+// Resolve a CoatPreset from a coat name string, accepting both the current
+// preset labels and legacy labels (e.g. 'Chocolate & Tan (Ziggy)').
+export function resolveCoatPresetByName(coatName) {
+  if (!coatName) return CoatPreset.CHOCOLATE_TAN;
+  const cn = String(coatName).toLowerCase();
+  if (cn.includes('golden')) return CoatPreset.GOLDEN;
+  if (cn.includes('black')) return CoatPreset.BLACK_LAB;
+  if (cn.includes('jack') || cn.includes('russell')) return CoatPreset.JACK_RUSSELL || CoatPreset.CHOCOLATE_TAN;
+  if (cn.includes('setter') || cn.includes('red')) return CoatPreset.RED_SETTER || CoatPreset.CHOCOLATE_TAN;
+  // Both 'Chocolate & Tan Cocker Spaniel' and legacy 'Chocolate & Tan (Ziggy)'.
+  if (cn.includes('chocolate') || cn.includes('ziggy') || cn.includes('cocker')) return CoatPreset.CHOCOLATE_TAN;
+  return CoatPreset.CHOCOLATE_TAN;
+}
+
 // States that must never be interrupted by ambient resting (LYING_DOWN) transitions.
 const ACTIVE_REST_BLOCKED_STATES = new Set([
   DogState.FETCHING,
@@ -186,7 +200,7 @@ const ACTIVE_REST_BLOCKED_STATES = new Set([
 
 export const CoatPreset = {
   CHOCOLATE_TAN: {
-    name: 'Chocolate & Tan (Ziggy)',
+    name: 'Chocolate & Tan Cocker Spaniel',
     bodyColor: '#2e1a14',
     bodyShade: '#22130e',
     tanColor: '#d89b54',
@@ -244,9 +258,11 @@ export const CoatPreset = {
 };
 
 export class CompanionDog {
-  constructor(x = 1240, y = 920, owner = null, coat = CoatPreset.CHOCOLATE_TAN, collarColor = '#0d9488', personality = null) {
+  constructor(x = 1240, y = 920, owner = null, coat = CoatPreset.CHOCOLATE_TAN, collarColor = '#0d9488', personality = null, name = 'Ziggy') {
     this.x = x;
     this.y = y;
+    // Custom dog name (rendered as a floating canvas name tag).
+    this.name = name || 'Ziggy';
     this.vx = 0;
     this.vy = 0;
     this.angle = 0;
@@ -3297,6 +3313,33 @@ export class CompanionDog {
     if (this.emoteBubble) {
       this.drawEmote(ctx, this.emoteBubble);
     }
+
+    // 7. Floating Dog Name Tag (world coordinates, below the dog)
+    if (this.name) {
+      ctx.save();
+      ctx.font = '600 11px Outfit, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const nameText = this.name;
+      const textWidth = ctx.measureText(nameText).width;
+      const pillW = textWidth + 12;
+      const pillH = 16;
+      const pillX = this.x - pillW / 2;
+      const pillY = this.y + 18;
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+      ctx.beginPath();
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(pillX, pillY, pillW, pillH, 8);
+      } else {
+        ctx.rect(pillX, pillY, pillW, pillH);
+      }
+      ctx.fill();
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillText(nameText, this.x, pillY + pillH / 2);
+      ctx.restore();
+    }
   }
 
   getCollarAnchor() {
@@ -3415,4 +3458,5 @@ CompanionDog.getLeashSlot = getLeashSlot;
 CompanionDog.ZoomiePath = ZoomiePath;
 CompanionDog.ZOOMIE_PATH_TYPES = ZOOMIE_PATH_TYPES;
 CompanionDog.RoamSubMode = RoamSubMode;
+CompanionDog.resolveCoatPresetByName = resolveCoatPresetByName;
 CompanionDog.ACTIVE_REST_BLOCKED_STATES = Object.freeze(new Set([...ACTIVE_REST_BLOCKED_STATES]));

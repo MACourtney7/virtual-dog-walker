@@ -78,7 +78,8 @@ export class PeerNetworkManager {
     this.localMeta = {
       name: 'Park Walker',
       jacketColor: '#1e3a8a',
-      coatName: 'Chocolate & Tan (Ziggy)'
+      coatName: 'Chocolate & Tan (Ziggy)',
+      dogName: 'Ziggy'
     };
 
     this.connections = new Map();
@@ -105,8 +106,14 @@ export class PeerNetworkManager {
     this.syncHz = 16;
   }
 
-  setLocalMeta(meta) {
+  setLocalMeta(meta = {}) {
     this.localMeta = { ...this.localMeta, ...meta };
+    if (typeof meta.hasDog === 'boolean') {
+      this.localMeta.hasDog = meta.hasDog;
+    }
+    if (typeof meta.dogName === 'string') {
+      this.localMeta.dogName = meta.dogName;
+    }
   }
 
   updateServerClock(serverTime) {
@@ -165,6 +172,10 @@ export class PeerNetworkManager {
           name: meta.name || 'Player',
           jacketColor: meta.jacketColor || '#14532d',
           coatName: meta.coatName || 'Chocolate & Tan (Ziggy)',
+          dogName: (typeof meta.dogName === 'string') ? meta.dogName : 'Ziggy',
+          hasDog: (typeof meta.hasDog === 'boolean')
+            ? meta.hasDog
+            : (Boolean(meta.dogName) || Boolean(meta.dogCoat || meta.coatName)),
           hairStyle: meta.hairStyle,
           hairColor: meta.hairColor,
           pantsColor: meta.pantsColor,
@@ -175,10 +186,12 @@ export class PeerNetworkManager {
         }
       };
       this.remotePeers.set(peerId, peerData);
-    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality)) {
+    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality || typeof meta.hasDog === 'boolean' || typeof meta.dogName === 'string')) {
       if (meta.name) peerData.meta.name = meta.name;
       if (meta.jacketColor) peerData.meta.jacketColor = meta.jacketColor;
       if (meta.coatName) peerData.meta.coatName = meta.coatName;
+      if (typeof meta.dogName === 'string') peerData.meta.dogName = meta.dogName;
+      if (typeof meta.hasDog === 'boolean') peerData.meta.hasDog = meta.hasDog;
       if (meta.hairStyle) peerData.meta.hairStyle = meta.hairStyle;
       if (meta.hairColor) peerData.meta.hairColor = meta.hairColor;
       if (meta.pantsColor) peerData.meta.pantsColor = meta.pantsColor;
@@ -303,6 +316,12 @@ export class PeerNetworkManager {
           name: packet.name || 'Visitor',
           jacketColor: packet.jacketColor || '#14532d',
           coatName: packet.dogCoatName || 'Chocolate & Tan (Ziggy)',
+          dogName: (typeof packet.dogName === 'string')
+            ? packet.dogName
+            : ((packet.extraMeta && typeof packet.extraMeta.dogName === 'string') ? packet.extraMeta.dogName : 'Ziggy'),
+          hasDog: (typeof packet.hasDog === 'boolean')
+            ? packet.hasDog
+            : ((typeof packet.dogName === 'string' && packet.dogName.length > 0) || Boolean(packet.dogCoatName)),
           hairStyle: packet.hairStyle,
           hairColor: packet.hairColor,
           pantsColor: packet.pantsColor,
@@ -335,6 +354,10 @@ export class PeerNetworkManager {
           name: packet.hostMeta.name,
           jacketColor: packet.hostMeta.jacketColor,
           coatName: packet.hostMeta.coatName || packet.hostMeta.dogCoatName,
+          dogName: (typeof packet.hostMeta.dogName === 'string') ? packet.hostMeta.dogName : 'Ziggy',
+          hasDog: (typeof packet.hostMeta.hasDog === 'boolean')
+            ? packet.hostMeta.hasDog
+            : ((typeof packet.hostMeta.dogName === 'string' && packet.hostMeta.dogName.length > 0) || Boolean(packet.hostMeta.dogCoatName || packet.hostMeta.coatName)),
           hairStyle: packet.hostMeta.hairStyle,
           hairColor: packet.hostMeta.hairColor,
           pantsColor: packet.hostMeta.pantsColor,
@@ -345,6 +368,7 @@ export class PeerNetworkManager {
           name: 'Host Walker',
           jacketColor: '#1e3a8a',
           coatName: 'Chocolate & Tan (Ziggy)',
+          dogName: 'Ziggy',
           personality: null
         };
         this.ensureRemotePeer(hostId, hostMeta);
@@ -357,6 +381,10 @@ export class PeerNetworkManager {
                 name: p.name,
                 jacketColor: p.jacketColor,
                 coatName: p.coatName || p.dogCoatName,
+                dogName: (typeof p.dogName === 'string') ? p.dogName : 'Ziggy',
+                hasDog: (typeof p.hasDog === 'boolean')
+                  ? p.hasDog
+                  : ((typeof p.dogName === 'string' && p.dogName.length > 0) || Boolean(p.dogCoatName || p.coatName)),
                 hairStyle: p.hairStyle,
                 hairColor: p.hairColor,
                 pantsColor: p.pantsColor,

@@ -7044,6 +7044,20 @@ export function getLeashSlot(owner) {
   return { x: slotX, y: slotY };
 }
 
+// Resolve a CoatPreset from a coat name string, accepting both the current
+// preset labels and legacy labels (e.g. 'Chocolate & Tan (Ziggy)').
+export function resolveCoatPresetByName(coatName) {
+  if (!coatName) return CoatPreset.CHOCOLATE_TAN;
+  const cn = String(coatName).toLowerCase();
+  if (cn.includes('golden')) return CoatPreset.GOLDEN;
+  if (cn.includes('black')) return CoatPreset.BLACK_LAB;
+  if (cn.includes('jack') || cn.includes('russell')) return CoatPreset.JACK_RUSSELL || CoatPreset.CHOCOLATE_TAN;
+  if (cn.includes('setter') || cn.includes('red')) return CoatPreset.RED_SETTER || CoatPreset.CHOCOLATE_TAN;
+  // Both 'Chocolate & Tan Cocker Spaniel' and legacy 'Chocolate & Tan (Ziggy)'.
+  if (cn.includes('chocolate') || cn.includes('ziggy') || cn.includes('cocker')) return CoatPreset.CHOCOLATE_TAN;
+  return CoatPreset.CHOCOLATE_TAN;
+}
+
 // States that must never be interrupted by ambient resting (LYING_DOWN) transitions.
 const ACTIVE_REST_BLOCKED_STATES = new Set([
   DogState.FETCHING,
@@ -7062,7 +7076,7 @@ const ACTIVE_REST_BLOCKED_STATES = new Set([
 
 export const CoatPreset = {
   CHOCOLATE_TAN: {
-    name: 'Chocolate & Tan (Ziggy)',
+    name: 'Chocolate & Tan Cocker Spaniel',
     bodyColor: '#2e1a14',
     bodyShade: '#22130e',
     tanColor: '#d89b54',
@@ -7120,9 +7134,11 @@ export const CoatPreset = {
 };
 
 export class CompanionDog {
-  constructor(x = 1240, y = 920, owner = null, coat = CoatPreset.CHOCOLATE_TAN, collarColor = '#0d9488', personality = null) {
+  constructor(x = 1240, y = 920, owner = null, coat = CoatPreset.CHOCOLATE_TAN, collarColor = '#0d9488', personality = null, name = 'Ziggy') {
     this.x = x;
     this.y = y;
+    // Custom dog name (rendered as a floating canvas name tag).
+    this.name = name || 'Ziggy';
     this.vx = 0;
     this.vy = 0;
     this.angle = 0;
@@ -10173,6 +10189,33 @@ export class CompanionDog {
     if (this.emoteBubble) {
       this.drawEmote(ctx, this.emoteBubble);
     }
+
+    // 7. Floating Dog Name Tag (world coordinates, below the dog)
+    if (this.name) {
+      ctx.save();
+      ctx.font = '600 11px Outfit, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      const nameText = this.name;
+      const textWidth = ctx.measureText(nameText).width;
+      const pillW = textWidth + 12;
+      const pillH = 16;
+      const pillX = this.x - pillW / 2;
+      const pillY = this.y + 18;
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+      ctx.beginPath();
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(pillX, pillY, pillW, pillH, 8);
+      } else {
+        ctx.rect(pillX, pillY, pillW, pillH);
+      }
+      ctx.fill();
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillText(nameText, this.x, pillY + pillH / 2);
+      ctx.restore();
+    }
   }
 
   getCollarAnchor() {
@@ -10291,6 +10334,7 @@ CompanionDog.getLeashSlot = getLeashSlot;
 CompanionDog.ZoomiePath = ZoomiePath;
 CompanionDog.ZOOMIE_PATH_TYPES = ZOOMIE_PATH_TYPES;
 CompanionDog.RoamSubMode = RoamSubMode;
+CompanionDog.resolveCoatPresetByName = resolveCoatPresetByName;
 CompanionDog.ACTIVE_REST_BLOCKED_STATES = Object.freeze(new Set([...ACTIVE_REST_BLOCKED_STATES]));
 ```
 
@@ -13382,7 +13426,7 @@ export class PoopPile {
 
 import { Field, Camera } from './world/field.js';
 import { Owner, Gait } from './entities/owner.js';
-import { CompanionDog, CoatPreset, DogState } from './entities/companion_dog.js';
+import { CompanionDog, CoatPreset, DogState, resolveCoatPresetByName } from './entities/companion_dog.js';
 import { TennisBall } from './entities/toy.js';
 import { NetworkManager, NetStatus } from './net/network.js';
 import { Protocol, PacketType } from './net/protocol.js';
@@ -13485,7 +13529,7 @@ export class CliftonDownGame {
 
     // Dog Stray Run-Off and Waste Drop Event Callbacks
     this.dog.onStrayTriggered = (dog) => {
-      this.hud.showToast('Your dog ran off! Check the compass arrow 🐕');
+      this.hud.showToast(`${this.dog.name || 'Your dog'} ran off! Check the compass arrow 🐕`);
       this.navArrow.setTarget(dog.x, dog.y, 'DOG', 'Find your dog!', '#f59e0b');
     };
 
@@ -13493,14 +13537,14 @@ export class CliftonDownGame {
       if (this.navArrow.target && this.navArrow.target.type === 'DOG') {
         this.navArrow.clearTarget();
       }
-      this.hud.showToast('Reunited with your dog! ❤️');
+      this.hud.showToast(`Reunited with ${this.dog.name || 'your dog'}! ❤️`);
     };
 
     this.dog.onPoopDropped = (dog, poopPile) => {
       if (this.field && typeof this.field.addPoopPile === 'function') {
         this.field.addPoopPile(poopPile);
       }
-      this.hud.showToast('Your dog did a poop! Please pick it up 🟤');
+      this.hud.showToast(`${this.dog.name || 'Your dog'} did a poop! Please pick it up 🟤`);
     };
 
     // Proximity Chat HUD & Dynamic Spatial Clustering
@@ -13705,16 +13749,11 @@ export class CliftonDownGame {
       }
     }
 
-    // Helper to resolve CoatPreset from coatName or coatKey
+    // Helper to resolve CoatPreset from coatName or coatKey. Delegates to the
+    // shared resolveCoatPresetByName so legacy labels resolve consistently.
     const resolveCoat = (coatName) => {
       if (!coatName) return CoatPreset.CHOCOLATE_TAN;
-      const cn = String(coatName).toLowerCase();
-      if (cn.includes('golden')) return CoatPreset.GOLDEN;
-      if (cn.includes('black')) return CoatPreset.BLACK_LAB;
-      if (cn.includes('jack') || cn.includes('russell')) return CoatPreset.JACK_RUSSELL || CoatPreset.CHOCOLATE_TAN;
-      if (cn.includes('setter') || cn.includes('red')) return CoatPreset.RED_SETTER || CoatPreset.CHOCOLATE_TAN;
-      if (cn.includes('chocolate') || cn.includes('ziggy')) return CoatPreset.CHOCOLATE_TAN;
-      return CoatPreset.CHOCOLATE_TAN;
+      return resolveCoatPresetByName(coatName) || CoatPreset.CHOCOLATE_TAN;
     };
 
     // When a peer connects or updates appearance
@@ -13733,6 +13772,7 @@ export class CliftonDownGame {
         if (meta.accessory !== undefined) existing.owner.accessory = meta.accessory || 'NONE';
         if (meta.skinTone) existing.owner.skinTone = meta.skinTone;
         if (meta.collarColor) existing.dog.collarColor = meta.collarColor;
+        this.applyRemoteDogPresence(existing, meta);
         if (meta.personality) {
           if (typeof existing.dog.setPersonality === 'function') {
             existing.dog.setPersonality(meta.personality);
@@ -13753,6 +13793,7 @@ export class CliftonDownGame {
       if (meta?.skinTone) remoteOwner.skinTone = meta.skinTone;
 
       const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
+      remoteDog.name = (meta && meta.dogName) ? meta.dogName : 'Ziggy';
       if (meta?.collarColor) remoteDog.collarColor = meta.collarColor;
       if (meta?.personality) {
         if (typeof remoteDog.setPersonality === 'function') {
@@ -13762,7 +13803,9 @@ export class CliftonDownGame {
         }
       }
 
-      this.remotePlayers.set(peerId, { owner: remoteOwner, dog: remoteDog });
+      const remoteEntry = { owner: remoteOwner, dog: remoteDog, hasDog: true };
+      this.applyRemoteDogPresence(remoteEntry, meta);
+      this.remotePlayers.set(peerId, remoteEntry);
 
       this.hud.updatePlayerCount(this.remotePlayers.size + 1);
       this.hud.showToast(`👋 ${remoteOwner.name} joined the field!`);
@@ -13834,6 +13877,14 @@ export class CliftonDownGame {
       }
     };
 
+    // Explicit profile_update broadcasts (e.g. dog removal) clear ghost dogs.
+    this.net.onProfileUpdate = (peerId, data) => {
+      const p = this.remotePlayers.get(peerId);
+      if (p && data) {
+        this.applyRemoteDogPresence(p, data);
+      }
+    };
+
     // Proximity Chat Handlers
     this.net.onProximityChat = (data) => {
       if (!data) return;
@@ -13869,6 +13920,16 @@ export class CliftonDownGame {
           if (packet.type === PacketType.PROXIMITY_CHAT || packet.type === 'PROXIMITY_CHAT') {
             const data = { ...packet, senderId: packet.senderId || senderId };
             this.net.onProximityChat(data);
+            if (this.net.isHost && typeof this.net.relayToOthers === 'function') {
+              this.net.relayToOthers(senderId, packet);
+            }
+            return;
+          }
+          if (packet.type === 'profile_update' || packet.type === 'PROFILE_UPDATE') {
+            const data = { ...packet, senderId: packet.senderId || senderId };
+            if (typeof this.net.onProfileUpdate === 'function') {
+              this.net.onProfileUpdate(data.senderId, data);
+            }
             if (this.net.isHost && typeof this.net.relayToOthers === 'function') {
               this.net.relayToOthers(senderId, packet);
             }
@@ -14233,6 +14294,30 @@ export class CliftonDownGame {
         }, DOUBLE_CLICK_MS);
       }
     });
+  }
+
+  /**
+   * Apply a peer's dog-presence metadata to a remote player entry.
+   * When the peer has no dog (hasDog === false or empty dogName), the dog
+   * entity is hidden (name cleared + hasDog flag) so no ghost dog or name
+   * tag renders. When a dog is present, its name is restored.
+   */
+  applyRemoteDogPresence(entry, meta) {
+    if (!entry || !entry.dog) return;
+    const hasDogFlag = meta ? meta.hasDog : undefined;
+    const dogName = meta ? meta.dogName : undefined;
+    const noDog = hasDogFlag === false || dogName === '';
+    if (noDog) {
+      entry.dog.name = '';
+      entry.hasDog = false;
+      return;
+    }
+    if (typeof dogName === 'string' && dogName.length > 0) {
+      entry.dog.name = dogName;
+      entry.hasDog = true;
+    } else if (hasDogFlag === true) {
+      entry.hasDog = true;
+    }
   }
 
   handleJoystickMove(vec) {
@@ -14644,6 +14729,24 @@ export class CliftonDownGame {
   }
 
   update(dt) {
+    // Home lock: strictly freeze the player in place until a dog is added.
+    if (this.hud && this.hud.isHomeLocked) {
+      if (this.owner) {
+        this.owner.vx = 0;
+        this.owner.vy = 0;
+        this.owner.isMoving = false;
+        if (this.owner.keys) {
+          this.owner.keys.up = false;
+          this.owner.keys.down = false;
+          this.owner.keys.left = false;
+          this.owner.keys.right = false;
+        }
+        if (typeof this.owner.setGait === 'function') {
+          this.owner.setGait('STAND');
+        }
+      }
+    }
+
     // Zone Warp Cooldown & Crossfade Fade
     if (this.warpCooldown > 0) this.warpCooldown = Math.max(0, this.warpCooldown - dt);
     if (this.warpFadeAlpha > 0) this.warpFadeAlpha = Math.max(0, this.warpFadeAlpha - dt * 1.5);
@@ -14682,7 +14785,9 @@ export class CliftonDownGame {
     // 2. Gather all other dogs for social play-bow reactions
     const allDogs = [this.dog];
     for (const p of this.remotePlayers.values()) {
-      allDogs.push(p.dog);
+      if (p.hasDog !== false) {
+        allDogs.push(p.dog);
+      }
     }
 
     // 1. Update Field & Ambient Particles with dynamic entities for leaf scattering
@@ -14697,7 +14802,9 @@ export class CliftonDownGame {
     const avoidanceEntities = [this.owner, this.dog, ...npcList];
     for (const p of this.remotePlayers.values()) {
       avoidanceEntities.push(p.owner);
-      avoidanceEntities.push(p.dog);
+      if (p.hasDog !== false) {
+        avoidanceEntities.push(p.dog);
+      }
     }
 
     // Update ambient NPCs
@@ -14783,17 +14890,17 @@ export class CliftonDownGame {
 
       let remote = this.remotePlayers.get(peerId);
       const meta = interpolatorData.meta || {};
-      let coat = CoatPreset.CHOCOLATE_TAN;
       const coatName = (meta && meta.coatName) ? meta.coatName : '';
-      if (coatName.includes('Golden')) coat = CoatPreset.GOLDEN;
-      else if (coatName.includes('Black')) coat = CoatPreset.BLACK_LAB;
+      const coat = resolveCoatPresetByName(coatName) || CoatPreset.CHOCOLATE_TAN;
 
       if (!remote) {
         // Auto-create remote player if not yet instantiated
         const remoteOwner = new Owner(this.owner.x, this.owner.y, meta.name || 'Walker', false);
         remoteOwner.jacketColor = meta.jacketColor || '#1e3a8a';
         const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
-        remote = { owner: remoteOwner, dog: remoteDog };
+        remoteDog.name = (meta && meta.dogName) ? meta.dogName : 'Ziggy';
+        remote = { owner: remoteOwner, dog: remoteDog, hasDog: true };
+        this.applyRemoteDogPresence(remote, meta);
         this.remotePlayers.set(peerId, remote);
         this.hud.updatePlayerCount(this.remotePlayers.size + 1);
       } else {
@@ -14807,6 +14914,7 @@ export class CliftonDownGame {
         if (meta.coatName && remote.dog.coat !== coat) {
           remote.dog.coat = coat;
         }
+        this.applyRemoteDogPresence(remote, meta);
         if (meta.personality) {
           if (typeof remote.dog.setPersonality === 'function') {
             remote.dog.setPersonality(meta.personality);
@@ -14946,7 +15054,9 @@ export class CliftonDownGame {
 
     for (const p of this.remotePlayers.values()) {
       dynamicEntities.push(p.owner);
-      dynamicEntities.push(p.dog);
+      if (p.hasDog !== false) {
+        dynamicEntities.push(p.dog);
+      }
     }
 
     // Field renders background turf, then Y-sorts trees, benches, owners, dogs, and balls
@@ -15007,7 +15117,10 @@ export class CliftonDownGame {
     if (this.environment) {
       const players = [this.owner, this.dog];
       for (const p of this.remotePlayers.values()) {
-        players.push(p.owner, p.dog);
+        players.push(p.owner);
+        if (p.hasDog !== false) {
+          players.push(p.dog);
+        }
       }
       for (const npc of this.npcs.values()) {
         players.push(npc);
@@ -15157,7 +15270,8 @@ export class PeerNetworkManager {
     this.localMeta = {
       name: 'Park Walker',
       jacketColor: '#1e3a8a',
-      coatName: 'Chocolate & Tan (Ziggy)'
+      coatName: 'Chocolate & Tan (Ziggy)',
+      dogName: 'Ziggy'
     };
 
     this.connections = new Map();
@@ -15184,8 +15298,14 @@ export class PeerNetworkManager {
     this.syncHz = 16;
   }
 
-  setLocalMeta(meta) {
+  setLocalMeta(meta = {}) {
     this.localMeta = { ...this.localMeta, ...meta };
+    if (typeof meta.hasDog === 'boolean') {
+      this.localMeta.hasDog = meta.hasDog;
+    }
+    if (typeof meta.dogName === 'string') {
+      this.localMeta.dogName = meta.dogName;
+    }
   }
 
   updateServerClock(serverTime) {
@@ -15244,6 +15364,10 @@ export class PeerNetworkManager {
           name: meta.name || 'Player',
           jacketColor: meta.jacketColor || '#14532d',
           coatName: meta.coatName || 'Chocolate & Tan (Ziggy)',
+          dogName: (typeof meta.dogName === 'string') ? meta.dogName : 'Ziggy',
+          hasDog: (typeof meta.hasDog === 'boolean')
+            ? meta.hasDog
+            : (Boolean(meta.dogName) || Boolean(meta.dogCoat || meta.coatName)),
           hairStyle: meta.hairStyle,
           hairColor: meta.hairColor,
           pantsColor: meta.pantsColor,
@@ -15254,10 +15378,12 @@ export class PeerNetworkManager {
         }
       };
       this.remotePeers.set(peerId, peerData);
-    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality)) {
+    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality || typeof meta.hasDog === 'boolean' || typeof meta.dogName === 'string')) {
       if (meta.name) peerData.meta.name = meta.name;
       if (meta.jacketColor) peerData.meta.jacketColor = meta.jacketColor;
       if (meta.coatName) peerData.meta.coatName = meta.coatName;
+      if (typeof meta.dogName === 'string') peerData.meta.dogName = meta.dogName;
+      if (typeof meta.hasDog === 'boolean') peerData.meta.hasDog = meta.hasDog;
       if (meta.hairStyle) peerData.meta.hairStyle = meta.hairStyle;
       if (meta.hairColor) peerData.meta.hairColor = meta.hairColor;
       if (meta.pantsColor) peerData.meta.pantsColor = meta.pantsColor;
@@ -15382,6 +15508,12 @@ export class PeerNetworkManager {
           name: packet.name || 'Visitor',
           jacketColor: packet.jacketColor || '#14532d',
           coatName: packet.dogCoatName || 'Chocolate & Tan (Ziggy)',
+          dogName: (typeof packet.dogName === 'string')
+            ? packet.dogName
+            : ((packet.extraMeta && typeof packet.extraMeta.dogName === 'string') ? packet.extraMeta.dogName : 'Ziggy'),
+          hasDog: (typeof packet.hasDog === 'boolean')
+            ? packet.hasDog
+            : ((typeof packet.dogName === 'string' && packet.dogName.length > 0) || Boolean(packet.dogCoatName)),
           hairStyle: packet.hairStyle,
           hairColor: packet.hairColor,
           pantsColor: packet.pantsColor,
@@ -15414,6 +15546,10 @@ export class PeerNetworkManager {
           name: packet.hostMeta.name,
           jacketColor: packet.hostMeta.jacketColor,
           coatName: packet.hostMeta.coatName || packet.hostMeta.dogCoatName,
+          dogName: (typeof packet.hostMeta.dogName === 'string') ? packet.hostMeta.dogName : 'Ziggy',
+          hasDog: (typeof packet.hostMeta.hasDog === 'boolean')
+            ? packet.hostMeta.hasDog
+            : ((typeof packet.hostMeta.dogName === 'string' && packet.hostMeta.dogName.length > 0) || Boolean(packet.hostMeta.dogCoatName || packet.hostMeta.coatName)),
           hairStyle: packet.hostMeta.hairStyle,
           hairColor: packet.hostMeta.hairColor,
           pantsColor: packet.hostMeta.pantsColor,
@@ -15424,6 +15560,7 @@ export class PeerNetworkManager {
           name: 'Host Walker',
           jacketColor: '#1e3a8a',
           coatName: 'Chocolate & Tan (Ziggy)',
+          dogName: 'Ziggy',
           personality: null
         };
         this.ensureRemotePeer(hostId, hostMeta);
@@ -15436,6 +15573,10 @@ export class PeerNetworkManager {
                 name: p.name,
                 jacketColor: p.jacketColor,
                 coatName: p.coatName || p.dogCoatName,
+                dogName: (typeof p.dogName === 'string') ? p.dogName : 'Ziggy',
+                hasDog: (typeof p.hasDog === 'boolean')
+                  ? p.hasDog
+                  : ((typeof p.dogName === 'string' && p.dogName.length > 0) || Boolean(p.dogCoatName || p.coatName)),
                 hairStyle: p.hairStyle,
                 hairColor: p.hairColor,
                 pantsColor: p.pantsColor,
@@ -15788,12 +15929,24 @@ export const PacketType = {
 
 export class Protocol {
   static createHello(peerId, name, jacketColor, dogCoatName, extraMeta = {}) {
+    const meta = extraMeta || {};
+    // Honor an explicitly provided dogName verbatim (including the empty string).
+    // Only fall back to the default 'Ziggy' when no dogName key is supplied at all.
+    const resolvedDogName = (typeof meta.dogName === 'string')
+      ? meta.dogName
+      : 'Ziggy';
+    // Honor an explicit hasDog boolean; otherwise derive it from the dog name/coat.
+    const resolvedHasDog = (typeof meta.hasDog === 'boolean')
+      ? meta.hasDog
+      : ((typeof resolvedDogName === 'string' && resolvedDogName.length > 0) || Boolean(dogCoatName));
     return {
       type: PacketType.HELLO,
       senderId: peerId,
       name,
       jacketColor,
       dogCoatName,
+      dogName: resolvedDogName,
+      hasDog: resolvedHasDog,
       hairStyle: extraMeta.hairStyle,
       hairColor: extraMeta.hairColor,
       pantsColor: extraMeta.pantsColor,
@@ -15806,11 +15959,16 @@ export class Protocol {
   }
 
   static createWelcome(hostId, hostMeta, peersList = [], ballState = null) {
+    const meta = hostMeta || {};
+    const resolvedDogName = (typeof meta.dogName === 'string') ? meta.dogName : 'Ziggy';
+    const resolvedHasDog = (typeof meta.hasDog === 'boolean')
+      ? meta.hasDog
+      : ((typeof resolvedDogName === 'string' && resolvedDogName.length > 0) || Boolean(meta.dogCoatName || meta.coatName));
     return {
       type: PacketType.WELCOME,
       senderId: hostId,
       hostId: hostId,
-      hostMeta: hostMeta,
+      hostMeta: { ...meta, dogName: resolvedDogName, hasDog: resolvedHasDog },
       peers: peersList,
       ball: ballState,
       timestamp: Date.now()
@@ -16103,6 +16261,7 @@ export class ZeroMeshNetworkManager {
       name: 'Park Walker',
       jacketColor: '#1e3a8a',
       coatName: 'Chocolate & Tan (Ziggy)',
+      dogName: 'Ziggy',
       hairStyle: 'short',
       hairColor: '#4a3728',
       pantsColor: '#1e293b',
@@ -16356,8 +16515,14 @@ export class ZeroMeshNetworkManager {
     }
   }
 
-  setLocalMeta(meta) {
+  setLocalMeta(meta = {}) {
     this.localMeta = { ...this.localMeta, ...meta };
+    if (typeof meta.hasDog === 'boolean') {
+      this.localMeta.hasDog = meta.hasDog;
+    }
+    if (typeof meta.dogName === 'string') {
+      this.localMeta.dogName = meta.dogName;
+    }
   }
 
   setStatus(status) {
@@ -16378,6 +16543,10 @@ export class ZeroMeshNetworkManager {
           name: meta.name || 'Walker',
           jacketColor: meta.jacketColor || '#1e3a8a',
           coatName: meta.coatName || 'Chocolate & Tan (Ziggy)',
+          dogName: (typeof meta.dogName === 'string') ? meta.dogName : 'Ziggy',
+          hasDog: (typeof meta.hasDog === 'boolean')
+            ? meta.hasDog
+            : (Boolean(meta.dogName) || Boolean(meta.dogCoat || meta.coatName)),
           hairStyle: meta.hairStyle,
           hairColor: meta.hairColor,
           pantsColor: meta.pantsColor,
@@ -16388,10 +16557,12 @@ export class ZeroMeshNetworkManager {
         }
       };
       this.remotePeers.set(peerId, peerData);
-    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality)) {
+    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality || typeof meta.hasDog === 'boolean' || typeof meta.dogName === 'string')) {
       if (meta.name) peerData.meta.name = meta.name;
       if (meta.jacketColor) peerData.meta.jacketColor = meta.jacketColor;
       if (meta.coatName) peerData.meta.coatName = meta.coatName;
+      if (typeof meta.dogName === 'string') peerData.meta.dogName = meta.dogName;
+      if (typeof meta.hasDog === 'boolean') peerData.meta.hasDog = meta.hasDog;
       if (meta.hairStyle) peerData.meta.hairStyle = meta.hairStyle;
       if (meta.hairColor) peerData.meta.hairColor = meta.hairColor;
       if (meta.pantsColor) peerData.meta.pantsColor = meta.pantsColor;
@@ -17529,6 +17700,12 @@ export class ZeroMeshNetworkManager {
           name: packet.name || 'Walker',
           jacketColor: packet.jacketColor || '#1e3a8a',
           coatName: packet.dogCoatName || packet.coatName || 'Chocolate & Tan (Ziggy)',
+          dogName: (typeof packet.dogName === 'string')
+            ? packet.dogName
+            : ((packet.extraMeta && typeof packet.extraMeta.dogName === 'string') ? packet.extraMeta.dogName : 'Ziggy'),
+          hasDog: (typeof packet.hasDog === 'boolean')
+            ? packet.hasDog
+            : ((typeof packet.dogName === 'string' && packet.dogName.length > 0) || Boolean(packet.dogCoatName)),
           hairStyle: packet.hairStyle,
           hairColor: packet.hairColor,
           pantsColor: packet.pantsColor,
@@ -17592,6 +17769,10 @@ export class ZeroMeshNetworkManager {
               name: p.name,
               jacketColor: p.jacketColor,
               coatName: p.coatName || p.dogCoatName,
+              dogName: (typeof p.dogName === 'string') ? p.dogName : 'Ziggy',
+              hasDog: (typeof p.hasDog === 'boolean')
+                ? p.hasDog
+                : ((typeof p.dogName === 'string' && p.dogName.length > 0) || Boolean(p.dogCoatName || p.coatName)),
               hairStyle: p.hairStyle,
               hairColor: p.hairColor,
               pantsColor: p.pantsColor,
@@ -18341,9 +18522,7 @@ body {
 }
 
 @keyframes pulseContextualBtn {
-
-  0%,
-  100% {
+  0%, 100% {
     transform: scale(1);
   }
 
@@ -18641,6 +18820,111 @@ body {
   justify-content: center;
 }
 
+/* Home Stage Preview */
+.home-stage-preview {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin-bottom: 14px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(56, 189, 248, 0.25);
+  background: #090e17;
+  box-shadow: inset 0 0 24px rgba(56, 189, 248, 0.08);
+}
+
+#home-stage-canvas {
+  display: block;
+  width: 100%;
+  max-width: 340px;
+  height: auto;
+  border-radius: 12px;
+}
+
+/* Single-Slot Kennel Card */
+.dog-slot-card {
+  background: rgba(15, 23, 42, 0.55);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 12px;
+  padding: 14px;
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+
+.dog-slot-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.dog-slot-name {
+  font-size: 1.05rem;
+  font-weight: 700;
+  color: #f8fafc;
+}
+
+.dog-slot-collar {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.6);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+.dog-slot-breed {
+  font-size: 0.82rem;
+  color: #94a3b8;
+  margin-bottom: 12px;
+}
+
+.dog-slot-traits {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+.dog-slot-trait {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 0.82rem;
+  color: #cbd5e1;
+  padding: 4px 8px;
+  background: rgba(30, 41, 59, 0.5);
+  border-radius: 6px;
+}
+
+.dog-slot-trait strong {
+  color: #38bdf8;
+  font-weight: 700;
+}
+
+.btn-remove-dog {
+  width: 100%;
+  padding: 9px;
+  background: linear-gradient(135deg, #be123c, #9f1239);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  font-weight: 700;
+  font-size: 0.88rem;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.18s ease;
+  box-shadow: 0 4px 12px rgba(190, 18, 60, 0.35);
+}
+
+.btn-remove-dog:hover {
+  background: linear-gradient(135deg, #e11d48, #be123c);
+  transform: translateY(-1px);
+}
+
+.btn-remove-dog:active {
+  transform: translateY(0);
+}
+
 #chat-toggle-btn {
   position: fixed;
   top: 16px;
@@ -18709,9 +18993,7 @@ body {
 }
 
 @keyframes pulseBadge {
-
-  0%,
-  100% {
+  0%, 100% {
     transform: scale(1);
   }
 
@@ -22048,6 +22330,7 @@ import { TouchControls } from './touch_controls.js';
 import { WSStatus } from '../net/network.js';
 import { NetStatus } from '../net/network.js';
 import { PUBLIC_ZONE_IDS, isPublicZoneId } from '../world/zones.js';
+import { resolveCoatPresetByName } from '../entities/companion_dog.js';
 
 export class SocialHUD {
   constructor(networkManager, localOwner, localDog, coatPresets) {
@@ -22056,6 +22339,13 @@ export class SocialHUD {
     this.dog = localDog;
     this.coatPresets = coatPresets;
     this.proximityChat = null;
+
+    // Single-slot immutable kennel state
+    this.dogSlot = null;
+    this.isHomeLocked = false;
+
+    // Stage preview animation loop handle
+    this.stageAnimId = null;
 
     this.container = document.getElementById('game-container');
     this.hudOverlay = document.getElementById('hud-overlay');
@@ -22078,8 +22368,8 @@ export class SocialHUD {
             <span>🐾 1</span>
           </div>
         </div>
-        <button id="btn-customize" class="style-toggle-btn" aria-label="Customize Style" title="Customize Style">
-          <span class="style-toggle-icon">⚙️</span>
+        <button id="btn-customize" class="style-toggle-btn" aria-label="Home" title="Home">
+          <span class="style-toggle-icon">🏠</span>
         </button>
       `;
     }
@@ -22105,14 +22395,19 @@ export class SocialHUD {
     modal.id = 'customizer-modal';
     modal.innerHTML = `
       <div class="customizer-header">
-        <h3>Style Customizer</h3>
+        <h3>Home</h3>
         <button class="customizer-close" id="close-modal" aria-label="Close">&times;</button>
+      </div>
+
+      <!-- Top Stylized Stage Preview -->
+      <div class="home-stage-preview">
+        <canvas id="home-stage-canvas" width="340" height="140"></canvas>
       </div>
 
       <!-- Tab Navigation -->
       <div class="customizer-tabs">
-        <button class="customizer-tab-btn active" id="tab-btn-walker" data-tab="cust-tab-walker">👤 Walker</button>
-        <button class="customizer-tab-btn" id="tab-btn-dog" data-tab="cust-tab-dog">🐕 Dog Companion</button>
+        <button class="customizer-tab-btn active" id="tab-btn-walker" data-tab="cust-tab-walker">👤 You</button>
+        <button class="customizer-tab-btn" id="tab-btn-dog" data-tab="cust-tab-dog">🐕 Dogs</button>
       </div>
 
       <!-- Tab 1: Walker -->
@@ -22187,66 +22482,9 @@ export class SocialHUD {
         </div>
       </div>
 
-      <!-- Tab 2: Dog Companion -->
+      <!-- Tab 2: Dogs (Single-Slot Immutable Kennel) -->
       <div class="customizer-tab-pane" id="cust-tab-dog">
-        <div class="cust-form-group">
-          <label class="cust-label" for="cust-dog-coat">Dog Breed / Coat</label>
-          <select id="cust-dog-coat" class="cust-select">
-            <option value="CHOCOLATE_TAN">Ziggy (Chocolate & Tan Cocker)</option>
-            <option value="GOLDEN">Golden Retriever</option>
-            <option value="BLACK_LAB">Black Lab</option>
-            <option value="JACK_RUSSELL">Jack Russell Terrier</option>
-            <option value="RED_SETTER">Irish Red Setter</option>
-          </select>
-        </div>
-
-        <div class="cust-form-group">
-          <label class="cust-label">Collar Color</label>
-          <div class="cust-palette" id="collar-palette">
-            <div class="color-swatch" data-palette="collarColor" data-color="#0d9488" style="background: #0d9488;" title="Teal"></div>
-            <div class="color-swatch" data-palette="collarColor" data-color="#dc2626" style="background: #dc2626;" title="Red"></div>
-            <div class="color-swatch" data-palette="collarColor" data-color="#2563eb" style="background: #2563eb;" title="Blue"></div>
-            <div class="color-swatch" data-palette="collarColor" data-color="#eab308" style="background: #eab308;" title="Gold"></div>
-            <div class="color-swatch" data-palette="collarColor" data-color="#7c3aed" style="background: #7c3aed;" title="Purple"></div>
-          </div>
-        </div>
-
-        <!-- Canine Personality Editor (1-5 Traits) -->
-        <div class="cust-form-group cust-personality-group">
-          <label class="cust-label" style="margin-bottom: 8px;">Canine Personality Traits</label>
-          
-          <div class="cust-trait-row">
-            <div class="cust-trait-header">
-              <label class="cust-trait-label" for="cust-personality-playfulness">🎾 Playfulness</label>
-              <span class="cust-trait-badge" id="val-personality-playfulness">3</span>
-            </div>
-            <input type="range" min="1" max="5" step="1" value="3" class="cust-range" id="cust-personality-playfulness" />
-          </div>
-
-          <div class="cust-trait-row">
-            <div class="cust-trait-header">
-              <label class="cust-trait-label" for="cust-personality-shyness">🙈 Shyness</label>
-              <span class="cust-trait-badge" id="val-personality-shyness">2</span>
-            </div>
-            <input type="range" min="1" max="5" step="1" value="2" class="cust-range" id="cust-personality-shyness" />
-          </div>
-
-          <div class="cust-trait-row">
-            <div class="cust-trait-header">
-              <label class="cust-trait-label" for="cust-personality-barkyness">🗣️ Barkyness</label>
-              <span class="cust-trait-badge" id="val-personality-barkyness">2</span>
-            </div>
-            <input type="range" min="1" max="5" step="1" value="2" class="cust-range" id="cust-personality-barkyness" />
-          </div>
-
-          <div class="cust-trait-row">
-            <div class="cust-trait-header">
-              <label class="cust-trait-label" for="cust-personality-obedience">🎓 Obedience</label>
-              <span class="cust-trait-badge" id="val-personality-obedience">4</span>
-            </div>
-            <input type="range" min="1" max="5" step="1" value="4" class="cust-range" id="cust-personality-obedience" />
-          </div>
-        </div>
+        <div id="dog-slot-container"></div>
       </div>
 
       <button id="btn-save-cust" class="btn-primary-cust">Save & Walk</button>
@@ -22279,18 +22517,519 @@ export class SocialHUD {
     this.bindEvents();
   }
 
+  // Read-only lock accessor (used by main.js to gate movement).
+  get isLocked() {
+    return Boolean(this.isHomeLocked);
+  }
+
+  /**
+   * Apply a peer's dog-presence metadata to a remote player entry.
+   * Mirrors CliftonDownGame.applyRemoteDogPresence so the same semantics are
+   * available on the HUD (and testable in isolation).
+   */
+  applyRemoteDogPresence(entry, meta) {
+    if (!entry || !entry.dog) return;
+    const hasDogFlag = meta ? meta.hasDog : undefined;
+    const dogName = meta ? meta.dogName : undefined;
+    const noDog = hasDogFlag === false || dogName === '';
+    if (noDog) {
+      entry.dog.name = '';
+      entry.hasDog = false;
+      return;
+    }
+    if (typeof dogName === 'string' && dogName.length > 0) {
+      entry.dog.name = dogName;
+      entry.hasDog = true;
+    } else if (hasDogFlag === true) {
+      entry.hasDog = true;
+    }
+  }
+
+  getBreedLabel(coatKey) {
+    const labels = {
+      CHOCOLATE_TAN: 'Chocolate & Tan Cocker Spaniel',
+      GOLDEN: 'Golden Retriever',
+      BLACK_LAB: 'Black Labrador',
+      JACK_RUSSELL: 'Jack Russell Terrier',
+      RED_SETTER: 'Irish Red Setter'
+    };
+    return labels[coatKey] || 'Chocolate & Tan Cocker Spaniel';
+  }
+
+  renderDogSlot() {
+    const container = document.getElementById('dog-slot-container');
+    if (!container) return;
+
+    if (this.dogSlot) {
+      // Occupied: read-only card. Build with DOM APIs so a malicious dog name
+      // or collar color can never inject HTML.
+      const p = this.dogSlot.personality || { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
+      container.innerHTML = '';
+
+      const card = document.createElement('div');
+      card.className = 'dog-slot-card';
+      card.id = 'dog-slot-occupied';
+
+      const header = document.createElement('div');
+      header.className = 'dog-slot-header';
+
+      const nameEl = document.createElement('span');
+      nameEl.className = 'dog-slot-name';
+      nameEl.textContent = `🐕 ${this.dogSlot.name}`;
+      header.appendChild(nameEl);
+
+      const collarEl = document.createElement('span');
+      collarEl.className = 'dog-slot-collar';
+      collarEl.title = 'Collar color';
+      // Only accept a safe CSS color token; otherwise fall back to teal.
+      const safeCollar = /^#[0-9a-fA-F]{3,8}$/.test(String(this.dogSlot.collarColor || ''))
+        ? this.dogSlot.collarColor
+        : '#0d9488';
+      collarEl.style.background = safeCollar;
+      header.appendChild(collarEl);
+
+      card.appendChild(header);
+
+      const breedEl = document.createElement('div');
+      breedEl.className = 'dog-slot-breed';
+      breedEl.textContent = this.getBreedLabel(this.dogSlot.coatKey);
+      card.appendChild(breedEl);
+
+      const traitsEl = document.createElement('div');
+      traitsEl.className = 'dog-slot-traits';
+      const traitRows = [
+        ['🎾 Playfulness', p.playfulness],
+        ['🙈 Shyness', p.shyness],
+        ['🗣️ Barkyness', p.barkyness],
+        ['🎓 Obedience', p.obedience]
+      ];
+      for (const [label, value] of traitRows) {
+        const row = document.createElement('div');
+        row.className = 'dog-slot-trait';
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = label;
+        const valueStrong = document.createElement('strong');
+        valueStrong.textContent = String(value);
+        row.appendChild(labelSpan);
+        row.appendChild(valueStrong);
+        traitsEl.appendChild(row);
+      }
+      card.appendChild(traitsEl);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.id = 'btn-remove-dog';
+      removeBtn.className = 'btn-remove-dog';
+      removeBtn.textContent = 'Remove Dog';
+      removeBtn.addEventListener('click', () => this.removeDog());
+      card.appendChild(removeBtn);
+
+      container.appendChild(card);
+    } else {
+      // Empty: creation form pre-filled with Ziggy defaults
+      container.innerHTML = `
+        <div class="dog-slot-card" id="dog-slot-empty">
+          <div class="cust-form-group">
+            <label class="cust-label" for="cust-dog-name">Dog Name</label>
+            <input type="text" id="cust-dog-name" class="cust-input" value="Ziggy" maxlength="14" autocomplete="off" />
+          </div>
+
+          <div class="cust-form-group">
+            <label class="cust-label" for="cust-dog-coat">Dog Breed / Coat</label>
+            <select id="cust-dog-coat" class="cust-select">
+              <option value="CHOCOLATE_TAN" selected>Chocolate & Tan Cocker Spaniel</option>
+              <option value="GOLDEN">Golden Retriever</option>
+              <option value="BLACK_LAB">Black Labrador</option>
+              <option value="JACK_RUSSELL">Jack Russell Terrier</option>
+              <option value="RED_SETTER">Irish Red Setter</option>
+            </select>
+          </div>
+
+          <div class="cust-form-group">
+            <label class="cust-label">Collar Color</label>
+            <div class="cust-palette" id="collar-palette">
+              <div class="color-swatch active" data-palette="collarColor" data-color="#0d9488" style="background: #0d9488; border: 2px solid #fff;" title="Teal"></div>
+              <div class="color-swatch" data-palette="collarColor" data-color="#dc2626" style="background: #dc2626;" title="Red"></div>
+              <div class="color-swatch" data-palette="collarColor" data-color="#2563eb" style="background: #2563eb;" title="Blue"></div>
+              <div class="color-swatch" data-palette="collarColor" data-color="#eab308" style="background: #eab308;" title="Gold"></div>
+              <div class="color-swatch" data-palette="collarColor" data-color="#7c3aed" style="background: #7c3aed;" title="Purple"></div>
+            </div>
+          </div>
+
+          <div class="cust-form-group cust-personality-group">
+            <label class="cust-label" style="margin-bottom: 8px;">Canine Personality Traits</label>
+
+            <div class="cust-trait-row">
+              <div class="cust-trait-header">
+                <label class="cust-trait-label" for="cust-personality-playfulness">🎾 Playfulness</label>
+                <span class="cust-trait-badge" id="val-personality-playfulness">3</span>
+              </div>
+              <input type="range" min="1" max="5" step="1" value="3" class="cust-range" id="cust-personality-playfulness" />
+            </div>
+
+            <div class="cust-trait-row">
+              <div class="cust-trait-header">
+                <label class="cust-trait-label" for="cust-personality-shyness">🙈 Shyness</label>
+                <span class="cust-trait-badge" id="val-personality-shyness">2</span>
+              </div>
+              <input type="range" min="1" max="5" step="1" value="2" class="cust-range" id="cust-personality-shyness" />
+            </div>
+
+            <div class="cust-trait-row">
+              <div class="cust-trait-header">
+                <label class="cust-trait-label" for="cust-personality-barkyness">🗣️ Barkyness</label>
+                <span class="cust-trait-badge" id="val-personality-barkyness">2</span>
+              </div>
+              <input type="range" min="1" max="5" step="1" value="2" class="cust-range" id="cust-personality-barkyness" />
+            </div>
+
+            <div class="cust-trait-row">
+              <div class="cust-trait-header">
+                <label class="cust-trait-label" for="cust-personality-obedience">🎓 Obedience</label>
+                <span class="cust-trait-badge" id="val-personality-obedience">4</span>
+              </div>
+              <input type="range" min="1" max="5" step="1" value="4" class="cust-range" id="cust-personality-obedience" />
+            </div>
+          </div>
+
+          <button id="btn-add-dog" class="btn-primary-cust">Add Dog</button>
+        </div>
+      `;
+
+      // Wire collar swatches
+      const swatches = container.querySelectorAll('.color-swatch');
+      swatches.forEach(swatch => {
+        swatch.addEventListener('click', () => {
+          swatches.forEach(s => {
+            s.classList.remove('active');
+            s.style.border = '2px solid transparent';
+          });
+          swatch.classList.add('active');
+          swatch.style.border = '2px solid #fff';
+          this.renderHomeStage();
+        });
+      });
+
+      // Wire personality sliders
+      ['playfulness', 'shyness', 'barkyness', 'obedience'].forEach(trait => {
+        const slider = document.getElementById(`cust-personality-${trait}`);
+        const badge = document.getElementById(`val-personality-${trait}`);
+        if (slider) {
+          slider.addEventListener('input', (e) => {
+            if (badge) badge.textContent = e.target.value;
+            this.renderHomeStage();
+          });
+        }
+      });
+
+      // Wire breed select + name input to refresh preview
+      const coatSelect = document.getElementById('cust-dog-coat');
+      if (coatSelect) coatSelect.addEventListener('change', () => this.renderHomeStage());
+      const nameInput = document.getElementById('cust-dog-name');
+      if (nameInput) nameInput.addEventListener('input', () => this.renderHomeStage());
+
+      // Wire add button
+      const addBtn = document.getElementById('btn-add-dog');
+      if (addBtn) {
+        addBtn.addEventListener('click', () => this.adoptDogFromForm());
+      }
+    }
+  }
+
+  // Remove the current dog: clear the slot, lock Home, persist & broadcast.
+  removeDog() {
+    this.dogSlot = null;
+    this.isHomeLocked = true;
+
+    // Reset the live dog entity so no stale name tag renders in the world
+    // while the kennel slot is empty.
+    if (this.dog) {
+      this.dog.name = '';
+    }
+
+    this.renderDogSlot();
+    this.renderHomeStage();
+    this.updateCloseButtonState();
+    this.persistProfile();
+
+    if (this.net && typeof this.net.setLocalMeta === 'function') {
+      this.net.setLocalMeta({
+        name: this.owner.name,
+        jacketColor: this.owner.jacketColor,
+        coatName: '',
+        dogName: '',
+        hasDog: false,
+        collarColor: '#0d9488',
+        personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 }
+      });
+      if (typeof this.net.broadcast === 'function' && this.net.peerId) {
+        this.net.broadcast(Protocol.createHello(
+          this.net.peerId,
+          this.owner.name,
+          this.owner.jacketColor,
+          '',
+          { dogName: '', hasDog: false, collarColor: '#0d9488' }
+        ));
+      }
+    }
+
+    // Broadcast an explicit profile_update so peers can clear the ghost dog.
+    if (this.net && typeof this.net.broadcast === 'function') {
+      this.net.broadcast({ type: 'profile_update', dogName: '', hasDog: false });
+    }
+  }
+
+  adoptDogFromForm() {
+    const nameInput = document.getElementById('cust-dog-name');
+    const coatSelect = document.getElementById('cust-dog-coat');
+    const activeCollar = document.querySelector('#collar-palette .color-swatch.active');
+
+    const name = (nameInput && nameInput.value.trim()) || 'Ziggy';
+    const coatKey = (coatSelect && coatSelect.value) || 'CHOCOLATE_TAN';
+    const collarColor = (activeCollar && activeCollar.getAttribute('data-color')) || '#0d9488';
+    const personality = {
+      playfulness: parseInt(document.getElementById('cust-personality-playfulness')?.value || '3', 10),
+      shyness: parseInt(document.getElementById('cust-personality-shyness')?.value || '2', 10),
+      barkyness: parseInt(document.getElementById('cust-personality-barkyness')?.value || '2', 10),
+      obedience: parseInt(document.getElementById('cust-personality-obedience')?.value || '4', 10)
+    };
+
+    this.dogSlot = { name, coatKey, collarColor, personality };
+
+    if (this.dog) {
+      this.dog.name = name;
+      if (this.coatPresets && this.coatPresets[coatKey]) {
+        this.dog.coat = this.coatPresets[coatKey];
+      }
+      this.dog.collarColor = collarColor;
+      if (typeof this.dog.setPersonality === 'function') {
+        this.dog.setPersonality(personality);
+      } else {
+        this.dog.personality = personality;
+      }
+    }
+
+    this.isHomeLocked = false;
+    this.renderDogSlot();
+    this.renderHomeStage();
+    this.updateCloseButtonState();
+    this.persistProfile();
+    this.broadcastProfile();
+  }
+
+  updateCloseButtonState() {
+    const closeBtn = document.getElementById('close-modal');
+    if (!closeBtn) return;
+    if (this.isHomeLocked) {
+      closeBtn.style.display = 'none';
+    } else {
+      closeBtn.style.display = '';
+    }
+  }
+
+  // Build a preview dog descriptor from the empty-slot creation form.
+  _readEmptySlotPreview() {
+    const nameInput = document.getElementById('cust-dog-name');
+    const coatSelect = document.getElementById('cust-dog-coat');
+    const activeCollar = document.querySelector('#collar-palette .color-swatch.active');
+    const readTrait = (trait, def) => {
+      const el = document.getElementById(`cust-personality-${trait}`);
+      const v = el ? parseInt(el.value, 10) : NaN;
+      return isNaN(v) ? def : v;
+    };
+    return {
+      name: (nameInput && nameInput.value.trim()) || 'Ziggy',
+      coatKey: (coatSelect && coatSelect.value) || 'CHOCOLATE_TAN',
+      collarColor: (activeCollar && activeCollar.getAttribute('data-color')) || '#0d9488',
+      personality: {
+        playfulness: readTrait('playfulness', 3),
+        shyness: readTrait('shyness', 2),
+        barkyness: readTrait('barkyness', 2),
+        obedience: readTrait('obedience', 4)
+      }
+    };
+  }
+
+  startStageAnimation() {
+    if (this.stageAnimId !== null) return;
+    if (typeof requestAnimationFrame === 'undefined') return;
+    const loop = () => {
+      this.stageAnimId = requestAnimationFrame(loop);
+      this.renderHomeStage();
+    };
+    this.stageAnimId = requestAnimationFrame(loop);
+  }
+
+  stopStageAnimation() {
+    if (this.stageAnimId !== null && typeof cancelAnimationFrame !== 'undefined') {
+      cancelAnimationFrame(this.stageAnimId);
+    }
+    this.stageAnimId = null;
+  }
+
+  renderHomeStage(previewDogData = null) {
+    const canvas = document.getElementById('home-stage-canvas');
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const stageW = canvas.width;
+    const stageH = canvas.height;
+
+    ctx.clearRect(0, 0, stageW, stageH);
+
+    // Stylized dark stage background
+    const bgGrad = ctx.createLinearGradient(0, 0, 0, stageH);
+    bgGrad.addColorStop(0, '#0d1522');
+    bgGrad.addColorStop(1, '#090e17');
+    ctx.fillStyle = bgGrad;
+    ctx.fillRect(0, 0, stageW, stageH);
+
+    // Soft radial spotlight
+    const spot = ctx.createRadialGradient(stageW / 2, stageH * 0.35, 10, stageW / 2, stageH * 0.35, stageW * 0.6);
+    spot.addColorStop(0, 'rgba(56, 189, 248, 0.18)');
+    spot.addColorStop(1, 'rgba(56, 189, 248, 0)');
+    ctx.fillStyle = spot;
+    ctx.fillRect(0, 0, stageW, stageH);
+
+    // Ellipse pedestal floor
+    ctx.beginPath();
+    ctx.ellipse(stageW / 2, stageH - 24, stageW * 0.42, 16, 0, 0, Math.PI * 2);
+    ctx.fillStyle = 'rgba(56, 189, 248, 0.10)';
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(56, 189, 248, 0.28)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    // Draw owner
+    if (this.owner && typeof this.owner.draw === 'function') {
+      const saved = { x: this.owner.x, y: this.owner.y, angle: this.owner.angle };
+      this.owner.x = 110;
+      this.owner.y = 100;
+      this.owner.angle = Math.PI / 2;
+      try {
+        this.owner.draw(ctx);
+      } catch (e) {
+        console.warn('Home stage owner draw failed:', e);
+      }
+      this.owner.x = saved.x;
+      this.owner.y = saved.y;
+      this.owner.angle = saved.angle;
+    }
+
+    // Draw dog. When the slot is empty, build a live preview from the form.
+    const effectiveDogData = previewDogData || this.dogSlot || this._readEmptySlotPreview();
+    const hasDog = Boolean(effectiveDogData);
+    if (hasDog && this.dog && typeof this.dog.draw === 'function') {
+      const saved = {
+        x: this.dog.x,
+        y: this.dog.y,
+        angle: this.dog.angle,
+        coat: this.dog.coat,
+        collarColor: this.dog.collarColor,
+        name: this.dog.name
+      };
+
+      const data = effectiveDogData;
+      if (data) {
+        if (data.coatKey && this.coatPresets && this.coatPresets[data.coatKey]) {
+          this.dog.coat = this.coatPresets[data.coatKey];
+        }
+        if (data.collarColor) this.dog.collarColor = data.collarColor;
+        if (data.name) this.dog.name = data.name;
+      }
+
+      this.dog.x = 220;
+      this.dog.y = 102;
+      this.dog.angle = Math.PI / 2;
+      try {
+        this.dog.draw(ctx);
+      } catch (e) {
+        console.warn('Home stage dog draw failed:', e);
+      }
+
+      this.dog.x = saved.x;
+      this.dog.y = saved.y;
+      this.dog.angle = saved.angle;
+      this.dog.coat = saved.coat;
+      this.dog.collarColor = saved.collarColor;
+      this.dog.name = saved.name;
+    }
+  }
+
+  persistProfile() {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const profileToSave = {
+        name: this.owner.name,
+        skinTone: this.owner.skinTone,
+        hairStyle: this.owner.hairStyle,
+        hairColor: this.owner.hairColor,
+        jacketColor: this.owner.jacketColor,
+        pantsColor: this.owner.pantsColor,
+        accessory: this.owner.accessory || 'NONE',
+        coatKey: this.dogSlot ? this.dogSlot.coatKey : 'CHOCOLATE_TAN',
+        collarColor: this.dogSlot ? this.dogSlot.collarColor : '#0d9488',
+        dogName: this.dogSlot ? this.dogSlot.name : 'Ziggy',
+        dogSlot: this.dogSlot,
+        personality: this.dogSlot ? this.dogSlot.personality : { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 }
+      };
+      localStorage.setItem('clifton_walker_profile', JSON.stringify(profileToSave));
+    } catch (e) {
+      console.warn('Could not save walker profile to localStorage:', e);
+    }
+  }
+
+  broadcastProfile() {
+    if (!this.net || typeof this.net.setLocalMeta !== 'function') return;
+    const personality = this.dogSlot ? this.dogSlot.personality : { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
+    const extraMeta = {
+      hairStyle: this.owner.hairStyle,
+      hairColor: this.owner.hairColor,
+      pantsColor: this.owner.pantsColor,
+      accessory: this.owner.accessory || 'NONE',
+      skinTone: this.owner.skinTone,
+      collarColor: this.dogSlot ? this.dogSlot.collarColor : '#0d9488',
+      dogName: this.dogSlot ? this.dogSlot.name : 'Ziggy',
+      personality
+    };
+    this.net.setLocalMeta({
+      name: this.owner.name,
+      jacketColor: this.owner.jacketColor,
+      coatName: this.dog && this.dog.coat ? this.dog.coat.name : 'Chocolate & Tan Cocker Spaniel',
+      ...extraMeta
+    });
+    if (typeof this.net.broadcast === 'function' && this.net.peerId) {
+      this.net.broadcast(Protocol.createHello(
+        this.net.peerId,
+        this.owner.name,
+        this.owner.jacketColor,
+        this.dog && this.dog.coat ? this.dog.coat.name : 'Chocolate & Tan Cocker Spaniel',
+        extraMeta
+      ));
+    }
+  }
+
   loadSavedProfile() {
     if (typeof localStorage === 'undefined') return;
     try {
       const savedStr = localStorage.getItem('clifton_walker_profile');
       if (!savedStr) {
-        // Initialize default personality if not present on dog
+        // First-time launch: no dog yet, lock the Home modal open
         if (this.dog) {
           if (!this.dog.personality) {
             this.dog.personality = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
           }
+          this.dog.name = '';
+        }
+        this.dogSlot = null;
+        this.isHomeLocked = true;
+        if (this.net && typeof this.net.setLocalMeta === 'function') {
+          this.net.setLocalMeta({ dogName: '', hasDog: false });
         }
         this.updateModalActiveSelections();
+        this.openModal();
+        this.updateCloseButtonState();
+        this.renderHomeStage();
         return;
       }
       const saved = JSON.parse(savedStr);
@@ -22298,7 +23037,18 @@ export class SocialHUD {
         if (this.dog && !this.dog.personality) {
           this.dog.personality = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
         }
+        if (this.dog) {
+          this.dog.name = '';
+        }
+        this.dogSlot = null;
+        this.isHomeLocked = true;
+        if (this.net && typeof this.net.setLocalMeta === 'function') {
+          this.net.setLocalMeta({ dogName: '', hasDog: false });
+        }
         this.updateModalActiveSelections();
+        this.openModal();
+        this.updateCloseButtonState();
+        this.renderHomeStage();
         return;
       }
 
@@ -22326,33 +23076,74 @@ export class SocialHUD {
       this.owner.accessory = saved.accessory || 'NONE';
 
       // 2. Dog companion attributes (with fallback defaults)
-      if (saved.coatKey && this.coatPresets && this.coatPresets[saved.coatKey]) {
-        this.dog.coat = this.coatPresets[saved.coatKey];
-        const coatSelect = document.getElementById('cust-dog-coat');
-        if (coatSelect) coatSelect.value = saved.coatKey;
-      }
-      if (saved.collarColor) {
-        this.dog.collarColor = saved.collarColor;
-      }
-
-      // 3. Canine Personality attributes (with fallback defaults)
       const personalityDefaults = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
-      if (this.dog) {
-        const loadedPersonality = saved.personality && typeof saved.personality === 'object'
-          ? {
-              playfulness: parseInt(saved.personality.playfulness, 10) || personalityDefaults.playfulness,
-              shyness: parseInt(saved.personality.shyness, 10) || personalityDefaults.shyness,
-              barkyness: parseInt(saved.personality.barkyness, 10) || personalityDefaults.barkyness,
-              obedience: parseInt(saved.personality.obedience, 10) || personalityDefaults.obedience
-            }
-          : { ...personalityDefaults };
+      const loadedPersonality = saved.personality && typeof saved.personality === 'object'
+        ? {
+            playfulness: parseInt(saved.personality.playfulness, 10) || personalityDefaults.playfulness,
+            shyness: parseInt(saved.personality.shyness, 10) || personalityDefaults.shyness,
+            barkyness: parseInt(saved.personality.barkyness, 10) || personalityDefaults.barkyness,
+            obedience: parseInt(saved.personality.obedience, 10) || personalityDefaults.obedience
+          }
+        : { ...personalityDefaults };
 
-        if (typeof this.dog.setPersonality === 'function') {
-          this.dog.setPersonality(loadedPersonality);
-        } else {
-          this.dog.personality = loadedPersonality;
+      // Honor an explicitly saved empty slot: never auto-create a dog.
+      if (saved.dogSlot === null) {
+        this.dogSlot = null;
+        this.isHomeLocked = true;
+        if (this.dog) {
+          this.dog.name = '';
+        }
+        if (this.net && typeof this.net.setLocalMeta === 'function') {
+          this.net.setLocalMeta({ dogName: '', hasDog: false });
+        }
+        this.updateCloseButtonState();
+        this.updateModalActiveSelections();
+        this.openModal();
+        this.renderHomeStage();
+        return;
+      }
+
+      // Resolve the coat preset by name (supports legacy labels) with a
+      // coatKey fallback.
+      const savedCoatKey = saved.coatKey || 'CHOCOLATE_TAN';
+      const savedCollar = saved.collarColor || '#0d9488';
+      const savedDogName = saved.dogName || 'Ziggy';
+
+      const resolvedPreset = resolveCoatPresetByName(saved.coatName || savedCoatKey);
+      if (resolvedPreset) {
+        this.dog.coat = resolvedPreset;
+      } else if (this.coatPresets && this.coatPresets[savedCoatKey]) {
+        this.dog.coat = this.coatPresets[savedCoatKey];
+      }
+      this.dog.collarColor = savedCollar;
+      this.dog.name = savedDogName;
+
+      if (typeof this.dog.setPersonality === 'function') {
+        this.dog.setPersonality(loadedPersonality);
+      } else {
+        this.dog.personality = loadedPersonality;
+      }
+
+      // Populate single-slot kennel. Derive the coatKey from the resolved
+      // preset name so legacy labels map to the correct key.
+      let resolvedCoatKey = savedCoatKey;
+      if (resolvedPreset && this.coatPresets) {
+        for (const key of Object.keys(this.coatPresets)) {
+          if (this.coatPresets[key] === resolvedPreset) {
+            resolvedCoatKey = key;
+            break;
+          }
         }
       }
+      this.dogSlot = {
+        name: savedDogName,
+        coatKey: resolvedCoatKey,
+        collarColor: savedCollar,
+        personality: loadedPersonality
+      };
+      this.isHomeLocked = false;
+      this.renderDogSlot();
+      this.updateCloseButtonState();
 
       this.updateModalActiveSelections();
 
@@ -22370,6 +23161,8 @@ export class SocialHUD {
           collarColor: this.dog.collarColor,
           personality
         });
+        // Explicitly advertise the occupied dog slot to peers.
+        this.net.setLocalMeta({ dogName: this.dog.name || 'Ziggy', hasDog: true });
       }
     } catch (e) {
       console.warn('Could not load saved walker profile from localStorage:', e);
@@ -22423,21 +23216,16 @@ export class SocialHUD {
       }
     });
 
-    // Update dog coat select
+    // Update dog coat select (only present in empty-slot form)
     const coatSelect = document.getElementById('cust-dog-coat');
-    if (coatSelect && this.dog.coat) {
-      for (const [key, preset] of Object.entries(this.coatPresets || {})) {
-        if (preset === this.dog.coat || preset.name === this.dog.coat.name) {
-          coatSelect.value = key;
-          break;
-        }
-      }
+    if (coatSelect && this.dogSlot && this.dogSlot.coatKey) {
+      coatSelect.value = this.dogSlot.coatKey;
     }
 
-    // Update personality sliders and badges
-    const personality = (this.dog && this.dog.personality)
-      ? this.dog.personality
-      : { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
+    // Update personality sliders and badges (only present in empty-slot form)
+    const personality = (this.dogSlot && this.dogSlot.personality)
+      ? this.dogSlot.personality
+      : ((this.dog && this.dog.personality) ? this.dog.personality : { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 });
 
     const traits = ['playfulness', 'shyness', 'barkyness', 'obedience'];
     traits.forEach(trait => {
@@ -22465,7 +23253,35 @@ export class SocialHUD {
     const modal = document.getElementById('customizer-modal');
     if (!modal) return;
     this.updateModalActiveSelections();
+    this.renderDogSlot();
+    this.updateCloseButtonState();
+
+    // When Home is locked, the modal must stay open (never toggle closed).
+    if (this.isHomeLocked) {
+      modal.style.display = 'block';
+      this.renderHomeStage();
+      this.startStageAnimation();
+      return;
+    }
+
     modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
+    if (modal.style.display === 'block') {
+      this.renderHomeStage();
+      this.startStageAnimation();
+    } else {
+      this.stopStageAnimation();
+    }
+  }
+
+  closeModal() {
+    const modal = document.getElementById('customizer-modal');
+    if (!modal) return;
+    if (this.isHomeLocked) {
+      this.showToast('Please add a dog to your slot before heading out!');
+      return;
+    }
+    modal.style.display = 'none';
+    this.stopStageAnimation();
   }
 
   bindEvents() {
@@ -22501,7 +23317,23 @@ export class SocialHUD {
     }
 
     if (closeModal && modal) {
-      closeModal.addEventListener('click', () => { modal.style.display = 'none'; });
+      closeModal.addEventListener('click', () => {
+        this.closeModal();
+      });
+    }
+
+    // Escape key: block closing while Home is locked.
+    if (typeof document !== 'undefined') {
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        if (!modal || modal.style.display !== 'block') return;
+        if (this.isHomeLocked) {
+          e.preventDefault();
+          this.showToast('Please add a dog to your slot before heading out!');
+          return;
+        }
+        this.closeModal();
+      });
     }
 
     // Tab navigation switching
@@ -22516,6 +23348,7 @@ export class SocialHUD {
         });
         const targetPane = document.getElementById(targetTabId);
         if (targetPane) targetPane.classList.add('active');
+        this.renderHomeStage();
       });
     });
 
@@ -22565,29 +23398,6 @@ export class SocialHUD {
       });
     });
 
-    // Canine Personality slider event wiring
-    const traits = ['playfulness', 'shyness', 'barkyness', 'obedience'];
-    traits.forEach(trait => {
-      const slider = document.getElementById(`cust-personality-${trait}`);
-      const badge = document.getElementById(`val-personality-${trait}`);
-      if (slider) {
-        slider.addEventListener('input', (e) => {
-          const val = parseInt(e.target.value, 10);
-          if (badge) badge.textContent = val;
-          if (this.dog) {
-            if (!this.dog.personality) {
-              this.dog.personality = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
-            }
-            if (typeof this.dog.setPersonality === 'function') {
-              this.dog.setPersonality({ [trait]: val });
-            } else {
-              this.dog.personality[trait] = val;
-            }
-          }
-        });
-      }
-    });
-
     // Save & Walk button
     if (btnSaveCust && modal) {
       btnSaveCust.addEventListener('click', () => {
@@ -22596,78 +23406,18 @@ export class SocialHUD {
           this.owner.name = nameInput.value.trim();
         }
 
-        const coatSelect = document.getElementById('cust-dog-coat');
-        let coatKey = 'CHOCOLATE_TAN';
-        if (coatSelect && this.coatPresets && this.coatPresets[coatSelect.value]) {
-          coatKey = coatSelect.value;
-          this.dog.coat = this.coatPresets[coatSelect.value];
+        // If no dog yet (locked), auto-adopt from the empty-slot form (one-click Ziggy)
+        if (!this.dogSlot) {
+          this.adoptDogFromForm();
         }
 
-        // Current personality configuration
-        const personality = {
-          playfulness: parseInt(document.getElementById('cust-personality-playfulness')?.value || (this.dog?.personality?.playfulness ?? 3), 10),
-          shyness: parseInt(document.getElementById('cust-personality-shyness')?.value || (this.dog?.personality?.shyness ?? 2), 10),
-          barkyness: parseInt(document.getElementById('cust-personality-barkyness')?.value || (this.dog?.personality?.barkyness ?? 2), 10),
-          obedience: parseInt(document.getElementById('cust-personality-obedience')?.value || (this.dog?.personality?.obedience ?? 4), 10)
-        };
+        this.persistProfile();
+        this.broadcastProfile();
 
-        if (this.dog) {
-          if (typeof this.dog.setPersonality === 'function') {
-            this.dog.setPersonality(personality);
-          } else {
-            this.dog.personality = personality;
-          }
+        if (!this.isHomeLocked) {
+          modal.style.display = 'none';
+          this.stopStageAnimation();
         }
-
-        // Save updated profile to localStorage
-        if (typeof localStorage !== 'undefined') {
-          try {
-            const profileToSave = {
-              name: this.owner.name,
-              skinTone: this.owner.skinTone,
-              hairStyle: this.owner.hairStyle,
-              hairColor: this.owner.hairColor,
-              jacketColor: this.owner.jacketColor,
-              pantsColor: this.owner.pantsColor,
-              accessory: this.owner.accessory || 'NONE',
-              coatKey: coatSelect ? coatSelect.value : coatKey,
-              collarColor: this.dog.collarColor,
-              personality: personality
-            };
-            localStorage.setItem('clifton_walker_profile', JSON.stringify(profileToSave));
-          } catch (e) {
-            console.warn('Could not save walker profile to localStorage:', e);
-          }
-        }
-
-        if (this.net && typeof this.net.setLocalMeta === 'function') {
-          const extraMeta = {
-            hairStyle: this.owner.hairStyle,
-            hairColor: this.owner.hairColor,
-            pantsColor: this.owner.pantsColor,
-            accessory: this.owner.accessory || 'NONE',
-            skinTone: this.owner.skinTone,
-            collarColor: this.dog.collarColor,
-            personality: personality
-          };
-
-          this.net.setLocalMeta({
-            name: this.owner.name,
-            jacketColor: this.owner.jacketColor,
-            coatName: this.dog.coat ? this.dog.coat.name : 'Chocolate & Tan (Ziggy)',
-            ...extraMeta
-          });
-
-          this.net.broadcast(Protocol.createHello(
-            this.net.peerId,
-            this.owner.name,
-            this.owner.jacketColor,
-            this.dog.coat ? this.dog.coat.name : 'Chocolate & Tan (Ziggy)',
-            extraMeta
-          ));
-        }
-
-        modal.style.display = 'none';
         this.showToast('✨ Appearance updated!');
       });
     }
@@ -34961,6 +35711,587 @@ if __name__ == "__main__":
     print("🎉 All gameplay tests passed!")
 ```
 
+## FILE: test/test_home_menu.py
+```python
+#!/usr/bin/env python3
+"""
+Unit & Acceptance Tests for the Home Menu (unification-028).
+Validates:
+- REQ-028.1: Home Button (🏠) & Home Modal Header
+- REQ-028.2: Top Clean Stylized Stage Preview (You & Dog Standing Together)
+- REQ-028.3: Single-Slot Immutable Dogs Submenu & First-Time / Empty-Slot Lock
+- REQ-028.4: Custom Dog Name, Breed Label Cleanup, Canvas Name Tag & Toast Integration
+- REQ-028.5: Browser localStorage Persistence & zero_network Broadcast
+"""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import unittest
+
+
+def read(rel_path):
+    base = os.path.dirname(__file__)
+    full = os.path.join(base, "..", rel_path)
+    with open(full, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def _run_js(snippet):
+    """Execute a JS snippet against the real SocialHUD class.
+
+    Strips ESM import/export lines, provides minimal module stubs and a mock
+    DOM, wraps the module in an IIFE, and runs the snippet via osascript
+    (JavaScriptCore) or node. Returns the JSON-decoded result of the snippet.
+    """
+    hud_src = read("src/ui/social_hud.js")
+    dog_src = read("src/entities/companion_dog.js")
+
+    clean_hud = re.sub(r"^\s*import\s+.*?;?\s*$", "", hud_src, flags=re.M)
+    clean_hud = re.sub(r"\bexport\s+(default\s+)?", "", clean_hud)
+
+    clean_dog = re.sub(r"^\s*import\s+.*?;?\s*$", "", dog_src, flags=re.M)
+    clean_dog = re.sub(r"\bexport\s+(default\s+)?", "", clean_dog)
+
+    harness = f"""
+// ---- Minimal module stubs ----
+const Protocol = {{
+  createHello(peerId, name, jacketColor, coatName, extraMeta) {{
+    return {{ type: 'HELLO', senderId: peerId, name, jacketColor, coatName, ...(extraMeta || {{}}) }};
+  }}
+}};
+class TouchControls {{}}
+const WSStatus = {{ CONNECTED: 'CONNECTED', CONNECTING: 'CONNECTING', RECONNECTING: 'RECONNECTING', OFFLINE: 'OFFLINE', ERROR: 'ERROR' }};
+const NetStatus = {{ CONNECTED_PEER: 'CONNECTED_PEER', HOSTING: 'HOSTING', CONNECTING: 'CONNECTING', OFFLINE: 'OFFLINE', ERROR: 'ERROR' }};
+const PUBLIC_ZONE_IDS = [];
+function isPublicZoneId() {{ return false; }}
+
+// ---- Mock DOM ----
+function __makeEl(tag) {{
+  const el = {{
+    tagName: (tag || 'div').toUpperCase(),
+    id: '',
+    className: '',
+    style: {{}},
+    innerHTML: '',
+    textContent: '',
+    value: '',
+    children: [],
+    _listeners: {{}},
+    classList: {{
+      _set: new Set(),
+      add(c) {{ this._set.add(c); }},
+      remove(c) {{ this._set.delete(c); }},
+      contains(c) {{ return this._set.has(c); }}
+    }},
+    appendChild(child) {{ this.children.push(child); if (child && child.id) __elements[child.id] = child; return child; }},
+    addEventListener(evt, fn) {{ (this._listeners[evt] = this._listeners[evt] || []).push(fn); }},
+    removeEventListener() {{}},
+    querySelector() {{ return null; }},
+    querySelectorAll() {{ return []; }},
+    getAttribute(name) {{ return this._attrs ? this._attrs[name] : null; }},
+    setAttribute(name, val) {{ (this._attrs = this._attrs || {{}})[name] = val; }},
+    getContext() {{
+      return {{
+        clearRect() {{}}, fillRect() {{}}, beginPath() {{}}, ellipse() {{}},
+        fill() {{}}, stroke() {{}}, save() {{}}, restore() {{}},
+        createLinearGradient() {{ return {{ addColorStop() {{}} }}; }},
+        createRadialGradient() {{ return {{ addColorStop() {{}} }}; }},
+        set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}}
+      }};
+    }},
+    focus() {{}}, blur() {{}}
+  }};
+  return el;
+}}
+const __elements = {{
+  'game-container': __makeEl('div'),
+  'hud-overlay': __makeEl('div'),
+  'controls-hint': __makeEl('div')
+}};
+const document = {{
+  _byId: __elements,
+  getElementById(id) {{ return __elements[id] || null; }},
+  createElement(tag) {{ return __makeEl(tag); }},
+  querySelector() {{ return null; }},
+  querySelectorAll() {{ return []; }},
+  addEventListener() {{}},
+  body: __makeEl('body')
+}};
+const window = {{ location: {{ search: '' }}, requestAnimationFrame: null }};
+const requestAnimationFrame = (fn) => 0;
+const cancelAnimationFrame = () => {{}};
+const setTimeout = (fn) => 0;
+const clearTimeout = () => {{}};
+const localStorage = (() => {{
+  let store = {{}};
+  return {{
+    getItem(k) {{ return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; }},
+    setItem(k, v) {{ store[k] = String(v); }},
+    removeItem(k) {{ delete store[k]; }},
+    clear() {{ store = {{}}; }}
+  }};
+}})();
+
+// ---- Load real modules ----
+const {{ resolveCoatPresetByName, CoatPreset }} = (() => {{ {clean_dog}\nreturn {{ resolveCoatPresetByName, CoatPreset }}; }})();
+const {{ SocialHUD }} = (() => {{ {clean_hud}\nreturn {{ SocialHUD }}; }})();
+
+const __res = (() => {{ {snippet} }})();
+JSON.stringify(__res);
+"""
+
+    if shutil.which("osascript"):
+        out = subprocess.check_output(
+            ["osascript", "-l", "JavaScript", "-e", harness], text=True
+        ).strip()
+        return json.loads(out)
+    if shutil.which("node"):
+        node_script = f"""
+{harness}
+if (typeof __res !== 'undefined' && __res !== null) {{
+    console.log(JSON.stringify(__res));
+}}
+"""
+        out = subprocess.check_output(["node", "-e", node_script], text=True)
+        return json.loads(out.strip().splitlines()[-1])
+    raise unittest.SkipTest("No JS runtime (osascript or node) available")
+
+
+class TestHomeHUDAndStage(unittest.TestCase):
+    """REQ-028.1 / REQ-028.2: Home button, modal header, and stage preview."""
+
+    def setUp(self):
+        self.hud_js = read("src/ui/social_hud.js")
+        self.style_css = read("src/style.css")
+
+    def test_home_button_icon_and_aria(self):
+        self.assertIn('id="btn-customize"', self.hud_js)
+        self.assertIn('🏠', self.hud_js, "#btn-customize must contain the house icon 🏠")
+        self.assertTrue(
+            'aria-label="Home"' in self.hud_js or "aria-label='Home'" in self.hud_js,
+            "#btn-customize must have aria-label=\"Home\""
+        )
+        self.assertTrue(
+            'title="Home"' in self.hud_js or "title='Home'" in self.hud_js,
+            "#btn-customize must have title=\"Home\""
+        )
+
+    def test_modal_header_is_home(self):
+        self.assertRegex(
+            self.hud_js,
+            r'<h3>\s*Home\s*</h3>',
+            "Customizer modal header must be <h3>Home</h3>"
+        )
+
+    def test_stage_preview_elements(self):
+        self.assertIn('home-stage-preview', self.hud_js, "Missing .home-stage-preview container")
+        self.assertIn('id="home-stage-canvas"', self.hud_js, "Missing #home-stage-canvas element")
+        self.assertIn('home-stage-preview', self.style_css, "Missing .home-stage-preview CSS rule")
+
+    def test_tab_buttons_you_and_dogs(self):
+        self.assertIn('cust-tab-walker', self.hud_js, "Missing You tab pane id")
+        self.assertIn('cust-tab-dog', self.hud_js, "Missing Dogs tab pane id")
+        self.assertIn('👤 You', self.hud_js, "Missing '👤 You' tab button label")
+        self.assertIn('🐕 Dogs', self.hud_js, "Missing '🐕 Dogs' tab button label")
+
+
+class TestDogSlotKennelAndLocking(unittest.TestCase):
+    """REQ-028.3: Single-slot immutable kennel and first-time / empty-slot lock."""
+
+    def setUp(self):
+        self.hud_js = read("src/ui/social_hud.js")
+
+    def test_single_slot_kennel_structure(self):
+        self.assertTrue(
+            'id="dog-slot-occupied"' in self.hud_js or "'dog-slot-occupied'" in self.hud_js,
+            "Missing #dog-slot-occupied container"
+        )
+        self.assertTrue(
+            'id="btn-remove-dog"' in self.hud_js or "'btn-remove-dog'" in self.hud_js,
+            "Missing #btn-remove-dog button"
+        )
+        self.assertIn('id="dog-slot-empty"', self.hud_js, "Missing #dog-slot-empty container")
+        self.assertIn('id="btn-add-dog"', self.hud_js, "Missing #btn-add-dog button")
+
+    def test_empty_slot_form_fields(self):
+        self.assertIn('id="cust-dog-name"', self.hud_js, "Missing dog name input #cust-dog-name")
+        self.assertIn('id="cust-dog-coat"', self.hud_js, "Missing breed select #cust-dog-coat")
+        self.assertIn('collar-palette', self.hud_js, "Missing collar swatch palette")
+        self.assertIn('cust-personality-playfulness', self.hud_js, "Missing personality sliders")
+
+    def test_empty_slot_prefilled_with_ziggy_defaults(self):
+        # Default dog name Ziggy
+        self.assertIn("'Ziggy'", self.hud_js, "Default dog name must be 'Ziggy'")
+        # Default coat key
+        self.assertIn('CHOCOLATE_TAN', self.hud_js, "Default coat key must be CHOCOLATE_TAN")
+        # Default teal collar
+        self.assertIn('#0d9488', self.hud_js, "Default collar color must be teal (#0d9488)")
+
+    def test_home_lock_logic(self):
+        self.assertIn('isHomeLocked', self.hud_js, "Missing isHomeLocked state flag")
+        # Lock must be enforced when closing the modal
+        self.assertRegex(
+            self.hud_js,
+            r'isHomeLocked',
+            "isHomeLocked must gate modal closing"
+        )
+
+    def test_add_dog_unlocks(self):
+        # Adding a dog must clear the lock
+        self.assertRegex(
+            self.hud_js,
+            r'isHomeLocked\s*=\s*false',
+            "Adding a dog must set isHomeLocked = false"
+        )
+
+
+class TestCompanionDogNameAndToasts(unittest.TestCase):
+    """REQ-028.4: Custom dog name, breed label cleanup, canvas name tag, toasts."""
+
+    def setUp(self):
+        self.dog_js = read("src/entities/companion_dog.js")
+        self.main_js = read("src/main.js")
+
+    def test_companion_dog_name_default(self):
+        self.assertRegex(
+            self.dog_js,
+            r"this\.name\s*=\s*(?:name\s*\|\|\s*)?['\"]Ziggy['\"]",
+            "CompanionDog must default this.name to 'Ziggy'"
+        )
+
+    def test_chocolate_tan_breed_label(self):
+        self.assertIn(
+            'Chocolate & Tan Cocker Spaniel',
+            self.dog_js,
+            "CoatPreset.CHOCOLATE_TAN.name must be 'Chocolate & Tan Cocker Spaniel'"
+        )
+
+    def test_resolve_coat_preset_by_name_legacy(self):
+        self.assertIn(
+            'resolveCoatPresetByName',
+            self.dog_js,
+            "Missing resolveCoatPresetByName helper"
+        )
+        self.assertIn(
+            'Chocolate & Tan (Ziggy)',
+            self.dog_js,
+            "resolveCoatPresetByName must support legacy 'Chocolate & Tan (Ziggy)'"
+        )
+
+    def test_canvas_name_tag_drawing(self):
+        self.assertRegex(
+            self.dog_js,
+            r'draw\s*\(\s*ctx',
+            "CompanionDog must implement draw(ctx)"
+        )
+        self.assertIn('this.name', self.dog_js, "Canvas name tag must render this.name")
+
+    def test_main_js_toasts_use_dog_name(self):
+        self.assertIn('this.dog.name', self.main_js, "main.js toasts must use this.dog.name")
+
+
+class TestReviewRemediation(unittest.TestCase):
+    """Brief 06: behavioral remediation tests for unification-028."""
+
+    def setUp(self):
+        self.hud_js = read("src/ui/social_hud.js")
+        self.main_js = read("src/main.js")
+        self.dog_js = read("src/entities/companion_dog.js")
+
+    def test_saved_empty_slot_honors_lock(self):
+        # loadSavedProfile must honor an explicitly saved empty slot.
+        self.assertRegex(
+            self.hud_js,
+            r"saved\.dogSlot\s*===\s*null",
+            "loadSavedProfile must branch on saved.dogSlot === null"
+        )
+        # Within that branch the slot must be cleared and Home locked.
+        self.assertRegex(
+            self.hud_js,
+            r"saved\.dogSlot\s*===\s*null[\s\S]{0,400}this\.dogSlot\s*=\s*null",
+            "Saved empty slot must set this.dogSlot = null"
+        )
+        self.assertRegex(
+            self.hud_js,
+            r"saved\.dogSlot\s*===\s*null[\s\S]{0,400}this\.isHomeLocked\s*=\s*true",
+            "Saved empty slot must set this.isHomeLocked = true"
+        )
+
+    def test_lock_blocks_modal_close_and_movement(self):
+        # closeModal must refuse to close while locked.
+        self.assertIn("closeModal()", self.hud_js, "Missing closeModal() method")
+        self.assertRegex(
+            self.hud_js,
+            r"closeModal\s*\(\s*\)\s*\{[\s\S]{0,400}this\.isHomeLocked",
+            "closeModal must check isHomeLocked"
+        )
+        self.assertIn(
+            "Please add a dog to your slot before heading out!",
+            self.hud_js,
+            "Locked close must show the warning toast"
+        )
+        # openModal must not toggle closed while locked.
+        self.assertRegex(
+            self.hud_js,
+            r"openModal\s*\(\s*\)\s*\{[\s\S]{0,600}this\.isHomeLocked",
+            "openModal must guard against toggling closed while locked"
+        )
+        # main.js must gate movement while hud.isHomeLocked.
+        self.assertIn("hud.isHomeLocked", self.main_js, "main.js must gate movement on hud.isHomeLocked")
+
+    def test_stage_preview_empty_slot_and_animation(self):
+        self.assertIn("_readEmptySlotPreview", self.hud_js, "Missing empty-slot preview builder")
+        self.assertIn("startStageAnimation", self.hud_js, "Missing startStageAnimation")
+        self.assertIn("stopStageAnimation", self.hud_js, "Missing stopStageAnimation")
+        self.assertIn("stageAnimId", self.hud_js, "Missing stageAnimId handle")
+        self.assertIn("requestAnimationFrame", self.hud_js, "Stage animation must use requestAnimationFrame")
+        self.assertIn("cancelAnimationFrame", self.hud_js, "Stage animation must use cancelAnimationFrame")
+        # Preview must read from the creation form inputs.
+        self.assertIn("cust-dog-name", self.hud_js, "Preview must read #cust-dog-name")
+        self.assertIn("cust-dog-coat", self.hud_js, "Preview must read #cust-dog-coat")
+
+    def test_remove_dog_persists_empty_slot(self):
+        self.assertIn("removeDog", self.hud_js, "Missing removeDog() method")
+        self.assertRegex(
+            self.hud_js,
+            r"removeDog\s*\(\s*\)\s*\{[\s\S]{0,400}this\.dogSlot\s*=\s*null",
+            "removeDog must clear this.dogSlot"
+        )
+        self.assertRegex(
+            self.hud_js,
+            r"removeDog\s*\(\s*\)\s*\{[\s\S]{0,800}this\.persistProfile\s*\(",
+            "removeDog must persist the empty slot"
+        )
+        # persistProfile must write dogSlot (null when empty).
+        self.assertIn("dogSlot: this.dogSlot", self.hud_js, "persistProfile must store dogSlot")
+
+    def test_resolve_coat_preset_by_name(self):
+        self.assertIn("resolveCoatPresetByName", self.dog_js, "Missing resolveCoatPresetByName")
+        self.assertIn("Chocolate & Tan Cocker Spaniel", self.dog_js, "Missing current breed label")
+        self.assertIn("Chocolate & Tan (Ziggy)", self.dog_js, "Missing legacy breed label")
+        # social_hud must import and use the resolver.
+        self.assertIn("resolveCoatPresetByName", self.hud_js, "social_hud must import resolveCoatPresetByName")
+        # main.js must use the resolver for remote players.
+        self.assertIn("resolveCoatPresetByName", self.main_js, "main.js must use resolveCoatPresetByName")
+
+
+class TestNetworkProtocolAndStorage(unittest.TestCase):
+    """REQ-028.5: Protocol dogName field and localStorage persistence."""
+
+    def setUp(self):
+        self.protocol_js = read("src/net/protocol.js")
+        self.hud_js = read("src/ui/social_hud.js")
+
+    def test_create_hello_includes_dog_name(self):
+        self.assertIn('dogName', self.protocol_js, "Protocol.createHello must include dogName")
+
+    def test_localstorage_persists_dog_slot_and_name(self):
+        self.assertIn('clifton_walker_profile', self.hud_js, "Missing clifton_walker_profile localStorage key")
+        self.assertIn('dogSlot', self.hud_js, "localStorage save must include dogSlot")
+        self.assertIn('dogName', self.hud_js, "localStorage save must include dogName")
+
+
+class TestHomeMenuBehavioralExecutable(unittest.TestCase):
+    """Brief 09: executable behavioral verification of the Home menu."""
+
+    def test_exec_resolve_coat_preset_by_name(self):
+        snippet = """
+        const current = resolveCoatPresetByName('Chocolate & Tan Cocker Spaniel');
+        const legacy = resolveCoatPresetByName('Chocolate & Tan (Ziggy)');
+        const unknown = resolveCoatPresetByName('Not A Real Breed');
+        return {
+          currentBody: current ? current.bodyColor : null,
+          currentName: current ? current.name : null,
+          legacyBody: legacy ? legacy.bodyColor : null,
+          legacyName: legacy ? legacy.name : null,
+          unknown: Boolean(unknown && typeof unknown.bodyColor === 'string' && unknown.bodyColor.length > 0)
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["currentBody"], "#2e1a14")
+        self.assertEqual(res["legacyBody"], "#2e1a14")
+        self.assertEqual(res["currentName"], "Chocolate & Tan Cocker Spaniel")
+        self.assertEqual(res["legacyName"], "Chocolate & Tan Cocker Spaniel")
+        self.assertTrue(res["unknown"], "Unknown breed must resolve to a valid coat preset")
+
+    def test_exec_load_saved_empty_slot_locks(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+        return {
+          dogSlot: hud.dogSlot,
+          isHomeLocked: hud.isHomeLocked
+        };
+        """
+        res = _run_js(snippet)
+        self.assertIsNone(res["dogSlot"], "Saved empty slot must leave dogSlot null")
+        self.assertTrue(res["isHomeLocked"], "Saved empty slot must lock Home")
+
+    def test_exec_lock_blocks_modal_dismissal(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+        const modal = document.getElementById('customizer-modal');
+        modal.style.display = 'block';
+        hud.isHomeLocked = true;
+
+        hud.openModal();
+        const afterOpen = modal.style.display;
+        hud.closeModal();
+        const afterClose = modal.style.display;
+
+        return { afterOpen: afterOpen, afterClose: afterClose };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["afterOpen"], "block",
+                         "openModal must not toggle closed while locked")
+        self.assertEqual(res["afterClose"], "block",
+                         "closeModal must refuse to close while locked")
+
+    def test_exec_remove_dog_persists_null_and_resets_dog(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        let broadcastCount = 0;
+        let lastLocalMeta = null;
+        let lastBroadcast = null;
+        const net = {
+          peerId: 'p1',
+          setLocalMeta(meta) { lastLocalMeta = meta; },
+          broadcast(msg) { broadcastCount++; lastBroadcast = msg; }
+        };
+        const hud = new SocialHUD(net, owner, dog, {});
+        const hadSlot = hud.dogSlot !== null;
+
+        hud.removeDog();
+
+        const saved = JSON.parse(localStorage.getItem('clifton_walker_profile'));
+        return {
+          hadSlot: hadSlot,
+          dogSlot: hud.dogSlot,
+          isHomeLocked: hud.isHomeLocked,
+          dogName: hud.dog.name,
+          savedDogSlot: saved.dogSlot,
+          broadcastCount: broadcastCount,
+          lastLocalMeta: lastLocalMeta,
+          lastBroadcast: lastBroadcast
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["hadSlot"], "Test setup must start with an occupied slot")
+        self.assertIsNone(res["dogSlot"], "removeDog must clear dogSlot")
+        self.assertTrue(res["isHomeLocked"], "removeDog must lock Home")
+        self.assertEqual(res["dogName"], "", "removeDog must reset the live dog name")
+        self.assertIsNone(res["savedDogSlot"], "removeDog must persist dogSlot: null")
+        self.assertGreaterEqual(res["broadcastCount"], 1,
+                                "removeDog must broadcast the empty profile")
+        self.assertFalse(res.get("lastLocalMeta", {}).get("hasDog"),
+                         "removeDog must broadcast setLocalMeta with hasDog: false")
+        self.assertEqual(res.get("lastLocalMeta", {}).get("dogName"), "",
+                         "removeDog must broadcast setLocalMeta with dogName: ''")
+        self.assertFalse(res.get("lastBroadcast", {}).get("hasDog"),
+                         "removeDog must broadcast with hasDog: false")
+        self.assertEqual(res.get("lastBroadcast", {}).get("dogName"), "",
+                         "removeDog must broadcast with dogName: ''")
+
+    def test_exec_add_dog_populates_slot_and_unlocks(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: '', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        // The empty-slot form is rendered by renderDogSlot(); populate the
+        // inputs it creates and adopt.
+        const nameInput = document.getElementById('cust-dog-name');
+        const coatSelect = document.getElementById('cust-dog-coat');
+        if (nameInput) nameInput.value = 'Ziggy';
+        if (coatSelect) coatSelect.value = 'CHOCOLATE_TAN';
+
+        hud.adoptDogFromForm();
+
+        const modal = document.getElementById('customizer-modal');
+        modal.style.display = 'block';
+        hud.closeModal();
+        const afterClose = modal.style.display;
+
+        return {
+          dogSlotName: hud.dogSlot ? hud.dogSlot.name : null,
+          isHomeLocked: hud.isHomeLocked,
+          dogName: hud.dog.name,
+          afterClose: afterClose
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["dogSlotName"], "Ziggy",
+                         "Adopting must populate the slot with the default name")
+        self.assertFalse(res["isHomeLocked"], "Adopting must unlock Home")
+        self.assertEqual(res["dogName"], "Ziggy",
+                         "Adopting must set the live dog name")
+        self.assertEqual(res["afterClose"], "none",
+                         "Modal must be closable once a dog is adopted")
+
+    def test_exec_apply_remote_dog_presence_clears_dog(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const remote = { hasDog: true, dog: { name: 'Ziggy' } };
+        hud.applyRemoteDogPresence(remote, { hasDog: false, dogName: '' });
+        const afterFalse = { hasDog: remote.hasDog, dogName: remote.dog ? remote.dog.name : null };
+
+        const remote2 = { hasDog: true, dog: { name: 'Ziggy' } };
+        hud.applyRemoteDogPresence(remote2, { dogName: '' });
+        const afterEmptyName = { hasDog: remote2.hasDog, dogName: remote2.dog ? remote2.dog.name : null };
+
+        return { afterFalse: afterFalse, afterEmptyName: afterEmptyName };
+        """
+        res = _run_js(snippet)
+        self.assertFalse(res["afterFalse"]["hasDog"],
+                         "applyRemoteDogPresence must set remote.hasDog = false for hasDog: false")
+        self.assertEqual(res["afterFalse"]["dogName"], "",
+                         "applyRemoteDogPresence must clear remote.dog.name for hasDog: false")
+        self.assertFalse(res["afterEmptyName"]["hasDog"],
+                         "applyRemoteDogPresence must set remote.hasDog = false for dogName: ''")
+        self.assertEqual(res["afterEmptyName"]["dogName"], "",
+                         "applyRemoteDogPresence must clear remote.dog.name for dogName: ''")
+
+
+if __name__ == '__main__':
+    unittest.main()
+```
+
 ## FILE: test/test_leash_sync.py
 ```python
 #!/usr/bin/env python3
@@ -42299,7 +43630,7 @@ class TestOffLeashMovement(unittest.TestCase):
                         "Dog must never freeze permanently in a resting state")
         self.assertIn(res["finalState"], (
             "ROAMING", "LYING_DOWN", "SITTING", "BARKING",
-            "IDLE_SNIFF", "PLAY_BOW", "ROLLING", "LOST",
+            "IDLE_SNIFF", "PLAY_BOW", "ROLLING", "LOST", "ZOOMIES",
         ))
 
     def test_pack_play_enum_and_active_rest_blocked(self):
@@ -44450,7 +45781,8 @@ class TestProximityChat(unittest.TestCase):
 
         self.assertNotIn('id="btn-room-action"', overlay_html, "#btn-room-action must be removed from top-left panel")
         self.assertIn('id="btn-customize"', overlay_html, "Missing #btn-customize in hudOverlay template")
-        self.assertIn('⚙️', overlay_html, "Missing cog icon in #btn-customize")
+        self.assertIn('🏠', overlay_html, "Expected Home icon '🏠' in customize button")
+        self.assertNotIn('⚙️', overlay_html, "Settings gear icon '⚙️' must no longer be present")
         self.assertIn('The Downs', overlay_html, "Missing park name pill in top-left panel")
 
     def test_ac019_2_top_right_corner_vacant(self):
@@ -45024,9 +46356,10 @@ class TestSocialHUDLayout(unittest.TestCase):
         self.assertNotIn('id="btn-room-action"', overlay_html, "#btn-room-action must be removed from hudOverlay template")
         self.assertNotIn('id="btn-room-label"', overlay_html, "#btn-room-label must be removed from hudOverlay template")
 
-        # Verify #btn-customize is positioned as cog icon button with no "Style" text (AC-023.5)
+        # Verify #btn-customize is positioned as an icon button with no "Style" text (AC-023.5)
         self.assertIn('id="btn-customize"', overlay_html, "Missing #btn-customize in hudOverlay template")
-        self.assertIn('⚙️', overlay_html, "Missing cog icon in #btn-customize")
+        self.assertIn('🏠', overlay_html, "Expected Home icon '🏠' in customize button")
+        self.assertNotIn('⚙️', overlay_html, "Settings gear icon '⚙️' must no longer be present")
         self.assertNotIn('>Style<', overlay_html, "#btn-customize must not contain 'Style' text")
 
         # Top-left panel content
@@ -45836,9 +47169,10 @@ class TestTicket023Refinements(unittest.TestCase):
         panel_html = panel_match.group(1)
         self.assertNotIn('id="btn-customize"', panel_html, "#btn-customize must not be inside .hud-panel")
 
-        # In overlay template as cog icon
+        # In overlay template as home icon
         self.assertIn('id="btn-customize"', overlay_html, "#btn-customize must exist in hudOverlay")
-        self.assertIn('⚙️', overlay_html, "⚙️ cog icon must be present in #btn-customize")
+        self.assertIn('🏠', overlay_html, "Expected Home icon '🏠' in customize button")
+        self.assertNotIn('⚙️', overlay_html, "Settings gear icon '⚙️' must no longer be present")
         self.assertNotIn('>Style<', overlay_html, "Word 'Style' text must not be rendered on the button")
 
         # CSS layout assertions

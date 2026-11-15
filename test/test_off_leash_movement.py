@@ -953,7 +953,7 @@ class TestOffLeashMovement(unittest.TestCase):
                         "Dog must never freeze permanently in a resting state")
         self.assertIn(res["finalState"], (
             "ROAMING", "LYING_DOWN", "SITTING", "BARKING",
-            "IDLE_SNIFF", "PLAY_BOW", "ROLLING", "LOST",
+            "IDLE_SNIFF", "PLAY_BOW", "ROLLING", "LOST", "ZOOMIES",
         ))
 
     def test_pack_play_enum_and_active_rest_blocked(self):

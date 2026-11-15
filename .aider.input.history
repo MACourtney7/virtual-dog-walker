@@ -304,3 +304,91 @@
 +Suite must pass 100%.
 +
 +
+
+# 2026-11-15 17:33:17.546535
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-04-review-remediation"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/home_sanctuary.js"
++  - "virtual_dog_walker/src/ui/home_feeding.js"
++  - "virtual_dog_walker/test/test_home_sanctuary.py"
++  - "virtual_dog_walker/.gitignore"
++test_cmd: "python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"
++---
++
++# Implementer Brief 04: Review Remediation for unification-030
++
++## Context & Objectives
++Address all findings from Reviewer Cycle 1 (`report-reviewer-1.md`):
++1. **Dog Orientation**: Fix orientation so `angle = Math.PI / 2` (camera pose / feeding) renders facing downward toward the camera, consistent with standard canvas coordinate system (`+X` = right, `+Y` = down). Ensure `drawArticulatedDog` and `CompanionDog.prototype.draw` use the exact same heading conventions.
++2. **Non-Mutating Live Dog Entity**: Ensure `drawDog()` does not mutate `liveDogEntity` (treat it as strictly read-only). Use a shallow render wrapper or adapter object that copies visual properties without mutating `liveDogEntity.x`, `y`, etc.
++3. **CompanionDog Compatibility in `buildDogEntity()`**: Populate `coat` as an object with `bodyColor`, `tanColor`, `bibColor`, etc., plus `gaitMode`, `gaitPhase`, `tailAngle` so `CompanionDog.prototype.draw` executes cleanly without throwing.
++4. **Food Bowl in `bowl` and `eating` States**: Render `drawFoodBowl()` whenever `forcedState === 'eating' || forcedState === 'bowl' || (dog && (dog.state === 'eating' || dog.state === 'bowl'))`.
++5. **SSR / Non-Browser Safety in `home_feeding.js`**: Guard all bare `window` references with `typeof window !== 'undefined' ? window : ...` or use a module root reference (`root`).
++6. **Use `GRASS_MOWN`**: In `drawField()` in `home_sanctuary.js`, actively use `GRASS_MOWN` (`#447831`) in turf shading / stripe bands.
++7. **Gitignore Aider**: Add `.aider*` to `virtual_dog_walker/.gitignore`.
++8. **Regression Tests**: In `virtual_dog_walker/test/test_home_sanctuary.py`, add tests verifying:
++   - Camera pose orientation angle is `Math.PI / 2` facing down.
++   - `liveDogEntity` is not mutated during rendering.
++   - Food bowl condition includes both `bowl` and `eating`.
++
++## Verification
++Run:
++`python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
++Suite must pass 100%.
++
++
+
+# 2026-11-15 17:33:17.547069
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-04-review-remediation"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/home_sanctuary.js"
++  - "virtual_dog_walker/src/ui/home_feeding.js"
++  - "virtual_dog_walker/test/test_home_sanctuary.py"
++  - "virtual_dog_walker/.gitignore"
++test_cmd: "python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"
++---
++
++# Implementer Brief 04: Review Remediation for unification-030
++
++## Context & Objectives
++Address all findings from Reviewer Cycle 1 (`report-reviewer-1.md`):
++1. **Dog Orientation**: Fix orientation so `angle = Math.PI / 2` (camera pose / feeding) renders facing downward toward the camera, consistent with standard canvas coordinate system (`+X` = right, `+Y` = down). Ensure `drawArticulatedDog` and `CompanionDog.prototype.draw` use the exact same heading conventions.
++2. **Non-Mutating Live Dog Entity**: Ensure `drawDog()` does not mutate `liveDogEntity` (treat it as strictly read-only). Use a shallow render wrapper or adapter object that copies visual properties without mutating `liveDogEntity.x`, `y`, etc.
++3. **CompanionDog Compatibility in `buildDogEntity()`**: Populate `coat` as an object with `bodyColor`, `tanColor`, `bibColor`, etc., plus `gaitMode`, `gaitPhase`, `tailAngle` so `CompanionDog.prototype.draw` executes cleanly without throwing.
++4. **Food Bowl in `bowl` and `eating` States**: Render `drawFoodBowl()` whenever `forcedState === 'eating' || forcedState === 'bowl' || (dog && (dog.state === 'eating' || dog.state === 'bowl'))`.
++5. **SSR / Non-Browser Safety in `home_feeding.js`**: Guard all bare `window` references with `typeof window !== 'undefined' ? window : ...` or use a module root reference (`root`).
++6. **Use `GRASS_MOWN`**: In `drawField()` in `home_sanctuary.js`, actively use `GRASS_MOWN` (`#447831`) in turf shading / stripe bands.
++7. **Gitignore Aider**: Add `.aider*` to `virtual_dog_walker/.gitignore`.
++8. **Regression Tests**: In `virtual_dog_walker/test/test_home_sanctuary.py`, add tests verifying:
++   - Camera pose orientation angle is `Math.PI / 2` facing down.
++   - `liveDogEntity` is not mutated during rendering.
++   - Food bowl condition includes both `bowl` and `eating`.
++
++## Verification
++Run:
++`python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
++Suite must pass 100%.
++
++

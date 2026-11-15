@@ -13772,7 +13772,7 @@ export class CliftonDownGame {
         if (meta.accessory !== undefined) existing.owner.accessory = meta.accessory || 'NONE';
         if (meta.skinTone) existing.owner.skinTone = meta.skinTone;
         if (meta.collarColor) existing.dog.collarColor = meta.collarColor;
-        if (meta.dogName) existing.dog.name = meta.dogName;
+        this.applyRemoteDogPresence(existing, meta);
         if (meta.personality) {
           if (typeof existing.dog.setPersonality === 'function') {
             existing.dog.setPersonality(meta.personality);
@@ -13803,7 +13803,9 @@ export class CliftonDownGame {
         }
       }
 
-      this.remotePlayers.set(peerId, { owner: remoteOwner, dog: remoteDog });
+      const remoteEntry = { owner: remoteOwner, dog: remoteDog, hasDog: true };
+      this.applyRemoteDogPresence(remoteEntry, meta);
+      this.remotePlayers.set(peerId, remoteEntry);
 
       this.hud.updatePlayerCount(this.remotePlayers.size + 1);
       this.hud.showToast(`👋 ${remoteOwner.name} joined the field!`);
@@ -13875,6 +13877,14 @@ export class CliftonDownGame {
       }
     };
 
+    // Explicit profile_update broadcasts (e.g. dog removal) clear ghost dogs.
+    this.net.onProfileUpdate = (peerId, data) => {
+      const p = this.remotePlayers.get(peerId);
+      if (p && data) {
+        this.applyRemoteDogPresence(p, data);
+      }
+    };
+
     // Proximity Chat Handlers
     this.net.onProximityChat = (data) => {
       if (!data) return;
@@ -13910,6 +13920,16 @@ export class CliftonDownGame {
           if (packet.type === PacketType.PROXIMITY_CHAT || packet.type === 'PROXIMITY_CHAT') {
             const data = { ...packet, senderId: packet.senderId || senderId };
             this.net.onProximityChat(data);
+            if (this.net.isHost && typeof this.net.relayToOthers === 'function') {
+              this.net.relayToOthers(senderId, packet);
+            }
+            return;
+          }
+          if (packet.type === 'profile_update' || packet.type === 'PROFILE_UPDATE') {
+            const data = { ...packet, senderId: packet.senderId || senderId };
+            if (typeof this.net.onProfileUpdate === 'function') {
+              this.net.onProfileUpdate(data.senderId, data);
+            }
             if (this.net.isHost && typeof this.net.relayToOthers === 'function') {
               this.net.relayToOthers(senderId, packet);
             }
@@ -14274,6 +14294,30 @@ export class CliftonDownGame {
         }, DOUBLE_CLICK_MS);
       }
     });
+  }
+
+  /**
+   * Apply a peer's dog-presence metadata to a remote player entry.
+   * When the peer has no dog (hasDog === false or empty dogName), the dog
+   * entity is hidden (name cleared + hasDog flag) so no ghost dog or name
+   * tag renders. When a dog is present, its name is restored.
+   */
+  applyRemoteDogPresence(entry, meta) {
+    if (!entry || !entry.dog) return;
+    const hasDogFlag = meta ? meta.hasDog : undefined;
+    const dogName = meta ? meta.dogName : undefined;
+    const noDog = hasDogFlag === false || dogName === '';
+    if (noDog) {
+      entry.dog.name = '';
+      entry.hasDog = false;
+      return;
+    }
+    if (typeof dogName === 'string' && dogName.length > 0) {
+      entry.dog.name = dogName;
+      entry.hasDog = true;
+    } else if (hasDogFlag === true) {
+      entry.hasDog = true;
+    }
   }
 
   handleJoystickMove(vec) {
@@ -14741,7 +14785,9 @@ export class CliftonDownGame {
     // 2. Gather all other dogs for social play-bow reactions
     const allDogs = [this.dog];
     for (const p of this.remotePlayers.values()) {
-      allDogs.push(p.dog);
+      if (p.hasDog !== false) {
+        allDogs.push(p.dog);
+      }
     }
 
     // 1. Update Field & Ambient Particles with dynamic entities for leaf scattering
@@ -14756,7 +14802,9 @@ export class CliftonDownGame {
     const avoidanceEntities = [this.owner, this.dog, ...npcList];
     for (const p of this.remotePlayers.values()) {
       avoidanceEntities.push(p.owner);
-      avoidanceEntities.push(p.dog);
+      if (p.hasDog !== false) {
+        avoidanceEntities.push(p.dog);
+      }
     }
 
     // Update ambient NPCs
@@ -14851,7 +14899,8 @@ export class CliftonDownGame {
         remoteOwner.jacketColor = meta.jacketColor || '#1e3a8a';
         const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
         remoteDog.name = (meta && meta.dogName) ? meta.dogName : 'Ziggy';
-        remote = { owner: remoteOwner, dog: remoteDog };
+        remote = { owner: remoteOwner, dog: remoteDog, hasDog: true };
+        this.applyRemoteDogPresence(remote, meta);
         this.remotePlayers.set(peerId, remote);
         this.hud.updatePlayerCount(this.remotePlayers.size + 1);
       } else {
@@ -14865,9 +14914,7 @@ export class CliftonDownGame {
         if (meta.coatName && remote.dog.coat !== coat) {
           remote.dog.coat = coat;
         }
-        if (meta.dogName && remote.dog.name !== meta.dogName) {
-          remote.dog.name = meta.dogName;
-        }
+        this.applyRemoteDogPresence(remote, meta);
         if (meta.personality) {
           if (typeof remote.dog.setPersonality === 'function') {
             remote.dog.setPersonality(meta.personality);
@@ -15007,7 +15054,9 @@ export class CliftonDownGame {
 
     for (const p of this.remotePlayers.values()) {
       dynamicEntities.push(p.owner);
-      dynamicEntities.push(p.dog);
+      if (p.hasDog !== false) {
+        dynamicEntities.push(p.dog);
+      }
     }
 
     // Field renders background turf, then Y-sorts trees, benches, owners, dogs, and balls
@@ -15068,7 +15117,10 @@ export class CliftonDownGame {
     if (this.environment) {
       const players = [this.owner, this.dog];
       for (const p of this.remotePlayers.values()) {
-        players.push(p.owner, p.dog);
+        players.push(p.owner);
+        if (p.hasDog !== false) {
+          players.push(p.dog);
+        }
       }
       for (const npc of this.npcs.values()) {
         players.push(npc);
@@ -15246,8 +15298,14 @@ export class PeerNetworkManager {
     this.syncHz = 16;
   }
 
-  setLocalMeta(meta) {
+  setLocalMeta(meta = {}) {
     this.localMeta = { ...this.localMeta, ...meta };
+    if (typeof meta.hasDog === 'boolean') {
+      this.localMeta.hasDog = meta.hasDog;
+    }
+    if (typeof meta.dogName === 'string') {
+      this.localMeta.dogName = meta.dogName;
+    }
   }
 
   updateServerClock(serverTime) {
@@ -15306,7 +15364,10 @@ export class PeerNetworkManager {
           name: meta.name || 'Player',
           jacketColor: meta.jacketColor || '#14532d',
           coatName: meta.coatName || 'Chocolate & Tan (Ziggy)',
-          dogName: meta.dogName || 'Ziggy',
+          dogName: (typeof meta.dogName === 'string') ? meta.dogName : 'Ziggy',
+          hasDog: (typeof meta.hasDog === 'boolean')
+            ? meta.hasDog
+            : (Boolean(meta.dogName) || Boolean(meta.dogCoat || meta.coatName)),
           hairStyle: meta.hairStyle,
           hairColor: meta.hairColor,
           pantsColor: meta.pantsColor,
@@ -15317,11 +15378,12 @@ export class PeerNetworkManager {
         }
       };
       this.remotePeers.set(peerId, peerData);
-    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality)) {
+    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality || typeof meta.hasDog === 'boolean' || typeof meta.dogName === 'string')) {
       if (meta.name) peerData.meta.name = meta.name;
       if (meta.jacketColor) peerData.meta.jacketColor = meta.jacketColor;
       if (meta.coatName) peerData.meta.coatName = meta.coatName;
-      if (meta.dogName) peerData.meta.dogName = meta.dogName;
+      if (typeof meta.dogName === 'string') peerData.meta.dogName = meta.dogName;
+      if (typeof meta.hasDog === 'boolean') peerData.meta.hasDog = meta.hasDog;
       if (meta.hairStyle) peerData.meta.hairStyle = meta.hairStyle;
       if (meta.hairColor) peerData.meta.hairColor = meta.hairColor;
       if (meta.pantsColor) peerData.meta.pantsColor = meta.pantsColor;
@@ -15446,7 +15508,12 @@ export class PeerNetworkManager {
           name: packet.name || 'Visitor',
           jacketColor: packet.jacketColor || '#14532d',
           coatName: packet.dogCoatName || 'Chocolate & Tan (Ziggy)',
-          dogName: packet.dogName || (packet.extraMeta && packet.extraMeta.dogName) || 'Ziggy',
+          dogName: (typeof packet.dogName === 'string')
+            ? packet.dogName
+            : ((packet.extraMeta && typeof packet.extraMeta.dogName === 'string') ? packet.extraMeta.dogName : 'Ziggy'),
+          hasDog: (typeof packet.hasDog === 'boolean')
+            ? packet.hasDog
+            : ((typeof packet.dogName === 'string' && packet.dogName.length > 0) || Boolean(packet.dogCoatName)),
           hairStyle: packet.hairStyle,
           hairColor: packet.hairColor,
           pantsColor: packet.pantsColor,
@@ -15479,7 +15546,10 @@ export class PeerNetworkManager {
           name: packet.hostMeta.name,
           jacketColor: packet.hostMeta.jacketColor,
           coatName: packet.hostMeta.coatName || packet.hostMeta.dogCoatName,
-          dogName: packet.hostMeta.dogName || 'Ziggy',
+          dogName: (typeof packet.hostMeta.dogName === 'string') ? packet.hostMeta.dogName : 'Ziggy',
+          hasDog: (typeof packet.hostMeta.hasDog === 'boolean')
+            ? packet.hostMeta.hasDog
+            : ((typeof packet.hostMeta.dogName === 'string' && packet.hostMeta.dogName.length > 0) || Boolean(packet.hostMeta.dogCoatName || packet.hostMeta.coatName)),
           hairStyle: packet.hostMeta.hairStyle,
           hairColor: packet.hostMeta.hairColor,
           pantsColor: packet.hostMeta.pantsColor,
@@ -15503,7 +15573,10 @@ export class PeerNetworkManager {
                 name: p.name,
                 jacketColor: p.jacketColor,
                 coatName: p.coatName || p.dogCoatName,
-                dogName: p.dogName || 'Ziggy',
+                dogName: (typeof p.dogName === 'string') ? p.dogName : 'Ziggy',
+                hasDog: (typeof p.hasDog === 'boolean')
+                  ? p.hasDog
+                  : ((typeof p.dogName === 'string' && p.dogName.length > 0) || Boolean(p.dogCoatName || p.coatName)),
                 hairStyle: p.hairStyle,
                 hairColor: p.hairColor,
                 pantsColor: p.pantsColor,
@@ -15856,13 +15929,20 @@ export const PacketType = {
 
 export class Protocol {
   static createHello(peerId, name, jacketColor, dogCoatName, extraMeta = {}) {
+    const resolvedDogName = (extraMeta && typeof extraMeta.dogName === 'string')
+      ? extraMeta.dogName
+      : (typeof extraMeta.dogName === 'string' ? extraMeta.dogName : 'Ziggy');
+    const resolvedHasDog = (extraMeta && typeof extraMeta.hasDog === 'boolean')
+      ? extraMeta.hasDog
+      : ((typeof resolvedDogName === 'string' && resolvedDogName.length > 0) || Boolean(dogCoatName));
     return {
       type: PacketType.HELLO,
       senderId: peerId,
       name,
       jacketColor,
       dogCoatName,
-      dogName: (extraMeta && extraMeta.dogName) ? extraMeta.dogName : 'Ziggy',
+      dogName: resolvedDogName,
+      hasDog: resolvedHasDog,
       hairStyle: extraMeta.hairStyle,
       hairColor: extraMeta.hairColor,
       pantsColor: extraMeta.pantsColor,
@@ -15875,11 +15955,16 @@ export class Protocol {
   }
 
   static createWelcome(hostId, hostMeta, peersList = [], ballState = null) {
+    const meta = hostMeta || {};
+    const resolvedDogName = (typeof meta.dogName === 'string') ? meta.dogName : 'Ziggy';
+    const resolvedHasDog = (typeof meta.hasDog === 'boolean')
+      ? meta.hasDog
+      : ((typeof resolvedDogName === 'string' && resolvedDogName.length > 0) || Boolean(meta.dogCoatName || meta.coatName));
     return {
       type: PacketType.WELCOME,
       senderId: hostId,
       hostId: hostId,
-      hostMeta: hostMeta,
+      hostMeta: { ...meta, dogName: resolvedDogName, hasDog: resolvedHasDog },
       peers: peersList,
       ball: ballState,
       timestamp: Date.now()
@@ -16426,8 +16511,14 @@ export class ZeroMeshNetworkManager {
     }
   }
 
-  setLocalMeta(meta) {
+  setLocalMeta(meta = {}) {
     this.localMeta = { ...this.localMeta, ...meta };
+    if (typeof meta.hasDog === 'boolean') {
+      this.localMeta.hasDog = meta.hasDog;
+    }
+    if (typeof meta.dogName === 'string') {
+      this.localMeta.dogName = meta.dogName;
+    }
   }
 
   setStatus(status) {
@@ -16448,7 +16539,10 @@ export class ZeroMeshNetworkManager {
           name: meta.name || 'Walker',
           jacketColor: meta.jacketColor || '#1e3a8a',
           coatName: meta.coatName || 'Chocolate & Tan (Ziggy)',
-          dogName: meta.dogName || 'Ziggy',
+          dogName: (typeof meta.dogName === 'string') ? meta.dogName : 'Ziggy',
+          hasDog: (typeof meta.hasDog === 'boolean')
+            ? meta.hasDog
+            : (Boolean(meta.dogName) || Boolean(meta.dogCoat || meta.coatName)),
           hairStyle: meta.hairStyle,
           hairColor: meta.hairColor,
           pantsColor: meta.pantsColor,
@@ -16459,11 +16553,12 @@ export class ZeroMeshNetworkManager {
         }
       };
       this.remotePeers.set(peerId, peerData);
-    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality)) {
+    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality || typeof meta.hasDog === 'boolean' || typeof meta.dogName === 'string')) {
       if (meta.name) peerData.meta.name = meta.name;
       if (meta.jacketColor) peerData.meta.jacketColor = meta.jacketColor;
       if (meta.coatName) peerData.meta.coatName = meta.coatName;
-      if (meta.dogName) peerData.meta.dogName = meta.dogName;
+      if (typeof meta.dogName === 'string') peerData.meta.dogName = meta.dogName;
+      if (typeof meta.hasDog === 'boolean') peerData.meta.hasDog = meta.hasDog;
       if (meta.hairStyle) peerData.meta.hairStyle = meta.hairStyle;
       if (meta.hairColor) peerData.meta.hairColor = meta.hairColor;
       if (meta.pantsColor) peerData.meta.pantsColor = meta.pantsColor;
@@ -17601,7 +17696,12 @@ export class ZeroMeshNetworkManager {
           name: packet.name || 'Walker',
           jacketColor: packet.jacketColor || '#1e3a8a',
           coatName: packet.dogCoatName || packet.coatName || 'Chocolate & Tan (Ziggy)',
-          dogName: packet.dogName || (packet.extraMeta && packet.extraMeta.dogName) || 'Ziggy',
+          dogName: (typeof packet.dogName === 'string')
+            ? packet.dogName
+            : ((packet.extraMeta && typeof packet.extraMeta.dogName === 'string') ? packet.extraMeta.dogName : 'Ziggy'),
+          hasDog: (typeof packet.hasDog === 'boolean')
+            ? packet.hasDog
+            : ((typeof packet.dogName === 'string' && packet.dogName.length > 0) || Boolean(packet.dogCoatName)),
           hairStyle: packet.hairStyle,
           hairColor: packet.hairColor,
           pantsColor: packet.pantsColor,
@@ -17665,7 +17765,10 @@ export class ZeroMeshNetworkManager {
               name: p.name,
               jacketColor: p.jacketColor,
               coatName: p.coatName || p.dogCoatName,
-              dogName: p.dogName || 'Ziggy',
+              dogName: (typeof p.dogName === 'string') ? p.dogName : 'Ziggy',
+              hasDog: (typeof p.hasDog === 'boolean')
+                ? p.hasDog
+                : ((typeof p.dogName === 'string' && p.dogName.length > 0) || Boolean(p.dogCoatName || p.coatName)),
               hairStyle: p.hairStyle,
               hairColor: p.hairColor,
               pantsColor: p.pantsColor,
@@ -22627,6 +22730,7 @@ export class SocialHUD {
         jacketColor: this.owner.jacketColor,
         coatName: '',
         dogName: '',
+        hasDog: false,
         collarColor: '#0d9488',
         personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 }
       });
@@ -22636,9 +22740,14 @@ export class SocialHUD {
           this.owner.name,
           this.owner.jacketColor,
           '',
-          { dogName: '', collarColor: '#0d9488' }
+          { dogName: '', hasDog: false, collarColor: '#0d9488' }
         ));
       }
+    }
+
+    // Broadcast an explicit profile_update so peers can clear the ghost dog.
+    if (this.net && typeof this.net.broadcast === 'function') {
+      this.net.broadcast({ type: 'profile_update', dogName: '', hasDog: false });
     }
   }
 
@@ -22883,10 +22992,13 @@ export class SocialHUD {
           if (!this.dog.personality) {
             this.dog.personality = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
           }
+          this.dog.name = '';
         }
         this.dogSlot = null;
         this.isHomeLocked = true;
-        this.renderDogSlot();
+        if (this.net && typeof this.net.setLocalMeta === 'function') {
+          this.net.setLocalMeta({ dogName: '', hasDog: false });
+        }
         this.updateModalActiveSelections();
         this.openModal();
         this.updateCloseButtonState();
@@ -22898,9 +23010,14 @@ export class SocialHUD {
         if (this.dog && !this.dog.personality) {
           this.dog.personality = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
         }
+        if (this.dog) {
+          this.dog.name = '';
+        }
         this.dogSlot = null;
         this.isHomeLocked = true;
-        this.renderDogSlot();
+        if (this.net && typeof this.net.setLocalMeta === 'function') {
+          this.net.setLocalMeta({ dogName: '', hasDog: false });
+        }
         this.updateModalActiveSelections();
         this.openModal();
         this.updateCloseButtonState();
@@ -22946,7 +23063,12 @@ export class SocialHUD {
       if (saved.dogSlot === null) {
         this.dogSlot = null;
         this.isHomeLocked = true;
-        this.renderDogSlot();
+        if (this.dog) {
+          this.dog.name = '';
+        }
+        if (this.net && typeof this.net.setLocalMeta === 'function') {
+          this.net.setLocalMeta({ dogName: '', hasDog: false });
+        }
         this.updateCloseButtonState();
         this.updateModalActiveSelections();
         this.openModal();
@@ -23012,6 +23134,8 @@ export class SocialHUD {
           collarColor: this.dog.collarColor,
           personality
         });
+        // Explicitly advertise the occupied dog slot to peers.
+        this.net.setLocalMeta({ dogName: this.dog.name || 'Ziggy', hasDog: true });
       }
     } catch (e) {
       console.warn('Could not load saved walker profile from localStorage:', e);

@@ -54,7 +54,6 @@ const PUBLIC_ZONE_IDS = [];
 function isPublicZoneId() {{ return false; }}
 
 // ---- Mock DOM ----
-const __elements = {{}};
 function __makeEl(tag) {{
   const el = {{
     tagName: (tag || 'div').toUpperCase(),
@@ -92,6 +91,11 @@ function __makeEl(tag) {{
   }};
   return el;
 }}
+const __elements = {{
+  'game-container': __makeEl('div'),
+  'hud-overlay': __makeEl('div'),
+  'controls-hint': __makeEl('div')
+}};
 const document = {{
   _byId: __elements,
   getElementById(id) {{ return __elements[id] || null; }},

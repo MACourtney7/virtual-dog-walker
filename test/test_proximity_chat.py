@@ -657,7 +657,8 @@ class TestProximityChat(unittest.TestCase):
 
         self.assertNotIn('id="btn-room-action"', overlay_html, "#btn-room-action must be removed from top-left panel")
         self.assertIn('id="btn-customize"', overlay_html, "Missing #btn-customize in hudOverlay template")
-        self.assertTrue('🏠' in overlay_html or '⚙️' in overlay_html, "Missing home or cog icon in #btn-customize")
+        self.assertIn('🏠', overlay_html, "Expected Home icon '🏠' in customize button")
+        self.assertNotIn('⚙️', overlay_html, "Settings gear icon '⚙️' must no longer be present")
         self.assertIn('The Downs', overlay_html, "Missing park name pill in top-left panel")
 
     def test_ac019_2_top_right_corner_vacant(self):

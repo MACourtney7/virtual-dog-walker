@@ -44,10 +44,8 @@ class TestSocialHUDLayout(unittest.TestCase):
 
         # Verify #btn-customize is positioned as an icon button with no "Style" text (AC-023.5)
         self.assertIn('id="btn-customize"', overlay_html, "Missing #btn-customize in hudOverlay template")
-        self.assertTrue(
-            '🏠' in overlay_html or '⚙️' in overlay_html,
-            "Missing house icon (or cog icon) in #btn-customize"
-        )
+        self.assertIn('🏠', overlay_html, "Expected Home icon '🏠' in customize button")
+        self.assertNotIn('⚙️', overlay_html, "Settings gear icon '⚙️' must no longer be present")
         self.assertNotIn('>Style<', overlay_html, "#btn-customize must not contain 'Style' text")
 
         # Top-left panel content

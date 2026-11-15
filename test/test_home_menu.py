@@ -134,10 +134,14 @@ JSON.stringify(__res);
         ).strip()
         return json.loads(out)
     if shutil.which("node"):
-        out = subprocess.check_output(
-            ["node", "-e", f"console.log({harness})"], text=True
-        ).strip()
-        return json.loads(out)
+        node_script = f"""
+{harness}
+if (typeof __res !== 'undefined' && __res !== null) {{
+    console.log(JSON.stringify(__res));
+}}
+"""
+        out = subprocess.check_output(["node", "-e", node_script], text=True)
+        return json.loads(out.strip().splitlines()[-1])
     raise unittest.SkipTest("No JS runtime (osascript or node) available")
 
 
@@ -454,7 +458,13 @@ class TestHomeMenuBehavioralExecutable(unittest.TestCase):
         const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
         const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
         let broadcastCount = 0;
-        const net = { setLocalMeta() {}, broadcast() { broadcastCount++; }, peerId: 'p1' };
+        let lastLocalMeta = null;
+        let lastBroadcast = null;
+        const net = {
+          peerId: 'p1',
+          setLocalMeta(meta) { lastLocalMeta = meta; },
+          broadcast(msg) { broadcastCount++; lastBroadcast = msg; }
+        };
         const hud = new SocialHUD(net, owner, dog, {});
         const hadSlot = hud.dogSlot !== null;
 
@@ -467,7 +477,9 @@ class TestHomeMenuBehavioralExecutable(unittest.TestCase):
           isHomeLocked: hud.isHomeLocked,
           dogName: hud.dog.name,
           savedDogSlot: saved.dogSlot,
-          broadcastCount: broadcastCount
+          broadcastCount: broadcastCount,
+          lastLocalMeta: lastLocalMeta,
+          lastBroadcast: lastBroadcast
         };
         """
         res = _run_js(snippet)
@@ -478,6 +490,14 @@ class TestHomeMenuBehavioralExecutable(unittest.TestCase):
         self.assertIsNone(res["savedDogSlot"], "removeDog must persist dogSlot: null")
         self.assertGreaterEqual(res["broadcastCount"], 1,
                                 "removeDog must broadcast the empty profile")
+        self.assertFalse(res.get("lastLocalMeta", {}).get("hasDog"),
+                         "removeDog must broadcast setLocalMeta with hasDog: false")
+        self.assertEqual(res.get("lastLocalMeta", {}).get("dogName"), "",
+                         "removeDog must broadcast setLocalMeta with dogName: ''")
+        self.assertFalse(res.get("lastBroadcast", {}).get("hasDog"),
+                         "removeDog must broadcast with hasDog: false")
+        self.assertEqual(res.get("lastBroadcast", {}).get("dogName"), "",
+                         "removeDog must broadcast with dogName: ''")
 
     def test_exec_add_dog_populates_slot_and_unlocks(self):
         snippet = """
@@ -519,6 +539,38 @@ class TestHomeMenuBehavioralExecutable(unittest.TestCase):
                          "Adopting must set the live dog name")
         self.assertEqual(res["afterClose"], "none",
                          "Modal must be closable once a dog is adopted")
+
+    def test_exec_apply_remote_dog_presence_clears_dog(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const remote = { hasDog: true, dog: { name: 'Ziggy' } };
+        hud.applyRemoteDogPresence(remote, { hasDog: false, dogName: '' });
+        const afterFalse = { hasDog: remote.hasDog, dogName: remote.dog ? remote.dog.name : null };
+
+        const remote2 = { hasDog: true, dog: { name: 'Ziggy' } };
+        hud.applyRemoteDogPresence(remote2, { dogName: '' });
+        const afterEmptyName = { hasDog: remote2.hasDog, dogName: remote2.dog ? remote2.dog.name : null };
+
+        return { afterFalse: afterFalse, afterEmptyName: afterEmptyName };
+        """
+        res = _run_js(snippet)
+        self.assertFalse(res["afterFalse"]["hasDog"],
+                         "applyRemoteDogPresence must set remote.hasDog = false for hasDog: false")
+        self.assertEqual(res["afterFalse"]["dogName"], "",
+                         "applyRemoteDogPresence must clear remote.dog.name for hasDog: false")
+        self.assertFalse(res["afterEmptyName"]["hasDog"],
+                         "applyRemoteDogPresence must set remote.hasDog = false for dogName: ''")
+        self.assertEqual(res["afterEmptyName"]["dogName"], "",
+                         "applyRemoteDogPresence must clear remote.dog.name for dogName: ''")
 
 
 if __name__ == '__main__':

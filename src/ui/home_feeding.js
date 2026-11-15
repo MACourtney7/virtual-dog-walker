@@ -10,6 +10,9 @@
 (function () {
   'use strict';
 
+  // SSR / non-browser safe module root.
+  var root = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : {});
+
   var STORAGE_KEY = 'virtual_dog_walker.last_feed_at';
 
   // Deterministic phase durations (ms).

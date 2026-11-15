@@ -4,6 +4,7 @@ import { TouchControls } from './touch_controls.js';
 import { WSStatus } from '../net/network.js';
 import { NetStatus } from '../net/network.js';
 import { PUBLIC_ZONE_IDS, isPublicZoneId } from '../world/zones.js';
+import { resolveCoatPresetByName } from '../entities/companion_dog.js';
 
 export class SocialHUD {
   constructor(networkManager, localOwner, localDog, coatPresets) {
@@ -16,6 +17,9 @@ export class SocialHUD {
     // Single-slot immutable kennel state
     this.dogSlot = null;
     this.isHomeLocked = false;
+
+    // Stage preview animation loop handle
+    this.stageAnimId = null;
 
     this.container = document.getElementById('game-container');
     this.hudOverlay = document.getElementById('hud-overlay');
@@ -187,6 +191,11 @@ export class SocialHUD {
     this.bindEvents();
   }
 
+  // Read-only lock accessor (used by main.js to gate movement).
+  get isLocked() {
+    return Boolean(this.isHomeLocked);
+  }
+
   getBreedLabel(coatKey) {
     const labels = {
       CHOCOLATE_TAN: 'Chocolate & Tan Cocker Spaniel',
@@ -203,34 +212,69 @@ export class SocialHUD {
     if (!container) return;
 
     if (this.dogSlot) {
-      // Occupied: read-only card
+      // Occupied: read-only card. Build with DOM APIs so a malicious dog name
+      // or collar color can never inject HTML.
       const p = this.dogSlot.personality || { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
-      container.innerHTML = `
-        <div class="dog-slot-card" id="dog-slot-occupied">
-          <div class="dog-slot-header">
-            <span class="dog-slot-name">🐕 ${this.dogSlot.name}</span>
-            <span class="dog-slot-collar" style="background: ${this.dogSlot.collarColor};" title="Collar color"></span>
-          </div>
-          <div class="dog-slot-breed">${this.getBreedLabel(this.dogSlot.coatKey)}</div>
-          <div class="dog-slot-traits">
-            <div class="dog-slot-trait"><span>🎾 Playfulness</span><strong>${p.playfulness}</strong></div>
-            <div class="dog-slot-trait"><span>🙈 Shyness</span><strong>${p.shyness}</strong></div>
-            <div class="dog-slot-trait"><span>🗣️ Barkyness</span><strong>${p.barkyness}</strong></div>
-            <div class="dog-slot-trait"><span>🎓 Obedience</span><strong>${p.obedience}</strong></div>
-          </div>
-          <button id="btn-remove-dog" class="btn-remove-dog">Remove Dog</button>
-        </div>
-      `;
-      const removeBtn = document.getElementById('btn-remove-dog');
-      if (removeBtn) {
-        removeBtn.addEventListener('click', () => {
-          this.dogSlot = null;
-          this.isHomeLocked = true;
-          this.renderDogSlot();
-          this.renderHomeStage();
-          this.updateCloseButtonState();
-        });
+      container.innerHTML = '';
+
+      const card = document.createElement('div');
+      card.className = 'dog-slot-card';
+      card.id = 'dog-slot-occupied';
+
+      const header = document.createElement('div');
+      header.className = 'dog-slot-header';
+
+      const nameEl = document.createElement('span');
+      nameEl.className = 'dog-slot-name';
+      nameEl.textContent = `🐕 ${this.dogSlot.name}`;
+      header.appendChild(nameEl);
+
+      const collarEl = document.createElement('span');
+      collarEl.className = 'dog-slot-collar';
+      collarEl.title = 'Collar color';
+      // Only accept a safe CSS color token; otherwise fall back to teal.
+      const safeCollar = /^#[0-9a-fA-F]{3,8}$/.test(String(this.dogSlot.collarColor || ''))
+        ? this.dogSlot.collarColor
+        : '#0d9488';
+      collarEl.style.background = safeCollar;
+      header.appendChild(collarEl);
+
+      card.appendChild(header);
+
+      const breedEl = document.createElement('div');
+      breedEl.className = 'dog-slot-breed';
+      breedEl.textContent = this.getBreedLabel(this.dogSlot.coatKey);
+      card.appendChild(breedEl);
+
+      const traitsEl = document.createElement('div');
+      traitsEl.className = 'dog-slot-traits';
+      const traitRows = [
+        ['🎾 Playfulness', p.playfulness],
+        ['🙈 Shyness', p.shyness],
+        ['🗣️ Barkyness', p.barkyness],
+        ['🎓 Obedience', p.obedience]
+      ];
+      for (const [label, value] of traitRows) {
+        const row = document.createElement('div');
+        row.className = 'dog-slot-trait';
+        const labelSpan = document.createElement('span');
+        labelSpan.textContent = label;
+        const valueStrong = document.createElement('strong');
+        valueStrong.textContent = String(value);
+        row.appendChild(labelSpan);
+        row.appendChild(valueStrong);
+        traitsEl.appendChild(row);
       }
+      card.appendChild(traitsEl);
+
+      const removeBtn = document.createElement('button');
+      removeBtn.id = 'btn-remove-dog';
+      removeBtn.className = 'btn-remove-dog';
+      removeBtn.textContent = 'Remove Dog';
+      removeBtn.addEventListener('click', () => this.removeDog());
+      card.appendChild(removeBtn);
+
+      container.appendChild(card);
     } else {
       // Empty: creation form pre-filled with Ziggy defaults
       container.innerHTML = `
@@ -298,7 +342,7 @@ export class SocialHUD {
             </div>
           </div>
 
-          <button id="btn-add-dog" class="btn-primary-cust">Adopt Dog</button>
+          <button id="btn-add-dog" class="btn-primary-cust">Add Dog</button>
         </div>
       `;
 
@@ -338,6 +382,36 @@ export class SocialHUD {
       const addBtn = document.getElementById('btn-add-dog');
       if (addBtn) {
         addBtn.addEventListener('click', () => this.adoptDogFromForm());
+      }
+    }
+  }
+
+  // Remove the current dog: clear the slot, lock Home, persist & broadcast.
+  removeDog() {
+    this.dogSlot = null;
+    this.isHomeLocked = true;
+    this.renderDogSlot();
+    this.renderHomeStage();
+    this.updateCloseButtonState();
+    this.persistProfile();
+
+    if (this.net && typeof this.net.setLocalMeta === 'function') {
+      this.net.setLocalMeta({
+        name: this.owner.name,
+        jacketColor: this.owner.jacketColor,
+        coatName: '',
+        dogName: '',
+        collarColor: '#0d9488',
+        personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 }
+      });
+      if (typeof this.net.broadcast === 'function' && this.net.peerId) {
+        this.net.broadcast(Protocol.createHello(
+          this.net.peerId,
+          this.owner.name,
+          this.owner.jacketColor,
+          '',
+          { dogName: '', collarColor: '#0d9488' }
+        ));
       }
     }
   }
@@ -390,6 +464,46 @@ export class SocialHUD {
     }
   }
 
+  // Build a preview dog descriptor from the empty-slot creation form.
+  _readEmptySlotPreview() {
+    const nameInput = document.getElementById('cust-dog-name');
+    const coatSelect = document.getElementById('cust-dog-coat');
+    const activeCollar = document.querySelector('#collar-palette .color-swatch.active');
+    const readTrait = (trait, def) => {
+      const el = document.getElementById(`cust-personality-${trait}`);
+      const v = el ? parseInt(el.value, 10) : NaN;
+      return isNaN(v) ? def : v;
+    };
+    return {
+      name: (nameInput && nameInput.value.trim()) || 'Ziggy',
+      coatKey: (coatSelect && coatSelect.value) || 'CHOCOLATE_TAN',
+      collarColor: (activeCollar && activeCollar.getAttribute('data-color')) || '#0d9488',
+      personality: {
+        playfulness: readTrait('playfulness', 3),
+        shyness: readTrait('shyness', 2),
+        barkyness: readTrait('barkyness', 2),
+        obedience: readTrait('obedience', 4)
+      }
+    };
+  }
+
+  startStageAnimation() {
+    if (this.stageAnimId !== null) return;
+    if (typeof requestAnimationFrame === 'undefined') return;
+    const loop = () => {
+      this.stageAnimId = requestAnimationFrame(loop);
+      this.renderHomeStage();
+    };
+    this.stageAnimId = requestAnimationFrame(loop);
+  }
+
+  stopStageAnimation() {
+    if (this.stageAnimId !== null && typeof cancelAnimationFrame !== 'undefined') {
+      cancelAnimationFrame(this.stageAnimId);
+    }
+    this.stageAnimId = null;
+  }
+
   renderHomeStage(previewDogData = null) {
     const canvas = document.getElementById('home-stage-canvas');
     if (!canvas) return;
@@ -440,8 +554,9 @@ export class SocialHUD {
       this.owner.angle = saved.angle;
     }
 
-    // Draw dog
-    const hasDog = this.dogSlot || previewDogData;
+    // Draw dog. When the slot is empty, build a live preview from the form.
+    const effectiveDogData = previewDogData || this.dogSlot || this._readEmptySlotPreview();
+    const hasDog = Boolean(effectiveDogData);
     if (hasDog && this.dog && typeof this.dog.draw === 'function') {
       const saved = {
         x: this.dog.x,
@@ -452,7 +567,7 @@ export class SocialHUD {
         name: this.dog.name
       };
 
-      const data = previewDogData || this.dogSlot;
+      const data = effectiveDogData;
       if (data) {
         if (data.coatKey && this.coatPresets && this.coatPresets[data.coatKey]) {
           this.dog.coat = this.coatPresets[data.coatKey];
@@ -601,11 +716,28 @@ export class SocialHUD {
           }
         : { ...personalityDefaults };
 
+      // Honor an explicitly saved empty slot: never auto-create a dog.
+      if (saved.dogSlot === null) {
+        this.dogSlot = null;
+        this.isHomeLocked = true;
+        this.renderDogSlot();
+        this.updateCloseButtonState();
+        this.updateModalActiveSelections();
+        this.openModal();
+        this.renderHomeStage();
+        return;
+      }
+
+      // Resolve the coat preset by name (supports legacy labels) with a
+      // coatKey fallback.
       const savedCoatKey = saved.coatKey || 'CHOCOLATE_TAN';
       const savedCollar = saved.collarColor || '#0d9488';
       const savedDogName = saved.dogName || 'Ziggy';
 
-      if (this.coatPresets && this.coatPresets[savedCoatKey]) {
+      const resolvedPreset = resolveCoatPresetByName(saved.coatName || savedCoatKey);
+      if (resolvedPreset) {
+        this.dog.coat = resolvedPreset;
+      } else if (this.coatPresets && this.coatPresets[savedCoatKey]) {
         this.dog.coat = this.coatPresets[savedCoatKey];
       }
       this.dog.collarColor = savedCollar;
@@ -617,10 +749,20 @@ export class SocialHUD {
         this.dog.personality = loadedPersonality;
       }
 
-      // Populate single-slot kennel
+      // Populate single-slot kennel. Derive the coatKey from the resolved
+      // preset name so legacy labels map to the correct key.
+      let resolvedCoatKey = savedCoatKey;
+      if (resolvedPreset && this.coatPresets) {
+        for (const key of Object.keys(this.coatPresets)) {
+          if (this.coatPresets[key] === resolvedPreset) {
+            resolvedCoatKey = key;
+            break;
+          }
+        }
+      }
       this.dogSlot = {
         name: savedDogName,
-        coatKey: savedCoatKey,
+        coatKey: resolvedCoatKey,
         collarColor: savedCollar,
         personality: loadedPersonality
       };
@@ -736,10 +878,33 @@ export class SocialHUD {
     this.updateModalActiveSelections();
     this.renderDogSlot();
     this.updateCloseButtonState();
+
+    // When Home is locked, the modal must stay open (never toggle closed).
+    if (this.isHomeLocked) {
+      modal.style.display = 'block';
+      this.renderHomeStage();
+      this.startStageAnimation();
+      return;
+    }
+
     modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
     if (modal.style.display === 'block') {
       this.renderHomeStage();
+      this.startStageAnimation();
+    } else {
+      this.stopStageAnimation();
     }
+  }
+
+  closeModal() {
+    const modal = document.getElementById('customizer-modal');
+    if (!modal) return;
+    if (this.isHomeLocked) {
+      this.showToast('Please add a dog to your slot before heading out!');
+      return;
+    }
+    modal.style.display = 'none';
+    this.stopStageAnimation();
   }
 
   bindEvents() {
@@ -776,8 +941,21 @@ export class SocialHUD {
 
     if (closeModal && modal) {
       closeModal.addEventListener('click', () => {
-        if (this.isHomeLocked) return;
-        modal.style.display = 'none';
+        this.closeModal();
+      });
+    }
+
+    // Escape key: block closing while Home is locked.
+    if (typeof document !== 'undefined') {
+      document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape') return;
+        if (!modal || modal.style.display !== 'block') return;
+        if (this.isHomeLocked) {
+          e.preventDefault();
+          this.showToast('Please add a dog to your slot before heading out!');
+          return;
+        }
+        this.closeModal();
       });
     }
 
@@ -861,6 +1039,7 @@ export class SocialHUD {
 
         if (!this.isHomeLocked) {
           modal.style.display = 'none';
+          this.stopStageAnimation();
         }
         this.showToast('✨ Appearance updated!');
       });

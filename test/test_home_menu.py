@@ -148,6 +148,91 @@ class TestCompanionDogNameAndToasts(unittest.TestCase):
         self.assertIn('this.dog.name', self.main_js, "main.js toasts must use this.dog.name")
 
 
+class TestReviewRemediation(unittest.TestCase):
+    """Brief 06: behavioral remediation tests for unification-028."""
+
+    def setUp(self):
+        self.hud_js = read("src/ui/social_hud.js")
+        self.main_js = read("src/main.js")
+        self.dog_js = read("src/entities/companion_dog.js")
+
+    def test_saved_empty_slot_honors_lock(self):
+        # loadSavedProfile must honor an explicitly saved empty slot.
+        self.assertRegex(
+            self.hud_js,
+            r"saved\.dogSlot\s*===\s*null",
+            "loadSavedProfile must branch on saved.dogSlot === null"
+        )
+        # Within that branch the slot must be cleared and Home locked.
+        self.assertRegex(
+            self.hud_js,
+            r"saved\.dogSlot\s*===\s*null[\s\S]{0,400}this\.dogSlot\s*=\s*null",
+            "Saved empty slot must set this.dogSlot = null"
+        )
+        self.assertRegex(
+            self.hud_js,
+            r"saved\.dogSlot\s*===\s*null[\s\S]{0,400}this\.isHomeLocked\s*=\s*true",
+            "Saved empty slot must set this.isHomeLocked = true"
+        )
+
+    def test_lock_blocks_modal_close_and_movement(self):
+        # closeModal must refuse to close while locked.
+        self.assertIn("closeModal()", self.hud_js, "Missing closeModal() method")
+        self.assertRegex(
+            self.hud_js,
+            r"closeModal\s*\(\s*\)\s*\{[\s\S]{0,400}this\.isHomeLocked",
+            "closeModal must check isHomeLocked"
+        )
+        self.assertIn(
+            "Please add a dog to your slot before heading out!",
+            self.hud_js,
+            "Locked close must show the warning toast"
+        )
+        # openModal must not toggle closed while locked.
+        self.assertRegex(
+            self.hud_js,
+            r"openModal\s*\(\s*\)\s*\{[\s\S]{0,600}this\.isHomeLocked",
+            "openModal must guard against toggling closed while locked"
+        )
+        # main.js must gate movement while hud.isHomeLocked.
+        self.assertIn("hud.isHomeLocked", self.main_js, "main.js must gate movement on hud.isHomeLocked")
+
+    def test_stage_preview_empty_slot_and_animation(self):
+        self.assertIn("_readEmptySlotPreview", self.hud_js, "Missing empty-slot preview builder")
+        self.assertIn("startStageAnimation", self.hud_js, "Missing startStageAnimation")
+        self.assertIn("stopStageAnimation", self.hud_js, "Missing stopStageAnimation")
+        self.assertIn("stageAnimId", self.hud_js, "Missing stageAnimId handle")
+        self.assertIn("requestAnimationFrame", self.hud_js, "Stage animation must use requestAnimationFrame")
+        self.assertIn("cancelAnimationFrame", self.hud_js, "Stage animation must use cancelAnimationFrame")
+        # Preview must read from the creation form inputs.
+        self.assertIn("cust-dog-name", self.hud_js, "Preview must read #cust-dog-name")
+        self.assertIn("cust-dog-coat", self.hud_js, "Preview must read #cust-dog-coat")
+
+    def test_remove_dog_persists_empty_slot(self):
+        self.assertIn("removeDog", self.hud_js, "Missing removeDog() method")
+        self.assertRegex(
+            self.hud_js,
+            r"removeDog\s*\(\s*\)\s*\{[\s\S]{0,400}this\.dogSlot\s*=\s*null",
+            "removeDog must clear this.dogSlot"
+        )
+        self.assertRegex(
+            self.hud_js,
+            r"removeDog\s*\(\s*\)\s*\{[\s\S]{0,800}this\.persistProfile\s*\(",
+            "removeDog must persist the empty slot"
+        )
+        # persistProfile must write dogSlot (null when empty).
+        self.assertIn("dogSlot: this.dogSlot", self.hud_js, "persistProfile must store dogSlot")
+
+    def test_resolve_coat_preset_by_name(self):
+        self.assertIn("resolveCoatPresetByName", self.dog_js, "Missing resolveCoatPresetByName")
+        self.assertIn("Chocolate & Tan Cocker Spaniel", self.dog_js, "Missing current breed label")
+        self.assertIn("Chocolate & Tan (Ziggy)", self.dog_js, "Missing legacy breed label")
+        # social_hud must import and use the resolver.
+        self.assertIn("resolveCoatPresetByName", self.hud_js, "social_hud must import resolveCoatPresetByName")
+        # main.js must use the resolver for remote players.
+        self.assertIn("resolveCoatPresetByName", self.main_js, "main.js must use resolveCoatPresetByName")
+
+
 class TestNetworkProtocolAndStorage(unittest.TestCase):
     """REQ-028.5: Protocol dogName field and localStorage persistence."""
 

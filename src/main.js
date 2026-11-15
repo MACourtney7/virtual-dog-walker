@@ -2,7 +2,7 @@
 
 import { Field, Camera } from './world/field.js';
 import { Owner, Gait } from './entities/owner.js';
-import { CompanionDog, CoatPreset, DogState } from './entities/companion_dog.js';
+import { CompanionDog, CoatPreset, DogState, resolveCoatPresetByName } from './entities/companion_dog.js';
 import { TennisBall } from './entities/toy.js';
 import { NetworkManager, NetStatus } from './net/network.js';
 import { Protocol, PacketType } from './net/protocol.js';
@@ -325,16 +325,11 @@ export class CliftonDownGame {
       }
     }
 
-    // Helper to resolve CoatPreset from coatName or coatKey
+    // Helper to resolve CoatPreset from coatName or coatKey. Delegates to the
+    // shared resolveCoatPresetByName so legacy labels resolve consistently.
     const resolveCoat = (coatName) => {
       if (!coatName) return CoatPreset.CHOCOLATE_TAN;
-      const cn = String(coatName).toLowerCase();
-      if (cn.includes('golden')) return CoatPreset.GOLDEN;
-      if (cn.includes('black')) return CoatPreset.BLACK_LAB;
-      if (cn.includes('jack') || cn.includes('russell')) return CoatPreset.JACK_RUSSELL || CoatPreset.CHOCOLATE_TAN;
-      if (cn.includes('setter') || cn.includes('red')) return CoatPreset.RED_SETTER || CoatPreset.CHOCOLATE_TAN;
-      if (cn.includes('chocolate') || cn.includes('ziggy')) return CoatPreset.CHOCOLATE_TAN;
-      return CoatPreset.CHOCOLATE_TAN;
+      return resolveCoatPresetByName(coatName) || CoatPreset.CHOCOLATE_TAN;
     };
 
     // When a peer connects or updates appearance
@@ -1266,6 +1261,24 @@ export class CliftonDownGame {
   }
 
   update(dt) {
+    // Home lock: strictly freeze the player in place until a dog is added.
+    if (this.hud && this.hud.isHomeLocked) {
+      if (this.owner) {
+        this.owner.vx = 0;
+        this.owner.vy = 0;
+        this.owner.isMoving = false;
+        if (this.owner.keys) {
+          this.owner.keys.up = false;
+          this.owner.keys.down = false;
+          this.owner.keys.left = false;
+          this.owner.keys.right = false;
+        }
+        if (typeof this.owner.setGait === 'function') {
+          this.owner.setGait('STAND');
+        }
+      }
+    }
+
     // Zone Warp Cooldown & Crossfade Fade
     if (this.warpCooldown > 0) this.warpCooldown = Math.max(0, this.warpCooldown - dt);
     if (this.warpFadeAlpha > 0) this.warpFadeAlpha = Math.max(0, this.warpFadeAlpha - dt * 1.5);
@@ -1405,10 +1418,8 @@ export class CliftonDownGame {
 
       let remote = this.remotePlayers.get(peerId);
       const meta = interpolatorData.meta || {};
-      let coat = CoatPreset.CHOCOLATE_TAN;
       const coatName = (meta && meta.coatName) ? meta.coatName : '';
-      if (coatName.includes('Golden')) coat = CoatPreset.GOLDEN;
-      else if (coatName.includes('Black')) coat = CoatPreset.BLACK_LAB;
+      const coat = resolveCoatPresetByName(coatName) || CoatPreset.CHOCOLATE_TAN;
 
       if (!remote) {
         // Auto-create remote player if not yet instantiated

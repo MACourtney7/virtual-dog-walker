@@ -224,6 +224,10 @@
       bowlEl.parentNode.removeChild(bowlEl);
     }
     bowlEl = null;
+    // Notify the sanctuary so any state-driven bowl rendering is cleared too.
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.clearBowl === 'function') {
+      try { window.HomeSanctuary.clearBowl(); } catch (e) { /* ignore */ }
+    }
   }
 
   // ---------------------------------------------------------------------------

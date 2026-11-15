@@ -130,3 +130,177 @@
 +Suite must pass 100%.
 +
 +
+
+# 2026-11-15 17:22:31.650375
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-02-downs-grass-and-real-dog-rendering"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/home_sanctuary.js"
++  - "virtual_dog_walker/src/ui/home_feeding.js"
++test_cmd: "python3 -m unittest test/test_home_sanctuary.py"
++---
++
++# Implementer Brief 02: "The Downs" Grass Patch & Real CompanionDog Rendering
++
++## Context & Objectives
++1. **The Downs Grass Aesthetic**:
++   Replace the bright lime-green cartoon grass with the authentic rich turf of "The Downs" (`src/world/field.js`):
++   - `grassBase`: `#3e6b2c`
++   - `grassDark`: `#335824`
++   - `grassLight`: `#4c8237`
++   - `grassMown`: `#447831`
++   - Diagonal mown meadow stripes (`rgba(76, 130, 55, 0.14)`)
++   - Subtle procedural grass variations and `#5da347` blade flecks.
++   - Soft dark vignette border along the canvas edge so it looks like an enclosed, manicured turf patch.
++2. **Real CompanionDog Rendering**:
++   Replace the cartoon oval dog with the authentic in-game `CompanionDog` representation:
++   - Use `CompanionDog.prototype.draw` (or a `CompanionDog` entity with `coat`, `collarColor`, `name`, `angle`, `tailAngle`, `legPhase`, `isSitting`, `isSniffing`).
++   - Draw the real top-down articulated canine body, floppy ears, paws, wagging tail, collar, and name tag.
++   - During feeding, turn to `angle = Math.PI / 2` (facing camera).
++   - In `drawField()` or `drawDog()`, render a ceramic food bowl with kibble in front of the dog (`x, y + 16`) during `bowl` and `eating` phases.
++3. **Canvas Containment (Zero Scrollbars)**:
++   In `resizeCanvas()`:
++   Always set `canvas.style.width = fieldWidth + 'px'; canvas.style.height = fieldHeight + 'px';` so DPR scaling does not expand the DOM layout box.
++
++## Detailed Requirements
++
++### 1. `virtual_dog_walker/src/ui/home_sanctuary.js`
++- **Downs Turf Palette**:
++  Define:
++  ```javascript
++  var GRASS_BASE = '#3e6b2c';
++  var GRASS_DARK = '#335824';
++  var GRASS_LIGHT = '#4c8237';
++  var GRASS_MOWN = '#447831';
++  var BLADE_COLOR = '#5da347';
++  ```
++- **Draw Field**:
++  - Fill with `GRASS_BASE`.
++  - Draw diagonal mown stripes across the field using `rgba(76, 130, 55, 0.14)`.
++  - Draw procedural grass variation patches using `GRASS_LIGHT` and `GRASS_DARK`.
++  - Draw subtle blade flecks using `BLADE_COLOR`.
++  - Draw soft inner vignette (`createRadialGradient`) darkening slightly at perimeter.
++- **Dog Rendering with `CompanionDog`**:
++  - Support delegating to `liveDogEntity` (if provided in `mount(canvasEl, explicitDogSlot, liveDog)` or via `window.__vdwLiveDog`) OR use `CompanionDog` class if available in global/module scope, or execute articulated `CompanionDog.prototype.draw.call(dog, ctx)`.
++  - Ensure the rendered dog exhibits:
++    - Shadow, articulated paws with leg cycling while walking.
++    - Torso and coat colors derived from `coatKey` (e.g. `CHOCOLATE_TAN`, `GOLDEN`, `BLACK_LAB`).
++    - Floppy ears, snout, eyes, collar with custom collar color.
++    - Wagging tail during `wag` and `wander` states.
++    - Dropping nose to ground during `sniff` state.
++    - Tucked hind legs during `sit` state.
++- **Food Bowl Rendering**:
++  - When `forcedState === 'eating'` or feeding state is active:
++    - Draw a ceramic pet bowl at `dog.x, dog.y + 14` with rim, interior depth shadow, and brown kibbles.
++- **Canvas Sizing**:
++  - In `resizeCanvas()`:
++    - `canvas.style.width = fieldWidth + 'px';`
++    - `canvas.style.height = fieldHeight + 'px';`
++
++### 2. `virtual_dog_walker/src/ui/home_feeding.js`
++- When clearing bowl on unmount or completion, notify sanctuary to clear bowl if rendered via state.
++- Keep `window.HomeFeeding` public API and test hooks 100% backwards-compatible.
++
++## Verification
++Run:
++`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py`
++Suite must pass 100%.
++
++
+
+# 2026-11-15 17:22:31.654176
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-02-downs-grass-and-real-dog-rendering"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/home_sanctuary.js"
++  - "virtual_dog_walker/src/ui/home_feeding.js"
++test_cmd: "python3 -m unittest test/test_home_sanctuary.py"
++---
++
++# Implementer Brief 02: "The Downs" Grass Patch & Real CompanionDog Rendering
++
++## Context & Objectives
++1. **The Downs Grass Aesthetic**:
++   Replace the bright lime-green cartoon grass with the authentic rich turf of "The Downs" (`src/world/field.js`):
++   - `grassBase`: `#3e6b2c`
++   - `grassDark`: `#335824`
++   - `grassLight`: `#4c8237`
++   - `grassMown`: `#447831`
++   - Diagonal mown meadow stripes (`rgba(76, 130, 55, 0.14)`)
++   - Subtle procedural grass variations and `#5da347` blade flecks.
++   - Soft dark vignette border along the canvas edge so it looks like an enclosed, manicured turf patch.
++2. **Real CompanionDog Rendering**:
++   Replace the cartoon oval dog with the authentic in-game `CompanionDog` representation:
++   - Use `CompanionDog.prototype.draw` (or a `CompanionDog` entity with `coat`, `collarColor`, `name`, `angle`, `tailAngle`, `legPhase`, `isSitting`, `isSniffing`).
++   - Draw the real top-down articulated canine body, floppy ears, paws, wagging tail, collar, and name tag.
++   - During feeding, turn to `angle = Math.PI / 2` (facing camera).
++   - In `drawField()` or `drawDog()`, render a ceramic food bowl with kibble in front of the dog (`x, y + 16`) during `bowl` and `eating` phases.
++3. **Canvas Containment (Zero Scrollbars)**:
++   In `resizeCanvas()`:
++   Always set `canvas.style.width = fieldWidth + 'px'; canvas.style.height = fieldHeight + 'px';` so DPR scaling does not expand the DOM layout box.
++
++## Detailed Requirements
++
++### 1. `virtual_dog_walker/src/ui/home_sanctuary.js`
++- **Downs Turf Palette**:
++  Define:
++  ```javascript
++  var GRASS_BASE = '#3e6b2c';
++  var GRASS_DARK = '#335824';
++  var GRASS_LIGHT = '#4c8237';
++  var GRASS_MOWN = '#447831';
++  var BLADE_COLOR = '#5da347';
++  ```
++- **Draw Field**:
++  - Fill with `GRASS_BASE`.
++  - Draw diagonal mown stripes across the field using `rgba(76, 130, 55, 0.14)`.
++  - Draw procedural grass variation patches using `GRASS_LIGHT` and `GRASS_DARK`.
++  - Draw subtle blade flecks using `BLADE_COLOR`.
++  - Draw soft inner vignette (`createRadialGradient`) darkening slightly at perimeter.
++- **Dog Rendering with `CompanionDog`**:
++  - Support delegating to `liveDogEntity` (if provided in `mount(canvasEl, explicitDogSlot, liveDog)` or via `window.__vdwLiveDog`) OR use `CompanionDog` class if available in global/module scope, or execute articulated `CompanionDog.prototype.draw.call(dog, ctx)`.
++  - Ensure the rendered dog exhibits:
++    - Shadow, articulated paws with leg cycling while walking.
++    - Torso and coat colors derived from `coatKey` (e.g. `CHOCOLATE_TAN`, `GOLDEN`, `BLACK_LAB`).
++    - Floppy ears, snout, eyes, collar with custom collar color.
++    - Wagging tail during `wag` and `wander` states.
++    - Dropping nose to ground during `sniff` state.
++    - Tucked hind legs during `sit` state.
++- **Food Bowl Rendering**:
++  - When `forcedState === 'eating'` or feeding state is active:
++    - Draw a ceramic pet bowl at `dog.x, dog.y + 14` with rim, interior depth shadow, and brown kibbles.
++- **Canvas Sizing**:
++  - In `resizeCanvas()`:
++    - `canvas.style.width = fieldWidth + 'px';`
++    - `canvas.style.height = fieldHeight + 'px';`
++
++### 2. `virtual_dog_walker/src/ui/home_feeding.js`
++- When clearing bowl on unmount or completion, notify sanctuary to clear bowl if rendered via state.
++- Keep `window.HomeFeeding` public API and test hooks 100% backwards-compatible.
++
++## Verification
++Run:
++`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py`
++Suite must pass 100%.
++
++

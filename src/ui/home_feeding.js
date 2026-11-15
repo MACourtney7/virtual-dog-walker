@@ -5,10 +5,13 @@
  * feeding state machine (facing -> bowl -> eating -> complete) and persists
  * the last feed timestamp to localStorage.
  *
- * Exposes window.HomeFeeding.
+ * Exposes HomeFeeding on the module root (window in browsers).
  */
 (function () {
   'use strict';
+
+  // SSR / non-browser safe module root.
+  var root = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : {});
 
   var STORAGE_KEY = 'virtual_dog_walker.last_feed_at';
 
@@ -25,7 +28,6 @@
   var timers = [];
   var actionBarEl = null;
   var feedBtnEl = null;
-  var bowlEl = null;
   var lastFeedAt = null;
   var pendingResolve = null;
 
@@ -57,17 +59,17 @@
   }
 
   function getDogSlot() {
-    if (window.HomeSanctuary && typeof window.HomeSanctuary.getDogSlot === 'function') {
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.getDogSlot === 'function') {
       try {
-        return window.HomeSanctuary.getDogSlot();
+        return root.HomeSanctuary.getDogSlot();
       } catch (e) {
         return null;
       }
     }
 
     // Fallback: an explicitly published active slot.
-    if (window.__vdwActiveDogSlot !== undefined) {
-      return window.__vdwActiveDogSlot;
+    if (root.__vdwActiveDogSlot !== undefined) {
+      return root.__vdwActiveDogSlot;
     }
 
     // Last resort: read the persisted walker profile. Never assume a dog
@@ -91,9 +93,9 @@
   }
 
   function setDogPose(pose) {
-    if (window.HomeSanctuary && typeof window.HomeSanctuary.setDogPose === 'function') {
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.setDogPose === 'function') {
       try {
-        window.HomeSanctuary.setDogPose(pose);
+        root.HomeSanctuary.setDogPose(pose);
       } catch (e) {
         /* ignore */
       }
@@ -101,9 +103,9 @@
   }
 
   function setDogState(dogState) {
-    if (window.HomeSanctuary && typeof window.HomeSanctuary.setDogState === 'function') {
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.setDogState === 'function') {
       try {
-        window.HomeSanctuary.setDogState(dogState);
+        root.HomeSanctuary.setDogState(dogState);
       } catch (e) {
         /* ignore */
       }
@@ -111,17 +113,17 @@
   }
 
   function emitToast(message) {
-    if (window.HomeSanctuary && typeof window.HomeSanctuary.toast === 'function') {
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.toast === 'function') {
       try {
-        window.HomeSanctuary.toast(message);
+        root.HomeSanctuary.toast(message);
         return;
       } catch (e) {
         /* fall through */
       }
     }
-    if (typeof window.showToast === 'function') {
+    if (typeof root.showToast === 'function') {
       try {
-        window.showToast(message);
+        root.showToast(message);
         return;
       } catch (e) {
         /* fall through */
@@ -203,27 +205,17 @@
     feedBtnEl.setAttribute('aria-disabled', disabled ? 'true' : 'false');
   }
 
+  // The food bowl is rendered natively on the canvas by
+  // HomeSanctuary.drawFoodBowl(); no DOM element is ever injected.
   function showBowl() {
-    if (bowlEl && document.body.contains(bowlEl)) return bowlEl;
-    bowlEl = document.createElement('div');
-    bowlEl.id = 'home-food-bowl';
-    bowlEl.className = 'home-food-bowl';
-    bowlEl.textContent = '🥣';
-    bowlEl.setAttribute('aria-hidden', 'true');
-    var canvas = getCanvas();
-    if (canvas && canvas.parentNode) {
-      canvas.parentNode.appendChild(bowlEl);
-    } else {
-      document.body.appendChild(bowlEl);
-    }
-    return bowlEl;
+    // No-op: bowl rendering is owned by HomeSanctuary.
   }
 
   function clearBowl() {
-    if (bowlEl && bowlEl.parentNode) {
-      bowlEl.parentNode.removeChild(bowlEl);
+    // Notify the sanctuary so any state-driven bowl rendering is cleared too.
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.clearBowl === 'function') {
+      try { root.HomeSanctuary.clearBowl(); } catch (e) { /* ignore */ }
     }
-    bowlEl = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -284,8 +276,8 @@
               feeding = false;
               setDogPose('auto');
               setDogState('wander');
-              if (window.HomeSanctuary && typeof window.HomeSanctuary.resumeRoaming === 'function') {
-                try { window.HomeSanctuary.resumeRoaming(); } catch (e) {}
+              if (root.HomeSanctuary && typeof root.HomeSanctuary.resumeRoaming === 'function') {
+                try { root.HomeSanctuary.resumeRoaming(); } catch (e) {}
               }
               updateDisabledState();
               pendingResolve = null;
@@ -300,12 +292,12 @@
   function onFeedClick() {
     if (feeding) return;
     var dogSlot = null;
-    if (window.HomeSanctuary && typeof window.HomeSanctuary.getDogSlot === 'function') {
-      try { dogSlot = window.HomeSanctuary.getDogSlot(); } catch (e) {}
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.getDogSlot === 'function') {
+      try { dogSlot = root.HomeSanctuary.getDogSlot(); } catch (e) {}
     }
     var dog = null;
-    if (window.HomeSanctuary && typeof window.HomeSanctuary.getCompanionDog === 'function') {
-      try { dog = window.HomeSanctuary.getCompanionDog(); } catch (e) {}
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.getCompanionDog === 'function') {
+      try { dog = root.HomeSanctuary.getCompanionDog(); } catch (e) {}
     }
     var name = (dogSlot && dogSlot.name) || (dog && dog.name) || 'Ziggy';
     var id = (dogSlot && (dogSlot.id || dogSlot.dogId)) || (dog && dog.id) || 'dog-1';
@@ -416,7 +408,7 @@
     }
   };
 
-  window.HomeFeeding = {
+  root.HomeFeeding = {
     mount: mount,
     unmount: unmount,
     feed: feed,

@@ -71,11 +71,14 @@ function __makeEl(tag) {{
       return {{
         clearRect() {{}}, fillRect() {{}}, beginPath() {{}}, ellipse() {{}},
         fill() {{}}, stroke() {{}}, save() {{}}, restore() {{}},
-        setTransform() {{}}, translate() {{}}, arc() {{}}, moveTo() {{}}, lineTo() {{}},
-        fillText() {{}},
+        setTransform() {{}}, translate() {{}}, rotate() {{}}, scale() {{}},
+        arc() {{}}, moveTo() {{}}, lineTo() {{}}, closePath() {{}}, rect() {{}},
+        fillText() {{}}, strokeText() {{}}, measureText() {{ return {{ width: 0 }}; }},
         createLinearGradient() {{ return {{ addColorStop() {{}} }}; }},
         createRadialGradient() {{ return {{ addColorStop() {{}} }}; }},
-        set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}}
+        set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}},
+        set lineCap(v) {{}}, set lineJoin(v) {{}}, set globalAlpha(v) {{}},
+        set font(v) {{}}, set textAlign(v) {{}}, set textBaseline(v) {{}}
       }};
     }},
     focus() {{}}, blur() {{}}
@@ -224,9 +227,68 @@ class TestHomeSanctuaryStatic(unittest.TestCase):
         self.assertIn('spawnParticles', self.sanctuary_js,
                       "HomeSanctuary must expose spawnParticles")
 
+    def test_gitignore_includes_aider(self):
+        gitignore = read(".gitignore")
+        self.assertIn(".aider", gitignore,
+                      ".gitignore must ignore .aider* files")
+
     def test_hud_bridges_window_show_toast(self):
         self.assertIn('window.showToast', self.hud_js,
                       "SocialHUD must bridge window.showToast")
+
+    def test_downs_grass_palette_constants(self):
+        for color in ("#3e6b2c", "#335824", "#4c8237", "#5da347"):
+            self.assertIn(color, self.sanctuary_js,
+                          f"Missing 'The Downs' turf palette constant {color}")
+
+    def test_canvas_style_dimensions_pinned(self):
+        self.assertIn('canvas.style.width', self.sanctuary_js,
+                      "Canvas CSS width must be pinned via canvas.style.width")
+        self.assertIn('canvas.style.height', self.sanctuary_js,
+                      "Canvas CSS height must be pinned via canvas.style.height")
+
+    def test_food_bowl_rendering(self):
+        self.assertIn('drawFoodBowl', self.sanctuary_js,
+                      "Missing drawFoodBowl renderer")
+        self.assertIn('kibbles', self.sanctuary_js,
+                      "Food bowl must render kibbles")
+
+    def test_bowl_visible_in_bowl_and_eating(self):
+        self.assertIn("isBowlVisible", self.sanctuary_js,
+                      "HomeSanctuary must define isBowlVisible()")
+        self.assertRegex(
+            self.sanctuary_js,
+            r"forcedState\s*===\s*'eating'\s*\|\|\s*forcedState\s*===\s*'bowl'",
+            "Bowl visibility must include both 'eating' and 'bowl' forced states"
+        )
+
+    def test_grass_mown_used_in_draw_field(self):
+        self.assertIn("GRASS_MOWN", self.sanctuary_js,
+                      "HomeSanctuary must define GRASS_MOWN")
+        self.assertRegex(
+            self.sanctuary_js,
+            r"ctx\.fillStyle\s*=\s*GRASS_MOWN",
+            "drawField must actively use GRASS_MOWN for turf shading"
+        )
+
+    def test_live_dog_entity_not_mutated_static(self):
+        self.assertIn("buildRenderAdapter", self.sanctuary_js,
+                      "HomeSanctuary must use a non-mutating render adapter")
+        # The old mutation pattern must be gone.
+        self.assertNotIn("entity.x = dog.x", self.sanctuary_js,
+                         "drawDog must not mutate the live entity's x")
+        self.assertNotIn("entity.y = dog.y", self.sanctuary_js,
+                         "drawDog must not mutate the live entity's y")
+
+    def test_feeding_ssr_safe_root(self):
+        self.assertIn("var root = typeof window !== 'undefined'",
+                      self.feeding_js,
+                      "home_feeding.js must define an SSR-safe root reference")
+        # No bare `window.HomeSanctuary` / `window.HomeFeeding` references.
+        self.assertNotIn("window.HomeSanctuary", self.feeding_js,
+                         "home_feeding.js must not reference bare window.HomeSanctuary")
+        self.assertNotIn("window.HomeFeeding", self.feeding_js,
+                         "home_feeding.js must not reference bare window.HomeFeeding")
 
 
 @unittest.skipUnless(
@@ -582,6 +644,286 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
                          "GOLDEN coatKey must map to the golden primary color")
         self.assertEqual(res["coatColorDark"], "#ca8a04",
                          "GOLDEN coatKey must map to the golden dark color")
+
+    def test_exec_mount_draws_downs_turf(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        // Instrument the 2D context to record fillStyle assignments.
+        const fills = [];
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          return new Proxy(ctx, {
+            set(target, prop, value) {
+              if (prop === 'fillStyle') { fills.push(value); }
+              target[prop] = value;
+              return true;
+            }
+          });
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.__testHooks.render();
+
+        return { fills: fills };
+        """
+        res = _run_js(snippet)
+        self.assertIn("#3e6b2c", res["fills"],
+                      "render() must fill the field with the 'The Downs' turf base #3e6b2c")
+
+    def test_exec_camera_pose_orientation_faces_down(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        // Instrument ctx.rotate so we can observe the effective rotation
+        // applied by drawArticulatedDog during render().
+        const rotations = [];
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          const originalRotate = ctx.rotate.bind(ctx);
+          ctx.rotate = function (angle) {
+            rotations.push(angle);
+            return originalRotate(angle);
+          };
+          return ctx;
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.setDogPose('camera');
+        const dog = window.HomeSanctuary.getCompanionDog();
+
+        rotations.length = 0;
+        window.HomeSanctuary.__testHooks.render();
+
+        return {
+          facing: dog.facing,
+          expected: Math.PI / 2,
+          rotations: rotations
+        };
+        """
+        res = _run_js(snippet)
+        self.assertAlmostEqual(res["facing"], res["expected"], places=6,
+                               msg="Camera pose must face down (angle = Math.PI / 2)")
+        self.assertTrue(len(res["rotations"]) > 0,
+                        "render() must rotate the dog body via ctx.rotate")
+        # drawArticulatedDog rotates by (angle - PI/2); with angle = PI/2 the
+        # effective rotation must be 0 so the head points down at +Y.
+        self.assertAlmostEqual(res["rotations"][0], 0.0, places=6,
+                               msg="Camera pose must rotate by 0 (head faces +Y)")
+
+    def test_exec_live_dog_entity_not_mutated(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const live = {
+          x: 999, y: 888, angle: 0.123, legPhase: 0,
+          isSitting: false, isSniffing: false,
+          coat: { bodyColor: '#111111', tanColor: '#222222', bibColor: '#333333' },
+          collarColor: '#444444', name: 'LiveDog'
+        };
+        const snapshot = JSON.stringify(live);
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot, live);
+
+        // Force a full render pass (drawDog -> buildRenderAdapter) through the
+        // public test hook path.
+        const hooks = window.HomeSanctuary.__testHooks;
+        hooks.updateDog(16);
+        hooks.render();
+        return {
+          before: snapshot,
+          after: JSON.stringify(live),
+          x: live.x,
+          y: live.y,
+          angle: live.angle
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["before"], res["after"],
+                         "liveDogEntity must not be mutated during rendering")
+        self.assertEqual(res["x"], 999, "liveDogEntity.x must remain unchanged")
+        self.assertEqual(res["y"], 888, "liveDogEntity.y must remain unchanged")
+        self.assertAlmostEqual(res["angle"], 0.123, places=6,
+                               msg="liveDogEntity.angle must remain unchanged")
+
+    def test_exec_bowl_visible_in_bowl_and_eating_states(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+
+        window.HomeSanctuary.setDogState('bowl');
+        const bowlForced = window.HomeSanctuary.__testHooks.getForcedState();
+
+        window.HomeSanctuary.setDogState('eating');
+        const eatingForced = window.HomeSanctuary.__testHooks.getForcedState();
+
+        return { bowlForced: bowlForced, eatingForced: eatingForced };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["bowlForced"], "bowl",
+                         "setDogState('bowl') must set forcedState to 'bowl'")
+        self.assertEqual(res["eatingForced"], "eating",
+                         "setDogState('eating') must set forcedState to 'eating'")
+
+    def test_exec_clear_bowl_resets_bowl_and_eating_state(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+
+        window.HomeSanctuary.setDogState('bowl');
+        const forcedBefore = window.HomeSanctuary.__testHooks.getForcedState();
+        window.HomeSanctuary.clearBowl();
+        const forcedAfter = window.HomeSanctuary.__testHooks.getForcedState();
+        const dogAfter = window.HomeSanctuary.getCompanionDog();
+
+        window.HomeSanctuary.setDogState('eating');
+        window.HomeSanctuary.clearBowl();
+        const forcedAfterEating = window.HomeSanctuary.__testHooks.getForcedState();
+        const dogAfterEating = window.HomeSanctuary.getCompanionDog();
+
+        return {
+          forcedBefore: forcedBefore,
+          forcedAfter: forcedAfter,
+          dogStateAfter: dogAfter.state,
+          forcedAfterEating: forcedAfterEating,
+          dogStateAfterEating: dogAfterEating.state
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["forcedBefore"], "bowl",
+                         "setDogState('bowl') must set forcedState to 'bowl'")
+        self.assertIsNone(res["forcedAfter"],
+                          "clearBowl() must clear forcedState from 'bowl'")
+        self.assertNotIn(res["dogStateAfter"], ("bowl", "eating"),
+                         "clearBowl() must reset the dog out of bowl/eating state")
+        self.assertIsNone(res["forcedAfterEating"],
+                          "clearBowl() must clear forcedState from 'eating'")
+        self.assertNotIn(res["dogStateAfterEating"], ("bowl", "eating"),
+                         "clearBowl() must reset the dog out of eating state")
+
+    def test_exec_draw_delegates_to_live_dog_draw_method(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        let drawCalled = false;
+        const live = {
+          x: 10, y: 10, angle: 0, legPhase: 0,
+          isSitting: false, isSniffing: false,
+          coat: { bodyColor: '#111111', tanColor: '#222222', bibColor: '#333333' },
+          collarColor: '#444444', name: 'LiveDog',
+          draw: function (ctx) { drawCalled = true; }
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot, live);
+        window.HomeSanctuary.__testHooks.render();
+
+        return { drawCalled: drawCalled };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["drawCalled"],
+                        "drawDog must delegate to the live entity's draw(ctx) method")
+
+    def test_home_feeding_no_dom_bowl_created(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+        const bar = document.createElement('div');
+        bar.id = 'home-action-bar';
+        sanctuary.appendChild(bar);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        HomeFeeding.mount();
+
+        HomeFeeding.__testHooks.runFeed({ dogName: 'Ziggy', dogId: 'dog-1' });
+        __flushTimers();
+
+        const byId = document.getElementById('home-food-bowl');
+        const byClass = document.querySelector('.home-food-bowl');
+        return {
+          byId: Boolean(byId),
+          byClass: Boolean(byClass)
+        };
+        """
+        res = _run_js(snippet)
+        self.assertFalse(res["byId"],
+                         "home_feeding must not inject a #home-food-bowl DOM element")
+        self.assertFalse(res["byClass"],
+                         "home_feeding must not inject a .home-food-bowl DOM element")
 
     def test_exec_second_click_while_feeding_ignored(self):
         snippet = """

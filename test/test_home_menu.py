@@ -213,6 +213,40 @@ class TestHomeHUDAndStage(unittest.TestCase):
         self.assertIn('👤 You', self.hud_js, "Missing '👤 You' tab button label")
         self.assertIn('🐕 Dogs', self.hud_js, "Missing '🐕 Dogs' tab button label")
 
+    def test_glassmorphic_css_rules_present(self):
+        css = self.style_css
+
+        # .home-field-preview must be a fixed-height turf panel.
+        preview_idx = css.find('.home-field-preview')
+        self.assertNotEqual(preview_idx, -1, "Missing .home-field-preview CSS rule")
+        preview_block = css[preview_idx:preview_idx + 400]
+        self.assertIn('height: 220px;', preview_block,
+                      ".home-field-preview must set height: 220px;")
+        self.assertIn('background: #3e6b2c;', preview_block,
+                      ".home-field-preview must use the 'The Downs' turf background #3e6b2c")
+
+        # .customizer-settings must be glassmorphic (rgba background).
+        settings_idx = css.find('.customizer-settings')
+        self.assertNotEqual(settings_idx, -1, "Missing .customizer-settings CSS rule")
+        settings_block = css[settings_idx:settings_idx + 400]
+        self.assertIn('rgba(', settings_block,
+                      ".customizer-settings must use a glassmorphic rgba background")
+
+        # .btn-action-feed must be emerald glassmorphic.
+        feed_idx = css.find('.btn-action-feed')
+        self.assertNotEqual(feed_idx, -1, "Missing .btn-action-feed CSS rule")
+        feed_block = css[feed_idx:feed_idx + 600]
+        self.assertIn('rgba(16, 185, 129', feed_block,
+                      ".btn-action-feed must use an emerald rgba(16, 185, 129 ...) background/border")
+
+    def test_modal_header_actions_layout(self):
+        css = self.style_css
+        idx = css.find('.customizer-header-actions')
+        self.assertNotEqual(idx, -1, "Missing .customizer-header-actions CSS rule")
+        block = css[idx:idx + 300]
+        self.assertIn('display: flex;', block,
+                      ".customizer-header-actions must be styled with display: flex;")
+
 
 class TestDogSlotKennelAndLocking(unittest.TestCase):
     """REQ-028.3: Single-slot immutable kennel and first-time / empty-slot lock."""

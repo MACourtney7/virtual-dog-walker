@@ -28,6 +28,7 @@ export class Protocol {
       name,
       jacketColor,
       dogCoatName,
+      dogName: (extraMeta && extraMeta.dogName) ? extraMeta.dogName : 'Ziggy',
       hairStyle: extraMeta.hairStyle,
       hairColor: extraMeta.hairColor,
       pantsColor: extraMeta.pantsColor,

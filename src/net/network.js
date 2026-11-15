@@ -78,7 +78,8 @@ export class PeerNetworkManager {
     this.localMeta = {
       name: 'Park Walker',
       jacketColor: '#1e3a8a',
-      coatName: 'Chocolate & Tan (Ziggy)'
+      coatName: 'Chocolate & Tan (Ziggy)',
+      dogName: 'Ziggy'
     };
 
     this.connections = new Map();
@@ -165,6 +166,7 @@ export class PeerNetworkManager {
           name: meta.name || 'Player',
           jacketColor: meta.jacketColor || '#14532d',
           coatName: meta.coatName || 'Chocolate & Tan (Ziggy)',
+          dogName: meta.dogName || 'Ziggy',
           hairStyle: meta.hairStyle,
           hairColor: meta.hairColor,
           pantsColor: meta.pantsColor,
@@ -179,6 +181,7 @@ export class PeerNetworkManager {
       if (meta.name) peerData.meta.name = meta.name;
       if (meta.jacketColor) peerData.meta.jacketColor = meta.jacketColor;
       if (meta.coatName) peerData.meta.coatName = meta.coatName;
+      if (meta.dogName) peerData.meta.dogName = meta.dogName;
       if (meta.hairStyle) peerData.meta.hairStyle = meta.hairStyle;
       if (meta.hairColor) peerData.meta.hairColor = meta.hairColor;
       if (meta.pantsColor) peerData.meta.pantsColor = meta.pantsColor;
@@ -303,6 +306,7 @@ export class PeerNetworkManager {
           name: packet.name || 'Visitor',
           jacketColor: packet.jacketColor || '#14532d',
           coatName: packet.dogCoatName || 'Chocolate & Tan (Ziggy)',
+          dogName: packet.dogName || (packet.extraMeta && packet.extraMeta.dogName) || 'Ziggy',
           hairStyle: packet.hairStyle,
           hairColor: packet.hairColor,
           pantsColor: packet.pantsColor,
@@ -335,6 +339,7 @@ export class PeerNetworkManager {
           name: packet.hostMeta.name,
           jacketColor: packet.hostMeta.jacketColor,
           coatName: packet.hostMeta.coatName || packet.hostMeta.dogCoatName,
+          dogName: packet.hostMeta.dogName || 'Ziggy',
           hairStyle: packet.hostMeta.hairStyle,
           hairColor: packet.hostMeta.hairColor,
           pantsColor: packet.hostMeta.pantsColor,
@@ -345,6 +350,7 @@ export class PeerNetworkManager {
           name: 'Host Walker',
           jacketColor: '#1e3a8a',
           coatName: 'Chocolate & Tan (Ziggy)',
+          dogName: 'Ziggy',
           personality: null
         };
         this.ensureRemotePeer(hostId, hostMeta);
@@ -357,6 +363,7 @@ export class PeerNetworkManager {
                 name: p.name,
                 jacketColor: p.jacketColor,
                 coatName: p.coatName || p.dogCoatName,
+                dogName: p.dogName || 'Ziggy',
                 hairStyle: p.hairStyle,
                 hairColor: p.hairColor,
                 pantsColor: p.pantsColor,

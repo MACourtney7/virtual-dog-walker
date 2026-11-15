@@ -80,6 +80,7 @@ export class ZeroMeshNetworkManager {
       name: 'Park Walker',
       jacketColor: '#1e3a8a',
       coatName: 'Chocolate & Tan (Ziggy)',
+      dogName: 'Ziggy',
       hairStyle: 'short',
       hairColor: '#4a3728',
       pantsColor: '#1e293b',
@@ -355,6 +356,7 @@ export class ZeroMeshNetworkManager {
           name: meta.name || 'Walker',
           jacketColor: meta.jacketColor || '#1e3a8a',
           coatName: meta.coatName || 'Chocolate & Tan (Ziggy)',
+          dogName: meta.dogName || 'Ziggy',
           hairStyle: meta.hairStyle,
           hairColor: meta.hairColor,
           pantsColor: meta.pantsColor,
@@ -369,6 +371,7 @@ export class ZeroMeshNetworkManager {
       if (meta.name) peerData.meta.name = meta.name;
       if (meta.jacketColor) peerData.meta.jacketColor = meta.jacketColor;
       if (meta.coatName) peerData.meta.coatName = meta.coatName;
+      if (meta.dogName) peerData.meta.dogName = meta.dogName;
       if (meta.hairStyle) peerData.meta.hairStyle = meta.hairStyle;
       if (meta.hairColor) peerData.meta.hairColor = meta.hairColor;
       if (meta.pantsColor) peerData.meta.pantsColor = meta.pantsColor;
@@ -1506,6 +1509,7 @@ export class ZeroMeshNetworkManager {
           name: packet.name || 'Walker',
           jacketColor: packet.jacketColor || '#1e3a8a',
           coatName: packet.dogCoatName || packet.coatName || 'Chocolate & Tan (Ziggy)',
+          dogName: packet.dogName || (packet.extraMeta && packet.extraMeta.dogName) || 'Ziggy',
           hairStyle: packet.hairStyle,
           hairColor: packet.hairColor,
           pantsColor: packet.pantsColor,
@@ -1569,6 +1573,7 @@ export class ZeroMeshNetworkManager {
               name: p.name,
               jacketColor: p.jacketColor,
               coatName: p.coatName || p.dogCoatName,
+              dogName: p.dogName || 'Ziggy',
               hairStyle: p.hairStyle,
               hairColor: p.hairColor,
               pantsColor: p.pantsColor,

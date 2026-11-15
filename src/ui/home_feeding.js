@@ -63,8 +63,30 @@
         return null;
       }
     }
-    // Fallback: treat presence of the canvas as a mounted slot.
-    return getCanvas() ? {} : null;
+
+    // Fallback: an explicitly published active slot.
+    if (window.__vdwActiveDogSlot !== undefined) {
+      return window.__vdwActiveDogSlot;
+    }
+
+    // Last resort: read the persisted walker profile. Never assume a dog
+    // exists merely because the canvas element is present.
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage) {
+        var raw = localStorage.getItem('clifton_walker_profile');
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            if (parsed.dogSlot === null) return null;
+            if (parsed.dogSlot && typeof parsed.dogSlot === 'object') return parsed.dogSlot;
+            if (parsed.dogName) return { name: parsed.dogName };
+          }
+        }
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return null;
   }
 
   function setDogPose(pose) {
@@ -142,6 +164,8 @@
     if (actionBarEl && document.body.contains(actionBarEl)) {
       return actionBarEl;
     }
+    // Prefer the existing container (e.g. rendered by SocialHUD) so we never
+    // detach it from its parent.
     actionBarEl = document.getElementById('home-action-bar');
     if (!actionBarEl) {
       actionBarEl = document.createElement('div');
@@ -173,7 +197,7 @@
 
   function updateDisabledState() {
     if (!feedBtnEl) return;
-    var disabled = getDogSlot() === null || !getCanvas();
+    var disabled = getDogSlot() === null;
     feedBtnEl.disabled = !!disabled;
     feedBtnEl.setAttribute('aria-disabled', disabled ? 'true' : 'false');
   }
@@ -311,10 +335,11 @@
       feedBtnEl.removeEventListener('click', onFeedClick);
       feedBtnEl.__homeFeedingBound = false;
     }
-    if (actionBarEl && actionBarEl.parentNode) {
-      actionBarEl.parentNode.removeChild(actionBarEl);
+    // Preserve the #home-action-bar container in the DOM; only clear its
+    // children so a subsequent mount() can re-populate it in place.
+    if (actionBarEl) {
+      actionBarEl.innerHTML = '';
     }
-    actionBarEl = null;
     feedBtnEl = null;
   }
 

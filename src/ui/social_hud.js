@@ -288,7 +288,9 @@ export class SocialHUD {
 
     if (target === 'sanctuary') {
       if (typeof window !== 'undefined') {
-        window.HomeSanctuary?.mount?.();
+        window.__vdwActiveDogSlot = this.dogSlot;
+        const canvas = document.getElementById('home-field-canvas');
+        window.HomeSanctuary?.mount?.(canvas, this.dogSlot);
         window.HomeFeeding?.mount?.();
       }
       this.stopStageAnimation();
@@ -644,8 +646,25 @@ export class SocialHUD {
     this.persistProfile();
     this.broadcastProfile();
 
-    // Unlock: transition to the sanctuary view now that a dog exists.
+    // Unlock: reset to the walker tab and transition to the sanctuary view.
+    this.switchTab('walker');
     this.setHomeView('sanctuary');
+  }
+
+  // Switch the active settings tab ('walker' | 'dog') and sync the DOM.
+  switchTab(tab) {
+    const target = tab === 'dog' ? 'dog' : 'walker';
+    this.activeTab = target;
+    const tabBtns = document.querySelectorAll('.customizer-tab-btn');
+    tabBtns.forEach(b => b.classList.remove('active'));
+    const btn = document.getElementById(target === 'dog' ? 'tab-btn-dog' : 'tab-btn-walker');
+    if (btn) btn.classList.add('active');
+    document.querySelectorAll('.customizer-tab-pane').forEach(pane => {
+      pane.classList.remove('active');
+    });
+    const pane = document.getElementById(target === 'dog' ? 'cust-tab-dog' : 'cust-tab-walker');
+    if (pane) pane.classList.add('active');
+    this.renderHomeStage();
   }
 
   updateCloseButtonState() {
@@ -1144,6 +1163,7 @@ export class SocialHUD {
 
     modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
     if (modal.style.display === 'block') {
+      // With a dog present, opening Home defaults to the sanctuary view.
       this.setHomeView(this.currentHomeView === 'settings' ? 'settings' : 'sanctuary');
     } else {
       this.stopStageAnimation();

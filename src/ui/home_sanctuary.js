@@ -47,6 +47,7 @@
   var fieldHeight = 0;
 
   var dog = null;
+  var activeDogSlot = null;
   var pose = 'auto'; // 'auto' | 'camera'
   var stateTimer = 0;
   var forcedState = null; // when set via setDogState, holds until cleared
@@ -91,6 +92,40 @@
 
   function readProfile() {
     if (typeof global.localStorage === 'undefined') return null;
+
+    // Primary source of truth: the SocialHUD-persisted walker profile.
+    var rawProfile = null;
+    try {
+      rawProfile = global.localStorage.getItem('clifton_walker_profile');
+    } catch (err) {
+      rawProfile = null;
+    }
+    if (rawProfile) {
+      var profile = safeParse(rawProfile);
+      if (profile && typeof profile === 'object') {
+        // An explicitly empty kennel means there is no companion dog.
+        if (profile.dogSlot === null) return null;
+
+        if (profile.dogSlot && typeof profile.dogSlot === 'object') {
+          var slot = profile.dogSlot;
+          return {
+            id: slot.id || 'dog-1',
+            name: slot.name || profile.dogName || 'Ziggy',
+            coatKey: slot.coatKey || profile.coatKey,
+            collar: slot.collarColor || profile.collarColor
+          };
+        }
+
+        if (profile.dogName) {
+          return {
+            id: 'dog-1',
+            name: profile.dogName,
+            coatKey: profile.coatKey,
+            collar: profile.collarColor
+          };
+        }
+      }
+    }
 
     var keys = [
       'vdw.activeProfile',
@@ -152,6 +187,7 @@
 
     if (profile.id != null) appearance.id = String(profile.id);
     if (profile.name) appearance.name = String(profile.name);
+    if (profile.coatKey) appearance.coatKey = String(profile.coatKey);
 
     var coat =
       profile.coat ||
@@ -555,10 +591,10 @@
   // Public API
   // ---------------------------------------------------------------------------
 
-  function mount() {
+  function mount(canvasEl, explicitDogSlot) {
     if (mounted) return;
 
-    var el = global.document && global.document.getElementById(CANVAS_ID);
+    var el = canvasEl || (global.document && global.document.getElementById(CANVAS_ID));
     if (!el) {
       // Graceful no-op when the canvas is not present.
       return;
@@ -573,8 +609,18 @@
 
     resizeCanvas();
 
-    var appearance = resolveAppearance(readProfile());
+    var slot = explicitDogSlot;
+    if (slot === undefined) {
+      slot = readProfile();
+    }
+    activeDogSlot = slot || null;
+
+    var appearance = resolveAppearance(activeDogSlot);
     dog = createDog(appearance);
+    if (activeDogSlot) {
+      dog.name = activeDogSlot.name || 'Ziggy';
+      dog.id = activeDogSlot.id || 'dog-1';
+    }
     pose = 'auto';
     forcedState = null;
     enterState('wander');
@@ -609,10 +655,15 @@
     canvas = null;
     ctx = null;
     dog = null;
+    activeDogSlot = null;
     forcedState = null;
     grassBlades = [];
     particles = [];
     particleFrame = 0;
+  }
+
+  function getDogSlot() {
+    return activeDogSlot;
   }
 
   function getCompanionDog() {
@@ -678,6 +729,7 @@
   var HomeSanctuary = {
     mount: mount,
     unmount: unmount,
+    getDogSlot: getDogSlot,
     getCompanionDog: getCompanionDog,
     setDogPose: setDogPose,
     setDogState: setDogState,

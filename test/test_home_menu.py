@@ -659,6 +659,19 @@ class TestHomeViewSplit(unittest.TestCase):
         self.assertIn('resolveHomeView', self.hud_js,
                       "Missing resolveHomeView helper")
 
+    def test_switch_tab_helper(self):
+        self.assertIn('switchTab', self.hud_js,
+                      "Missing switchTab helper for tab lifecycle resets")
+
+    def test_sanctuary_mount_receives_dog_slot(self):
+        self.assertIn('__vdwActiveDogSlot', self.hud_js,
+                      "setHomeView must publish window.__vdwActiveDogSlot")
+        self.assertRegex(
+            self.hud_js,
+            r"HomeSanctuary\?\.mount\?\.\([^)]*this\.dogSlot",
+            "setHomeView must pass this.dogSlot to HomeSanctuary.mount"
+        )
+
 
 @unittest.skipUnless(
     shutil.which("node") or shutil.which("osascript"),
@@ -717,6 +730,39 @@ class TestHomeViewSplitBehavioral(unittest.TestCase):
                          "resolveHomeView('sanctuary') must return 'sanctuary'")
         self.assertIn(res["unknown"], ("sanctuary", "settings"),
                       "resolveHomeView must normalize unknown views")
+
+    def test_exec_adopt_resets_tab_to_walker_and_shows_sanctuary(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: '', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        hud.activeTab = 'dog';
+        const nameInput = document.getElementById('cust-dog-name');
+        const coatSelect = document.getElementById('cust-dog-coat');
+        if (nameInput) nameInput.value = 'Ziggy';
+        if (coatSelect) coatSelect.value = 'CHOCOLATE_TAN';
+
+        hud.adoptDogFromForm();
+
+        return {
+          activeTab: hud.activeTab,
+          homeView: hud.homeView,
+          isHomeLocked: hud.isHomeLocked
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["activeTab"], "walker",
+                         "Adopting a dog must reset the active tab to 'walker'")
+        self.assertEqual(res["homeView"], "sanctuary",
+                         "Adopting a dog must transition to the sanctuary view")
+        self.assertFalse(res["isHomeLocked"],
+                         "Adopting a dog must release the Home lock")
 
     def test_exec_split_stage_preview_draws_only_active_tab(self):
         snippet = """

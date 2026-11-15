@@ -378,6 +378,153 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
         self.assertEqual(res["hydrated"], res["seeded"],
                          "mount() must hydrate lastFeedAt from localStorage")
 
+    def test_exec_mount_unmount_remount_preserves_action_bar_in_sanctuary(self):
+        snippet = """
+        // Build the sanctuary DOM structure the way SocialHUD does.
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+        const bar = document.createElement('div');
+        bar.id = 'home-action-bar';
+        sanctuary.appendChild(bar);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        HomeFeeding.mount();
+        HomeFeeding.unmount();
+        window.HomeSanctuary.unmount();
+
+        const barAfterUnmount = document.getElementById('home-action-bar');
+        const stillChild = sanctuary.children.indexOf(barAfterUnmount) >= 0;
+
+        window.HomeSanctuary.mount(canvas, slot);
+        HomeFeeding.mount();
+        const barAfterRemount = document.getElementById('home-action-bar');
+        const stillChildRemount = sanctuary.children.indexOf(barAfterRemount) >= 0;
+        const feedBtn = document.getElementById('btn-action-feed');
+
+        return {
+          stillChild: stillChild,
+          stillChildRemount: stillChildRemount,
+          sameBar: barAfterUnmount === barAfterRemount,
+          hasFeedBtn: Boolean(feedBtn)
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["stillChild"],
+                        "#home-action-bar must remain a child of #home-view-sanctuary after unmount")
+        self.assertTrue(res["stillChildRemount"],
+                        "#home-action-bar must remain a child of #home-view-sanctuary after remount")
+        self.assertTrue(res["sameBar"],
+                        "unmount/remount must reuse the same #home-action-bar element")
+        self.assertTrue(res["hasFeedBtn"],
+                        "Remount must re-create #btn-action-feed inside the preserved bar")
+
+    def test_exec_real_profile_identity_used_in_feed_and_toast(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Barnaby', coatKey: 'GOLDEN', collarColor: '#dc2626' }
+        }));
+
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+        const bar = document.createElement('div');
+        bar.id = 'home-action-bar';
+        sanctuary.appendChild(bar);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const toasts = [];
+        window.showToast = function (msg) { toasts.push(msg); };
+
+        window.HomeSanctuary.mount();
+        HomeFeeding.mount();
+
+        const slot = window.HomeSanctuary.getDogSlot();
+        const companion = window.HomeSanctuary.getCompanionDog();
+
+        const feedBtn = document.getElementById('btn-action-feed');
+        if (feedBtn && feedBtn._listeners && feedBtn._listeners.click) {
+          feedBtn._listeners.click.forEach(function (fn) { fn(); });
+        }
+        __flushTimers();
+
+        const raw = localStorage.getItem('virtual_dog_walker.last_feed_at');
+        let parsed = null;
+        try { parsed = JSON.parse(raw); } catch (e) { parsed = null; }
+
+        return {
+          slotName: slot ? slot.name : null,
+          companionName: companion ? companion.name : null,
+          toasts: toasts,
+          persistedDogId: parsed ? parsed.dogId : null,
+          hasAt: parsed ? typeof parsed.at === 'string' : false
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["slotName"], "Barnaby",
+                         "HomeSanctuary.getDogSlot() must expose the real profile dog")
+        self.assertEqual(res["companionName"], "Barnaby",
+                         "Companion dog must use the real profile name")
+        self.assertTrue(any("Barnaby loved the meal! ❤️" in t for t in res["toasts"]),
+                        "Feed toast must use the real dog name 'Barnaby'")
+        self.assertIsNotNone(res["persistedDogId"],
+                             "last_feed_at must persist a dogId")
+        self.assertTrue(res["hasAt"], "last_feed_at must include an ISO 'at' field")
+
+    def test_exec_feed_disabled_when_dog_slot_is_null(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+        const bar = document.createElement('div');
+        bar.id = 'home-action-bar';
+        sanctuary.appendChild(bar);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        window.HomeSanctuary.mount();
+        HomeFeeding.mount();
+
+        const feedBtn = document.getElementById('btn-action-feed');
+        return {
+          slot: window.HomeSanctuary.getDogSlot(),
+          disabled: feedBtn ? feedBtn.disabled : null,
+          ariaDisabled: feedBtn ? feedBtn.getAttribute('aria-disabled') : null
+        };
+        """
+        res = _run_js(snippet)
+        self.assertIsNone(res["slot"],
+                          "A null dogSlot must yield a null HomeSanctuary slot")
+        self.assertTrue(res["disabled"],
+                        "#btn-action-feed must be disabled when dogSlot is null")
+        self.assertEqual(res["ariaDisabled"], "true",
+                         "#btn-action-feed must set aria-disabled='true' when dogSlot is null")
+
     def test_exec_second_click_while_feeding_ignored(self):
         snippet = """
         const feeding = HomeFeeding;

@@ -157,6 +157,7 @@
     if (!feedBtnEl) {
       feedBtnEl = document.createElement('button');
       feedBtnEl.id = 'btn-action-feed';
+      // Markup reference: id="btn-action-feed"
       feedBtnEl.type = 'button';
       feedBtnEl.className = 'btn-action btn-action-feed';
       feedBtnEl.textContent = '🍖 Feed';

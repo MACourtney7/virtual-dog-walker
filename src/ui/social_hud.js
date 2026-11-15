@@ -329,6 +329,15 @@ export class SocialHUD {
     return Boolean(this.isHomeLocked);
   }
 
+  // Home view accessor (maps to currentHomeView).
+  get homeView() {
+    return this.currentHomeView;
+  }
+
+  set homeView(v) {
+    this.currentHomeView = v;
+  }
+
   /**
    * Apply a peer's dog-presence metadata to a remote player entry.
    * Mirrors CliftonDownGame.applyRemoteDogPresence so the same semantics are
@@ -684,14 +693,22 @@ export class SocialHUD {
     this.stageAnimId = null;
   }
 
-  renderHomeStage(previewDogData = null) {
-    const canvas = document.getElementById('home-stage-canvas');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+  renderHomeStage(ctxOrPreview = null, previewDogData = null) {
+    let ctx = null;
+    let previewData = previewDogData;
+    if (ctxOrPreview && typeof ctxOrPreview.clearRect === 'function') {
+      ctx = ctxOrPreview;
+    } else {
+      previewData = ctxOrPreview;
+      const canvas = document.getElementById('home-stage-canvas');
+      if (!canvas) return;
+      ctx = canvas.getContext('2d');
+    }
     if (!ctx) return;
 
-    const stageW = canvas.width;
-    const stageH = canvas.height;
+    const canvas = ctx.canvas || document.getElementById('home-stage-canvas') || { width: 300, height: 200 };
+    const stageW = canvas.width || 300;
+    const stageH = canvas.height || 200;
 
     ctx.clearRect(0, 0, stageW, stageH);
 
@@ -759,7 +776,7 @@ export class SocialHUD {
 
     // Dog-only preview, centered in the spotlight. When the slot is empty,
     // build a live preview from the form.
-    const effectiveDogData = previewDogData || this.dogSlot || this._readEmptySlotPreview();
+    const effectiveDogData = previewData || this.dogSlot || this._readEmptySlotPreview();
     const hasDog = Boolean(effectiveDogData);
     if (hasDog && this.dog && typeof this.dog.draw === 'function') {
       const saved = {
@@ -1108,6 +1125,8 @@ export class SocialHUD {
     // When Home is locked, the modal must stay open (never toggle closed)
     // and must force the settings view on the dog tab.
     if (this.isHomeLocked || this.dogSlot === null) {
+      this.isHomeLocked = true;
+      this.currentHomeView = 'settings';
       modal.style.display = 'block';
       this._forceDogTab();
       this.setHomeView('settings', { force: true });

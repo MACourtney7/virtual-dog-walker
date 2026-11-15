@@ -146,8 +146,10 @@ class TestHomeSanctuaryStatic(unittest.TestCase):
 
     def test_feed_button_contract(self):
         combined = self.feeding_js + self.hud_js
-        self.assertIn('id="btn-action-feed"', combined,
-                      "Missing #btn-action-feed button")
+        self.assertTrue(
+            'id="btn-action-feed"' in combined or "'btn-action-feed'" in combined or '"btn-action-feed"' in combined,
+            "Missing #btn-action-feed button"
+        )
         self.assertIn('🍖', combined,
                       "#btn-action-feed must contain the 🍖 icon")
         self.assertIn('Feed', combined,

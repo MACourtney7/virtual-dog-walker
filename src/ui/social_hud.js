@@ -126,7 +126,7 @@ export class SocialHUD {
       <!-- Sanctuary View -->
       <div id="home-view-sanctuary" class="home-view">
         <div class="home-field-preview">
-          <canvas id="home-field-canvas" width="340" height="180"></canvas>
+          <canvas id="home-field-canvas" width="340" height="220"></canvas>
         </div>
         <div id="home-action-bar" class="home-action-bar"></div>
       </div>

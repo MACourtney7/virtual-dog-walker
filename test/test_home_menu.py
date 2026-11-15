@@ -108,6 +108,8 @@ const document = {{
 const window = {{ location: {{ search: '' }}, requestAnimationFrame: null }};
 const requestAnimationFrame = (fn) => 0;
 const cancelAnimationFrame = () => {{}};
+const setTimeout = (fn) => 0;
+const clearTimeout = () => {{}};
 const localStorage = (() => {{
   let store = {{}};
   return {{

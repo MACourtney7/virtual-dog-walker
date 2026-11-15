@@ -1179,6 +1179,2983 @@ pwd && ls
 > Run shell command? (Y)es/(N)o/(S)kip all/(D)on't ask again [Yes]: n  
 > pwd && ls  
 > Run shell command? (Y)es/(N)o/(S)kip all/(D)on't ask again [Yes]: n  
+
+# aider chat started at 2026-11-15 16:01:02
+
+> /Users/mattcourtney/Library/Python/3.9/bin/aider --model deepseek/deepseek-chat --yes-always --no-show-model-warnings --no-browser --no-show-release-notes --no-analytics --no-check-update --no-gitignore --map-tokens 0 --file virtual_dog_walker/src/ui/social_hud.js --file virtual_dog_walker/src/ui/home_sanctuary.js --file virtual_dog_walker/src/ui/home_feeding.js --file virtual_dog_walker/src/main.js --file virtual_dog_walker/test/test_home_sanctuary.py --file virtual_dog_walker/test/test_home_menu.py --test-cmd cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py --auto-test --message You are an autonomous Implementer worker for the Agentic Software Factory.
+Follow all instructions in this task brief strictly.
+Make all edits directly to the relevant files in the chat.
+NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
+Ensure the code builds and passes all acceptance criteria and tests.
+
+=== TASK BRIEF ===
+---
+brief_id: "brief-08-review-remediations"
+role: "IMPLEMENTER"
+thinking_level: "MEDIUM"
+target_package: "virtual_dog_walker"
+target_files:
+  - "virtual_dog_walker/src/ui/social_hud.js"
+  - "virtual_dog_walker/src/ui/home_sanctuary.js"
+  - "virtual_dog_walker/src/ui/home_feeding.js"
+  - "virtual_dog_walker/src/main.js"
+  - "virtual_dog_walker/test/test_home_sanctuary.py"
+  - "virtual_dog_walker/test/test_home_menu.py"
+test_cmd: "cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"
+---
+
+# Implementer Brief 08: Resolve Reviewer Remediation Points
+
+## Reviewer Findings & Specific Fixes Required
+
+### 1. Fix Post-Feed Autonomous Resumption (`home_feeding.js` & `home_sanctuary.js`)
+- In `virtual_dog_walker/src/ui/home_feeding.js`:
+  - Define `var RESUME_DELAY_MS = 800;`
+  - In the feeding completion handler, after `EATING_MS`:
+    - Remove the food bowl element.
+    - Persist the feed timestamp.
+    - Show the toast (`"<DogName> loved the meal! ❤️"`).
+    - Schedule a callback after `RESUME_DELAY_MS`:
+      - Call `setDogPose('auto')`.
+      - Call `setDogState('wander')`.
+      - If `window.HomeSanctuary.resumeRoaming` exists, call it.
+      - Reset `feeding = false` and `state = 'idle'`.
+- In `virtual_dog_walker/src/ui/home_sanctuary.js`:
+  - Ensure `setDogPose('auto')` correctly clears any camera lock (`pose = 'auto'`).
+  - Ensure `setDogState('wander')` or `setDogState(null)` clears `forcedState` and allows autonomous cycling (`wander`, `sniff`, `sit`, `wag`) to resume locomotion.
+  - Expose `resumeRoaming()` on `window.HomeSanctuary` that sets `pose = 'auto'`, clears `forcedState`, and sets dog state to `'wander'`.
+
+### 2. Munch & Heart Particles during Eating (`home_sanctuary.js`)
+- In `home_sanctuary.js`:
+  - Add a lightweight particle system for the eating state on `#home-field-canvas`:
+    - When `state === 'eating'` or `forcedState === 'eating'`, spawn floating heart (`❤️`) and crumb/munch particles around the dog's head/bowl.
+    - Update and draw particles each frame (float upward, fade out, gentle wobble).
+
+### 3. Clear `isHomeLocked` on Dog Creation / Adoption (`social_hud.js`)
+- In `social_hud.js`:
+  - In `handleSaveDog()` / `createDog()` / when a dog slot is filled from an empty slot:
+    - Explicitly set `this.isHomeLocked = false;`
+  - In `_applyHomeViewDom()`:
+    - Compute `locked = this.isHomeLocked || this.dogSlot === null;` so that both button visibility and modal gating are strictly consistent.
+  - When `this.dogSlot !== null` and `!this.isHomeLocked`, `canWalkInPark()` must return `true`, and `closeModal()` must allow closing.
+
+### 4. Wire Global Module Imports (`src/main.js` & `social_hud.js`)
+- In `virtual_dog_walker/src/main.js`:
+  - Add side-effect imports:
+    ```javascript
+    import './ui/home_sanctuary.js';
+    import './ui/home_feeding.js';
+    ```
+  - This ensures `window.HomeSanctuary` and `window.HomeFeeding` are loaded at runtime in production.
+- In `virtual_dog_walker/src/ui/social_hud.js`:
+  - Expose `window.showToast = (msg) => this.showToast(msg);` so that `emitToast` in `home_feeding.js` successfully triggers the game HUD toast notification.
+
+### 5. Behavioral Test Assertions
+- In `virtual_dog_walker/test/test_home_sanctuary.py`:
+  - Add behavioral tests verifying:
+    - `RESUME_DELAY_MS` constant and post-feed resumption (`setDogPose('auto')`, `setDogState('wander')`).
+    - Particles spawn during eating state.
+    - Toast emission triggers `window.showToast` or HUD toast.
+- In `virtual_dog_walker/test/test_home_menu.py`:
+  - Add test verifying that after creating a dog, `isHomeLocked` is `false`, `canWalkInPark()` is `true`, and `closeModal()` successfully hides the modal.
+
+## Verification
+Run:
+`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
+All tests must pass (0 failures, 0 errors).  
+> Warning: it's best to only add files that need changes to the chat.  
+> https://aider.chat/docs/troubleshooting/edit-errors.html  
+> Aider v0.82.3  
+> Model: deepseek/deepseek-chat with diff edit format, prompt cache, infinite output  
+> Git repo: ../../../../.git/worktrees/implementer-e69b11/modules/virtual_dog_walker with 152 files  
+> Repo-map: disabled  
+> Added src/main.js to the chat.  
+> Added src/ui/home_feeding.js to the chat.  
+> Added src/ui/home_sanctuary.js to the chat.  
+> Added src/ui/social_hud.js to the chat.  
+> Added test/test_home_menu.py to the chat.  
+> Added test/test_home_sanctuary.py to the chat.  
+> Note: in-chat filenames are always relative to the git working dir, not the current working dir.  
+> Cur working dir: /Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/zero/.factory/worktrees/unification-029/implementer-e69b11  
+> Git working dir: /Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/zero/.factory/worktrees/unification-029/implementer-e69b11/virtual_dog_walker  
+
+#### You are an autonomous Implementer worker for the Agentic Software Factory.  
+#### Follow all instructions in this task brief strictly.  
+#### Make all edits directly to the relevant files in the chat.  
+#### NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.  
+#### Ensure the code builds and passes all acceptance criteria and tests.  
+####   
+#### === TASK BRIEF ===  
+#### ---  
+#### brief_id: "brief-08-review-remediations"  
+#### role: "IMPLEMENTER"  
+#### thinking_level: "MEDIUM"  
+#### target_package: "virtual_dog_walker"  
+#### target_files:  
+####   - "virtual_dog_walker/src/ui/social_hud.js"  
+####   - "virtual_dog_walker/src/ui/home_sanctuary.js"  
+####   - "virtual_dog_walker/src/ui/home_feeding.js"  
+####   - "virtual_dog_walker/src/main.js"  
+####   - "virtual_dog_walker/test/test_home_sanctuary.py"  
+####   - "virtual_dog_walker/test/test_home_menu.py"  
+#### test_cmd: "cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"  
+#### ---  
+####   
+#### # Implementer Brief 08: Resolve Reviewer Remediation Points  
+####   
+#### ## Reviewer Findings & Specific Fixes Required  
+####   
+#### ### 1. Fix Post-Feed Autonomous Resumption (`home_feeding.js` & `home_sanctuary.js`)  
+#### - In `virtual_dog_walker/src/ui/home_feeding.js`:  
+####   - Define `var RESUME_DELAY_MS = 800;`  
+####   - In the feeding completion handler, after `EATING_MS`:  
+####     - Remove the food bowl element.  
+####     - Persist the feed timestamp.  
+####     - Show the toast (`"<DogName> loved the meal! ❤️"`).  
+####     - Schedule a callback after `RESUME_DELAY_MS`:  
+####       - Call `setDogPose('auto')`.  
+####       - Call `setDogState('wander')`.  
+####       - If `window.HomeSanctuary.resumeRoaming` exists, call it.  
+####       - Reset `feeding = false` and `state = 'idle'`.  
+#### - In `virtual_dog_walker/src/ui/home_sanctuary.js`:  
+####   - Ensure `setDogPose('auto')` correctly clears any camera lock (`pose = 'auto'`).  
+####   - Ensure `setDogState('wander')` or `setDogState(null)` clears `forcedState` and allows autonomous cycling (`wander`, `sniff`, `sit`, `wag`) to resume locomotion.  
+####   - Expose `resumeRoaming()` on `window.HomeSanctuary` that sets `pose = 'auto'`, clears `forcedState`, and sets dog state to `'wander'`.  
+####   
+#### ### 2. Munch & Heart Particles during Eating (`home_sanctuary.js`)  
+#### - In `home_sanctuary.js`:  
+####   - Add a lightweight particle system for the eating state on `#home-field-canvas`:  
+####     - When `state === 'eating'` or `forcedState === 'eating'`, spawn floating heart (`❤️`) and crumb/munch particles around the dog's head/bowl.  
+####     - Update and draw particles each frame (float upward, fade out, gentle wobble).  
+####   
+#### ### 3. Clear `isHomeLocked` on Dog Creation / Adoption (`social_hud.js`)  
+#### - In `social_hud.js`:  
+####   - In `handleSaveDog()` / `createDog()` / when a dog slot is filled from an empty slot:  
+####     - Explicitly set `this.isHomeLocked = false;`  
+####   - In `_applyHomeViewDom()`:  
+####     - Compute `locked = this.isHomeLocked || this.dogSlot === null;` so that both button visibility and modal gating are strictly consistent.  
+####   - When `this.dogSlot !== null` and `!this.isHomeLocked`, `canWalkInPark()` must return `true`, and `closeModal()` must allow closing.  
+####   
+#### ### 4. Wire Global Module Imports (`src/main.js` & `social_hud.js`)  
+#### - In `virtual_dog_walker/src/main.js`:  
+####   - Add side-effect imports:  
+####     ```javascript  
+####     import './ui/home_sanctuary.js';  
+####     import './ui/home_feeding.js';  
+####     ```  
+####   - This ensures `window.HomeSanctuary` and `window.HomeFeeding` are loaded at runtime in production.  
+#### - In `virtual_dog_walker/src/ui/social_hud.js`:  
+####   - Expose `window.showToast = (msg) => this.showToast(msg);` so that `emitToast` in `home_feeding.js` successfully triggers the game HUD toast notification.  
+####   
+#### ### 5. Behavioral Test Assertions  
+#### - In `virtual_dog_walker/test/test_home_sanctuary.py`:  
+####   - Add behavioral tests verifying:  
+####     - `RESUME_DELAY_MS` constant and post-feed resumption (`setDogPose('auto')`, `setDogState('wander')`).  
+####     - Particles spawn during eating state.  
+####     - Toast emission triggers `window.showToast` or HUD toast.  
+#### - In `virtual_dog_walker/test/test_home_menu.py`:  
+####   - Add test verifying that after creating a dog, `isHomeLocked` is `false`, `canWalkInPark()` is `true`, and `closeModal()` successfully hides the modal.  
+####   
+#### ## Verification  
+#### Run:  
+#### `cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`  
+#### All tests must pass (0 failures, 0 errors).  
+####  
+
+I'll implement the reviewer remediations across the files. Let me work through each requirement.
+
+**1. `home_feeding.js`** — add `RESUME_DELAY_MS`, resume roaming after feed, and expose `resumeRoaming` wiring.
+
+```javascript
+src/ui/home_feeding.js
+<<<<<<< SEARCH
+  var FACING_MS = 200; // <= 250ms
+  var BOWL_MS = 150; // <= 200ms
+  var EATING_MS = 3500; // within 3000-4000ms, target 3500ms
+=======
+  var FACING_MS = 200; // <= 250ms
+  var BOWL_MS = 150; // <= 200ms
+  var EATING_MS = 3500; // within 3000-4000ms, target 3500ms
+  var RESUME_DELAY_MS = 800; // pause after eating before autonomous roaming resumes
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_feeding.js
+<<<<<<< SEARCH
+  function setDogState(dogState) {
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.setDogState === 'function') {
+      try {
+        window.HomeSanctuary.setDogState(dogState);
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+=======
+  function setDogState(dogState) {
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.setDogState === 'function') {
+      try {
+        window.HomeSanctuary.setDogState(dogState);
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+
+  function resumeRoaming() {
+    setDogPose('auto');
+    setDogState('wander');
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.resumeRoaming === 'function') {
+      try {
+        window.HomeSanctuary.resumeRoaming();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_feeding.js
+<<<<<<< SEARCH
+          schedule(function () {
+            // Phase 4: complete (instant)
+            setState('complete');
+            clearBowl();
+            setDogState('idle');
+            setDogPose('idle');
+
+            var toast = dogName + ' loved the meal! ❤️';
+            emitToast(toast);
+
+            persistFeed(dogId);
+
+            setState('idle');
+            feeding = false;
+            updateDisabledState();
+
+            // Expose duration for test hooks via closure variable.
+            runFeed.__lastDuration = Math.round(now() - start);
+            resolve();
+          }, EATING_MS);
+=======
+          schedule(function () {
+            // Phase 4: complete (instant)
+            setState('complete');
+            clearBowl();
+
+            var toast = dogName + ' loved the meal! ❤️';
+            emitToast(toast);
+
+            persistFeed(dogId);
+
+            // Expose duration for test hooks via closure variable.
+            runFeed.__lastDuration = Math.round(now() - start);
+
+            // Pause briefly, then hand control back to autonomous roaming.
+            schedule(function () {
+              resumeRoaming();
+              setState('idle');
+              feeding = false;
+              updateDisabledState();
+              resolve();
+            }, RESUME_DELAY_MS);
+          }, EATING_MS);
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_feeding.js
+<<<<<<< SEARCH
+      var toast = dogName + ' loved the meal! ❤️';
+      var persistedValue = persistFeed(dogId);
+      var durationMs = fullDuration;
+
+      // Keep state consistent for observers.
+      setState('idle');
+=======
+      var toast = dogName + ' loved the meal! ❤️';
+      var persistedValue = persistFeed(dogId);
+      var durationMs = fullDuration;
+
+      // Emit the toast through the same path as the live feed so the HUD
+      // notification is exercised by the test hooks too.
+      emitToast(toast);
+
+      // Keep state consistent for observers.
+      setState('idle');
+>>>>>>> REPLACE
+```
+
+**2. `home_sanctuary.js`** — clear camera lock on `'auto'`, allow `setDogState(null)`/`'wander'` to clear `forcedState`, expose `resumeRoaming()`, and add eating particles.
+
+```javascript
+src/ui/home_sanctuary.js
+<<<<<<< SEARCH
+  var grassBlades = [];
+  var noiseSeed = 1337;
+=======
+  var grassBlades = [];
+  var noiseSeed = 1337;
+
+  // Lightweight eating particles (hearts + munch crumbs).
+  var particles = [];
+  var particleAccumulator = 0;
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_sanctuary.js
+<<<<<<< SEARCH
+  function setDogPose(nextPose) {
+    if (nextPose !== 'camera' && nextPose !== 'auto') return;
+    pose = nextPose;
+    if (dog && nextPose === 'camera') {
+      dog.facing = Math.PI / 2;
+    }
+  }
+
+  function setDogState(nextState) {
+    if (STATES.indexOf(nextState) === -1) return;
+    if (!dog) return;
+
+    forcedState = nextState;
+    enterState(nextState);
+  }
+=======
+  function setDogPose(nextPose) {
+    if (nextPose !== 'camera' && nextPose !== 'auto') return;
+    pose = nextPose;
+    if (dog && nextPose === 'camera') {
+      dog.facing = Math.PI / 2;
+    }
+  }
+
+  function setDogState(nextState) {
+    // null / undefined clears any forced state and resumes autonomous cycling.
+    if (nextState === null || nextState === undefined) {
+      forcedState = null;
+      if (dog) enterState('wander');
+      return;
+    }
+    if (STATES.indexOf(nextState) === -1) return;
+    if (!dog) return;
+
+    forcedState = nextState;
+    enterState(nextState);
+  }
+
+  // Hand control back to autonomous roaming: clear camera lock + forced state.
+  function resumeRoaming() {
+    pose = 'auto';
+    forcedState = null;
+    if (dog) {
+      enterState('wander');
+    }
+  }
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_sanctuary.js
+<<<<<<< SEARCH
+  function render() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, fieldWidth, fieldHeight);
+    drawField();
+    drawDog();
+  }
+=======
+  // ---------------------------------------------------------------------------
+  // Eating particles
+  // ---------------------------------------------------------------------------
+
+  function isEating() {
+    return Boolean(dog && (dog.state === 'eating' || forcedState === 'eating'));
+  }
+
+  function spawnEatingParticle() {
+    if (!dog) return;
+    var isHeart = Math.random() < 0.4;
+    particles.push({
+      x: dog.x + rand(-DOG_RADIUS, DOG_RADIUS),
+      y: dog.y - DOG_RADIUS * 0.6 + rand(-4, 4),
+      vx: rand(-8, 8),
+      vy: rand(-26, -14),
+      life: 0,
+      maxLife: rand(700, 1200),
+      wobble: rand(0, Math.PI * 2),
+      glyph: isHeart ? '❤️' : (Math.random() < 0.5 ? '🍖' : '✨'),
+      size: isHeart ? 12 : 9
+    });
+  }
+
+  function updateParticles(dt) {
+    if (isEating()) {
+      particleAccumulator += dt;
+      // Spawn roughly every 120ms while eating.
+      while (particleAccumulator >= 120) {
+        particleAccumulator -= 120;
+        spawnEatingParticle();
+      }
+    } else {
+      particleAccumulator = 0;
+    }
+
+    for (var i = particles.length - 1; i >= 0; i--) {
+      var p = particles[i];
+      p.life += dt;
+      if (p.life >= p.maxLife) {
+        particles.splice(i, 1);
+        continue;
+      }
+      p.wobble += dt * 0.006;
+      p.x += (p.vx + Math.sin(p.wobble) * 10) * (dt / 1000);
+      p.y += p.vy * (dt / 1000);
+    }
+  }
+
+  function drawParticles() {
+    if (!ctx || particles.length === 0) return;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      var t = p.life / p.maxLife;
+      ctx.globalAlpha = Math.max(0, 1 - t);
+      ctx.font = p.size + 'px system-ui, -apple-system, sans-serif';
+      ctx.fillText(p.glyph, p.x, p.y);
+    }
+    ctx.restore();
+  }
+
+  function render() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, fieldWidth, fieldHeight);
+    drawField();
+    drawDog();
+    drawParticles();
+  }
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_sanctuary.js
+<<<<<<< SEARCH
+    updateDog(dt);
+    render();
+
+    rafId = global.requestAnimationFrame(frame);
+=======
+    updateDog(dt);
+    updateParticles(dt);
+    render();
+
+    rafId = global.requestAnimationFrame(frame);
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_sanctuary.js
+<<<<<<< SEARCH
+    canvas = null;
+    ctx = null;
+    dog = null;
+    forcedState = null;
+    grassBlades = [];
+  }
+=======
+    canvas = null;
+    ctx = null;
+    dog = null;
+    forcedState = null;
+    grassBlades = [];
+    particles = [];
+    particleAccumulator = 0;
+  }
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_sanctuary.js
+<<<<<<< SEARCH
+  var HomeSanctuary = {
+    mount: mount,
+    unmount: unmount,
+    getCompanionDog: getCompanionDog,
+    setDogPose: setDogPose,
+    setDogState: setDogState,
+    getFieldSize: getFieldSize
+  };
+=======
+  var HomeSanctuary = {
+    mount: mount,
+    unmount: unmount,
+    getCompanionDog: getCompanionDog,
+    setDogPose: setDogPose,
+    setDogState: setDogState,
+    resumeRoaming: resumeRoaming,
+    getFieldSize: getFieldSize,
+    __testHooks: {
+      getParticleCount: function () {
+        return particles.length;
+      },
+      spawnEatingParticle: spawnEatingParticle,
+      updateParticles: updateParticles,
+      isEating: isEating
+    }
+  };
+>>>>>>> REPLACE
+```
+
+**3. `social_hud.js`** — clear `isHomeLocked` on adoption, consistent `locked` computation, and expose `window.showToast`.
+
+```javascript
+src/ui/social_hud.js
+<<<<<<< SEARCH
+    this.isHomeLocked = false;
+    this.renderDogSlot();
+    this.renderHomeStage();
+    this.updateCloseButtonState();
+    this.persistProfile();
+    this.broadcastProfile();
+
+    // Unlock: transition to the sanctuary view now that a dog exists.
+    this.setHomeView('sanctuary');
+=======
+    // Explicitly clear the lock now that a dog occupies the slot.
+    this.isHomeLocked = false;
+    this.renderDogSlot();
+    this.renderHomeStage();
+    this.updateCloseButtonState();
+    this.persistProfile();
+    this.broadcastProfile();
+
+    // Unlock: transition to the sanctuary view now that a dog exists.
+    this.setHomeView('sanctuary');
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/social_hud.js
+<<<<<<< SEARCH
+    const isSettings = this.currentHomeView === 'settings';
+    const locked = this.dogSlot === null;
+=======
+    const isSettings = this.currentHomeView === 'settings';
+    const locked = this.isHomeLocked || this.dogSlot === null;
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/social_hud.js
+<<<<<<< SEARCH
+  exposeTestHooks() {
+    if (typeof window === 'undefined') return;
+    window.__vdwHomeTestHooks = {
+      resolveHomeView: (req, opts) => this.resolveHomeView(req, opts),
+      canWalkInPark: () => this.canWalkInPark()
+    };
+  }
+=======
+  exposeTestHooks() {
+    if (typeof window === 'undefined') return;
+    window.__vdwHomeTestHooks = {
+      resolveHomeView: (req, opts) => this.resolveHomeView(req, opts),
+      canWalkInPark: () => this.canWalkInPark()
+    };
+    // Expose a global toast so home_feeding.js emitToast() reaches the HUD.
+    window.showToast = (msg) => this.showToast(msg);
+  }
+>>>>>>> REPLACE
+```
+
+**4. `main.js`** — side-effect imports for the Home modules.
+
+```javascript
+src/main.js
+<<<<<<< SEARCH
+import { initWasmSim, syncWorldObstacles } from './engine/wasm_sim_bridge.js';
+import { applyCoastalShallowWaterInteraction } from './systems/coastalWater.js';
+=======
+import { initWasmSim, syncWorldObstacles } from './engine/wasm_sim_bridge.js';
+import { applyCoastalShallowWaterInteraction } from './systems/coastalWater.js';
+// Side-effect imports: register window.HomeSanctuary / window.HomeFeeding.
+import './ui/home_sanctuary.js';
+import './ui/home_feeding.js';
+>>>>>>> REPLACE
+```
+
+**5. Tests** — add behavioral assertions.
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+    def test_test_hooks_exposed(self):
+        self.assertIn('__testHooks', self.feeding_js,
+                      "HomeFeeding must expose __testHooks")
+        self.assertIn('simulateFeed', self.feeding_js,
+                      "HomeFeeding.__testHooks must expose simulateFeed")
+=======
+    def test_test_hooks_exposed(self):
+        self.assertIn('__testHooks', self.feeding_js,
+                      "HomeFeeding must expose __testHooks")
+        self.assertIn('simulateFeed', self.feeding_js,
+                      "HomeFeeding.__testHooks must expose simulateFeed")
+
+    def test_resume_delay_constant(self):
+        self.assertIn('RESUME_DELAY_MS', self.feeding_js,
+                      "home_feeding.js must define RESUME_DELAY_MS")
+
+    def test_post_feed_resumes_roaming(self):
+        self.assertIn("setDogPose('auto')", self.feeding_js,
+                      "Post-feed must call setDogPose('auto')")
+        self.assertIn("setDogState('wander')", self.feeding_js,
+                      "Post-feed must call setDogState('wander')")
+        self.assertIn('resumeRoaming', self.sanctuary_js,
+                      "home_sanctuary.js must expose resumeRoaming")
+
+    def test_eating_particles(self):
+        self.assertIn('particles', self.sanctuary_js,
+                      "home_sanctuary.js must implement eating particles")
+        self.assertIn('❤️', self.sanctuary_js,
+                      "Eating particles must include heart glyphs")
+        self.assertIn('spawnEatingParticle', self.sanctuary_js,
+                      "home_sanctuary.js must expose spawnEatingParticle")
+
+    def test_global_toast_wiring(self):
+        self.assertIn('window.showToast', self.hud_js,
+                      "social_hud.js must expose window.showToast")
+        self.assertIn('showToast', self.feeding_js,
+                      "home_feeding.js emitToast must fall back to window.showToast")
+>>>>>>> REPLACE
+```
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+    def test_exec_second_click_while_feeding_ignored(self):
+=======
+    def test_exec_resume_roaming_clears_forced_state(self):
+        snippet = """
+        const s = window.HomeSanctuary;
+        s.setDogState('eating');
+        const before = s.getCompanionDog().state;
+        s.resumeRoaming();
+        const after = s.getCompanionDog().state;
+        return { before: before, after: after };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["before"], "eating",
+                         "setDogState('eating') must force the eating state")
+        self.assertEqual(res["after"], "wander",
+                         "resumeRoaming must return the dog to wander")
+
+    def test_exec_eating_particles_spawn(self):
+        snippet = """
+        const s = window.HomeSanctuary;
+        s.setDogState('eating');
+        const hooks = s.__testHooks;
+        const eating = hooks.isEating();
+        for (let i = 0; i < 5; i++) { hooks.spawnEatingParticle(); }
+        const count = hooks.getParticleCount();
+        return { eating: eating, count: count };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["eating"], "isEating must be true in eating state")
+        self.assertGreater(res["count"], 0, "Eating particles must spawn")
+
+    def test_exec_second_click_while_feeding_ignored(self):
+>>>>>>> REPLACE
+```
+
+```python
+test/test_home_menu.py
+<<<<<<< SEARCH
+    def test_exec_apply_remote_dog_presence_clears_dog(self):
+=======
+    def test_exec_adopt_unlocks_and_allows_walk_and_close(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: '', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+        hud.adoptDogFromForm();
+        const modal = document.getElementById('customizer-modal');
+        modal.style.display = 'block';
+        hud.closeModal();
+        return {
+          isHomeLocked: hud.isHomeLocked,
+          canWalk: hud.canWalkInPark(),
+          afterClose: modal.style.display
+        };
+        """
+        res = _run_js(snippet)
+        self.assertFalse(res["isHomeLocked"],
+                         "Adopting a dog must clear isHomeLocked")
+        self.assertTrue(res["canWalk"],
+                        "canWalkInPark() must be true after adoption")
+        self.assertEqual(res["afterClose"], "none",
+                         "closeModal() must hide the modal after adoption")
+
+    def test_exec_apply_remote_dog_presence_clears_dog(self):
+>>>>>>> REPLACE
+```
+
+Note: the `test_exec_resume_roaming_clears_forced_state` and `test_exec_eating_particles_spawn` tests rely on `window.HomeSanctuary` being available in the JS harness. The existing `_run_js` in `test_home_sanctuary.py` only loads `home_feeding.js`. To make these pass, the harness must also load `home_sanctuary.js`. Here is the harness update:
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+    feeding_src = read("src/ui/home_feeding.js")
+
+    clean = re.sub(r"^\s*import\s+.*?;?\s*$", "", feeding_src, flags=re.M)
+    clean = re.sub(r"\bexport\s+(default\s+)?", "", clean)
+=======
+    feeding_src = read("src/ui/home_feeding.js")
+    sanctuary_src = read("src/ui/home_sanctuary.js")
+
+    clean = re.sub(r"^\s*import\s+.*?;?\s*$", "", feeding_src, flags=re.M)
+    clean = re.sub(r"\bexport\s+(default\s+)?", "", clean)
+
+    clean_sanctuary = re.sub(r"^\s*import\s+.*?;?\s*$", "", sanctuary_src, flags=re.M)
+    clean_sanctuary = re.sub(r"\bexport\s+(default\s+)?", "", clean_sanctuary)
+>>>>>>> REPLACE
+```
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+// ---- Load real module ----
+// home_feeding.js is an IIFE that assigns window.HomeFeeding.
+(() => {{ {clean} }})();
+const HomeFeeding = window.HomeFeeding;
+=======
+// ---- Load real modules ----
+// home_sanctuary.js is an IIFE that assigns window.HomeSanctuary.
+(() => {{ {clean_sanctuary} }})();
+// home_feeding.js is an IIFE that assigns window.HomeFeeding.
+(() => {{ {clean} }})();
+const HomeFeeding = window.HomeFeeding;
+>>>>>>> REPLACE
+```
+
+The `home_sanctuary.js` IIFE references `global.document.getElementById(CANVAS_ID)` only inside `mount()`, so loading it without mounting is safe. The `__testHooks` on `HomeSanctuary` operate on module-level `particles`/`dog`; `setDogState` requires `dog` to be non-null, so the particle test calls `setDogState('eating')` which returns early if `dog` is null. To make the particle test robust without mounting, `isEating()` and `spawnEatingParticle()` guard on `dog`. The test asserts `isEating()` is true — but with `dog === null` it will be false. Let me adjust the test to mount first:
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+    def test_exec_eating_particles_spawn(self):
+        snippet = """
+        const s = window.HomeSanctuary;
+        s.setDogState('eating');
+        const hooks = s.__testHooks;
+        const eating = hooks.isEating();
+        for (let i = 0; i < 5; i++) { hooks.spawnEatingParticle(); }
+        const count = hooks.getParticleCount();
+        return { eating: eating, count: count };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["eating"], "isEating must be true in eating state")
+        self.assertGreater(res["count"], 0, "Eating particles must spawn")
+=======
+    def test_exec_eating_particles_spawn(self):
+        snippet = """
+        const s = window.HomeSanctuary;
+        s.mount();
+        s.setDogState('eating');
+        const hooks = s.__testHooks;
+        const eating = hooks.isEating();
+        for (let i = 0; i < 5; i++) { hooks.spawnEatingParticle(); }
+        const count = hooks.getParticleCount();
+        return { eating: eating, count: count };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["eating"], "isEating must be true in eating state")
+        self.assertGreater(res["count"], 0, "Eating particles must spawn")
+>>>>>>> REPLACE
+```
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+    def test_exec_resume_roaming_clears_forced_state(self):
+        snippet = """
+        const s = window.HomeSanctuary;
+        s.setDogState('eating');
+        const before = s.getCompanionDog().state;
+        s.resumeRoaming();
+        const after = s.getCompanionDog().state;
+        return { before: before, after: after };
+        """
+=======
+    def test_exec_resume_roaming_clears_forced_state(self):
+        snippet = """
+        const s = window.HomeSanctuary;
+        s.mount();
+        s.setDogState('eating');
+        const before = s.getCompanionDog().state;
+        s.resumeRoaming();
+        const after = s.getCompanionDog().state;
+        return { before: before, after: after };
+        """
+>>>>>>> REPLACE
+```
+
+The `mount()` call requires `#home-field-canvas` to exist in the mock DOM. The harness's `__elements` only has `game-container` and `hud-overlay`. I'll add the canvas element to the mock DOM:
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+const __elements = {{
+  'game-container': __makeEl('div'),
+  'hud-overlay': __makeEl('div')
+}};
+=======
+const __elements = {{
+  'game-container': __makeEl('div'),
+  'hud-overlay': __makeEl('div'),
+  'home-field-canvas': __makeEl('canvas')
+}};
+>>>>>>> REPLACE
+```
+
+The mock canvas's `getContext` returns an object with `setTransform` missing — `resizeCanvas` calls `ctx.setTransform(dpr, 0, 0, dpr, 0, 0)`. I'll add `setTransform` and `arc`/`moveTo`/`lineTo`/`fillText`/`measureText` to the mock context:
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+    getContext() {{
+      return {{
+        clearRect() {{}}, fillRect() {{}}, beginPath() {{}}, ellipse() {{}},
+        fill() {{}}, stroke() {{}}, save() {{}}, restore() {{}},
+        createLinearGradient() {{ return {{ addColorStop() {{}} }}; }},
+        createRadialGradient() {{ return {{ addColorStop() {{}} }}; }},
+        set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}}
+      }};
+    }},
+=======
+    getContext() {{
+      return {{
+        clearRect() {{}}, fillRect() {{}}, beginPath() {{}}, ellipse() {{}},
+        arc() {{}}, moveTo() {{}}, lineTo() {{}}, fillText() {{}},
+        measureText() {{ return {{ width: 10 }}; }},
+        setTransform() {{}},
+        fill() {{}}, stroke() {{}}, save() {{}}, restore() {{}},
+        createLinearGradient() {{ return {{ addColorStop() {{}} }}; }},
+        createRadialGradient() {{ return {{ addColorStop() {{}} }}; }},
+        set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}},
+        set globalAlpha(v) {{}}, set font(v) {{}}, set textAlign(v) {{}},
+        set textBaseline(v) {{}}, set lineCap(v) {{}}
+      }};
+    }},
+>>>>>>> REPLACE
+```
+
+The mock canvas also needs `getBoundingClientRect` and `clientWidth`/`clientHeight` for `resizeCanvas`. The `__makeEl` already has `style`, but not `getBoundingClientRect`. `resizeCanvas` falls back to `canvas.clientWidth || canvas.width || 320` — `clientWidth` is undefined, `canvas.width` is undefined (mock doesn't set it), so it falls to 320. That's fine. But `canvas.width = ...` assignment works on the plain object. Good.
+
+Also `global.requestAnimationFrame` — the harness defines `requestAnimationFrame` as a top-level const, but `home_sanctuary.js` uses `global.requestAnimationFrame` where `global` is `window`. The harness's `window` object doesn't have `requestAnimationFrame`. `startLoop` calls `global.requestAnimationFrame(frame)` → `window.requestAnimationFrame` is undefined → throws. I'll add it to the mock `window`:
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+const window = {{ location: {{ search: '' }}, requestAnimationFrame: null }};
+const requestAnimationFrame = (fn) => 0;
+const cancelAnimationFrame = () => {{}};
+=======
+const requestAnimationFrame = (fn) => 0;
+const cancelAnimationFrame = () => {{}};
+const window = {{
+  location: {{ search: '' }},
+  requestAnimationFrame: requestAnimationFrame,
+  cancelAnimationFrame: cancelAnimationFrame,
+  addEventListener() {{}},
+  removeEventListener() {{}},
+  devicePixelRatio: 1
+}};
+>>>>>>> REPLACE
+```
+
+`home_sanctuary.js` also uses `global.localStorage` in `readProfile` — the harness defines `localStorage` as a top-level const, but `global.localStorage` (i.e. `window.localStorage`) is undefined. `readProfile` checks `typeof global.localStorage === 'undefined'` and returns null — safe. Good.
+
+`home_sanctuary.js` uses `global.document` in `mount()` — `window.document` is undefined. I need to add `document` to the mock `window`:
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+const window = {{
+  location: {{ search: '' }},
+  requestAnimationFrame: requestAnimationFrame,
+  cancelAnimationFrame: cancelAnimationFrame,
+  addEventListener() {{}},
+  removeEventListener() {{}},
+  devicePixelRatio: 1
+}};
+=======
+const window = {{
+  location: {{ search: '' }},
+  requestAnimationFrame: requestAnimationFrame,
+  cancelAnimationFrame: cancelAnimationFrame,
+  addEventListener() {{}},
+  removeEventListener() {{}},
+  devicePixelRatio: 1
+}};
+window.document = document;
+window.localStorage = localStorage;
+>>>>>>> REPLACE
+```
+
+But `document` and `localStorage` are declared *after* `window` in the harness. I need to reorder. Let me restructure the harness so `document` and `localStorage` are defined before `window`:
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+const window = {{
+  location: {{ search: '' }},
+  requestAnimationFrame: requestAnimationFrame,
+  cancelAnimationFrame: cancelAnimationFrame,
+  addEventListener() {{}},
+  removeEventListener() {{}},
+  devicePixelRatio: 1
+}};
+window.document = document;
+window.localStorage = localStorage;
+const requestAnimationFrame = (fn) => 0;
+const cancelAnimationFrame = () => {{}};
+const setTimeout = (fn) => 0;
+const clearTimeout = () => {{}};
+const localStorage = (() => {{
+  let store = {{}};
+  return {{
+    getItem(k) {{ return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; }},
+    setItem(k, v) {{ store[k] = String(v); }},
+    removeItem(k) {{ delete store[k]; }},
+    clear() {{ store = {{}}; }}
+  }};
+}})();
+=======
+const requestAnimationFrame = (fn) => 0;
+const cancelAnimationFrame = () => {{}};
+const setTimeout = (fn) => 0;
+const clearTimeout = () => {{}};
+const localStorage = (() => {{
+  let store = {{}};
+  return {{
+    getItem(k) {{ return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; }},
+    setItem(k, v) {{ store[k] = String(v); }},
+    removeItem(k) {{ delete store[k]; }},
+    clear() {{ store = {{}}; }}
+  }};
+}})();
+const window = {{
+  location: {{ search: '' }},
+  requestAnimationFrame: requestAnimationFrame,
+  cancelAnimationFrame: cancelAnimationFrame,
+  addEventListener() {{}},
+  removeEventListener() {{}},
+  devicePixelRatio: 1
+}};
+window.document = document;
+window.localStorage = localStorage;
+>>>>>>> REPLACE
+```
+
+Wait — `document` is defined *before* `window` in the original harness (the `const document = {...}` block comes before `const window = ...`). Let me verify the original order: `__makeEl`, `__elements`, `document`, `window`, `requestAnimationFrame`, `cancelAnimationFrame`, `setTimeout`, `clearTimeout`, `localStorage`. So `document` is before `window`, but `localStorage` is after. My reorder moves `localStorage` before `window`. Good — `document` is already before `window`.
+
+But the original `window` line is `const window = {{ location: {{ search: '' }}, requestAnimationFrame: null }};` — my SEARCH block above uses the *new* form. Let me fix the SEARCH to match the original:
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+const window = {{ location: {{ search: '' }}, requestAnimationFrame: null }};
+const requestAnimationFrame = (fn) => 0;
+const cancelAnimationFrame = () => {{}};
+const setTimeout = (fn) => 0;
+const clearTimeout = () => {{}};
+const localStorage = (() => {{
+  let store = {{}};
+  return {{
+    getItem(k) {{ return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; }},
+    setItem(k, v) {{ store[k] = String(v); }},
+    removeItem(k) {{ delete store[k]; }},
+    clear() {{ store = {{}}; }}
+  }};
+}})();
+=======
+const requestAnimationFrame = (fn) => 0;
+const cancelAnimationFrame = () => {{}};
+const setTimeout = (fn) => 0;
+const clearTimeout = () => {{}};
+const localStorage = (() => {{
+  let store = {{}};
+  return {{
+    getItem(k) {{ return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; }},
+    setItem(k, v) {{ store[k] = String(v); }},
+    removeItem(k) {{ delete store[k]; }},
+    clear() {{ store = {{}}; }}
+  }};
+}})();
+const window = {{
+  location: {{ search: '' }},
+  requestAnimationFrame: requestAnimationFrame,
+  cancelAnimationFrame: cancelAnimationFrame,
+  addEventListener() {{}},
+  removeEventListener() {{}},
+  devicePixelRatio: 1
+}};
+window.document = document;
+window.localStorage = localStorage;
+>>>>>>> REPLACE
+```
+
+Now `home_sanctuary.js`'s IIFE is `(function (global) {...})(typeof window !== 'undefined' ? window : this)`. In the harness, `window` is defined, so `global = window`. `global.document` = `document` ✓, `global.localStorage` = `localStorage` ✓, `global.requestAnimationFrame` ✓.
+
+`home_feeding.js`'s IIFE is `(function () {...})()` — it references bare `window`, `document`, `localStorage`, `setTimeout`, `clearTimeout`, `performance`. All are top-level consts in the harness scope, so they resolve. ✓
+
+One more issue: `home_sanctuary.js` `mount()` calls `resizeCanvas()` which calls `canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : null`. The mock canvas doesn't have `getBoundingClientRect`, so `rect = null`, then `cssWidth = canvas.clientWidth || canvas.width || 320`. `canvas.clientWidth` is undefined, `canvas.width` is undefined → 320. Then `canvas.width = Math.round(320 * 1)` = 320. `ctx.setTransform` ✓. `buildGrass()` ✓. `dog = createDog(...)` ✓. `enterState('wander')` ✓. `startLoop()` → `global.requestAnimationFrame(frame)` returns 0, `rafId = 0`. ✓
+
+`setDogState('eating')` → `forcedState = 'eating'`, `enterState('eating')` → `dog.state = 'eating'`, `stateTimer = rand(...)`. ✓
+
+`isEating()` → `dog.state === 'eating'` → true ✓.
+
+`spawnEatingParticle()` → pushes to `particles` ✓.
+
+`resumeRoaming()` → `pose = 'auto'`, `forcedState = null`, `enterState('wander')` → `dog.state = 'wander'` ✓.
+
+`getCompanionDog().state` → `'wander'` ✓.
+
+Now for `test_home_menu.py` — the `test_exec_adopt_unlocks_and_allows_walk_and_close`
+
+
+test. `adoptDogFromForm()` reads `#cust-dog-name` and `#cust-dog-coat` via `document.getElementById`. These elements are created by `renderDogSlot()` which is called in `openModal()` / `loadSavedProfile()`. In the test, `new SocialHUD(...)` → `initHUD()` → `loadSavedProfile()` → saved `dogSlot: null` branch → `renderDogSlot()` is NOT called in that branch (only `updateModalActiveSelections`, `_forceDogTab`, `openModal`, `updateCloseButtonState`, `renderHomeStage`). `openModal()` calls `renderDogSlot()` ✓. So `#cust-dog-name` and `#cust-dog-coat` exist after construction. But `renderDogSlot()` uses `container.innerHTML = \`...\`` — the mock `innerHTML` setter is a plain property, so the elements inside are NOT parsed into `__elements`. So `document.getElementById('cust-dog-name')` returns null.
+
+`adoptDogFromForm()` handles null inputs: `name = (nameInput && nameInput.value.trim()) || 'Ziggy'` → 'Ziggy' ✓. `coatKey = (coatSelect && coatSelect.value) || 'CHOCOLATE_TAN'` → 'CHOCOLATE_TAN' ✓. So adoption works with defaults. ✓
+
+`canWalkInPark()` → `this.dogSlot !== null && !this.isHomeLocked` → true ✓.
+
+`closeModal()` → `if (this.isHomeLocked || this.dogSlot === null)` → false → `modal.style.display = 'none'` ✓.
+
+Good. Now let me also double-check `test_exec_open_home_null_slot_forces_settings_and_lock` still passes — `openHome()` → `openModal()` → locked branch → `setHomeView('settings', {force: true})` → `currentHomeView = 'settings'` ✓.
+
+And `test_exec_resolve_home_view_transitions` — `resolveHomeView('settings')` with `dogSlot !== null` → 'settings' ✓.
+
+Now, one concern: in `home_feeding.js`, `simulateFeed` now calls `emitToast(toast)`. `emitToast` tries `window.HomeSanctuary.toast` (doesn't exist), then `window.showToast` (in the sanctuary test harness, `window.showToast` is undefined — `home_sanctuary.js` doesn't set it). So it's a no-op. Fine — the test doesn't assert on toast emission via `simulateFeed`. But the brief says "Toast emission triggers `window.showToast` or HUD toast." Let me add a test that verifies `window.showToast` is called when set:
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+    def test_exec_second_click_while_feeding_ignored(self):
+=======
+    def test_exec_simulate_feed_emits_global_toast(self):
+        snippet = """
+        let captured = null;
+        window.showToast = (msg) => { captured = msg; };
+        const feeding = HomeFeeding;
+        feeding.__testHooks.simulateFeed({ dogName: 'Ziggy' });
+        return { captured: captured };
+        """
+        res = _run_js(snippet)
+        self.assertIsNotNone(res["captured"],
+                             "simulateFeed must emit a toast via window.showToast")
+        self.assertIn("loved the meal! ❤️", res["captured"],
+                      "Emitted toast must contain the meal copy")
+
+    def test_exec_second_click_while_feeding_ignored(self):
+>>>>>>> REPLACE
+```
+
+Now let me verify the `home_feeding.js` `runFeed` change doesn't break the existing `test_exec_second_click_while_feeding_ignored` — that test uses `simulateFeed`, not `runFeed`, so it's unaffected. ✓
+
+Let me also verify `home_sanctuary.js` `setDogState(null)` — the brief says "`setDogState('wander')` or `setDogState(null)` clears `forcedState`". My implementation: `setDogState('wander')` sets `forcedState = 'wander'` (not cleared). Hmm — the brief says `setDogState('wander')` should clear `forcedState`. Let me re-read: "Ensure `setDogState('wander')` or `setDogState(null)` clears `forcedState` and allows autonomous cycling". So `setDogState('wander')` should clear `forcedState` (not force it). Let me adjust:
+
+```javascript
+src/ui/home_sanctuary.js
+<<<<<<< SEARCH
+  function setDogState(nextState) {
+    // null / undefined clears any forced state and resumes autonomous cycling.
+    if (nextState === null || nextState === undefined) {
+      forcedState = null;
+      if (dog) enterState('wander');
+      return;
+    }
+    if (STATES.indexOf(nextState) === -1) return;
+    if (!dog) return;
+
+    forcedState = nextState;
+    enterState(nextState);
+  }
+=======
+  function setDogState(nextState) {
+    // null / undefined / 'wander' clears any forced state and resumes
+    // autonomous cycling (wander, sniff, sit, wag).
+    if (nextState === null || nextState === undefined || nextState === 'wander') {
+      forcedState = null;
+      if (dog) enterState('wander');
+      return;
+    }
+    if (STATES.indexOf(nextState) === -1) return;
+    if (!dog) return;
+
+    forcedState = nextState;
+    enterState(nextState);
+  }
+>>>>>>> REPLACE
+```
+
+But wait — `home_feeding.js` `resumeRoaming()` calls `setDogState('wander')` then `window.HomeSanctuary.resumeRoaming()`. With the new `setDogState('wander')` clearing `forcedState`, that's consistent. ✓
+
+And `test_exec_resume_roaming_clears_forced_state` calls `s.setDogState('eating')` (forces eating), then `s.resumeRoaming()` (clears forcedState, sets wander). ✓
+
+Now `home_feeding.js` `runFeed` — after `EATING_MS`, it calls `resumeRoaming()` which calls `setDogPose('auto')` and `setDogState('wander')`. With the new `setDogState('wander')` clearing `forcedState`, the dog resumes autonomous cycling. ✓
+
+Let me also check: `home_feeding.js` `runFeed` previously called `setDogState('idle')` and `setDogPose('idle')` — `'idle'` is not a valid pose/state, so those were no-ops. My replacement removes them and uses `resumeRoaming()`. ✓
+
+One more: the `home_sanctuary.js` `drawParticles` uses `ctx.fillText` — the mock context now has `fillText` ✓. And `ctx.font`, `ctx.textAlign`, `ctx.textBaseline`, `ctx.globalAlpha` setters ✓.
+
+Let me verify the `home_sanctuary.js` `updateParticles` — it's called in `frame()` which is only called via `requestAnimationFrame`. In the test, `mount()` calls `startLoop()` → `requestAnimationFrame(frame)` returns 0 (mock doesn't invoke `frame`). So `updateParticles` is never called in the test. The test calls `hooks.spawnEatingParticle()` directly. ✓
+
+Now let me make sure the `home_sanctuary.js` `__testHooks` doesn't break the existing `test_home_menu.py` `test_exec_split_stage_preview_draws_only_active_tab` — that test uses `SocialHUD`, not `HomeSanctuary`. ✓
+
+And `test_home_menu.py`'s `_run_js` loads `social_hud.js` and `companion_dog.js`, not `home_sanctuary.js`. The `social_hud.js` `setHomeView` calls `window.HomeSanctuary?.mount?.()` — optional chaining, safe if undefined. ✓
+
+Let me also verify `social_hud.js` `exposeTestHooks` — it's called in the constructor. `window.showToast = (msg) => this.showToast(msg)` — `this` is the HUD instance. ✓
+
+Now, `test_home_menu.py` `test_exec_adopt_unlocks_and_allows_walk_and_close` — `adoptDogFromForm()` calls `this.setHomeView('sanctuary')`. `setHomeView('sanctuary')` → `target === 'sanctuary'`, `this.dogSlot !== null` (just set), so not locked → `this.currentHomeView = 'sanctuary'` → `_applyHomeViewDom()` → `window.HomeSanctuary?.mount?.()` (undefined, safe) → `window.HomeFeeding?.mount?.()` (undefined, safe). ✓
+
+Then `modal.style.display = 'block'`, `hud.closeModal()` → not locked → `modal.style.display = 'none'` ✓.
+
+All good. Let me also double-check the `home_feeding.js` `simulateFeed` — it now calls `emitToast(toast)`. In `test_home_sanctuary.py`'s `test_exec_simulate_feed_returns_expected_shape`, `window.showToast` is undefined (not set by the test), so `emitToast` is a no-op. ✓ In `test_exec_simulate_feed_emits_global_toast`, `window.showToast` is set → captured. ✓
+
+Wait — `emitToast` checks `window.HomeSanctuary && typeof window.HomeSanctuary.toast === 'function'` first. In the sanctuary test harness, `window.HomeSanctuary` IS defined (we load `home_sanctuary.js`), but it has no `toast` method. So it falls through to `window.showToast`. ✓
+
+Let me finalize all the blocks. I need to be careful with the `test_home_sanctuary.py` harness reordering — let me re-verify the exact original text.
+
+Original harness (from the file):
+```
+const window = {{ location: {{ search: '' }}, requestAnimationFrame: null }};
+const requestAnimationFrame = (fn) => 0;
+const cancelAnimationFrame = () => {{}};
+const setTimeout = (fn) => 0;
+const clearTimeout = () => {{}};
+const localStorage = (() => {{
+  let store = {{}};
+  return {{
+    getItem(k) {{ return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; }},
+    setItem(k, v) {{ store[k] = String(v); }},
+    removeItem(k) {{ delete store[k]; }},
+    clear() {{ store = {{}}; }}
+  }};
+}})();
+```
+
+My SEARCH block matches this exactly. ✓
+
+And the `document` block is before `window`:
+```
+const document = {{
+  _byId: __elements,
+  getElementById(id) {{ return __elements[id] || null; }},
+  createElement(tag) {{ return __makeEl(tag); }},
+  querySelector() {{ return null; }},
+  querySelectorAll() {{ return []; }},
+  addEventListener() {{}},
+  body: __makeEl('body')
+}};
+```
+✓
+
+Now the `__elements` block:
+```
+const __elements = {{
+  'game-container': __makeEl('div'),
+  'hud-overlay': __makeEl('div')
+}};
+```
+✓
+
+And the `getContext` block — let me match exactly:
+```
+    getContext() {{
+      return {{
+        clearRect() {{}}, fillRect() {{}}, beginPath() {{}}, ellipse() {{}},
+        fill() {{}}, stroke() {{}}, save() {{}}, restore() {{}},
+        createLinearGradient() {{ return {{ addColorStop() {{}} }}; }},
+        createRadialGradient() {{ return {{ addColorStop() {{}} }}; }},
+        set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}}
+      }};
+    }},
+```
+✓
+
+And the module load block:
+```
+// ---- Load real module ----
+// home_feeding.js is an IIFE that assigns window.HomeFeeding.
+(() => {{ {clean} }})();
+const HomeFeeding = window.HomeFeeding;
+```
+✓
+
+And the `feeding_src` block:
+```
+    feeding_src = read("src/ui/home_feeding.js")
+
+    clean = re.sub(r"^\s*import\s+.*?;?\s*$", "", feeding_src, flags=re.M)
+    clean = re.sub(r"\bexport\s+(default\s+)?", "", clean)
+```
+✓
+
+All good. Let me write out the final blocks.
+
+One last check on `home_sanctuary.js` — the `frame` function:
+```
+    updateDog(dt);
+    render();
+
+    rafId = global.requestAnimationFrame(frame);
+```
+✓
+
+And `unmount`:
+```
+    canvas = null;
+    ctx = null;
+    dog = null;
+    forcedState = null;
+    grassBlades = [];
+  }
+```
+✓
+
+And the `HomeSanctuary` object:
+```
+  var HomeSanctuary = {
+    mount: mount,
+    unmount: unmount,
+    getCompanionDog: getCompanionDog,
+    setDogPose: setDogPose,
+    setDogState: setDogState,
+    getFieldSize: getFieldSize
+  };
+```
+✓
+
+And `render`:
+```
+  function render() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, fieldWidth, fieldHeight);
+    drawField();
+    drawDog();
+  }
+```
+✓
+
+And `setDogPose`/`setDogState`:
+```
+  function setDogPose(nextPose) {
+    if (nextPose !== 'camera' && nextPose !== 'auto') return;
+    pose = nextPose;
+    if (dog && nextPose === 'camera') {
+      dog.facing = Math.PI / 2;
+    }
+  }
+
+  function setDogState(nextState) {
+    if (STATES.indexOf(nextState) === -1) return;
+    if (!dog) return;
+
+    forcedState = nextState;
+    enterState(nextState);
+  }
+```
+✓
+
+And the module state:
+```
+  var grassBlades = [];
+  var noiseSeed = 1337;
+```
+✓
+
+All blocks verified. Let me output them.
+
+```javascript
+src/ui/home_feeding.js
+<<<<<<< SEARCH
+  var FACING_MS = 200; // <= 250ms
+  var BOWL_MS = 150; // <= 200ms
+  var EATING_MS = 3500; // within 3000-4000ms, target 3500ms
+=======
+  var FACING_MS = 200; // <= 250ms
+  var BOWL_MS = 150; // <= 200ms
+  var EATING_MS = 3500; // within 3000-4000ms, target 3500ms
+  var RESUME_DELAY_MS = 800; // pause after eating before autonomous roaming resumes
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_feeding.js
+<<<<<<< SEARCH
+  function setDogState(dogState) {
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.setDogState === 'function') {
+      try {
+        window.HomeSanctuary.setDogState(dogState);
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+=======
+  function setDogState(dogState) {
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.setDogState === 'function') {
+      try {
+        window.HomeSanctuary.setDogState(dogState);
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+
+  function resumeRoaming() {
+    setDogPose('auto');
+    setDogState('wander');
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.resumeRoaming === 'function') {
+      try {
+        window.HomeSanctuary.resumeRoaming();
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_feeding.js
+<<<<<<< SEARCH
+          schedule(function () {
+            // Phase 4: complete (instant)
+            setState('complete');
+            clearBowl();
+            setDogState('idle');
+            setDogPose('idle');
+
+            var toast = dogName + ' loved the meal! ❤️';
+            emitToast(toast);
+
+            persistFeed(dogId);
+
+            setState('idle');
+            feeding = false;
+            updateDisabledState();
+
+            // Expose duration for test hooks via closure variable.
+            runFeed.__lastDuration = Math.round(now() - start);
+            resolve();
+          }, EATING_MS);
+=======
+          schedule(function () {
+            // Phase 4: complete (instant)
+            setState('complete');
+            clearBowl();
+
+            var toast = dogName + ' loved the meal! ❤️';
+            emitToast(toast);
+
+            persistFeed(dogId);
+
+            // Expose duration for test hooks via closure variable.
+            runFeed.__lastDuration = Math.round(now() - start);
+
+            // Pause briefly, then hand control back to autonomous roaming.
+            schedule(function () {
+              resumeRoaming();
+              setState('idle');
+              feeding = false;
+              updateDisabledState();
+              resolve();
+            }, RESUME_DELAY_MS);
+          }, EATING_MS);
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_feeding.js
+<<<<<<< SEARCH
+      var toast = dogName + ' loved the meal! ❤️';
+      var persistedValue = persistFeed(dogId);
+      var durationMs = fullDuration;
+
+      // Keep state consistent for observers.
+      setState('idle');
+=======
+      var toast = dogName + ' loved the meal! ❤️';
+      var persistedValue = persistFeed(dogId);
+      var durationMs = fullDuration;
+
+      // Emit the toast through the same path as the live feed so the HUD
+      // notification is exercised by the test hooks too.
+      emitToast(toast);
+
+      // Keep state consistent for observers.
+      setState('idle');
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_sanctuary.js
+<<<<<<< SEARCH
+  var grassBlades = [];
+  var noiseSeed = 1337;
+=======
+  var grassBlades = [];
+  var noiseSeed = 1337;
+
+  // Lightweight eating particles (hearts + munch crumbs).
+  var particles = [];
+  var particleAccumulator = 0;
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_sanctuary.js
+<<<<<<< SEARCH
+  function setDogPose(nextPose) {
+    if (nextPose !== 'camera' && nextPose !== 'auto') return;
+    pose = nextPose;
+    if (dog && nextPose === 'camera') {
+      dog.facing = Math.PI / 2;
+    }
+  }
+
+  function setDogState(nextState) {
+    if (STATES.indexOf(nextState) === -1) return;
+    if (!dog) return;
+
+    forcedState = nextState;
+    enterState(nextState);
+  }
+=======
+  function setDogPose(nextPose) {
+    if (nextPose !== 'camera' && nextPose !== 'auto') return;
+    pose = nextPose;
+    if (dog && nextPose === 'camera') {
+      dog.facing = Math.PI / 2;
+    }
+  }
+
+  function setDogState(nextState) {
+    // null / undefined / 'wander' clears any forced state and resumes
+    // autonomous cycling (wander, sniff, sit, wag).
+    if (nextState === null || nextState === undefined || nextState === 'wander') {
+      forcedState = null;
+      if (dog) enterState('wander');
+      return;
+    }
+    if (STATES.indexOf(nextState) === -1) return;
+    if (!dog) return;
+
+    forcedState = nextState;
+    enterState(nextState);
+  }
+
+  // Hand control back to autonomous roaming: clear camera lock + forced state.
+  function resumeRoaming() {
+    pose = 'auto';
+    forcedState = null;
+    if (dog) {
+      enterState('wander');
+    }
+  }
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_sanctuary.js
+<<<<<<< SEARCH
+  function render() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, fieldWidth, fieldHeight);
+    drawField();
+    drawDog();
+  }
+=======
+  // ---------------------------------------------------------------------------
+  // Eating particles
+  // ---------------------------------------------------------------------------
+
+  function isEating() {
+    return Boolean(dog && (dog.state === 'eating' || forcedState === 'eating'));
+  }
+
+  function spawnEatingParticle() {
+    if (!dog) return;
+    var isHeart = Math.random() < 0.4;
+    particles.push({
+      x: dog.x + rand(-DOG_RADIUS, DOG_RADIUS),
+      y: dog.y - DOG_RADIUS * 0.6 + rand(-4, 4),
+      vx: rand(-8, 8),
+      vy: rand(-26, -14),
+      life: 0,
+      maxLife: rand(700, 1200),
+      wobble: rand(0, Math.PI * 2),
+      glyph: isHeart ? '❤️' : (Math.random() < 0.5 ? '🍖' : '✨'),
+      size: isHeart ? 12 : 9
+    });
+  }
+
+  function updateParticles(dt) {
+    if (isEating()) {
+      particleAccumulator += dt;
+      // Spawn roughly every 120ms while eating.
+      while (particleAccumulator >= 120) {
+        particleAccumulator -= 120;
+        spawnEatingParticle();
+      }
+    } else {
+      particleAccumulator = 0;
+    }
+
+    for (var i = particles.length - 1; i >= 0; i--) {
+      var p = particles[i];
+      p.life += dt;
+      if (p.life >= p.maxLife) {
+        particles.splice(i, 1);
+        continue;
+      }
+      p.wobble += dt * 0.006;
+      p.x += (p.vx + Math.sin(p.wobble) * 10) * (dt / 1000);
+      p.y += p.vy * (dt / 1000);
+    }
+  }
+
+  function drawParticles() {
+    if (!ctx || particles.length === 0) return;
+    ctx.save();
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    for (var i = 0; i < particles.length; i++) {
+      var p = particles[i];
+      var t = p.life / p.maxLife;
+      ctx.globalAlpha = Math.max(0, 1 - t);
+      ctx.font = p.size + 'px system-ui, -apple-system, sans-serif';
+      ctx.fillText(p.glyph, p.x, p.y);
+    }
+    ctx.restore();
+  }
+
+  function render() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, fieldWidth, fieldHeight);
+    drawField();
+    drawDog();
+    drawParticles();
+  }
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_sanctuary.js
+<<<<<<< SEARCH
+    updateDog(dt);
+    render();
+
+    rafId = global.requestAnimationFrame(frame);
+=======
+    updateDog(dt);
+    updateParticles(dt);
+    render();
+
+    rafId = global.requestAnimationFrame(frame);
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_sanctuary.js
+<<<<<<< SEARCH
+    canvas = null;
+    ctx = null;
+    dog = null;
+    forcedState = null;
+    grassBlades = [];
+  }
+=======
+    canvas = null;
+    ctx = null;
+    dog = null;
+    forcedState = null;
+    grassBlades = [];
+    particles = [];
+    particleAccumulator = 0;
+  }
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/home_sanctuary.js
+<<<<<<< SEARCH
+  var HomeSanctuary = {
+    mount: mount,
+    unmount: unmount,
+    getCompanionDog: getCompanionDog,
+    setDogPose: setDogPose,
+    setDogState: setDogState,
+    getFieldSize: getFieldSize
+  };
+=======
+  var HomeSanctuary = {
+    mount: mount,
+    unmount: unmount,
+    getCompanionDog: getCompanionDog,
+    setDogPose: setDogPose,
+    setDogState: setDogState,
+    resumeRoaming: resumeRoaming,
+    getFieldSize: getFieldSize,
+    __testHooks: {
+      getParticleCount: function () {
+        return particles.length;
+      },
+      spawnEatingParticle: spawnEatingParticle,
+      updateParticles: updateParticles,
+      isEating: isEating
+    }
+  };
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/social_hud.js
+<<<<<<< SEARCH
+    this.isHomeLocked = false;
+    this.renderDogSlot();
+    this.renderHomeStage();
+    this.updateCloseButtonState();
+    this.persistProfile();
+    this.broadcastProfile();
+
+    // Unlock: transition to the sanctuary view now that a dog exists.
+    this.setHomeView('sanctuary');
+=======
+    // Explicitly clear the lock now that a dog occupies the slot.
+    this.isHomeLocked = false;
+    this.renderDogSlot();
+    this.renderHomeStage();
+    this.updateCloseButtonState();
+    this.persistProfile();
+    this.broadcastProfile();
+
+    // Unlock: transition to the sanctuary view now that a dog exists.
+    this.setHomeView('sanctuary');
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/social_hud.js
+<<<<<<< SEARCH
+    const isSettings = this.currentHomeView === 'settings';
+    const locked = this.dogSlot === null;
+=======
+    const isSettings = this.currentHomeView === 'settings';
+    const locked = this.isHomeLocked || this.dogSlot === null;
+>>>>>>> REPLACE
+```
+
+```javascript
+src/ui/social_hud.js
+<<<<<<< SEARCH
+  exposeTestHooks() {
+    if (typeof window === 'undefined') return;
+    window.__vdwHomeTestHooks = {
+      resolveHomeView: (req, opts) => this.resolveHomeView(req, opts),
+      canWalkInPark: () => this.canWalkInPark()
+    };
+  }
+=======
+  exposeTestHooks() {
+    if (typeof window === 'undefined') return;
+    window.__vdwHomeTestHooks = {
+      resolveHomeView: (req, opts) => this.resolveHomeView(req, opts),
+      canWalkInPark: () => this.canWalkInPark()
+    };
+    // Expose a global toast so home_feeding.js emitToast() reaches the HUD.
+    window.showToast = (msg) => this.showToast(msg);
+  }
+>>>>>>> REPLACE
+```
+
+```javascript
+src/main.js
+<<<<<<< SEARCH
+import { initWasmSim, syncWorldObstacles } from './engine/wasm_sim_bridge.js';
+import { applyCoastalShallowWaterInteraction } from './systems/coastalWater.js';
+=======
+import { initWasmSim, syncWorldObstacles } from './engine/wasm_sim_bridge.js';
+import { applyCoastalShallowWaterInteraction } from './systems/coastalWater.js';
+// Side-effect imports: register window.HomeSanctuary / window.HomeFeeding.
+import './ui/home_sanctuary.js';
+import './ui/home_feeding.js';
+>>>>>>> REPLACE
+```
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+    feeding_src = read("src/ui/home_feeding.js")
+
+    clean = re.sub(r"^\s*import\s+.*?;?\s*$", "", feeding_src, flags=re.M)
+    clean = re.sub(r"\bexport\s+(default\s+)?", "", clean)
+=======
+    feeding_src = read("src/ui/home_feeding.js")
+    sanctuary_src = read("src/ui/home_sanctuary.js")
+
+    clean = re.sub(r"^\s*import\s+.*?;?\s*$", "", feeding_src, flags=re.M)
+    clean = re.sub(r"\bexport\s+(default\s+)?", "", clean)
+
+    clean_sanctuary = re.sub(r"^\s*import\s+.*?;?\s*$", "", sanctuary_src, flags=re.M)
+    clean_sanctuary = re.sub(r"\bexport\s+(default\s+)?", "", clean_sanctuary)
+>>>>>>> REPLACE
+```
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+const __elements = {{
+  'game-container': __makeEl('div'),
+  'hud-overlay': __makeEl('div')
+}};
+=======
+const __elements = {{
+  'game-container': __makeEl('div'),
+  'hud-overlay': __makeEl('div'),
+  'home-field-canvas': __makeEl('canvas')
+}};
+>>>>>>> REPLACE
+```
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+    getContext() {{
+      return {{
+        clearRect() {{}}, fillRect() {{}}, beginPath() {{}}, ellipse() {{}},
+        fill() {{}}, stroke() {{}}, save() {{}}, restore() {{}},
+        createLinearGradient() {{ return {{ addColorStop() {{}} }}; }},
+        createRadialGradient() {{ return {{ addColorStop() {{}} }}; }},
+        set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}}
+      }};
+    }},
+=======
+    getContext() {{
+      return {{
+        clearRect() {{}}, fillRect() {{}}, beginPath() {{}}, ellipse() {{}},
+        arc() {{}}, moveTo() {{}}, lineTo() {{}}, fillText() {{}},
+        measureText() {{ return {{ width: 10 }}; }},
+        setTransform() {{}},
+        fill() {{}}, stroke() {{}}, save() {{}}, restore() {{}},
+        createLinearGradient() {{ return {{ addColorStop() {{}} }}; }},
+        createRadialGradient() {{ return {{ addColorStop() {{}} }}; }},
+        set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}},
+        set globalAlpha(v) {{}}, set font(v) {{}}, set textAlign(v) {{}},
+        set textBaseline(v) {{}}, set lineCap(v) {{}}
+      }};
+    }},
+>>>>>>> REPLACE
+```
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+const window = {{ location: {{ search: '' }}, requestAnimationFrame: null }};
+const requestAnimationFrame = (fn) => 0;
+const cancelAnimationFrame = () => {{}};
+const setTimeout = (fn) => 0;
+const clearTimeout = () => {{}};
+const localStorage = (() => {{
+  let store = {{}};
+  return {{
+    getItem(k) {{ return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; }},
+    setItem(k, v) {{ store[k] = String(v); }},
+    removeItem(k) {{ delete store[k]; }},
+    clear() {{ store = {{}}; }}
+  }};
+}})();
+=======
+const requestAnimationFrame = (fn) => 0;
+const cancelAnimationFrame = () => {{}};
+const setTimeout = (fn) => 0;
+const clearTimeout = () => {{}};
+const localStorage = (() => {{
+  let store = {{}};
+  return {{
+    getItem(k) {{ return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; }},
+    setItem(k, v) {{ store[k] = String(v); }},
+    removeItem(k) {{ delete store[k]; }},
+    clear() {{ store = {{}}; }}
+  }};
+}})();
+const window = {{
+  location: {{ search: '' }},
+  requestAnimationFrame: requestAnimationFrame,
+  cancelAnimationFrame: cancelAnimationFrame,
+  addEventListener() {{}},
+  removeEventListener() {{}},
+  devicePixelRatio: 1
+}};
+window.document = document;
+window.localStorage = localStorage;
+>>>>>>> REPLACE
+```
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+// ---- Load real module ----
+// home_feeding.js is an IIFE that assigns window.HomeFeeding.
+(() => {{ {clean} }})();
+const HomeFeeding = window.HomeFeeding;
+=======
+// ---- Load real modules ----
+// home_sanctuary.js is an IIFE that assigns window.HomeSanctuary.
+(() => {{ {clean_sanctuary} }})();
+// home_feeding.js is an IIFE that assigns window.HomeFeeding.
+(() => {{ {clean} }})();
+const HomeFeeding = window.HomeFeeding;
+>>>>>>> REPLACE
+```
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+    def test_test_hooks_exposed(self):
+        self.assertIn('__testHooks', self.feeding_js,
+                      "HomeFeeding must expose __testHooks")
+        self.assertIn('simulateFeed', self.feeding_js,
+                      "HomeFeeding.__testHooks must expose simulateFeed")
+=======
+    def test_test_hooks_exposed(self):
+        self.assertIn('__testHooks', self.feeding_js,
+                      "HomeFeeding must expose __testHooks")
+        self.assertIn('simulateFeed', self.feeding_js,
+                      "HomeFeeding.__testHooks must expose simulateFeed")
+
+    def test_resume_delay_constant(self):
+        self.assertIn('RESUME_DELAY_MS', self.feeding_js,
+                      "home_feeding.js must define RESUME_DELAY_MS")
+
+    def test_post_feed_resumes_roaming(self):
+        self.assertIn("setDogPose('auto')", self.feeding_js,
+                      "Post-feed must call setDogPose('auto')")
+        self.assertIn("setDogState('wander')", self.feeding_js,
+                      "Post-feed must call setDogState('wander')")
+        self.assertIn('resumeRoaming', self.sanctuary_js,
+                      "home_sanctuary.js must expose resumeRoaming")
+
+    def test_eating_particles(self):
+        self.assertIn('particles', self.sanctuary_js,
+                      "home_sanctuary.js must implement eating particles")
+        self.assertIn('❤️', self.sanctuary_js,
+                      "Eating particles must include heart glyphs")
+        self.assertIn('spawnEatingParticle', self.sanctuary_js,
+                      "home_sanctuary.js must expose spawnEatingParticle")
+
+    def test_global_toast_wiring(self):
+        self.assertIn('window.showToast', self.hud_js,
+                      "social_hud.js must expose window.showToast")
+        self.assertIn('showToast', self.feeding_js,
+                      "home_feeding.js emitToast must fall back to window.showToast")
+>>>>>>> REPLACE
+```
+
+```python
+test/test_home_sanctuary.py
+<<<<<<< SEARCH
+    def test_exec_second_click_while_feeding_ignored(self):
+=======
+    def test_exec_resume_roaming_clears_forced_state(self):
+        snippet = """
+        const s = window.HomeSanctuary;
+        s.mount();
+        s.setDogState('eating');
+        const before = s.getCompanionDog().state;
+        s.resumeRoaming();
+        const after = s.getCompanionDog().state;
+        return { before: before, after: after };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["before"], "eating",
+                         "setDogState('eating') must force the eating state")
+        self.assertEqual(res["after"], "wander",
+                         "resumeRoaming must return the dog to wander")
+
+    def test_exec_eating_particles_spawn(self):
+        snippet = """
+        const s = window.HomeSanctuary;
+        s.mount();
+        s.setDogState('eating');
+        const hooks = s.__testHooks;
+        const eating = hooks.isEating();
+        for (let i = 0; i < 5; i++) { hooks.spawnEatingParticle(); }
+        const count = hooks.getParticleCount();
+        return { eating: eating, count: count };
+        """
+        res = _run_js(s
+
+
+nippet)
+        self.assertTrue(res["eating"], "isEating must be true in eating state")
+        self.assertGreater(res["count"], 0, "Eating particles must spawn")
+
+    def test_exec_simulate_feed_emits_global_toast(self):
+        snippet = """
+        let captured = null;
+        window.showToast = (msg) => { captured = msg; };
+        const feeding = HomeFeeding;
+        feeding.__testHooks.simulateFeed({ dogName: 'Ziggy' });
+        return { captured: captured };
+        """
+        res = _run_js(snippet)
+        self.assertIsNotNone(res["captured"],
+                             "simulateFeed must emit a toast via window.showToast")
+        self.assertIn("loved the meal! ❤️", res["captured"],
+                      "Emitted toast must contain the meal copy")
+
+    def test_exec_second_click_while_feeding_ignored(self):
+>>>>>>> REPLACE
+```
+
+```python
+test/test_home_menu.py
+<<<<<<< SEARCH
+    def test_exec_apply_remote_dog_presence_clears_dog(self):
+=======
+    def test_exec_adopt_unlocks_and_allows_walk_and_close(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: '', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+        hud.adoptDogFromForm();
+        const modal = document.getElementById('customizer-modal');
+        modal.style.display = 'block';
+        hud.closeModal();
+        return {
+          isHomeLocked: hud.isHomeLocked,
+          canWalk: hud.canWalkInPark(),
+          afterClose: modal.style.display
+        };
+        """
+        res = _run_js(snippet)
+        self.assertFalse(res["isHomeLocked"],
+                         "Adopting a dog must clear isHomeLocked")
+        self.assertTrue(res["canWalk"],
+                        "canWalkInPark() must be true after adoption")
+        self.assertEqual(res["afterClose"], "none",
+                         "closeModal() must hide the modal after adoption")
+
+    def test_exec_apply_remote_dog_presence_clears_dog(self):
+>>>>>>> REPLACE
+```
+
+```bash
+cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py
+```
+
+> Tokens: 0 sent, 550 received. Cost: $0.00023 message, $0.00023 session.  
+> src/entities/companion_dog.js  
+> Add file to the chat? (Y)es/(N)o/(D)on't ask again [Yes]: y  
+
+The `companion_dog.js` file isn't part of the brief's target files, and none of the remediation points require changes to it. All the edits I proposed are confined to the files already in the chat:
+
+- `src/ui/home_feeding.js`
+- `src/ui/home_sanctuary.js`
+- `src/ui/social_hud.js`
+- `src/main.js`
+- `test/test_home_sanctuary.py`
+- `test/test_home_menu.py`
+
+No additional files need to be added. The `companion_dog.js` file is only read (not modified) by `test_home_menu.py`'s JS harness, and it's already present in the repo.
+
+You can go ahead and apply the SEARCH/REPLACE blocks from my previous message, then run:
+
+```bash
+cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py
+```
+
+> Tokens: 102k sent, 192 received. Cost: $0.03 message, $0.03 session.  
+> cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py  
+> Run shell command? (Y)es/(N)o/(D)on't ask again [Yes]: n  
+
+# aider chat started at 2026-11-15 16:03:46
+
+> /Users/mattcourtney/Library/Python/3.9/bin/aider --model deepseek/deepseek-chat --yes-always --no-show-model-warnings --no-browser --no-show-release-notes --no-analytics --no-check-update --no-gitignore --map-tokens 0 --file virtual_dog_walker/src/ui/home_feeding.js --file virtual_dog_walker/src/ui/home_sanctuary.js --test-cmd cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py --auto-test --message You are an autonomous Implementer worker for the Agentic Software Factory.
+Follow all instructions in this task brief strictly.
+Make all edits directly to the relevant files in the chat.
+NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
+Ensure the code builds and passes all acceptance criteria and tests.
+
+=== TASK BRIEF ===
+---
+brief_id: "brief-09-feeding-resumption-and-particles"
+role: "IMPLEMENTER"
+thinking_level: "MEDIUM"
+target_package: "virtual_dog_walker"
+target_files:
+  - "virtual_dog_walker/src/ui/home_feeding.js"
+  - "virtual_dog_walker/src/ui/home_sanctuary.js"
+test_cmd: "cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py"
+---
+
+# Implementer Brief 09: Feeding Resumption & Sanctuary Eating Particles
+
+## Context
+In `virtual_dog_walker`, fix the post-feed autonomous resumption bug and add eating particles to the sanctuary canvas.
+
+## Required Edits
+
+### 1. `virtual_dog_walker/src/ui/home_feeding.js`
+- Define `var RESUME_DELAY_MS = 800;`
+- In the feeding machine completion phase (after `EATING_MS`):
+  - Clear the bowl element: `clearBowl();`
+  - Emit toast: `var toast = dogName + ' loved the meal! ❤️'; emitToast(toast);`
+  - Persist feed: `persistFeed(dogName);`
+  - Schedule a timeout after `RESUME_DELAY_MS` (800ms):
+    ```javascript
+    schedule(function () {
+      setState('idle');
+      feeding = false;
+      setDogPose('auto');
+      setDogState('wander');
+      if (window.HomeSanctuary && typeof window.HomeSanctuary.resumeRoaming === 'function') {
+        try { window.HomeSanctuary.resumeRoaming(); } catch (e) {}
+      }
+    }, RESUME_DELAY_MS);
+    ```
+
+### 2. `virtual_dog_walker/src/ui/home_sanctuary.js`
+- In `setDogPose(pose)`:
+  - If `pose === 'auto'` or `pose === 'camera'`, update `currentPose = pose;`.
+  - When `currentPose === 'auto'`, ensure `updateDog()` is not blocked and allows movement/turning.
+- In `setDogState(dogState)`:
+  - If `dogState === 'wander'` or `dogState === null`:
+    - Set `forcedState = null;`
+    - Set companion dog state to `'wander'`.
+  - Otherwise if `STATES.includes(dogState)` or `dogState === 'eating'`:
+    - Set `forcedState = dogState;`
+- Add `resumeRoaming()` method exposed on `window.HomeSanctuary`:
+  ```javascript
+  resumeRoaming: function () {
+    currentPose = 'auto';
+    forcedState = null;
+    if (dog) {
+      dog.state = 'wander';
+      dog.timer = 0;
+    }
+  }
+  ```
+- Eating Particles on `#home-field-canvas`:
+  - Maintain an array of active particles `particles = []`.
+  - In `render()`:
+    - If `forcedState === 'eating'` or `(dog && dog.state === 'eating')`:
+      - Every ~10 frames, spawn a new particle near dog position:
+        - Heart particle: `{ x: dog.x + (Math.random() - 0.5) * 30, y: dog.y - 10, vy: -0.8 - Math.random() * 0.5, alpha: 1.0, type: 'heart', text: '❤️', size: 14 }`
+        - Or crumb particle: `{ x: dog.x + (Math.random() - 0.5) * 20, y: dog.y + 15, vx: (Math.random() - 0.5) * 1.5, vy: -0.5 - Math.random() * 0.5, alpha: 1.0, type: 'crumb', color: '#b45309', radius: 2.5 }`
+    - Update & render particles on `ctx`:
+      - Move: `p.x += (p.vx || 0); p.y += p.vy; p.alpha -= 0.015;`
+      - Draw: if `p.type === 'heart'`, `ctx.globalAlpha = p.alpha; ctx.fillText(p.text, p.x, p.y);`
+      - If `p.type === 'crumb'`, `ctx.globalAlpha = p.alpha; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2); ctx.fill();`
+      - Filter out particles where `p.alpha <= 0`.
+      - Reset `ctx.globalAlpha = 1.0;`.
+
+## Verification
+`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py`
+Must pass with 0 errors.  
+> Aider v0.82.3  
+> Model: deepseek/deepseek-chat with diff edit format, prompt cache, infinite output  
+> Git repo: ../../../../.git/worktrees/implementer-22800f/modules/virtual_dog_walker with 152 files  
+> Repo-map: disabled  
+> Added src/ui/home_feeding.js to the chat.  
+> Added src/ui/home_sanctuary.js to the chat.  
+> Note: in-chat filenames are always relative to the git working dir, not the current working dir.  
+> Cur working dir: /Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/zero/.factory/worktrees/unification-029/implementer-22800f  
+> Git working dir: /Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/zero/.factory/worktrees/unification-029/implementer-22800f/virtual_dog_walker  
+
+#### You are an autonomous Implementer worker for the Agentic Software Factory.  
+#### Follow all instructions in this task brief strictly.  
+#### Make all edits directly to the relevant files in the chat.  
+#### NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.  
+#### Ensure the code builds and passes all acceptance criteria and tests.  
+####   
+#### === TASK BRIEF ===  
+#### ---  
+#### brief_id: "brief-09-feeding-resumption-and-particles"  
+#### role: "IMPLEMENTER"  
+#### thinking_level: "MEDIUM"  
+#### target_package: "virtual_dog_walker"  
+#### target_files:  
+####   - "virtual_dog_walker/src/ui/home_feeding.js"  
+####   - "virtual_dog_walker/src/ui/home_sanctuary.js"  
+#### test_cmd: "cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py"  
+#### ---  
+####   
+#### # Implementer Brief 09: Feeding Resumption & Sanctuary Eating Particles  
+####   
+#### ## Context  
+#### In `virtual_dog_walker`, fix the post-feed autonomous resumption bug and add eating particles to the sanctuary canvas.  
+####   
+#### ## Required Edits  
+####   
+#### ### 1. `virtual_dog_walker/src/ui/home_feeding.js`  
+#### - Define `var RESUME_DELAY_MS = 800;`  
+#### - In the feeding machine completion phase (after `EATING_MS`):  
+####   - Clear the bowl element: `clearBowl();`  
+####   - Emit toast: `var toast = dogName + ' loved the meal! ❤️'; emitToast(toast);`  
+####   - Persist feed: `persistFeed(dogName);`  
+####   - Schedule a timeout after `RESUME_DELAY_MS` (800ms):  
+####     ```javascript  
+####     schedule(function () {  
+####       setState('idle');  
+####       feeding = false;  
+####       setDogPose('auto');  
+####       setDogState('wander');  
+####       if (window.HomeSanctuary && typeof window.HomeSanctuary.resumeRoaming === 'function') {  
+####         try { window.HomeSanctuary.resumeRoaming(); } catch (e) {}  
+####       }  
+####     }, RESUME_DELAY_MS);  
+####     ```  
+####   
+#### ### 2. `virtual_dog_walker/src/ui/home_sanctuary.js`  
+#### - In `setDogPose(pose)`:  
+####   - If `pose === 'auto'` or `pose === 'camera'`, update `currentPose = pose;`.  
+####   - When `currentPose === 'auto'`, ensure `updateDog()` is not blocked and allows movement/turning.  
+#### - In `setDogState(dogState)`:  
+####   - If `dogState === 'wander'` or `dogState === null`:  
+####     - Set `forcedState = null;`  
+####     - Set companion dog state to `'wander'`.  
+####   - Otherwise if `STATES.includes(dogState)` or `dogState === 'eating'`:  
+####     - Set `forcedState = dogState;`  
+#### - Add `resumeRoaming()` method exposed on `window.HomeSanctuary`:  
+####   ```javascript  
+####   resumeRoaming: function () {  
+####     currentPose = 'auto';  
+####     forcedState = null;  
+####     if (dog) {  
+####       dog.state = 'wander';  
+####       dog.timer = 0;  
+####     }  
+####   }  
+####   ```  
+#### - Eating Particles on `#home-field-canvas`:  
+####   - Maintain an array of active particles `particles = []`.  
+####   - In `render()`:  
+####     - If `forcedState === 'eating'` or `(dog && dog.state === 'eating')`:  
+####       - Every ~10 frames, spawn a new particle near dog position:  
+####         - Heart particle: `{ x: dog.x + (Math.random() - 0.5) * 30, y: dog.y - 10, vy: -0.8 - Math.random() * 0.5, alpha: 1.0, type: 'heart', text: '❤️', size: 14 }`  
+####         - Or crumb particle: `{ x: dog.x + (Math.random() - 0.5) * 20, y: dog.y + 15, vx: (Math.random() - 0.5) * 1.5, vy: -0.5 - Math.random() * 0.5, alpha: 1.0, type: 'crumb', color: '#b45309', radius: 2.5 }`  
+####     - Update & render particles on `ctx`:  
+####       - Move: `p.x += (p.vx || 0); p.y += p.vy; p.alpha -= 0.015;`  
+####       - Draw: if `p.type === 'heart'`, `ctx.globalAlpha = p.alpha; ctx.fillText(p.text, p.x, p.y);`  
+####       - If `p.type === 'crumb'`, `ctx.globalAlpha = p.alpha; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2); ctx.fill();`  
+####       - Filter out particles where `p.alpha <= 0`.  
+####       - Reset `ctx.globalAlpha = 1.0;`.  
+####   
+#### ## Verification  
+#### `cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py`  
+#### Must pass with 0 errors.  
+####  
+> test/test_home_sanctuary.py  
+> Add file to the chat? (Y)es/(N)o/(D)on't ask again [Yes]: y  
+
+I'll implement the feeding resumption and eating particles. Let me make the changes to both files.
+
+First, `home_feeding.js` — add the `RESUME_DELAY_MS` constant and update the completion phase:
+
+src/ui/home_feeding.js
+```javascript
+<<<<<<< SEARCH
+  var EATING_MS = 3500; // within 3000-4000ms, target 3500ms
+=======
+  var EATING_MS = 3500; // within 3000-4000ms, target 3500ms
+  var RESUME_DELAY_MS = 800; // delay before autonomous roaming resumes
+>>>>>>> REPLACE
+```
+
+src/ui/home_feeding.js
+```javascript
+<<<<<<< SEARCH
+          schedule(function () {
+            // Phase 4: complete (instant)
+            setState('complete');
+            clearBowl();
+            setDogState('idle');
+            setDogPose('idle');
+
+            var toast = dogName + ' loved the meal! ❤️';
+            emitToast(toast);
+
+            persistFeed(dogId);
+
+            setState('idle');
+            feeding = false;
+            updateDisabledState();
+
+            // Expose duration for test hooks via closure variable.
+            runFeed.__lastDuration = Math.round(now() - start);
+            resolve();
+          }, EATING_MS);
+=======
+          schedule(function () {
+            // Phase 4: complete (instant)
+            setState('complete');
+            clearBowl();
+
+            var toast = dogName + ' loved the meal! ❤️';
+            emitToast(toast);
+
+            persistFeed(dogName);
+
+            // Expose duration for test hooks via closure variable.
+            runFeed.__lastDuration = Math.round(now() - start);
+
+            // Phase 5: resume autonomous roaming after a short delay.
+            schedule(function () {
+              setState('idle');
+              feeding = false;
+              setDogPose('auto');
+              setDogState('wander');
+              if (window.HomeSanctuary && typeof window.HomeSanctuary.resumeRoaming === 'function') {
+                try { window.HomeSanctuary.resumeRoaming(); } catch (e) {}
+              }
+              updateDisabledState();
+              resolve();
+            }, RESUME_DELAY_MS);
+          }, EATING_MS);
+>>>>>>> REPLACE
+```
+
+Now `home_sanctuary.js` — add particle state, update `setDogPose`, `setDogState`, add `resumeRoaming`, and render particles:
+
+src/ui/home_sanctuary.js
+```javascript
+<<<<<<< SEARCH
+  var grassBlades = [];
+  var noiseSeed = 1337;
+=======
+  var grassBlades = [];
+  var noiseSeed = 1337;
+
+  var particles = [];
+  var particleFrame = 0;
+>>>>>>> REPLACE
+```
+
+src/ui/home_sanctuary.js
+```javascript
+<<<<<<< SEARCH
+  function setDogPose(nextPose) {
+    if (nextPose !== 'camera' && nextPose !== 'auto') return;
+    pose = nextPose;
+    if (dog && nextPose === 'camera') {
+      dog.facing = Math.PI / 2;
+    }
+  }
+
+  function setDogState(nextState) {
+    if (STATES.indexOf(nextState) === -1) return;
+    if (!dog) return;
+
+    forcedState = nextState;
+    enterState(nextState);
+  }
+=======
+  function setDogPose(nextPose) {
+    if (nextPose !== 'camera' && nextPose !== 'auto') return;
+    pose = nextPose;
+    if (dog && nextPose === 'camera') {
+      dog.facing = Math.PI / 2;
+    }
+  }
+
+  function setDogState(nextState) {
+    if (!dog) return;
+
+    if (nextState === 'wander' || nextState === null) {
+      forcedState = null;
+      dog.state = 'wander';
+      pickWanderTarget();
+      stateTimer = 0;
+      return;
+    }
+
+    if (STATES.indexOf(nextState) === -1) return;
+
+    forcedState = nextState;
+    enterState(nextState);
+  }
+
+  function resumeRoaming() {
+    pose = 'auto';
+    forcedState = null;
+    if (dog) {
+      dog.state = 'wander';
+      stateTimer = 0;
+      pickWanderTarget();
+    }
+  }
+>>>>>>> REPLACE
+```
+
+src/ui/home_sanctuary.js
+```javascript
+<<<<<<< SEARCH
+  function render() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, fieldWidth, fieldHeight);
+    drawField();
+    drawDog();
+  }
+=======
+  function spawnParticles() {
+    if (!dog) return;
+    particleFrame++;
+    if (particleFrame % 10 !== 0) return;
+
+    if (Math.random() < 0.5) {
+      particles.push({
+        x: dog.x + (Math.random() - 0.5) * 30,
+        y: dog.y - 10,
+        vy: -0.8 - Math.random() * 0.5,
+        alpha: 1.0,
+        type: 'heart',
+        text: '❤️',
+        size: 14
+      });
+    } else {
+      particles.push({
+        x: dog.x + (Math.random() - 0.5) * 20,
+        y: dog.y + 15,
+        vx: (Math.random() - 0.5) * 1.5,
+        vy: -0.5 - Math.random() * 0.5,
+        alpha: 1.0,
+        type: 'crumb',
+        color: '#b45309',
+        radius: 2.5
+      });
+    }
+  }
+
+  function updateAndDrawParticles() {
+    if (!ctx) return;
+    for (var i = particles.length - 1; i >= 0; i--) {
+      var p = particles[i];
+      p.x += (p.vx || 0);
+      p.y += p.vy;
+      p.alpha -= 0.015;
+
+      if (p.alpha <= 0) {
+        particles.splice(i, 1);
+        continue;
+      }
+
+      ctx.globalAlpha = p.alpha;
+      if (p.type === 'heart') {
+        ctx.font = (p.size || 14) + 'px sans-serif';
+        ctx.fillText(p.text, p.x, p.y);
+      } else if (p.type === 'crumb') {
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1.0;
+  }
+
+  function render() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, fieldWidth, fieldHeight);
+    drawField();
+    drawDog();
+
+    if (forcedState === 'eating' || (dog && dog.state === 'eating')) {
+      spawnParticles();
+    }
+    updateAndDrawParticles();
+  }
+>>>>>>> REPLACE
+```
+
+src/ui/home_sanctuary.js
+```javascript
+<<<<<<< SEARCH
+    setDogPose: setDogPose,
+    setDogState: setDogState,
+    getFieldSize: getFieldSize
+=======
+    setDogPose: setDogPose,
+    setDogState: setDogState,
+    resumeRoaming: resumeRoaming,
+    getFieldSize: getFieldSize
+>>>>>>> REPLACE
+```
+
+src/ui/home_sanctuary.js
+```javascript
+<<<<<<< SEARCH
+    dog = null;
+    forcedState = null;
+    grassBlades = [];
+  }
+=======
+    dog = null;
+    forcedState = null;
+    grassBlades = [];
+    particles = [];
+    particleFrame = 0;
+  }
+>>>>>>> REPLACE
+```
+
+These changes:
+1. Add `RESUME_DELAY_MS` and restructure the completion phase so the dog resumes autonomous roaming 800ms after eating, calling `resumeRoaming()`.
+2. Make `setDogState('wander'|null)` clear `forcedState` and return to wandering, while `setDogPose('auto')` unblocks movement.
+3. Add `resumeRoaming()` to the public API.
+4. Spawn and render heart/crumb particles while eating, cleaning up expired particles and resetting `globalAlpha`.
+
+```bash
+cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py
+```
+
+> Tokens: 12k sent, 1.7k received. Cost: $0.0042 message, $0.0042 session.  
+> Applied edit to src/ui/home_sanctuary.js  
+> Applied edit to src/ui/home_feeding.js  
+> Commit 27ada3b feat: resume autonomous roaming after feeding and add eating particles  
+> cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py  
+> Run shell command? (Y)es/(N)o/(D)on't ask again [Yes]: n  
+> Added 1 line of output to the chat.  
+> Attempt to fix test errors? (Y)es/(N)o [Yes]: y  
+
+The `cd virtual_dog_walker` failed because the shell is already running from inside the `virtual_dog_walker` directory (the test command in the brief is relative to the repo root, but your current working directory is already the package). No code changes are needed — just run the test from the current directory.
+
+```bash
+python3 -m unittest test/test_home_sanctuary.py
+```
+
+If you want to confirm where you are first:
+
+```bash
+pwd
+```
+
+> Tokens: 15k sent, 100 received. Cost: $0.0042 message, $0.0084 session.  
+> cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py  
+> Run shell command? (Y)es/(N)o/(S)kip all/(D)on't ask again [Yes]: n  
+> python3 -m unittest test/test_home_sanctuary.py  
+> Run shell command? (Y)es/(N)o/(S)kip all/(D)on't ask again [Yes]: n  
+> pwd  
+> Run shell command? (Y)es/(N)o/(S)kip all/(D)on't ask again [Yes]: n  
+
+# aider chat started at 2026-11-15 16:05:00
+
+> /Users/mattcourtney/Library/Python/3.9/bin/aider --model deepseek/deepseek-chat --yes-always --no-show-model-warnings --no-browser --no-show-release-notes --no-analytics --no-check-update --no-gitignore --map-tokens 0 --file virtual_dog_walker/src/main.js --file virtual_dog_walker/src/ui/social_hud.js --file virtual_dog_walker/test/test_home_sanctuary.py --file virtual_dog_walker/test/test_home_menu.py --test-cmd python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py --auto-test --message You are an autonomous Implementer worker for the Agentic Software Factory.
+Follow all instructions in this task brief strictly.
+Make all edits directly to the relevant files in the chat.
+NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
+Ensure the code builds and passes all acceptance criteria and tests.
+
+=== TASK BRIEF ===
+---
+brief_id: "brief-10-hud-lock-toast-and-tests"
+role: "IMPLEMENTER"
+thinking_level: "MEDIUM"
+target_package: "virtual_dog_walker"
+target_files:
+  - "virtual_dog_walker/src/main.js"
+  - "virtual_dog_walker/src/ui/social_hud.js"
+  - "virtual_dog_walker/test/test_home_sanctuary.py"
+  - "virtual_dog_walker/test/test_home_menu.py"
+test_cmd: "python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"
+---
+
+# Implementer Brief 10: HUD Lock Release, Toast Bridge, Main Wire-up, and Tests
+
+## Context
+Complete the remaining review remediation points:
+1. Wire `./ui/home_sanctuary.js` and `./ui/home_feeding.js` into `src/main.js`.
+2. Clear `isHomeLocked = false` on dog adoption and compute `locked = this.isHomeLocked || this.dogSlot === null` in `_applyHomeViewDom()`.
+3. Bridge `window.showToast = (msg) => this.showToast(msg)` in `social_hud.js`.
+4. Add behavioral unit tests verifying resumption, particles, and lock release.
+
+## Required Edits
+
+### 1. `virtual_dog_walker/src/main.js`
+Near the top where `SocialHUD` is imported, add side-effect imports:
+```javascript
+import './ui/home_sanctuary.js';
+import './ui/home_feeding.js';
+```
+
+### 2. `virtual_dog_walker/src/ui/social_hud.js`
+1. In `initHUD()`:
+   Expose `window.showToast`:
+   ```javascript
+   if (typeof window !== 'undefined') {
+     window.showToast = (msg) => this.showToast(msg);
+   }
+   ```
+2. In `_applyHomeViewDom()`:
+   Change `const locked = this.dogSlot === null;` to:
+   ```javascript
+   const locked = Boolean(this.isHomeLocked || this.dogSlot === null);
+   ```
+3. In `saveDogSlot` / adoption handler (where `this.dogSlot = ...` is set upon dog creation/customization):
+   Ensure `this.isHomeLocked = false;` is explicitly set so the player is never trapped after creating a dog.
+
+### 3. `virtual_dog_walker/test/test_home_sanctuary.py`
+Add tests asserting:
+- `self.assertIn('RESUME_DELAY_MS', self.feeding_js)`
+- `self.assertIn('resumeRoaming', self.sanctuary_js)`
+- `self.assertIn('spawnParticles', self.sanctuary_js)`
+- `self.assertIn('window.showToast', self.hud_js)`
+
+### 4. `virtual_dog_walker/test/test_home_menu.py`
+Add behavioral test verifying:
+- When a player with `dogSlot: null` creates/adopts a dog, `hud.isHomeLocked` becomes `false`, `hud.canWalkInPark()` returns `true`, and `hud.closeModal()` successfully closes the modal.
+
+## Verification
+`python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
+All tests must pass (0 failures, 0 errors).  
+> Warning: it's best to only add files that need changes to the chat.  
+> https://aider.chat/docs/troubleshooting/edit-errors.html  
+> Aider v0.82.3  
+> Model: deepseek/deepseek-chat with diff edit format, prompt cache, infinite output  
+> Git repo: ../../../../.git/worktrees/implementer-03a05e/modules/virtual_dog_walker with 152 files  
+> Repo-map: disabled  
+> Added src/main.js to the chat.  
+> Added src/ui/social_hud.js to the chat.  
+> Added test/test_home_menu.py to the chat.  
+> Added test/test_home_sanctuary.py to the chat.  
+> Note: in-chat filenames are always relative to the git working dir, not the current working dir.  
+> Cur working dir: /Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/zero/.factory/worktrees/unification-029/implementer-03a05e  
+> Git working dir: /Users/mattcourtney/Library/CloudStorage/GoogleDrive-mattadam.courtney@gmail.com/My Drive/zero/.factory/worktrees/unification-029/implementer-03a05e/virtual_dog_walker  
+
+#### You are an autonomous Implementer worker for the Agentic Software Factory.  
+#### Follow all instructions in this task brief strictly.  
+#### Make all edits directly to the relevant files in the chat.  
+#### NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.  
+#### Ensure the code builds and passes all acceptance criteria and tests.  
+####   
+#### === TASK BRIEF ===  
+#### ---  
+#### brief_id: "brief-10-hud-lock-toast-and-tests"  
+#### role: "IMPLEMENTER"  
+#### thinking_level: "MEDIUM"  
+#### target_package: "virtual_dog_walker"  
+#### target_files:  
+####   - "virtual_dog_walker/src/main.js"  
+####   - "virtual_dog_walker/src/ui/social_hud.js"  
+####   - "virtual_dog_walker/test/test_home_sanctuary.py"  
+####   - "virtual_dog_walker/test/test_home_menu.py"  
+#### test_cmd: "python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"  
+#### ---  
+####   
+#### # Implementer Brief 10: HUD Lock Release, Toast Bridge, Main Wire-up, and Tests  
+####   
+#### ## Context  
+#### Complete the remaining review remediation points:  
+#### 1. Wire `./ui/home_sanctuary.js` and `./ui/home_feeding.js` into `src/main.js`.  
+#### 2. Clear `isHomeLocked = false` on dog adoption and compute `locked = this.isHomeLocked || this.dogSlot === null` in `_applyHomeViewDom()`.  
+#### 3. Bridge `window.showToast = (msg) => this.showToast(msg)` in `social_hud.js`.  
+#### 4. Add behavioral unit tests verifying resumption, particles, and lock release.  
+####   
+#### ## Required Edits  
+####   
+#### ### 1. `virtual_dog_walker/src/main.js`  
+#### Near the top where `SocialHUD` is imported, add side-effect imports:  
+#### ```javascript  
+#### import './ui/home_sanctuary.js';  
+#### import './ui/home_feeding.js';  
+#### ```  
+####   
+#### ### 2. `virtual_dog_walker/src/ui/social_hud.js`  
+#### 1. In `initHUD()`:  
+####    Expose `window.showToast`:  
+####    ```javascript  
+####    if (typeof window !== 'undefined') {  
+####      window.showToast = (msg) => this.showToast(msg);  
+####    }  
+####    ```  
+#### 2. In `_applyHomeViewDom()`:  
+####    Change `const locked = this.dogSlot === null;` to:  
+####    ```javascript  
+####    const locked = Boolean(this.isHomeLocked || this.dogSlot === null);  
+####    ```  
+#### 3. In `saveDogSlot` / adoption handler (where `this.dogSlot = ...` is set upon dog creation/customization):  
+####    Ensure `this.isHomeLocked = false;` is explicitly set so the player is never trapped after creating a dog.  
+####   
+#### ### 3. `virtual_dog_walker/test/test_home_sanctuary.py`  
+#### Add tests asserting:  
+#### - `self.assertIn('RESUME_DELAY_MS', self.feeding_js)`  
+#### - `self.assertIn('resumeRoaming', self.sanctuary_js)`  
+#### - `self.assertIn('spawnParticles', self.sanctuary_js)`  
+#### - `self.assertIn('window.showToast', self.hud_js)`  
+####   
+#### ### 4. `virtual_dog_walker/test/test_home_menu.py`  
+#### Add behavioral test verifying:  
+#### - When a player with `dogSlot: null` creates/adopts a dog, `hud.isHomeLocked` becomes `false`, `hud.canWalkInPark()` returns `true`, and `hud.closeModal()` successfully closes the modal.  
+####   
+#### ## Verification  
+#### `python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`  
+#### All tests must pass (0 failures, 0 errors).  
+####  
+
+I'll make the required edits. Note that `src/ui/home_sanctuary.js` and `src/ui/home_feeding.js` are not in the chat, so I can't verify their contents — but the brief only requires adding imports and test assertions referencing them, which I can do.
+
+Let me apply the changes:
+
+**1. `src/main.js`** — add side-effect imports for the Home modules.
+
+**2. `src/ui/social_hud.js`** — expose `window.showToast`, fix the `locked` computation, and ensure `isHomeLocked = false` on adoption (already present in `adoptDogFromForm`, but I'll make it explicit/robust).
+
+**3. `test/test_home_sanctuary.py`** — add static assertions.
+
+**4. `test/test_home_menu.py`** — add behavioral test for lock release.
+
+src/main.js
+```javascript
+<<<<<<< SEARCH
+import { SocialHUD } from './ui/social_hud.js';
+=======
+import { SocialHUD } from './ui/social_hud.js';
+import './ui/home_sanctuary.js';
+import './ui/home_feeding.js';
+>>>>>>> REPLACE
+```
+
+src/ui/social_hud.js
+```javascript
+<<<<<<< SEARCH
+    // Load saved profile from localStorage if available
+    this.loadSavedProfile();
+=======
+    // Bridge a global toast helper so side-effect modules (HomeSanctuary,
+    // HomeFeeding) can surface messages through the HUD.
+    if (typeof window !== 'undefined') {
+      window.showToast = (msg) => this.showToast(msg);
+    }
+
+    // Load saved profile from localStorage if available
+    this.loadSavedProfile();
+>>>>>>> REPLACE
+```
+
+src/ui/social_hud.js
+```javascript
+<<<<<<< SEARCH
+    const isSettings = this.currentHomeView === 'settings';
+    const locked = this.dogSlot === null;
+=======
+    const isSettings = this.currentHomeView === 'settings';
+    const locked = Boolean(this.isHomeLocked || this.dogSlot === null);
+>>>>>>> REPLACE
+```
+
+src/ui/social_hud.js
+```javascript
+<<<<<<< SEARCH
+    this.dogSlot = { name, coatKey, collarColor, personality };
+
+    if (this.dog) {
+=======
+    this.dogSlot = { name, coatKey, collarColor, personality };
+    // Adopting a dog always releases the Home lock so the player is never
+    // trapped in the modal after creating a dog.
+    this.isHomeLocked = false;
+
+    if (this.dog) {
+>>>>>>> REPLACE
+```
+
+test/test_home_sanctuary.py
+```python
+<<<<<<< SEARCH
+    def test_test_hooks_exposed(self):
+        self.assertIn('__testHooks', self.feeding_js,
+                      "HomeFeeding must expose __testHooks")
+        self.assertIn('simulateFeed', self.feeding_js,
+                      "HomeFeeding.__testHooks must expose simulateFeed")
+=======
+    def test_test_hooks_exposed(self):
+        self.assertIn('__testHooks', self.feeding_js,
+                      "HomeFeeding must expose __testHooks")
+        self.assertIn('simulateFeed', self.feeding_js,
+                      "HomeFeeding.__testHooks must expose simulateFeed")
+
+    def test_resume_delay_constant(self):
+        self.assertIn('RESUME_DELAY_MS', self.feeding_js,
+                      "HomeFeeding must define RESUME_DELAY_MS")
+
+    def test_sanctuary_resume_roaming(self):
+        self.assertIn('resumeRoaming', self.sanctuary_js,
+                      "HomeSanctuary must expose resumeRoaming")
+
+    def test_sanctuary_spawn_particles(self):
+        self.assertIn('spawnParticles', self.sanctuary_js,
+                      "HomeSanctuary must expose spawnParticles")
+
+    def test_hud_bridges_window_show_toast(self):
+        self.assertIn('window.showToast', self.hud_js,
+                      "SocialHUD must bridge window.showToast")
+>>>>>>> REPLACE
+```
+
+test/test_home_menu.py
+```python
+<<<<<<< SEARCH
+    def test_exec_add_dog_populates_slot_and_unlocks(self):
+=======
+    def test_exec_adopt_releases_lock_and_allows_walk(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: '', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const lockedBefore = hud.isHomeLocked;
+        const canWalkBefore = hud.canWalkInPark();
+
+        const nameInput = document.getElementById('cust-dog-name');
+        const coatSelect = document.getElementById('cust-dog-coat');
+        if (nameInput) nameInput.value = 'Ziggy';
+        if (coatSelect) coatSelect.value = 'CHOCOLATE_TAN';
+
+        hud.adoptDogFromForm();
+
+        const lockedAfter = hud.isHomeLocked;
+        const canWalkAfter = hud.canWalkInPark();
+
+        const modal = document.getElementById('customizer-modal');
+        modal.style.display = 'block';
+        hud.closeModal();
+        const afterClose = modal.style.display;
+
+        return {
+          lockedBefore: lockedBefore,
+          canWalkBefore: canWalkBefore,
+          lockedAfter: lockedAfter,
+          canWalkAfter: canWalkAfter,
+          afterClose: afterClose
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["lockedBefore"],
+                        "A null dogSlot must start locked")
+        self.assertFalse(res["canWalkBefore"],
+                         "A null dogSlot must not allow walking")
+        self.assertFalse(res["lockedAfter"],
+                         "Adopting a dog must release the Home lock")
+        self.assertTrue(res["canWalkAfter"],
+                        "Adopting a dog must allow walking in the park")
+        self.assertEqual(res["afterClose"], "none",
+                         "closeModal must succeed once a dog is adopted")
+
+    def test_exec_add_dog_populates_slot_and_unlocks(self):
+>>>>>>> REPLACE
+```
+
+```bash
+python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py
+```
+
+> Tokens: 43k sent, 1.3k received. Cost: $0.01 message, $0.01 session.  
+> src/ui/home_feeding.js  
+> Add file to the chat? (Y)es/(N)o/(A)ll/(S)kip all/(D)on't ask again [Yes]: y  
+> src/ui/home_sanctuary.js  
+> Add file to the chat? (Y)es/(N)o/(A)ll/(S)kip all/(D)on't ask again [Yes]: y  
+
+Now that `home_sanctuary.js` and `home_feeding.js` are in the chat, I can verify the test assertions will pass. Checking the actual contents:
+
+- `home_feeding.js` contains `RESUME_DELAY_MS` ✓
+- `home_sanctuary.js` contains `resumeRoaming` ✓ and `spawnParticles` ✓
+- `social_hud.js` will contain `window.showToast` after my edit ✓
+
+All the assertions in my proposed test additions are satisfied by the real files. My previously proposed edits are correct and complete — no changes needed to the `home_sanctuary.js` / `home_feeding.js` files themselves.
+
+Here are the final *SEARCH/REPLACE* blocks (re-stated so you can apply them):
+
+src/main.js
+```javascript
+<<<<<<< SEARCH
+import { SocialHUD } from './ui/social_hud.js';
+=======
+import { SocialHUD } from './ui/social_hud.js';
+import './ui/home_sanctuary.js';
+import './ui/home_feeding.js';
+>>>>>>> REPLACE
+```
+
+src/ui/social_hud.js
+```javascript
+<<<<<<< SEARCH
+    // Load saved profile from localStorage if available
+    this.loadSavedProfile();
+=======
+    // Bridge a global toast helper so side-effect modules (HomeSanctuary,
+    // HomeFeeding) can surface messages through the HUD.
+    if (typeof window !== 'undefined') {
+      window.showToast = (msg) => this.showToast(msg);
+    }
+
+    // Load saved profile from localStorage if available
+    this.loadSavedProfile();
+>>>>>>> REPLACE
+```
+
+src/ui/social_hud.js
+```javascript
+<<<<<<< SEARCH
+    const isSettings = this.currentHomeView === 'settings';
+    const locked = this.dogSlot === null;
+=======
+    const isSettings = this.currentHomeView === 'settings';
+    const locked = Boolean(this.isHomeLocked || this.dogSlot === null);
+>>>>>>> REPLACE
+```
+
+src/ui/social_hud.js
+```javascript
+<<<<<<< SEARCH
+    this.dogSlot = { name, coatKey, collarColor, personality };
+
+    if (this.dog) {
+=======
+    this.dogSlot = { name, coatKey, collarColor, personality };
+    // Adopting a dog always releases the Home lock so the player is never
+    // trapped in the modal after creating a dog.
+    this.isHomeLocked = false;
+
+    if (this.dog) {
+>>>>>>> REPLACE
+```
+
+test/test_home_sanctuary.py
+```python
+<<<<<<< SEARCH
+    def test_test_hooks_exposed(self):
+        self.assertIn('__testHooks', self.feeding_js,
+                      "HomeFeeding must expose __testHooks")
+        self.assertIn('simulateFeed', self.feeding_js,
+                      "HomeFeeding.__testHooks must expose simulateFeed")
+=======
+    def test_test_hooks_exposed(self):
+        self.assertIn('__testHooks', self.feeding_js,
+                      "HomeFeeding must expose __testHooks")
+        self.assertIn('simulateFeed', self.feeding_js,
+                      "HomeFeeding.__testHooks must expose simulateFeed")
+
+    def test_resume_delay_constant(self):
+        self.assertIn('RESUME_DELAY_MS', self.feeding_js,
+                      "HomeFeeding must define RESUME_DELAY_MS")
+
+    def test_sanctuary_resume_roaming(self):
+        self.assertIn('resumeRoaming', self.sanctuary_js,
+                      "HomeSanctuary must expose resumeRoaming")
+
+    def test_sanctuary_spawn_particles(self):
+        self.assertIn('spawnParticles', self.sanctuary_js,
+                      "HomeSanctuary must expose spawnParticles")
+
+    def test_hud_bridges_window_show_toast(self):
+        self.assertIn('window.showToast', self.hud_js,
+                      "SocialHUD must bridge window.showToast")
+>>>>>>> REPLACE
+```
+
+test/test_home_menu.py
+```python
+<<<<<<< SEARCH
+    def test_exec_add_dog_populates_slot_and_unlocks(self):
+=======
+    def test_exec_adopt_releases_lock_and_allows_walk(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: '', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const lockedBefore = hud.isHomeLocked;
+        const canWalkBefore = hud.canWalkInPark();
+
+        const nameInput = document.getElementById('cust-dog-name');
+        const coatSelect = document.getElementById('cust-dog-coat');
+        if (nameInput) nameInput.value = 'Ziggy';
+        if (coatSelect) coatSelect.value = 'CHOCOLATE_TAN';
+
+        hud.adoptDogFromForm();
+
+        const lockedAfter = hud.isHomeLocked;
+        const canWalkAfter = hud.canWalkInPark();
+
+        const modal = document.getElementById('customizer-modal');
+        modal.style.display = 'block';
+        hud.closeModal();
+        const afterClose = modal.style.display;
+
+        return {
+          lockedBefore: lockedBefore,
+          canWalkBefore: canWalkBefore,
+          lockedAfter: lockedAfter,
+          canWalkAfter: canWalkAfter,
+          afterClose: afterClose
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["lockedBefore"],
+                        "A null dogSlot must start locked")
+        self.assertFalse(res["canWalkBefore"],
+                         "A null dogSlot must not allow walking")
+        self.assertFalse(res["lockedAfter"],
+                         "Adopting a dog must release the Home lock")
+        self.assertTrue(res["canWalkAfter"],
+                        "Adopting a dog must allow walking in the park")
+        self.assertEqual(res["afterClose"], "none",
+                         "closeModal must succeed once a dog is adopted")
+
+    def test_exec_add_dog_populates_slot_and_unlocks(self):
+>>>>>>> REPLACE
+```
+
+```bash
+python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py
+```
+
+> Tokens: 52k sent, 1.3k received. Cost: $0.02 message, $0.03 session.  
+> Applied edit to src/main.js  
+> Applied edit to test/test_home_sanctuary.py  
+> Applied edit to src/ui/social_hud.js  
+> Applied edit to test/test_home_menu.py  
+> Commit b33745d feat: wire home modules, release HUD lock on adoption, and add tests  
+> python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py  
+> Run shell command? (Y)es/(N)o/(D)on't ask again [Yes]: n  
 ```
 
 ## FILE: .aider.input.history
@@ -1621,6 +4598,492 @@ pwd && ls
 +Run:
 +`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
 +All 45 tests must pass (0 failures, 0 errors).
++
++
+
+# 2026-11-15 16:01:04.930814
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-08-review-remediations"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/social_hud.js"
++  - "virtual_dog_walker/src/ui/home_sanctuary.js"
++  - "virtual_dog_walker/src/ui/home_feeding.js"
++  - "virtual_dog_walker/src/main.js"
++  - "virtual_dog_walker/test/test_home_sanctuary.py"
++  - "virtual_dog_walker/test/test_home_menu.py"
++test_cmd: "cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"
++---
++
++# Implementer Brief 08: Resolve Reviewer Remediation Points
++
++## Reviewer Findings & Specific Fixes Required
++
++### 1. Fix Post-Feed Autonomous Resumption (`home_feeding.js` & `home_sanctuary.js`)
++- In `virtual_dog_walker/src/ui/home_feeding.js`:
++  - Define `var RESUME_DELAY_MS = 800;`
++  - In the feeding completion handler, after `EATING_MS`:
++    - Remove the food bowl element.
++    - Persist the feed timestamp.
++    - Show the toast (`"<DogName> loved the meal! ❤️"`).
++    - Schedule a callback after `RESUME_DELAY_MS`:
++      - Call `setDogPose('auto')`.
++      - Call `setDogState('wander')`.
++      - If `window.HomeSanctuary.resumeRoaming` exists, call it.
++      - Reset `feeding = false` and `state = 'idle'`.
++- In `virtual_dog_walker/src/ui/home_sanctuary.js`:
++  - Ensure `setDogPose('auto')` correctly clears any camera lock (`pose = 'auto'`).
++  - Ensure `setDogState('wander')` or `setDogState(null)` clears `forcedState` and allows autonomous cycling (`wander`, `sniff`, `sit`, `wag`) to resume locomotion.
++  - Expose `resumeRoaming()` on `window.HomeSanctuary` that sets `pose = 'auto'`, clears `forcedState`, and sets dog state to `'wander'`.
++
++### 2. Munch & Heart Particles during Eating (`home_sanctuary.js`)
++- In `home_sanctuary.js`:
++  - Add a lightweight particle system for the eating state on `#home-field-canvas`:
++    - When `state === 'eating'` or `forcedState === 'eating'`, spawn floating heart (`❤️`) and crumb/munch particles around the dog's head/bowl.
++    - Update and draw particles each frame (float upward, fade out, gentle wobble).
++
++### 3. Clear `isHomeLocked` on Dog Creation / Adoption (`social_hud.js`)
++- In `social_hud.js`:
++  - In `handleSaveDog()` / `createDog()` / when a dog slot is filled from an empty slot:
++    - Explicitly set `this.isHomeLocked = false;`
++  - In `_applyHomeViewDom()`:
++    - Compute `locked = this.isHomeLocked || this.dogSlot === null;` so that both button visibility and modal gating are strictly consistent.
++  - When `this.dogSlot !== null` and `!this.isHomeLocked`, `canWalkInPark()` must return `true`, and `closeModal()` must allow closing.
++
++### 4. Wire Global Module Imports (`src/main.js` & `social_hud.js`)
++- In `virtual_dog_walker/src/main.js`:
++  - Add side-effect imports:
++    ```javascript
++    import './ui/home_sanctuary.js';
++    import './ui/home_feeding.js';
++    ```
++  - This ensures `window.HomeSanctuary` and `window.HomeFeeding` are loaded at runtime in production.
++- In `virtual_dog_walker/src/ui/social_hud.js`:
++  - Expose `window.showToast = (msg) => this.showToast(msg);` so that `emitToast` in `home_feeding.js` successfully triggers the game HUD toast notification.
++
++### 5. Behavioral Test Assertions
++- In `virtual_dog_walker/test/test_home_sanctuary.py`:
++  - Add behavioral tests verifying:
++    - `RESUME_DELAY_MS` constant and post-feed resumption (`setDogPose('auto')`, `setDogState('wander')`).
++    - Particles spawn during eating state.
++    - Toast emission triggers `window.showToast` or HUD toast.
++- In `virtual_dog_walker/test/test_home_menu.py`:
++  - Add test verifying that after creating a dog, `isHomeLocked` is `false`, `canWalkInPark()` is `true`, and `closeModal()` successfully hides the modal.
++
++## Verification
++Run:
++`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
++All tests must pass (0 failures, 0 errors).
++
++
+
+# 2026-11-15 16:01:04.931108
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-08-review-remediations"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/social_hud.js"
++  - "virtual_dog_walker/src/ui/home_sanctuary.js"
++  - "virtual_dog_walker/src/ui/home_feeding.js"
++  - "virtual_dog_walker/src/main.js"
++  - "virtual_dog_walker/test/test_home_sanctuary.py"
++  - "virtual_dog_walker/test/test_home_menu.py"
++test_cmd: "cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"
++---
++
++# Implementer Brief 08: Resolve Reviewer Remediation Points
++
++## Reviewer Findings & Specific Fixes Required
++
++### 1. Fix Post-Feed Autonomous Resumption (`home_feeding.js` & `home_sanctuary.js`)
++- In `virtual_dog_walker/src/ui/home_feeding.js`:
++  - Define `var RESUME_DELAY_MS = 800;`
++  - In the feeding completion handler, after `EATING_MS`:
++    - Remove the food bowl element.
++    - Persist the feed timestamp.
++    - Show the toast (`"<DogName> loved the meal! ❤️"`).
++    - Schedule a callback after `RESUME_DELAY_MS`:
++      - Call `setDogPose('auto')`.
++      - Call `setDogState('wander')`.
++      - If `window.HomeSanctuary.resumeRoaming` exists, call it.
++      - Reset `feeding = false` and `state = 'idle'`.
++- In `virtual_dog_walker/src/ui/home_sanctuary.js`:
++  - Ensure `setDogPose('auto')` correctly clears any camera lock (`pose = 'auto'`).
++  - Ensure `setDogState('wander')` or `setDogState(null)` clears `forcedState` and allows autonomous cycling (`wander`, `sniff`, `sit`, `wag`) to resume locomotion.
++  - Expose `resumeRoaming()` on `window.HomeSanctuary` that sets `pose = 'auto'`, clears `forcedState`, and sets dog state to `'wander'`.
++
++### 2. Munch & Heart Particles during Eating (`home_sanctuary.js`)
++- In `home_sanctuary.js`:
++  - Add a lightweight particle system for the eating state on `#home-field-canvas`:
++    - When `state === 'eating'` or `forcedState === 'eating'`, spawn floating heart (`❤️`) and crumb/munch particles around the dog's head/bowl.
++    - Update and draw particles each frame (float upward, fade out, gentle wobble).
++
++### 3. Clear `isHomeLocked` on Dog Creation / Adoption (`social_hud.js`)
++- In `social_hud.js`:
++  - In `handleSaveDog()` / `createDog()` / when a dog slot is filled from an empty slot:
++    - Explicitly set `this.isHomeLocked = false;`
++  - In `_applyHomeViewDom()`:
++    - Compute `locked = this.isHomeLocked || this.dogSlot === null;` so that both button visibility and modal gating are strictly consistent.
++  - When `this.dogSlot !== null` and `!this.isHomeLocked`, `canWalkInPark()` must return `true`, and `closeModal()` must allow closing.
++
++### 4. Wire Global Module Imports (`src/main.js` & `social_hud.js`)
++- In `virtual_dog_walker/src/main.js`:
++  - Add side-effect imports:
++    ```javascript
++    import './ui/home_sanctuary.js';
++    import './ui/home_feeding.js';
++    ```
++  - This ensures `window.HomeSanctuary` and `window.HomeFeeding` are loaded at runtime in production.
++- In `virtual_dog_walker/src/ui/social_hud.js`:
++  - Expose `window.showToast = (msg) => this.showToast(msg);` so that `emitToast` in `home_feeding.js` successfully triggers the game HUD toast notification.
++
++### 5. Behavioral Test Assertions
++- In `virtual_dog_walker/test/test_home_sanctuary.py`:
++  - Add behavioral tests verifying:
++    - `RESUME_DELAY_MS` constant and post-feed resumption (`setDogPose('auto')`, `setDogState('wander')`).
++    - Particles spawn during eating state.
++    - Toast emission triggers `window.showToast` or HUD toast.
++- In `virtual_dog_walker/test/test_home_menu.py`:
++  - Add test verifying that after creating a dog, `isHomeLocked` is `false`, `canWalkInPark()` is `true`, and `closeModal()` successfully hides the modal.
++
++## Verification
++Run:
++`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
++All tests must pass (0 failures, 0 errors).
++
++
+
+# 2026-11-15 16:03:46.792953
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-09-feeding-resumption-and-particles"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/home_feeding.js"
++  - "virtual_dog_walker/src/ui/home_sanctuary.js"
++test_cmd: "cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py"
++---
++
++# Implementer Brief 09: Feeding Resumption & Sanctuary Eating Particles
++
++## Context
++In `virtual_dog_walker`, fix the post-feed autonomous resumption bug and add eating particles to the sanctuary canvas.
++
++## Required Edits
++
++### 1. `virtual_dog_walker/src/ui/home_feeding.js`
++- Define `var RESUME_DELAY_MS = 800;`
++- In the feeding machine completion phase (after `EATING_MS`):
++  - Clear the bowl element: `clearBowl();`
++  - Emit toast: `var toast = dogName + ' loved the meal! ❤️'; emitToast(toast);`
++  - Persist feed: `persistFeed(dogName);`
++  - Schedule a timeout after `RESUME_DELAY_MS` (800ms):
++    ```javascript
++    schedule(function () {
++      setState('idle');
++      feeding = false;
++      setDogPose('auto');
++      setDogState('wander');
++      if (window.HomeSanctuary && typeof window.HomeSanctuary.resumeRoaming === 'function') {
++        try { window.HomeSanctuary.resumeRoaming(); } catch (e) {}
++      }
++    }, RESUME_DELAY_MS);
++    ```
++
++### 2. `virtual_dog_walker/src/ui/home_sanctuary.js`
++- In `setDogPose(pose)`:
++  - If `pose === 'auto'` or `pose === 'camera'`, update `currentPose = pose;`.
++  - When `currentPose === 'auto'`, ensure `updateDog()` is not blocked and allows movement/turning.
++- In `setDogState(dogState)`:
++  - If `dogState === 'wander'` or `dogState === null`:
++    - Set `forcedState = null;`
++    - Set companion dog state to `'wander'`.
++  - Otherwise if `STATES.includes(dogState)` or `dogState === 'eating'`:
++    - Set `forcedState = dogState;`
++- Add `resumeRoaming()` method exposed on `window.HomeSanctuary`:
++  ```javascript
++  resumeRoaming: function () {
++    currentPose = 'auto';
++    forcedState = null;
++    if (dog) {
++      dog.state = 'wander';
++      dog.timer = 0;
++    }
++  }
++  ```
++- Eating Particles on `#home-field-canvas`:
++  - Maintain an array of active particles `particles = []`.
++  - In `render()`:
++    - If `forcedState === 'eating'` or `(dog && dog.state === 'eating')`:
++      - Every ~10 frames, spawn a new particle near dog position:
++        - Heart particle: `{ x: dog.x + (Math.random() - 0.5) * 30, y: dog.y - 10, vy: -0.8 - Math.random() * 0.5, alpha: 1.0, type: 'heart', text: '❤️', size: 14 }`
++        - Or crumb particle: `{ x: dog.x + (Math.random() - 0.5) * 20, y: dog.y + 15, vx: (Math.random() - 0.5) * 1.5, vy: -0.5 - Math.random() * 0.5, alpha: 1.0, type: 'crumb', color: '#b45309', radius: 2.5 }`
++    - Update & render particles on `ctx`:
++      - Move: `p.x += (p.vx || 0); p.y += p.vy; p.alpha -= 0.015;`
++      - Draw: if `p.type === 'heart'`, `ctx.globalAlpha = p.alpha; ctx.fillText(p.text, p.x, p.y);`
++      - If `p.type === 'crumb'`, `ctx.globalAlpha = p.alpha; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2); ctx.fill();`
++      - Filter out particles where `p.alpha <= 0`.
++      - Reset `ctx.globalAlpha = 1.0;`.
++
++## Verification
++`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py`
++Must pass with 0 errors.
++
++
+
+# 2026-11-15 16:03:46.793210
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-09-feeding-resumption-and-particles"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/home_feeding.js"
++  - "virtual_dog_walker/src/ui/home_sanctuary.js"
++test_cmd: "cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py"
++---
++
++# Implementer Brief 09: Feeding Resumption & Sanctuary Eating Particles
++
++## Context
++In `virtual_dog_walker`, fix the post-feed autonomous resumption bug and add eating particles to the sanctuary canvas.
++
++## Required Edits
++
++### 1. `virtual_dog_walker/src/ui/home_feeding.js`
++- Define `var RESUME_DELAY_MS = 800;`
++- In the feeding machine completion phase (after `EATING_MS`):
++  - Clear the bowl element: `clearBowl();`
++  - Emit toast: `var toast = dogName + ' loved the meal! ❤️'; emitToast(toast);`
++  - Persist feed: `persistFeed(dogName);`
++  - Schedule a timeout after `RESUME_DELAY_MS` (800ms):
++    ```javascript
++    schedule(function () {
++      setState('idle');
++      feeding = false;
++      setDogPose('auto');
++      setDogState('wander');
++      if (window.HomeSanctuary && typeof window.HomeSanctuary.resumeRoaming === 'function') {
++        try { window.HomeSanctuary.resumeRoaming(); } catch (e) {}
++      }
++    }, RESUME_DELAY_MS);
++    ```
++
++### 2. `virtual_dog_walker/src/ui/home_sanctuary.js`
++- In `setDogPose(pose)`:
++  - If `pose === 'auto'` or `pose === 'camera'`, update `currentPose = pose;`.
++  - When `currentPose === 'auto'`, ensure `updateDog()` is not blocked and allows movement/turning.
++- In `setDogState(dogState)`:
++  - If `dogState === 'wander'` or `dogState === null`:
++    - Set `forcedState = null;`
++    - Set companion dog state to `'wander'`.
++  - Otherwise if `STATES.includes(dogState)` or `dogState === 'eating'`:
++    - Set `forcedState = dogState;`
++- Add `resumeRoaming()` method exposed on `window.HomeSanctuary`:
++  ```javascript
++  resumeRoaming: function () {
++    currentPose = 'auto';
++    forcedState = null;
++    if (dog) {
++      dog.state = 'wander';
++      dog.timer = 0;
++    }
++  }
++  ```
++- Eating Particles on `#home-field-canvas`:
++  - Maintain an array of active particles `particles = []`.
++  - In `render()`:
++    - If `forcedState === 'eating'` or `(dog && dog.state === 'eating')`:
++      - Every ~10 frames, spawn a new particle near dog position:
++        - Heart particle: `{ x: dog.x + (Math.random() - 0.5) * 30, y: dog.y - 10, vy: -0.8 - Math.random() * 0.5, alpha: 1.0, type: 'heart', text: '❤️', size: 14 }`
++        - Or crumb particle: `{ x: dog.x + (Math.random() - 0.5) * 20, y: dog.y + 15, vx: (Math.random() - 0.5) * 1.5, vy: -0.5 - Math.random() * 0.5, alpha: 1.0, type: 'crumb', color: '#b45309', radius: 2.5 }`
++    - Update & render particles on `ctx`:
++      - Move: `p.x += (p.vx || 0); p.y += p.vy; p.alpha -= 0.015;`
++      - Draw: if `p.type === 'heart'`, `ctx.globalAlpha = p.alpha; ctx.fillText(p.text, p.x, p.y);`
++      - If `p.type === 'crumb'`, `ctx.globalAlpha = p.alpha; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2); ctx.fill();`
++      - Filter out particles where `p.alpha <= 0`.
++      - Reset `ctx.globalAlpha = 1.0;`.
++
++## Verification
++`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py`
++Must pass with 0 errors.
++
++
+
+# 2026-11-15 16:05:03.023209
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-10-hud-lock-toast-and-tests"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/main.js"
++  - "virtual_dog_walker/src/ui/social_hud.js"
++  - "virtual_dog_walker/test/test_home_sanctuary.py"
++  - "virtual_dog_walker/test/test_home_menu.py"
++test_cmd: "python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"
++---
++
++# Implementer Brief 10: HUD Lock Release, Toast Bridge, Main Wire-up, and Tests
++
++## Context
++Complete the remaining review remediation points:
++1. Wire `./ui/home_sanctuary.js` and `./ui/home_feeding.js` into `src/main.js`.
++2. Clear `isHomeLocked = false` on dog adoption and compute `locked = this.isHomeLocked || this.dogSlot === null` in `_applyHomeViewDom()`.
++3. Bridge `window.showToast = (msg) => this.showToast(msg)` in `social_hud.js`.
++4. Add behavioral unit tests verifying resumption, particles, and lock release.
++
++## Required Edits
++
++### 1. `virtual_dog_walker/src/main.js`
++Near the top where `SocialHUD` is imported, add side-effect imports:
++```javascript
++import './ui/home_sanctuary.js';
++import './ui/home_feeding.js';
++```
++
++### 2. `virtual_dog_walker/src/ui/social_hud.js`
++1. In `initHUD()`:
++   Expose `window.showToast`:
++   ```javascript
++   if (typeof window !== 'undefined') {
++     window.showToast = (msg) => this.showToast(msg);
++   }
++   ```
++2. In `_applyHomeViewDom()`:
++   Change `const locked = this.dogSlot === null;` to:
++   ```javascript
++   const locked = Boolean(this.isHomeLocked || this.dogSlot === null);
++   ```
++3. In `saveDogSlot` / adoption handler (where `this.dogSlot = ...` is set upon dog creation/customization):
++   Ensure `this.isHomeLocked = false;` is explicitly set so the player is never trapped after creating a dog.
++
++### 3. `virtual_dog_walker/test/test_home_sanctuary.py`
++Add tests asserting:
++- `self.assertIn('RESUME_DELAY_MS', self.feeding_js)`
++- `self.assertIn('resumeRoaming', self.sanctuary_js)`
++- `self.assertIn('spawnParticles', self.sanctuary_js)`
++- `self.assertIn('window.showToast', self.hud_js)`
++
++### 4. `virtual_dog_walker/test/test_home_menu.py`
++Add behavioral test verifying:
++- When a player with `dogSlot: null` creates/adopts a dog, `hud.isHomeLocked` becomes `false`, `hud.canWalkInPark()` returns `true`, and `hud.closeModal()` successfully closes the modal.
++
++## Verification
++`python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
++All tests must pass (0 failures, 0 errors).
++
++
+
+# 2026-11-15 16:05:03.023573
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-10-hud-lock-toast-and-tests"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/main.js"
++  - "virtual_dog_walker/src/ui/social_hud.js"
++  - "virtual_dog_walker/test/test_home_sanctuary.py"
++  - "virtual_dog_walker/test/test_home_menu.py"
++test_cmd: "python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"
++---
++
++# Implementer Brief 10: HUD Lock Release, Toast Bridge, Main Wire-up, and Tests
++
++## Context
++Complete the remaining review remediation points:
++1. Wire `./ui/home_sanctuary.js` and `./ui/home_feeding.js` into `src/main.js`.
++2. Clear `isHomeLocked = false` on dog adoption and compute `locked = this.isHomeLocked || this.dogSlot === null` in `_applyHomeViewDom()`.
++3. Bridge `window.showToast = (msg) => this.showToast(msg)` in `social_hud.js`.
++4. Add behavioral unit tests verifying resumption, particles, and lock release.
++
++## Required Edits
++
++### 1. `virtual_dog_walker/src/main.js`
++Near the top where `SocialHUD` is imported, add side-effect imports:
++```javascript
++import './ui/home_sanctuary.js';
++import './ui/home_feeding.js';
++```
++
++### 2. `virtual_dog_walker/src/ui/social_hud.js`
++1. In `initHUD()`:
++   Expose `window.showToast`:
++   ```javascript
++   if (typeof window !== 'undefined') {
++     window.showToast = (msg) => this.showToast(msg);
++   }
++   ```
++2. In `_applyHomeViewDom()`:
++   Change `const locked = this.dogSlot === null;` to:
++   ```javascript
++   const locked = Boolean(this.isHomeLocked || this.dogSlot === null);
++   ```
++3. In `saveDogSlot` / adoption handler (where `this.dogSlot = ...` is set upon dog creation/customization):
++   Ensure `this.isHomeLocked = false;` is explicitly set so the player is never trapped after creating a dog.
++
++### 3. `virtual_dog_walker/test/test_home_sanctuary.py`
++Add tests asserting:
++- `self.assertIn('RESUME_DELAY_MS', self.feeding_js)`
++- `self.assertIn('resumeRoaming', self.sanctuary_js)`
++- `self.assertIn('spawnParticles', self.sanctuary_js)`
++- `self.assertIn('window.showToast', self.hud_js)`
++
++### 4. `virtual_dog_walker/test/test_home_menu.py`
++Add behavioral test verifying:
++- When a player with `dogSlot: null` creates/adopts a dog, `hud.isHomeLocked` becomes `false`, `hud.canWalkInPark()` returns `true`, and `hud.closeModal()` successfully closes the modal.
++
++## Verification
++`python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
++All tests must pass (0 failures, 0 errors).
 +
 +
 ```
@@ -15056,6 +18519,8 @@ import { TennisBall } from './entities/toy.js';
 import { NetworkManager, NetStatus } from './net/network.js';
 import { Protocol, PacketType } from './net/protocol.js';
 import { SocialHUD } from './ui/social_hud.js';
+import './ui/home_sanctuary.js';
+import './ui/home_feeding.js';
 import { sound } from './systems/audio.js';
 import { TouchControls } from './ui/touch_controls.js';
 import { ProximityChat } from './ui/proximity_chat.js';
@@ -22686,6 +26151,7 @@ export default weatherClient;
   var FACING_MS = 200; // <= 250ms
   var BOWL_MS = 150; // <= 200ms
   var EATING_MS = 3500; // within 3000-4000ms, target 3500ms
+  var RESUME_DELAY_MS = 800; // delay before autonomous roaming resumes
 
   var state = 'idle';
   var mounted = false;
@@ -22912,21 +26378,27 @@ export default weatherClient;
             // Phase 4: complete (instant)
             setState('complete');
             clearBowl();
-            setDogState('idle');
-            setDogPose('idle');
 
             var toast = dogName + ' loved the meal! ❤️';
             emitToast(toast);
 
-            persistFeed(dogId);
-
-            setState('idle');
-            feeding = false;
-            updateDisabledState();
+            persistFeed(dogName);
 
             // Expose duration for test hooks via closure variable.
             runFeed.__lastDuration = Math.round(now() - start);
-            resolve();
+
+            // Phase 5: resume autonomous roaming after a short delay.
+            schedule(function () {
+              setState('idle');
+              feeding = false;
+              setDogPose('auto');
+              setDogState('wander');
+              if (window.HomeSanctuary && typeof window.HomeSanctuary.resumeRoaming === 'function') {
+                try { window.HomeSanctuary.resumeRoaming(); } catch (e) {}
+              }
+              updateDisabledState();
+              resolve();
+            }, RESUME_DELAY_MS);
           }, EATING_MS);
         }, BOWL_MS);
       }, FACING_MS);
@@ -23091,6 +26563,9 @@ export default weatherClient;
 
   var grassBlades = [];
   var noiseSeed = 1337;
+
+  var particles = [];
+  var particleFrame = 0;
 
   // ---------------------------------------------------------------------------
   // Utilities
@@ -23453,11 +26928,72 @@ export default weatherClient;
     ctx.restore();
   }
 
+  function spawnParticles() {
+    if (!dog) return;
+    particleFrame++;
+    if (particleFrame % 10 !== 0) return;
+
+    if (Math.random() < 0.5) {
+      particles.push({
+        x: dog.x + (Math.random() - 0.5) * 30,
+        y: dog.y - 10,
+        vy: -0.8 - Math.random() * 0.5,
+        alpha: 1.0,
+        type: 'heart',
+        text: '❤️',
+        size: 14
+      });
+    } else {
+      particles.push({
+        x: dog.x + (Math.random() - 0.5) * 20,
+        y: dog.y + 15,
+        vx: (Math.random() - 0.5) * 1.5,
+        vy: -0.5 - Math.random() * 0.5,
+        alpha: 1.0,
+        type: 'crumb',
+        color: '#b45309',
+        radius: 2.5
+      });
+    }
+  }
+
+  function updateAndDrawParticles() {
+    if (!ctx) return;
+    for (var i = particles.length - 1; i >= 0; i--) {
+      var p = particles[i];
+      p.x += (p.vx || 0);
+      p.y += p.vy;
+      p.alpha -= 0.015;
+
+      if (p.alpha <= 0) {
+        particles.splice(i, 1);
+        continue;
+      }
+
+      ctx.globalAlpha = p.alpha;
+      if (p.type === 'heart') {
+        ctx.font = (p.size || 14) + 'px sans-serif';
+        ctx.fillText(p.text, p.x, p.y);
+      } else if (p.type === 'crumb') {
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1.0;
+  }
+
   function render() {
     if (!ctx) return;
     ctx.clearRect(0, 0, fieldWidth, fieldHeight);
     drawField();
     drawDog();
+
+    if (forcedState === 'eating' || (dog && dog.state === 'eating')) {
+      spawnParticles();
+    }
+    updateAndDrawParticles();
   }
 
   // ---------------------------------------------------------------------------
@@ -23585,6 +27121,8 @@ export default weatherClient;
     dog = null;
     forcedState = null;
     grassBlades = [];
+    particles = [];
+    particleFrame = 0;
   }
 
   function getCompanionDog() {
@@ -23617,11 +27155,30 @@ export default weatherClient;
   }
 
   function setDogState(nextState) {
-    if (STATES.indexOf(nextState) === -1) return;
     if (!dog) return;
+
+    if (nextState === 'wander' || nextState === null) {
+      forcedState = null;
+      dog.state = 'wander';
+      pickWanderTarget();
+      stateTimer = 0;
+      return;
+    }
+
+    if (STATES.indexOf(nextState) === -1) return;
 
     forcedState = nextState;
     enterState(nextState);
+  }
+
+  function resumeRoaming() {
+    pose = 'auto';
+    forcedState = null;
+    if (dog) {
+      dog.state = 'wander';
+      stateTimer = 0;
+      pickWanderTarget();
+    }
   }
 
   function getFieldSize() {
@@ -23634,6 +27191,7 @@ export default weatherClient;
     getCompanionDog: getCompanionDog,
     setDogPose: setDogPose,
     setDogState: setDogState,
+    resumeRoaming: resumeRoaming,
     getFieldSize: getFieldSize
   };
 
@@ -25178,6 +28736,12 @@ export class SocialHUD {
     `;
     this.container.appendChild(toast);
 
+    // Bridge a global toast helper so side-effect modules (HomeSanctuary,
+    // HomeFeeding) can surface messages through the HUD.
+    if (typeof window !== 'undefined') {
+      window.showToast = (msg) => this.showToast(msg);
+    }
+
     // Load saved profile from localStorage if available
     this.loadSavedProfile();
 
@@ -25231,7 +28795,7 @@ export class SocialHUD {
     const titleEl = document.getElementById('home-header-title');
 
     const isSettings = this.currentHomeView === 'settings';
-    const locked = this.dogSlot === null;
+    const locked = Boolean(this.isHomeLocked || this.dogSlot === null);
 
     if (sanctuary) sanctuary.style.display = isSettings ? 'none' : '';
     if (settings) settings.style.display = isSettings ? '' : 'none';
@@ -25544,6 +29108,9 @@ export class SocialHUD {
     };
 
     this.dogSlot = { name, coatKey, collarColor, personality };
+    // Adopting a dog always releases the Home lock so the player is never
+    // trapped in the modal after creating a dog.
+    this.isHomeLocked = false;
 
     if (this.dog) {
       this.dog.name = name;
@@ -39051,6 +42618,55 @@ class TestHomeMenuBehavioralExecutable(unittest.TestCase):
         self.assertEqual(res.get("lastBroadcast", {}).get("dogName"), "",
                          "removeDog must broadcast with dogName: ''")
 
+    def test_exec_adopt_releases_lock_and_allows_walk(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: '', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const lockedBefore = hud.isHomeLocked;
+        const canWalkBefore = hud.canWalkInPark();
+
+        const nameInput = document.getElementById('cust-dog-name');
+        const coatSelect = document.getElementById('cust-dog-coat');
+        if (nameInput) nameInput.value = 'Ziggy';
+        if (coatSelect) coatSelect.value = 'CHOCOLATE_TAN';
+
+        hud.adoptDogFromForm();
+
+        const lockedAfter = hud.isHomeLocked;
+        const canWalkAfter = hud.canWalkInPark();
+
+        const modal = document.getElementById('customizer-modal');
+        modal.style.display = 'block';
+        hud.closeModal();
+        const afterClose = modal.style.display;
+
+        return {
+          lockedBefore: lockedBefore,
+          canWalkBefore: canWalkBefore,
+          lockedAfter: lockedAfter,
+          canWalkAfter: canWalkAfter,
+          afterClose: afterClose
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["lockedBefore"],
+                        "A null dogSlot must start locked")
+        self.assertFalse(res["canWalkBefore"],
+                         "A null dogSlot must not allow walking")
+        self.assertFalse(res["lockedAfter"],
+                         "Adopting a dog must release the Home lock")
+        self.assertTrue(res["canWalkAfter"],
+                        "Adopting a dog must allow walking in the park")
+        self.assertEqual(res["afterClose"], "none",
+                         "closeModal must succeed once a dog is adopted")
+
     def test_exec_add_dog_populates_slot_and_unlocks(self):
         snippet = """
         localStorage.setItem('clifton_walker_profile', JSON.stringify({
@@ -39443,6 +43059,22 @@ class TestHomeSanctuaryStatic(unittest.TestCase):
                       "HomeFeeding must expose __testHooks")
         self.assertIn('simulateFeed', self.feeding_js,
                       "HomeFeeding.__testHooks must expose simulateFeed")
+
+    def test_resume_delay_constant(self):
+        self.assertIn('RESUME_DELAY_MS', self.feeding_js,
+                      "HomeFeeding must define RESUME_DELAY_MS")
+
+    def test_sanctuary_resume_roaming(self):
+        self.assertIn('resumeRoaming', self.sanctuary_js,
+                      "HomeSanctuary must expose resumeRoaming")
+
+    def test_sanctuary_spawn_particles(self):
+        self.assertIn('spawnParticles', self.sanctuary_js,
+                      "HomeSanctuary must expose spawnParticles")
+
+    def test_hud_bridges_window_show_toast(self):
+        self.assertIn('window.showToast', self.hud_js,
+                      "SocialHUD must bridge window.showToast")
 
 
 @unittest.skipUnless(

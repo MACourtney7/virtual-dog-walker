@@ -248,6 +248,46 @@ class TestHomeHUDAndStage(unittest.TestCase):
                       ".customizer-header-actions must be styled with display: flex;")
 
 
+class TestSquareLayoutContracts(unittest.TestCase):
+    """unification-031: Square field layout CSS & markup contracts."""
+
+    def setUp(self):
+        self.hud_js = read("src/ui/social_hud.js")
+        self.style_css = read("src/style.css")
+
+    def test_home_field_preview_is_square(self):
+        css = self.style_css
+        idx = css.find('.home-field-preview')
+        self.assertNotEqual(idx, -1, "Missing .home-field-preview CSS rule")
+        block = css[idx:idx + 500]
+        self.assertIn('aspect-ratio: 1 / 1;', block,
+                      ".home-field-preview must set aspect-ratio: 1 / 1;")
+
+    def test_home_field_canvas_fills_container(self):
+        css = self.style_css
+        idx = css.find('#home-field-canvas')
+        self.assertNotEqual(idx, -1, "Missing #home-field-canvas CSS rule")
+        block = css[idx:idx + 300]
+        self.assertIn('width: 100%;', block,
+                      "#home-field-canvas must set width: 100%;")
+        self.assertIn('height: 100%;', block,
+                      "#home-field-canvas must set height: 100%;")
+
+    def test_home_field_canvas_markup_not_fixed_rectangular(self):
+        self.assertIn('id="home-field-canvas"', self.hud_js,
+                      "Missing #home-field-canvas element")
+        idx = self.hud_js.find('id="home-field-canvas"')
+        # Inspect the surrounding tag markup for fixed rectangular dimensions.
+        start = self.hud_js.rfind('<canvas', 0, idx)
+        end = self.hud_js.find('>', idx)
+        self.assertNotEqual(start, -1, "Could not locate <canvas> tag for #home-field-canvas")
+        tag = self.hud_js[start:end + 1]
+        self.assertNotIn('width="340"', tag,
+                         "#home-field-canvas must not pin width=\"340\"")
+        self.assertNotIn('height="220"', tag,
+                         "#home-field-canvas must not pin height=\"220\"")
+
+
 class TestDogSlotKennelAndLocking(unittest.TestCase):
     """REQ-028.3: Single-slot immutable kennel and first-time / empty-slot lock."""
 

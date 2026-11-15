@@ -969,7 +969,9 @@
       facing: dog.facing,
       state: dog.state,
       coatColor: dog.coatColor,
-      coatColorDark: dog.coatColorDark
+      coatColorDark: dog.coatColorDark,
+      isLeashed: dog.isLeashed,
+      leash: dog.leash
     };
   }
 

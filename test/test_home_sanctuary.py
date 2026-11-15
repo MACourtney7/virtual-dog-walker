@@ -291,6 +291,67 @@ class TestHomeSanctuaryStatic(unittest.TestCase):
                          "home_feeding.js must not reference bare window.HomeFeeding")
 
 
+class TestSquareLayoutAndOffLeashStatic(unittest.TestCase):
+    """unification-031: Seamless grass & dedicated off-leash dog contracts."""
+
+    def setUp(self):
+        self.sanctuary_js = read("src/ui/home_sanctuary.js")
+
+    def test_resize_canvas_is_dynamic(self):
+        self.assertIn("resizeCanvas", self.sanctuary_js,
+                      "HomeSanctuary must define resizeCanvas()")
+        idx = self.sanctuary_js.find("resizeCanvas")
+        self.assertNotEqual(idx, -1, "Missing resizeCanvas()")
+        # resizeCanvas must not pin fixed inline pixel styles.
+        block = self.sanctuary_js[idx:idx + 1200]
+        self.assertNotIn("canvas.style.width = '340px'", block,
+                         "resizeCanvas must not pin a fixed 340px inline width")
+        self.assertNotIn("canvas.style.height = '220px'", block,
+                         "resizeCanvas must not pin a fixed 220px inline height")
+
+    def test_draw_field_fills_full_canvas(self):
+        self.assertIn("drawField", self.sanctuary_js,
+                      "HomeSanctuary must define drawField()")
+        self.assertRegex(
+            self.sanctuary_js,
+            r"fillRect\s*\(\s*0\s*,\s*0\s*,\s*fieldWidth\s*,\s*fieldHeight\s*\)",
+            "drawField must fill (0, 0, fieldWidth, fieldHeight)"
+        )
+        self.assertIn("#3e6b2c", self.sanctuary_js,
+                      "drawField must use the 'The Downs' turf base #3e6b2c")
+
+    def test_sanctuary_dog_is_off_leash(self):
+        self.assertIn("isLeashed", self.sanctuary_js,
+                      "Sanctuary dog must declare isLeashed")
+        self.assertRegex(
+            self.sanctuary_js,
+            r"isLeashed\s*[:=]\s*false",
+            "Sanctuary dog must set isLeashed = false"
+        )
+        self.assertRegex(
+            self.sanctuary_js,
+            r"leash\s*[:=]\s*null",
+            "Sanctuary dog must set leash = null"
+        )
+
+    def test_no_leash_rendering(self):
+        # No red leash stroke should be drawn in the sanctuary.
+        self.assertNotRegex(
+            self.sanctuary_js,
+            r"strokeStyle\s*=\s*['\"]#(?:ff0000|f00|dc2626|ef4444)['\"]",
+            "HomeSanctuary must not render a red leash stroke"
+        )
+        self.assertNotIn("drawLeash", self.sanctuary_js,
+                         "HomeSanctuary must not define a drawLeash renderer")
+
+    def test_mount_creates_autonomous_entity_without_live_dog(self):
+        self.assertIn("mount", self.sanctuary_js,
+                      "HomeSanctuary must expose mount()")
+        # mount must not require window.__vdwLiveDog.
+        self.assertNotIn("__vdwLiveDog", self.sanctuary_js,
+                         "HomeSanctuary must not depend on window.__vdwLiveDog")
+
+
 @unittest.skipUnless(
     shutil.which("node") or shutil.which("osascript"),
     "No JS runtime (node or osascript) available"
@@ -924,6 +985,43 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
                          "home_feeding must not inject a #home-food-bowl DOM element")
         self.assertFalse(res["byClass"],
                          "home_feeding must not inject a .home-food-bowl DOM element")
+
+    def test_exec_mount_creates_off_leash_dog_from_slot(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        // Ensure no live dog is present.
+        window.__vdwLiveDog = undefined;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        const dog = window.HomeSanctuary.getCompanionDog();
+
+        return {
+          hasDog: Boolean(dog),
+          name: dog ? dog.name : null,
+          isLeashed: dog ? dog.isLeashed : null,
+          leash: dog ? dog.leash : 'MISSING'
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["hasDog"],
+                        "mount(canvas, slot) must create an autonomous dog entity")
+        self.assertEqual(res["name"], "Ziggy",
+                         "Autonomous dog must use the slot name")
+        self.assertFalse(res["isLeashed"],
+                         "Sanctuary dog must be off-leash (isLeashed === false)")
+        self.assertIsNone(res["leash"],
+                          "Sanctuary dog must have leash === null")
 
     def test_exec_second_click_while_feeding_ignored(self):
         snippet = """

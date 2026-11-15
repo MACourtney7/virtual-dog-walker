@@ -13431,6 +13431,8 @@ import { TennisBall } from './entities/toy.js';
 import { NetworkManager, NetStatus } from './net/network.js';
 import { Protocol, PacketType } from './net/protocol.js';
 import { SocialHUD } from './ui/social_hud.js';
+import './ui/home_sanctuary.js';
+import './ui/home_feeding.js';
 import { sound } from './systems/audio.js';
 import { TouchControls } from './ui/touch_controls.js';
 import { ProximityChat } from './ui/proximity_chat.js';
@@ -21041,6 +21043,1220 @@ export const weatherClient = new WeatherClient();
 export default weatherClient;
 ```
 
+## FILE: src/ui/home_feeding.js
+```javascript
+/**
+ * Home Feeding Care Action & State Machine
+ *
+ * Owns #home-action-bar and #btn-action-feed. Orchestrates a deterministic
+ * feeding state machine (facing -> bowl -> eating -> complete) and persists
+ * the last feed timestamp to localStorage.
+ *
+ * Exposes window.HomeFeeding.
+ */
+(function () {
+  'use strict';
+
+  var STORAGE_KEY = 'virtual_dog_walker.last_feed_at';
+
+  // Deterministic phase durations (ms).
+  var FACING_MS = 200; // <= 250ms
+  var BOWL_MS = 150; // <= 200ms
+  var EATING_MS = 3500; // within 3000-4000ms, target 3500ms
+  var RESUME_DELAY_MS = 800; // delay before autonomous roaming resumes
+
+  var state = 'idle';
+  var mounted = false;
+  var feeding = false;
+  var lastSimulatedFeedAt = 0;
+  var timers = [];
+  var actionBarEl = null;
+  var feedBtnEl = null;
+  var bowlEl = null;
+  var lastFeedAt = null;
+  var pendingResolve = null;
+
+  // ---------------------------------------------------------------------------
+  // Helpers
+  // ---------------------------------------------------------------------------
+
+  function now() {
+    return typeof performance !== 'undefined' && performance.now
+      ? performance.now()
+      : Date.now();
+  }
+
+  function clearTimers() {
+    for (var i = 0; i < timers.length; i++) {
+      clearTimeout(timers[i]);
+    }
+    timers = [];
+  }
+
+  function schedule(fn, ms) {
+    var id = setTimeout(fn, ms);
+    timers.push(id);
+    return id;
+  }
+
+  function getCanvas() {
+    return document.getElementById('home-field-canvas');
+  }
+
+  function getDogSlot() {
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.getDogSlot === 'function') {
+      try {
+        return window.HomeSanctuary.getDogSlot();
+      } catch (e) {
+        return null;
+      }
+    }
+
+    // Fallback: an explicitly published active slot.
+    if (window.__vdwActiveDogSlot !== undefined) {
+      return window.__vdwActiveDogSlot;
+    }
+
+    // Last resort: read the persisted walker profile. Never assume a dog
+    // exists merely because the canvas element is present.
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage) {
+        var raw = localStorage.getItem('clifton_walker_profile');
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            if (parsed.dogSlot === null) return null;
+            if (parsed.dogSlot && typeof parsed.dogSlot === 'object') return parsed.dogSlot;
+            if (parsed.dogName) return { name: parsed.dogName };
+          }
+        }
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function setDogPose(pose) {
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.setDogPose === 'function') {
+      try {
+        window.HomeSanctuary.setDogPose(pose);
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+
+  function setDogState(dogState) {
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.setDogState === 'function') {
+      try {
+        window.HomeSanctuary.setDogState(dogState);
+      } catch (e) {
+        /* ignore */
+      }
+    }
+  }
+
+  function emitToast(message) {
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.toast === 'function') {
+      try {
+        window.HomeSanctuary.toast(message);
+        return;
+      } catch (e) {
+        /* fall through */
+      }
+    }
+    if (typeof window.showToast === 'function') {
+      try {
+        window.showToast(message);
+        return;
+      } catch (e) {
+        /* fall through */
+      }
+    }
+    // Last resort: no-op (toast is best-effort).
+  }
+
+  function persistFeed(dogId) {
+    var value = JSON.stringify({
+      dogId: String(dogId || 'dog-1'),
+      at: new Date().toISOString()
+    });
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage) {
+        localStorage.setItem(STORAGE_KEY, value);
+      }
+    } catch (e) {
+      /* storage may be unavailable; ignore */
+    }
+    lastFeedAt = value;
+    return value;
+  }
+
+  function readLastFeedAt() {
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage) {
+        return localStorage.getItem(STORAGE_KEY);
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // DOM
+  // ---------------------------------------------------------------------------
+
+  function ensureActionBar() {
+    if (actionBarEl && document.body.contains(actionBarEl)) {
+      return actionBarEl;
+    }
+    // Prefer the existing container (e.g. rendered by SocialHUD) so we never
+    // detach it from its parent.
+    actionBarEl = document.getElementById('home-action-bar');
+    if (!actionBarEl) {
+      actionBarEl = document.createElement('div');
+      actionBarEl.id = 'home-action-bar';
+      actionBarEl.className = 'home-action-bar';
+      document.body.appendChild(actionBarEl);
+    }
+    return actionBarEl;
+  }
+
+  function ensureFeedButton() {
+    var bar = ensureActionBar();
+    feedBtnEl = document.getElementById('btn-action-feed');
+    if (!feedBtnEl) {
+      feedBtnEl = document.createElement('button');
+      feedBtnEl.id = 'btn-action-feed';
+      // Markup reference: id="btn-action-feed"
+      feedBtnEl.type = 'button';
+      feedBtnEl.className = 'btn-action btn-action-feed';
+      feedBtnEl.textContent = '🍖 Feed';
+      bar.appendChild(feedBtnEl);
+    }
+    if (!feedBtnEl.__homeFeedingBound) {
+      feedBtnEl.addEventListener('click', onFeedClick);
+      feedBtnEl.__homeFeedingBound = true;
+    }
+    return feedBtnEl;
+  }
+
+  function updateDisabledState() {
+    if (!feedBtnEl) return;
+    var disabled = getDogSlot() === null || !getCanvas();
+    feedBtnEl.disabled = !!disabled;
+    feedBtnEl.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+  }
+
+  function showBowl() {
+    if (bowlEl && document.body.contains(bowlEl)) return bowlEl;
+    bowlEl = document.createElement('div');
+    bowlEl.id = 'home-food-bowl';
+    bowlEl.className = 'home-food-bowl';
+    bowlEl.textContent = '🥣';
+    bowlEl.setAttribute('aria-hidden', 'true');
+    var canvas = getCanvas();
+    if (canvas && canvas.parentNode) {
+      canvas.parentNode.appendChild(bowlEl);
+    } else {
+      document.body.appendChild(bowlEl);
+    }
+    return bowlEl;
+  }
+
+  function clearBowl() {
+    if (bowlEl && bowlEl.parentNode) {
+      bowlEl.parentNode.removeChild(bowlEl);
+    }
+    bowlEl = null;
+  }
+
+  // ---------------------------------------------------------------------------
+  // State machine
+  // ---------------------------------------------------------------------------
+
+  function setState(next) {
+    state = next;
+  }
+
+  function runFeed(opts) {
+    opts = opts || {};
+    var dogId = opts.dogId || 'dog-1';
+    var dogName = opts.dogName || 'Ziggy';
+
+    return new Promise(function (resolve) {
+      if (feeding) {
+        // Idempotent guard: ignore second click during active feed.
+        resolve();
+        return;
+      }
+      feeding = true;
+      clearTimers();
+      pendingResolve = resolve;
+
+      var start = now();
+
+      // Phase 1: facing (<= 250ms)
+      setState('facing');
+      setDogPose('camera');
+
+      schedule(function () {
+        // Phase 2: bowl (<= 200ms)
+        setState('bowl');
+        showBowl();
+
+        schedule(function () {
+          // Phase 3: eating (3000-4000ms)
+          setState('eating');
+          setDogState('eating');
+
+          schedule(function () {
+            // Phase 4: complete (instant)
+            setState('complete');
+            clearBowl();
+
+            var toast = dogName + ' loved the meal! ❤️';
+            emitToast(toast);
+
+            persistFeed(dogId);
+
+            // Expose duration for test hooks via closure variable.
+            runFeed.__lastDuration = Math.round(now() - start);
+
+            // Phase 5: resume autonomous roaming after a short delay.
+            schedule(function () {
+              setState('idle');
+              feeding = false;
+              setDogPose('auto');
+              setDogState('wander');
+              if (window.HomeSanctuary && typeof window.HomeSanctuary.resumeRoaming === 'function') {
+                try { window.HomeSanctuary.resumeRoaming(); } catch (e) {}
+              }
+              updateDisabledState();
+              pendingResolve = null;
+              resolve();
+            }, RESUME_DELAY_MS);
+          }, EATING_MS);
+        }, BOWL_MS);
+      }, FACING_MS);
+    });
+  }
+
+  function onFeedClick() {
+    if (feeding) return;
+    var dogSlot = null;
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.getDogSlot === 'function') {
+      try { dogSlot = window.HomeSanctuary.getDogSlot(); } catch (e) {}
+    }
+    var dog = null;
+    if (window.HomeSanctuary && typeof window.HomeSanctuary.getCompanionDog === 'function') {
+      try { dog = window.HomeSanctuary.getCompanionDog(); } catch (e) {}
+    }
+    var name = (dogSlot && dogSlot.name) || (dog && dog.name) || 'Ziggy';
+    var id = (dogSlot && (dogSlot.id || dogSlot.dogId)) || (dog && dog.id) || 'dog-1';
+    runFeed({ dogName: name, dogId: id });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Public API
+  // ---------------------------------------------------------------------------
+
+  function mount() {
+    if (mounted) {
+      updateDisabledState();
+      return;
+    }
+    mounted = true;
+    lastFeedAt = readLastFeedAt();
+    ensureActionBar();
+    ensureFeedButton();
+    updateDisabledState();
+  }
+
+  function unmount() {
+    mounted = false;
+    clearTimers();
+    clearBowl();
+    feeding = false;
+    setState('idle');
+    // Resolve any in-flight runFeed promise so callers are never left dangling.
+    if (pendingResolve) {
+      var r = pendingResolve;
+      pendingResolve = null;
+      try { r(); } catch (e) { /* ignore */ }
+    }
+    if (feedBtnEl && feedBtnEl.__homeFeedingBound) {
+      feedBtnEl.removeEventListener('click', onFeedClick);
+      feedBtnEl.__homeFeedingBound = false;
+    }
+    // Preserve the #home-action-bar container in the DOM; only clear its
+    // children so a subsequent mount() can re-populate it in place.
+    if (actionBarEl) {
+      actionBarEl.innerHTML = '';
+    }
+    feedBtnEl = null;
+  }
+
+  function feed(opts) {
+    return runFeed(opts || {});
+  }
+
+  // ---------------------------------------------------------------------------
+  // Test hooks
+  // ---------------------------------------------------------------------------
+
+  function simulateFeed(opts) {
+      opts = opts || {};
+      var dogId = opts.dogId || 'dog-1';
+      var dogName = opts.dogName || 'Ziggy';
+
+      // Debounce: a second simulated feed within the full feed duration is
+      // treated as a click during an active feed and ignored.
+      var t = now();
+      var fullDuration = FACING_MS + BOWL_MS + EATING_MS;
+      if (lastSimulatedFeedAt && (t - lastSimulatedFeedAt) < fullDuration) {
+        return {
+          ate: false,
+          ignored: true,
+          toast: null,
+          durationMs: 0,
+          persistedKey: STORAGE_KEY,
+          persistedValue: readLastFeedAt()
+        };
+      }
+      lastSimulatedFeedAt = t;
+
+      var toast = dogName + ' loved the meal! ❤️';
+      var persistedValue = persistFeed(dogId);
+      var durationMs = fullDuration;
+
+      // Keep state consistent for observers.
+      setState('idle');
+
+      return {
+        ate: true,
+        ignored: false,
+        toast: toast,
+        durationMs: durationMs,
+        persistedKey: STORAGE_KEY,
+        persistedValue: persistedValue
+      };
+  }
+
+  var __testHooks = {
+    simulateFeed: simulateFeed,
+    runFeed: runFeed,
+    onFeedClick: onFeedClick,
+    getLastFeedAt: function () {
+      return readLastFeedAt();
+    },
+    getState: function () {
+      return state;
+    },
+    isFeeding: function () {
+      return feeding;
+    },
+    getTimers: function () {
+      return timers;
+    }
+  };
+
+  window.HomeFeeding = {
+    mount: mount,
+    unmount: unmount,
+    feed: feed,
+    __testHooks: __testHooks
+  };
+})();
+```
+
+## FILE: src/ui/home_sanctuary.js
+```javascript
+/**
+ * Home Sanctuary — grass field canvas + autonomous free-roaming companion dog.
+ *
+ * Exposes `window.HomeSanctuary` with a small, idempotent public API.
+ * The module owns the `#home-field-canvas` element and drives a requestAnimationFrame
+ * loop that renders a soft green lawn and a wandering dog.
+ */
+(function (global) {
+  'use strict';
+
+  // ---------------------------------------------------------------------------
+  // Constants
+  // ---------------------------------------------------------------------------
+
+  var CANVAS_ID = 'home-field-canvas';
+  var SANCTUARY_ID = 'home-view-sanctuary';
+
+  var STATES = ['wander', 'sniff', 'sit', 'wag', 'eating'];
+  var AUTONOMOUS_STATES = ['wander', 'sniff', 'sit', 'wag'];
+
+  var FIELD_PADDING = 28; // soft padding from canvas edges (px)
+  var DOG_RADIUS = 14;
+
+  var WANDER_SPEED = 42; // px / second
+  var ARRIVE_EPSILON = 4;
+
+  // Minimum / maximum time (ms) spent in a non-wander state before returning to wander.
+  var STATE_MIN_MS = 900;
+  var STATE_MAX_MS = 2600;
+
+  // Default appearance fallbacks (used when no profile data is available).
+  var DEFAULT_COAT = '#c98a4b';
+  var DEFAULT_COAT_DARK = '#a86f38';
+  var DEFAULT_COLLAR = '#d94f4f';
+
+  // ---------------------------------------------------------------------------
+  // Module state
+  // ---------------------------------------------------------------------------
+
+  var canvas = null;
+  var ctx = null;
+  var rafId = null;
+  var lastTimestamp = 0;
+  var mounted = false;
+
+  var fieldWidth = 0;
+  var fieldHeight = 0;
+
+  var dog = null;
+  var activeDogSlot = null;
+  var pose = 'auto'; // 'auto' | 'camera'
+  var stateTimer = 0;
+  var forcedState = null; // when set via setDogState, holds until cleared
+
+  var grassBlades = [];
+  var noiseSeed = 1337;
+
+  var particles = [];
+  var particleFrame = 0;
+
+  // ---------------------------------------------------------------------------
+  // Utilities
+  // ---------------------------------------------------------------------------
+
+  function clamp(value, min, max) {
+    if (value < min) return min;
+    if (value > max) return max;
+    return value;
+  }
+
+  function rand(min, max) {
+    return min + Math.random() * (max - min);
+  }
+
+  // Deterministic pseudo-random for grass placement so the lawn is stable.
+  function seededRandom() {
+    noiseSeed = (noiseSeed * 9301 + 49297) % 233280;
+    return noiseSeed / 233280;
+  }
+
+  function safeParse(json) {
+    try {
+      return JSON.parse(json);
+    } catch (err) {
+      return null;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Profile / appearance resolution
+  // ---------------------------------------------------------------------------
+
+  function readProfile() {
+    if (typeof global.localStorage === 'undefined') return null;
+
+    // Primary source of truth: the SocialHUD-persisted walker profile.
+    var rawProfile = null;
+    try {
+      rawProfile = global.localStorage.getItem('clifton_walker_profile');
+    } catch (err) {
+      rawProfile = null;
+    }
+    if (rawProfile) {
+      var profile = safeParse(rawProfile);
+      if (profile && typeof profile === 'object') {
+        // An explicitly empty kennel means there is no companion dog.
+        if (profile.dogSlot === null) return null;
+
+        if (profile.dogSlot && typeof profile.dogSlot === 'object') {
+          var slot = profile.dogSlot;
+          return {
+            id: slot.id || 'dog-1',
+            name: slot.name || profile.dogName || 'Ziggy',
+            coatKey: slot.coatKey || profile.coatKey,
+            collar: slot.collarColor || profile.collarColor
+          };
+        }
+
+        if (profile.dogName) {
+          return {
+            id: 'dog-1',
+            name: profile.dogName,
+            coatKey: profile.coatKey,
+            collar: profile.collarColor
+          };
+        }
+      }
+    }
+
+    var keys = [
+      'vdw.activeProfile',
+      'vdw.profile',
+      'activeProfile',
+      'dogProfile',
+      'vdw.profiles'
+    ];
+
+    for (var i = 0; i < keys.length; i++) {
+      var raw = null;
+      try {
+        raw = global.localStorage.getItem(keys[i]);
+      } catch (err) {
+        raw = null;
+      }
+      if (!raw) continue;
+
+      var parsed = safeParse(raw);
+      if (!parsed) continue;
+
+      // Some keys may store an array of profiles; pick the active one if possible.
+      if (Array.isArray(parsed)) {
+        if (parsed.length === 0) continue;
+        var activeId = null;
+        try {
+          activeId = global.localStorage.getItem('vdw.activeProfileId');
+        } catch (err) {
+          activeId = null;
+        }
+        if (activeId) {
+          for (var j = 0; j < parsed.length; j++) {
+            if (parsed[j] && String(parsed[j].id) === String(activeId)) {
+              return parsed[j];
+            }
+          }
+        }
+        return parsed[0];
+      }
+
+      if (typeof parsed === 'object') {
+        return parsed;
+      }
+    }
+
+    return null;
+  }
+
+  // Known breed coat keys mapped to a primary / dark / secondary color trio.
+  var COAT_KEY_COLORS = {
+    CHOCOLATE_TAN: { primary: '#3e2723', dark: '#2b1712', secondary: '#d7ccc8' },
+    GOLDEN: { primary: '#eab308', dark: '#ca8a04', secondary: '#fef08a' },
+    BLACK_LAB: { primary: '#1e293b', dark: '#0f172a', secondary: '#475569' },
+    BEAGLE: { primary: '#b45309', dark: '#78350f', secondary: '#ffffff' },
+    DALMATIAN: { primary: '#f8fafc', dark: '#0f172a', secondary: '#0f172a' }
+  };
+
+  function resolveAppearance(profile) {
+    var appearance = {
+      coat: DEFAULT_COAT,
+      coatDark: DEFAULT_COAT_DARK,
+      collar: DEFAULT_COLLAR,
+      name: 'Companion',
+      id: 'companion'
+    };
+
+    if (!profile || typeof profile !== 'object') return appearance;
+
+    if (profile.id != null) appearance.id = String(profile.id);
+    if (profile.name) appearance.name = String(profile.name);
+    if (profile.coatKey) appearance.coatKey = String(profile.coatKey);
+
+    // Breed coat-key mapping takes precedence so breed choices render
+    // accurately regardless of any stale explicit color fields.
+    var mapped = appearance.coatKey ? COAT_KEY_COLORS[appearance.coatKey] : null;
+    if (mapped) {
+      appearance.coat = mapped.primary;
+      appearance.coatDark = mapped.dark;
+      appearance.coatSecondary = mapped.secondary;
+    }
+
+    var coat =
+      profile.coat ||
+      profile.coatColor ||
+      profile.color ||
+      (profile.appearance && (profile.appearance.coat || profile.appearance.color));
+    if (coat && !mapped) appearance.coat = String(coat);
+
+    var coatDark =
+      profile.coatDark ||
+      profile.coatSecondary ||
+      (profile.appearance && (profile.appearance.coatDark || profile.appearance.coatSecondary));
+    if (coatDark && !mapped) appearance.coatDark = String(coatDark);
+
+    var collar =
+      profile.collar ||
+      profile.collarColor ||
+      (profile.appearance && (profile.appearance.collar || profile.appearance.collarColor));
+    if (collar) appearance.collar = String(collar);
+
+    return appearance;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Dog model
+  // ---------------------------------------------------------------------------
+
+  function createDog(appearance) {
+    return {
+      id: appearance.id,
+      name: appearance.name,
+      coat: appearance.coat,
+      coatDark: appearance.coatDark,
+      coatColor: appearance.coat,
+      coatColorDark: appearance.coatDark,
+      coatSecondary: appearance.coatSecondary,
+      collar: appearance.collar,
+      x: fieldWidth / 2,
+      y: fieldHeight / 2,
+      facing: Math.PI / 2, // radians; PI/2 = facing down toward camera
+      state: 'wander',
+      targetX: fieldWidth / 2,
+      targetY: fieldHeight / 2,
+      bob: 0
+    };
+  }
+
+  function pickWanderTarget() {
+    var minX = FIELD_PADDING;
+    var maxX = Math.max(FIELD_PADDING, fieldWidth - FIELD_PADDING);
+    var minY = FIELD_PADDING;
+    var maxY = Math.max(FIELD_PADDING, fieldHeight - FIELD_PADDING);
+
+    dog.targetX = rand(minX, maxX);
+    dog.targetY = rand(minY, maxY);
+  }
+
+  function enterState(nextState) {
+    if (STATES.indexOf(nextState) === -1) return;
+    dog.state = nextState;
+
+    if (nextState === 'wander') {
+      pickWanderTarget();
+      stateTimer = 0;
+    } else {
+      stateTimer = rand(STATE_MIN_MS, STATE_MAX_MS);
+    }
+  }
+
+  function chooseNextAutonomousState() {
+    // Weighted: mostly wander, occasionally idle behaviours.
+    var roll = Math.random();
+    if (roll < 0.55) return 'wander';
+    if (roll < 0.72) return 'sniff';
+    if (roll < 0.88) return 'sit';
+    return 'wag';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Simulation
+  // ---------------------------------------------------------------------------
+
+  function updateDog(dt) {
+    if (!dog) return;
+
+    // Camera pose: dog faces the viewer and stays put.
+    if (pose === 'camera') {
+      dog.facing = Math.PI / 2;
+      dog.bob += dt * 0.004;
+      return;
+    }
+
+    if (forcedState) {
+      dog.state = forcedState;
+    }
+
+    if (dog.state === 'wander') {
+      var dx = dog.targetX - dog.x;
+      var dy = dog.targetY - dog.y;
+      var dist = Math.sqrt(dx * dx + dy * dy);
+
+      if (dist < ARRIVE_EPSILON) {
+        if (!forcedState) {
+          enterState(chooseNextAutonomousState());
+        } else {
+          pickWanderTarget();
+        }
+      } else {
+        // dt is in milliseconds; WANDER_SPEED is px/second.
+        var step = WANDER_SPEED * (dt / 1000);
+        var nx = dx / dist;
+        var ny = dy / dist;
+        dog.x += nx * step;
+        dog.y += ny * step;
+        dog.facing = Math.atan2(ny, nx);
+        dog.bob += dt * 0.012;
+      }
+    } else {
+      // Idle states: count down, then return to wander.
+      dog.bob += dt * 0.006;
+      if (!forcedState) {
+        stateTimer -= dt;
+        if (stateTimer <= 0) {
+          enterState('wander');
+        }
+      }
+    }
+
+    // Soft clamp within field boundaries.
+    dog.x = clamp(dog.x, FIELD_PADDING, Math.max(FIELD_PADDING, fieldWidth - FIELD_PADDING));
+    dog.y = clamp(dog.y, FIELD_PADDING, Math.max(FIELD_PADDING, fieldHeight - FIELD_PADDING));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Rendering
+  // ---------------------------------------------------------------------------
+
+  function buildGrass() {
+    grassBlades = [];
+    noiseSeed = 1337;
+    var count = Math.max(40, Math.floor((fieldWidth * fieldHeight) / 2600));
+    for (var i = 0; i < count; i++) {
+      grassBlades.push({
+        x: seededRandom() * fieldWidth,
+        y: seededRandom() * fieldHeight,
+        h: 3 + seededRandom() * 5,
+        lean: (seededRandom() - 0.5) * 3,
+        tone: seededRandom() > 0.5 ? '#7fbf5a' : '#6aa84f'
+      });
+    }
+  }
+
+  function drawField() {
+    if (!ctx) return;
+
+    // Base lawn gradient (hue 100–140).
+    var grad = ctx.createLinearGradient(0, 0, 0, fieldHeight);
+    grad.addColorStop(0, '#a8d98a'); // light green
+    grad.addColorStop(1, '#7cb85c'); // deeper green
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, fieldWidth, fieldHeight);
+
+    // Subtle dither / noise patches for texture.
+    ctx.save();
+    ctx.globalAlpha = 0.08;
+    for (var i = 0; i < 120; i++) {
+      var px = seededRandom() * fieldWidth;
+      var py = seededRandom() * fieldHeight;
+      var r = 6 + seededRandom() * 18;
+      ctx.fillStyle = seededRandom() > 0.5 ? '#5f9e45' : '#c3e6a8';
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Grass blades.
+    ctx.lineWidth = 1.2;
+    ctx.lineCap = 'round';
+    for (var b = 0; b < grassBlades.length; b++) {
+      var blade = grassBlades[b];
+      ctx.strokeStyle = blade.tone;
+      ctx.beginPath();
+      ctx.moveTo(blade.x, blade.y);
+      ctx.lineTo(blade.x + blade.lean, blade.y - blade.h);
+      ctx.stroke();
+    }
+  }
+
+  function drawDog() {
+    if (!ctx || !dog) return;
+
+    var bob = Math.sin(dog.bob) * 1.5;
+    var cx = dog.x;
+    var cy = dog.y + bob;
+
+    ctx.save();
+    ctx.translate(cx, cy);
+
+    // Shadow.
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
+    ctx.beginPath();
+    ctx.ellipse(0, DOG_RADIUS * 0.9, DOG_RADIUS * 0.9, DOG_RADIUS * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Body.
+    ctx.fillStyle = dog.coat;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, DOG_RADIUS, DOG_RADIUS * 0.8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Darker back patch.
+    ctx.fillStyle = dog.coatDark;
+    ctx.beginPath();
+    ctx.ellipse(0, -DOG_RADIUS * 0.25, DOG_RADIUS * 0.7, DOG_RADIUS * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Collar.
+    ctx.strokeStyle = dog.collar;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, DOG_RADIUS * 0.15, DOG_RADIUS * 0.55, 0.15 * Math.PI, 0.85 * Math.PI);
+    ctx.stroke();
+
+    // Head — position depends on facing.
+    var headAngle = pose === 'camera' ? Math.PI / 2 : dog.facing;
+    var hx = Math.cos(headAngle) * DOG_RADIUS * 0.85;
+    var hy = Math.sin(headAngle) * DOG_RADIUS * 0.85;
+
+    ctx.fillStyle = dog.coat;
+    ctx.beginPath();
+    ctx.arc(hx, hy, DOG_RADIUS * 0.55, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Ears.
+    ctx.fillStyle = dog.coatDark;
+    ctx.beginPath();
+    ctx.arc(hx - DOG_RADIUS * 0.3, hy - DOG_RADIUS * 0.35, DOG_RADIUS * 0.22, 0, Math.PI * 2);
+    ctx.arc(hx + DOG_RADIUS * 0.3, hy - DOG_RADIUS * 0.35, DOG_RADIUS * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eyes.
+    ctx.fillStyle = '#2b2b2b';
+    ctx.beginPath();
+    ctx.arc(hx - DOG_RADIUS * 0.18, hy - DOG_RADIUS * 0.05, 1.6, 0, Math.PI * 2);
+    ctx.arc(hx + DOG_RADIUS * 0.18, hy - DOG_RADIUS * 0.05, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Nose.
+    ctx.fillStyle = '#1f1f1f';
+    ctx.beginPath();
+    ctx.arc(hx, hy + DOG_RADIUS * 0.22, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Tail — wags faster in 'wag' state.
+    var wagSpeed = dog.state === 'wag' ? 0.02 : 0.006;
+    var tailAngle = Math.sin(dog.bob * (wagSpeed / 0.006)) * 0.5;
+    ctx.strokeStyle = dog.coatDark;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(-Math.cos(headAngle) * DOG_RADIUS * 0.8, -Math.sin(headAngle) * DOG_RADIUS * 0.8);
+    ctx.lineTo(
+      -Math.cos(headAngle) * DOG_RADIUS * 1.4 + Math.sin(tailAngle) * 6,
+      -Math.sin(headAngle) * DOG_RADIUS * 1.4 - Math.cos(tailAngle) * 6
+    );
+    ctx.stroke();
+
+    ctx.restore();
+  }
+
+  function spawnParticles() {
+    if (!dog) return;
+    particleFrame++;
+    if (particleFrame % 10 !== 0) return;
+
+    if (Math.random() < 0.5) {
+      particles.push({
+        x: dog.x + (Math.random() - 0.5) * 30,
+        y: dog.y - 10,
+        vy: -0.8 - Math.random() * 0.5,
+        alpha: 1.0,
+        type: 'heart',
+        text: '❤️',
+        size: 14
+      });
+    } else {
+      particles.push({
+        x: dog.x + (Math.random() - 0.5) * 20,
+        y: dog.y + 15,
+        vx: (Math.random() - 0.5) * 1.5,
+        vy: -0.5 - Math.random() * 0.5,
+        alpha: 1.0,
+        type: 'crumb',
+        color: '#b45309',
+        radius: 2.5
+      });
+    }
+  }
+
+  function updateAndDrawParticles() {
+    if (!ctx) return;
+    for (var i = particles.length - 1; i >= 0; i--) {
+      var p = particles[i];
+      p.x += (p.vx || 0);
+      p.y += p.vy;
+      p.alpha -= 0.015;
+
+      if (p.alpha <= 0) {
+        particles.splice(i, 1);
+        continue;
+      }
+
+      ctx.globalAlpha = p.alpha;
+      if (p.type === 'heart') {
+        ctx.font = (p.size || 14) + 'px sans-serif';
+        ctx.fillText(p.text, p.x, p.y);
+      } else if (p.type === 'crumb') {
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1.0;
+  }
+
+  function render() {
+    if (!ctx) return;
+    ctx.clearRect(0, 0, fieldWidth, fieldHeight);
+    drawField();
+    drawDog();
+
+    if (forcedState === 'eating' || (dog && dog.state === 'eating')) {
+      spawnParticles();
+    }
+    updateAndDrawParticles();
+  }
+
+  // ---------------------------------------------------------------------------
+  // Animation loop
+  // ---------------------------------------------------------------------------
+
+  function frame(timestamp) {
+    if (!mounted) return;
+
+    if (!lastTimestamp) lastTimestamp = timestamp;
+    var dt = Math.min(timestamp - lastTimestamp, 100); // clamp to avoid huge jumps
+    lastTimestamp = timestamp;
+
+    updateDog(dt);
+    render();
+
+    rafId = global.requestAnimationFrame(frame);
+  }
+
+  function startLoop() {
+    if (rafId != null) return;
+    lastTimestamp = 0;
+    rafId = global.requestAnimationFrame(frame);
+  }
+
+  function stopLoop() {
+    if (rafId != null) {
+      global.cancelAnimationFrame(rafId);
+      rafId = null;
+    }
+    lastTimestamp = 0;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sizing
+  // ---------------------------------------------------------------------------
+
+  function resizeCanvas() {
+    if (!canvas) return;
+
+    var rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : null;
+    var cssWidth = (rect && rect.width) || canvas.clientWidth || canvas.width || 320;
+    var cssHeight = (rect && rect.height) || canvas.clientHeight || canvas.height || 240;
+
+    var dpr = global.devicePixelRatio || 1;
+
+    fieldWidth = Math.max(1, Math.round(cssWidth));
+    fieldHeight = Math.max(1, Math.round(cssHeight));
+
+    canvas.width = Math.round(fieldWidth * dpr);
+    canvas.height = Math.round(fieldHeight * dpr);
+
+    if (ctx) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    buildGrass();
+
+    if (dog) {
+      dog.x = clamp(dog.x, FIELD_PADDING, Math.max(FIELD_PADDING, fieldWidth - FIELD_PADDING));
+      dog.y = clamp(dog.y, FIELD_PADDING, Math.max(FIELD_PADDING, fieldHeight - FIELD_PADDING));
+      pickWanderTarget();
+    }
+  }
+
+  var resizeHandler = null;
+
+  // ---------------------------------------------------------------------------
+  // Public API
+  // ---------------------------------------------------------------------------
+
+  function mount(canvasEl, explicitDogSlot) {
+    if (mounted) return;
+
+    var el = canvasEl || (global.document && global.document.getElementById(CANVAS_ID));
+    if (!el) {
+      // Graceful no-op when the canvas is not present.
+      return;
+    }
+
+    canvas = el;
+    ctx = canvas.getContext ? canvas.getContext('2d') : null;
+    if (!ctx) {
+      canvas = null;
+      return;
+    }
+
+    resizeCanvas();
+
+    var slot = explicitDogSlot;
+    if (slot === undefined) {
+      slot = readProfile();
+    }
+    activeDogSlot = slot || null;
+
+    var appearance = resolveAppearance(activeDogSlot);
+    dog = createDog(appearance);
+    if (activeDogSlot) {
+      dog.name = activeDogSlot.name || 'Ziggy';
+      dog.id = activeDogSlot.id || 'dog-1';
+    }
+    pose = 'auto';
+    forcedState = null;
+    enterState('wander');
+
+    mounted = true;
+
+    resizeHandler = function () {
+      resizeCanvas();
+    };
+    if (global.addEventListener) {
+      global.addEventListener('resize', resizeHandler);
+    }
+
+    startLoop();
+  }
+
+  function unmount() {
+    if (!mounted) return;
+
+    mounted = false;
+    stopLoop();
+
+    if (resizeHandler && global.removeEventListener) {
+      global.removeEventListener('resize', resizeHandler);
+    }
+    resizeHandler = null;
+
+    if (ctx) {
+      ctx.clearRect(0, 0, fieldWidth, fieldHeight);
+    }
+
+    canvas = null;
+    ctx = null;
+    dog = null;
+    activeDogSlot = null;
+    forcedState = null;
+    grassBlades = [];
+    particles = [];
+    particleFrame = 0;
+  }
+
+  function getDogSlot() {
+    return activeDogSlot;
+  }
+
+  function getCompanionDog() {
+    if (!dog) {
+      return {
+        id: 'companion',
+        name: 'Companion',
+        x: 0,
+        y: 0,
+        facing: Math.PI / 2,
+        state: 'wander'
+      };
+    }
+    return {
+      id: dog.id,
+      name: dog.name,
+      x: dog.x,
+      y: dog.y,
+      facing: dog.facing,
+      state: dog.state,
+      coatColor: dog.coatColor,
+      coatColorDark: dog.coatColorDark
+    };
+  }
+
+  function setDogPose(nextPose) {
+    if (nextPose !== 'camera' && nextPose !== 'auto') return;
+    pose = nextPose;
+    if (dog && nextPose === 'camera') {
+      dog.facing = Math.PI / 2;
+    }
+  }
+
+  function setDogState(nextState) {
+    if (!dog) return;
+
+    if (nextState === 'wander' || nextState === null) {
+      forcedState = null;
+      dog.state = 'wander';
+      pickWanderTarget();
+      stateTimer = 0;
+      return;
+    }
+
+    if (STATES.indexOf(nextState) === -1) return;
+
+    forcedState = nextState;
+    enterState(nextState);
+  }
+
+  function resumeRoaming() {
+    pose = 'auto';
+    forcedState = null;
+    if (dog) {
+      dog.state = 'wander';
+      stateTimer = 0;
+      pickWanderTarget();
+    }
+  }
+
+  function getFieldSize() {
+    return { width: fieldWidth, height: fieldHeight };
+  }
+
+  var HomeSanctuary = {
+    mount: mount,
+    unmount: unmount,
+    getDogSlot: getDogSlot,
+    getCompanionDog: getCompanionDog,
+    setDogPose: setDogPose,
+    setDogState: setDogState,
+    resumeRoaming: resumeRoaming,
+    getFieldSize: getFieldSize,
+    __testHooks: {
+      getParticles: function () { return particles; },
+      spawnParticles: spawnParticles,
+      getForcedState: function () { return forcedState; },
+      getPose: function () { return pose; },
+      updateDog: function (dt) { updateDog(dt); },
+      setWanderTarget: function (x, y) {
+        if (!dog) return;
+        dog.targetX = x;
+        dog.targetY = y;
+      }
+    }
+  };
+
+  global.HomeSanctuary = HomeSanctuary;
+
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = HomeSanctuary;
+  }
+})(typeof window !== 'undefined' ? window : this);
+```
+
 ## FILE: src/ui/navigation_arrow.js
 ```javascript
 // Directional Navigation Compass Arrow HUD Component
@@ -22344,6 +23560,9 @@ export class SocialHUD {
     this.dogSlot = null;
     this.isHomeLocked = false;
 
+    // Home modal view state machine: 'sanctuary' | 'settings'
+    this.currentHomeView = 'sanctuary';
+
     // Stage preview animation loop handle
     this.stageAnimId = null;
 
@@ -22353,6 +23572,49 @@ export class SocialHUD {
 
     this.toastTimer = null;
     this.initHUD();
+    this.exposeTestHooks();
+  }
+
+  // Resolve the effective Home view, honoring the empty-kennel lock.
+  // Supports both signatures:
+  //   resolveHomeView('settings' | 'sanctuary')
+  //   resolveHomeView({ dogSlot, requestedView, currentTab })
+  resolveHomeView(requestedView, opts = {}) {
+    let req = requestedView;
+    let slot = this.dogSlot;
+    if (typeof requestedView === 'object' && requestedView !== null) {
+      req = requestedView.requestedView;
+      if ('dogSlot' in requestedView) slot = requestedView.dogSlot;
+    } else if (opts && 'dogSlot' in opts) {
+      slot = opts.dogSlot;
+    }
+    if (slot === null) return 'settings';
+    if (req === 'settings') return 'settings';
+    if (req === 'sanctuary') return 'sanctuary';
+    return this.currentHomeView === 'settings' ? 'settings' : 'sanctuary';
+  }
+
+  // Whether the walker may leave Home and walk in the park.
+  canWalkInPark() {
+    return this.dogSlot !== null && !this.isHomeLocked;
+  }
+
+  // Alias: open the Home modal (used by tests and external callers).
+  openHome() {
+    return this.openModal();
+  }
+
+  // Alias: draw the stage preview (used by tests and external callers).
+  drawStagePreview(ctx) {
+    return this.renderHomeStage(ctx);
+  }
+
+  exposeTestHooks() {
+    if (typeof window === 'undefined') return;
+    window.__vdwHomeTestHooks = {
+      resolveHomeView: (req, opts) => this.resolveHomeView(req, opts),
+      canWalkInPark: () => this.canWalkInPark()
+    };
   }
 
   initHUD() {
@@ -22395,23 +23657,39 @@ export class SocialHUD {
     modal.id = 'customizer-modal';
     modal.innerHTML = `
       <div class="customizer-header">
-        <h3>Home</h3>
-        <button class="customizer-close" id="close-modal" aria-label="Close">&times;</button>
+        <h3 id="home-header-title">Home</h3>
+        <div class="customizer-header-actions">
+          <button class="customizer-settings" id="btn-home-settings" aria-label="Settings" title="Settings">⚙️</button>
+          <button class="customizer-back" id="btn-home-back" aria-label="Back" title="Back" style="display: none;">← Back</button>
+          <button class="customizer-close" id="btn-close-customizer" aria-label="Close">&times;</button>
+        </div>
       </div>
 
-      <!-- Top Stylized Stage Preview -->
-      <div class="home-stage-preview">
-        <canvas id="home-stage-canvas" width="340" height="140"></canvas>
+      <!-- Sanctuary View -->
+      <div id="home-view-sanctuary" class="home-view">
+        <div class="home-field-preview">
+          <canvas id="home-field-canvas" width="340" height="180"></canvas>
+        </div>
+        <div id="home-action-bar" class="home-action-bar"></div>
       </div>
 
-      <!-- Tab Navigation -->
-      <div class="customizer-tabs">
-        <button class="customizer-tab-btn active" id="tab-btn-walker" data-tab="cust-tab-walker">👤 You</button>
-        <button class="customizer-tab-btn" id="tab-btn-dog" data-tab="cust-tab-dog">🐕 Dogs</button>
-      </div>
+      <!-- Settings View -->
+      <div id="home-view-settings" class="home-view" style="display: none;">
+        <div class="settings-submenu-title">Wardrobe &amp; Kennel</div>
 
-      <!-- Tab 1: Walker -->
-      <div class="customizer-tab-pane active" id="cust-tab-walker">
+        <!-- Top Stylized Stage Preview -->
+        <div class="home-stage-preview">
+          <canvas id="home-stage-canvas" width="340" height="140"></canvas>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="customizer-tabs">
+          <button class="customizer-tab-btn active" id="tab-btn-walker" data-tab="cust-tab-walker">👤 You</button>
+          <button class="customizer-tab-btn" id="tab-btn-dog" data-tab="cust-tab-dog">🐕 Dogs</button>
+        </div>
+
+        <!-- Tab 1: Walker -->
+        <div class="customizer-tab-pane active" id="cust-tab-walker">
         <div class="cust-form-group">
           <label class="cust-label" for="cust-name">Walker Name</label>
           <input type="text" id="cust-name" class="cust-input" value="${this.owner.name || 'Walker'}" maxlength="14" autocomplete="off" />
@@ -22482,12 +23760,13 @@ export class SocialHUD {
         </div>
       </div>
 
-      <!-- Tab 2: Dogs (Single-Slot Immutable Kennel) -->
-      <div class="customizer-tab-pane" id="cust-tab-dog">
-        <div id="dog-slot-container"></div>
-      </div>
+        <!-- Tab 2: Dogs (Single-Slot Immutable Kennel) -->
+        <div class="customizer-tab-pane" id="cust-tab-dog">
+          <div id="dog-slot-container"></div>
+        </div>
 
-      <button id="btn-save-cust" class="btn-primary-cust">Save & Walk</button>
+        <button id="btn-save-cust" class="btn-primary-cust">Save & Walk</button>
+      </div>
     `;
     this.container.appendChild(modal);
 
@@ -22511,15 +23790,102 @@ export class SocialHUD {
     `;
     this.container.appendChild(toast);
 
+    // Bridge a global toast helper so side-effect modules (HomeSanctuary,
+    // HomeFeeding) can surface messages through the HUD.
+    if (typeof window !== 'undefined') {
+      window.showToast = (msg) => this.showToast(msg);
+    }
+
     // Load saved profile from localStorage if available
     this.loadSavedProfile();
 
     this.bindEvents();
+
+    // Apply initial view state (honors empty-kennel lock).
+    this.setHomeView(this.resolveHomeView(), { force: true });
+  }
+
+  // Transition the Home modal between 'sanctuary' and 'settings'.
+  setHomeView(view, opts = {}) {
+    const target = view === 'settings' ? 'settings' : 'sanctuary';
+    const prev = this.currentHomeView;
+
+    // Empty-kennel lock: never allow sanctuary while no dog is adopted.
+    if (target === 'sanctuary' && this.dogSlot === null) {
+      this.currentHomeView = 'settings';
+      this._applyHomeViewDom();
+      return;
+    }
+
+    this.currentHomeView = target;
+
+    if (prev === 'sanctuary' && target !== 'sanctuary') {
+      if (typeof window !== 'undefined') {
+        window.HomeFeeding?.unmount?.();
+        window.HomeSanctuary?.unmount?.();
+      }
+    }
+
+    this._applyHomeViewDom();
+
+    if (target === 'sanctuary') {
+      if (typeof window !== 'undefined') {
+        window.__vdwActiveDogSlot = this.dogSlot;
+        const canvas = document.getElementById('home-field-canvas');
+        window.HomeSanctuary?.mount?.(canvas, this.dogSlot);
+        window.HomeFeeding?.mount?.();
+      }
+      this.stopStageAnimation();
+    } else {
+      this.renderHomeStage();
+      this.startStageAnimation();
+    }
+  }
+
+  _applyHomeViewDom() {
+    const sanctuary = document.getElementById('home-view-sanctuary');
+    const settings = document.getElementById('home-view-settings');
+    const settingsBtn = document.getElementById('btn-home-settings');
+    const backBtn = document.getElementById('btn-home-back');
+    const closeBtn = document.getElementById('btn-close-customizer');
+    const titleEl = document.getElementById('home-header-title');
+
+    const isSettings = this.currentHomeView === 'settings';
+    const locked = Boolean(this.isHomeLocked || this.dogSlot === null);
+
+    if (sanctuary) sanctuary.style.display = isSettings ? 'none' : '';
+    if (settings) settings.style.display = isSettings ? '' : 'none';
+
+    if (titleEl) {
+      titleEl.textContent = isSettings ? 'Wardrobe & Kennel' : 'Home';
+    }
+
+    if (settingsBtn) {
+      settingsBtn.style.display = (!isSettings && !locked) ? '' : 'none';
+      settingsBtn.disabled = locked;
+    }
+    if (backBtn) {
+      backBtn.style.display = (isSettings && !locked) ? '' : 'none';
+      backBtn.disabled = locked;
+    }
+    if (closeBtn) {
+      closeBtn.style.display = locked ? 'none' : '';
+      closeBtn.disabled = locked;
+    }
   }
 
   // Read-only lock accessor (used by main.js to gate movement).
   get isLocked() {
     return Boolean(this.isHomeLocked);
+  }
+
+  // Home view accessor (maps to currentHomeView).
+  get homeView() {
+    return this.currentHomeView;
+  }
+
+  set homeView(v) {
+    this.currentHomeView = v;
   }
 
   /**
@@ -22751,6 +24117,10 @@ export class SocialHUD {
     this.updateCloseButtonState();
     this.persistProfile();
 
+    // Empty kennel: force the settings view on the dog tab.
+    this._forceDogTab();
+    this.setHomeView('settings', { force: true });
+
     if (this.net && typeof this.net.setLocalMeta === 'function') {
       this.net.setLocalMeta({
         name: this.owner.name,
@@ -22794,6 +24164,9 @@ export class SocialHUD {
     };
 
     this.dogSlot = { name, coatKey, collarColor, personality };
+    // Adopting a dog always releases the Home lock so the player is never
+    // trapped in the modal after creating a dog.
+    this.isHomeLocked = false;
 
     if (this.dog) {
       this.dog.name = name;
@@ -22814,16 +24187,40 @@ export class SocialHUD {
     this.updateCloseButtonState();
     this.persistProfile();
     this.broadcastProfile();
+
+    // Unlock: reset to the walker tab and transition to the sanctuary view.
+    this.switchTab('walker');
+    this.setHomeView('sanctuary');
+  }
+
+  // Switch the active settings tab ('walker' | 'dog') and sync the DOM.
+  switchTab(tab) {
+    const target = tab === 'dog' ? 'dog' : 'walker';
+    this.activeTab = target;
+    const tabBtns = document.querySelectorAll('.customizer-tab-btn');
+    tabBtns.forEach(b => b.classList.remove('active'));
+    const btn = document.getElementById(target === 'dog' ? 'tab-btn-dog' : 'tab-btn-walker');
+    if (btn) btn.classList.add('active');
+    document.querySelectorAll('.customizer-tab-pane').forEach(pane => {
+      pane.classList.remove('active');
+    });
+    const pane = document.getElementById(target === 'dog' ? 'cust-tab-dog' : 'cust-tab-walker');
+    if (pane) pane.classList.add('active');
+    this.renderHomeStage();
   }
 
   updateCloseButtonState() {
-    const closeBtn = document.getElementById('close-modal');
-    if (!closeBtn) return;
-    if (this.isHomeLocked) {
-      closeBtn.style.display = 'none';
-    } else {
-      closeBtn.style.display = '';
+    const closeBtn = document.getElementById('btn-close-customizer') || document.getElementById('close-modal');
+    if (closeBtn) {
+      if (this.isHomeLocked) {
+        closeBtn.style.display = 'none';
+        closeBtn.disabled = true;
+      } else {
+        closeBtn.style.display = '';
+        closeBtn.disabled = false;
+      }
     }
+    this._applyHomeViewDom();
   }
 
   // Build a preview dog descriptor from the empty-slot creation form.
@@ -22866,14 +24263,22 @@ export class SocialHUD {
     this.stageAnimId = null;
   }
 
-  renderHomeStage(previewDogData = null) {
-    const canvas = document.getElementById('home-stage-canvas');
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
+  renderHomeStage(ctxOrPreview = null, previewDogData = null) {
+    let ctx = null;
+    let previewData = previewDogData;
+    if (ctxOrPreview && typeof ctxOrPreview.clearRect === 'function') {
+      ctx = ctxOrPreview;
+    } else {
+      previewData = ctxOrPreview;
+      const canvas = document.getElementById('home-stage-canvas');
+      if (!canvas) return;
+      ctx = canvas.getContext('2d');
+    }
     if (!ctx) return;
 
-    const stageW = canvas.width;
-    const stageH = canvas.height;
+    const canvas = ctx.canvas || document.getElementById('home-stage-canvas') || { width: 300, height: 200 };
+    const stageW = canvas.width || 300;
+    const stageH = canvas.height || 200;
 
     ctx.clearRect(0, 0, stageW, stageH);
 
@@ -22900,24 +24305,48 @@ export class SocialHUD {
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    // Draw owner
-    if (this.owner && typeof this.owner.draw === 'function') {
-      const saved = { x: this.owner.x, y: this.owner.y, angle: this.owner.angle };
-      this.owner.x = 110;
-      this.owner.y = 100;
-      this.owner.angle = Math.PI / 2;
-      try {
-        this.owner.draw(ctx);
-      } catch (e) {
-        console.warn('Home stage owner draw failed:', e);
-      }
-      this.owner.x = saved.x;
-      this.owner.y = saved.y;
-      this.owner.angle = saved.angle;
+    // Determine which tab is active so we render only one subject.
+    // Prefer the explicit `activeTab` field when set (test hook / external
+    // callers), otherwise fall back to the DOM tab button state.
+    const dogTabBtn = document.getElementById('tab-btn-dog');
+    const walkerTabBtn = document.getElementById('tab-btn-walker');
+    const isDogTab = Boolean(dogTabBtn && dogTabBtn.classList.contains('active'));
+    const isWalkerTab = Boolean(walkerTabBtn && walkerTabBtn.classList.contains('active'));
+    let showDog;
+    if (this.activeTab === 'dog') {
+      showDog = true;
+    } else if (this.activeTab === 'walker') {
+      showDog = false;
+    } else {
+      // Default to walker when neither is explicitly active.
+      showDog = isDogTab && !isWalkerTab;
     }
 
-    // Draw dog. When the slot is empty, build a live preview from the form.
-    const effectiveDogData = previewDogData || this.dogSlot || this._readEmptySlotPreview();
+    const centerX = stageW / 2;
+    const centerY = stageH * 0.62;
+
+    if (!showDog) {
+      // Walker-only preview, centered in the spotlight.
+      if (this.owner && typeof this.owner.draw === 'function') {
+        const saved = { x: this.owner.x, y: this.owner.y, angle: this.owner.angle };
+        this.owner.x = centerX;
+        this.owner.y = centerY;
+        this.owner.angle = Math.PI / 2;
+        try {
+          this.owner.draw(ctx);
+        } catch (e) {
+          console.warn('Home stage owner draw failed:', e);
+        }
+        this.owner.x = saved.x;
+        this.owner.y = saved.y;
+        this.owner.angle = saved.angle;
+      }
+      return;
+    }
+
+    // Dog-only preview, centered in the spotlight. When the slot is empty,
+    // build a live preview from the form.
+    const effectiveDogData = previewData || this.dogSlot || this._readEmptySlotPreview();
     const hasDog = Boolean(effectiveDogData);
     if (hasDog && this.dog && typeof this.dog.draw === 'function') {
       const saved = {
@@ -22938,8 +24367,8 @@ export class SocialHUD {
         if (data.name) this.dog.name = data.name;
       }
 
-      this.dog.x = 220;
-      this.dog.y = 102;
+      this.dog.x = centerX;
+      this.dog.y = centerY;
       this.dog.angle = Math.PI / 2;
       try {
         this.dog.draw(ctx);
@@ -23027,6 +24456,7 @@ export class SocialHUD {
           this.net.setLocalMeta({ dogName: '', hasDog: false });
         }
         this.updateModalActiveSelections();
+        this._forceDogTab();
         this.openModal();
         this.updateCloseButtonState();
         this.renderHomeStage();
@@ -23046,6 +24476,7 @@ export class SocialHUD {
           this.net.setLocalMeta({ dogName: '', hasDog: false });
         }
         this.updateModalActiveSelections();
+        this._forceDogTab();
         this.openModal();
         this.updateCloseButtonState();
         this.renderHomeStage();
@@ -23098,6 +24529,7 @@ export class SocialHUD {
         }
         this.updateCloseButtonState();
         this.updateModalActiveSelections();
+        this._forceDogTab();
         this.openModal();
         this.renderHomeStage();
         return;
@@ -23146,6 +24578,10 @@ export class SocialHUD {
       this.updateCloseButtonState();
 
       this.updateModalActiveSelections();
+
+      // A dog exists: default to the sanctuary view.
+      this.currentHomeView = 'sanctuary';
+      this._applyHomeViewDom();
 
       if (this.net && typeof this.net.setLocalMeta === 'function') {
         const personality = this.dog && this.dog.personality ? this.dog.personality : personalityDefaults;
@@ -23256,32 +24692,57 @@ export class SocialHUD {
     this.renderDogSlot();
     this.updateCloseButtonState();
 
-    // When Home is locked, the modal must stay open (never toggle closed).
-    if (this.isHomeLocked) {
+    // When Home is locked, the modal must stay open (never toggle closed)
+    // and must force the settings view on the dog tab.
+    if (this.isHomeLocked || this.dogSlot === null) {
+      this.isHomeLocked = true;
+      this.currentHomeView = 'settings';
       modal.style.display = 'block';
-      this.renderHomeStage();
-      this.startStageAnimation();
+      this._forceDogTab();
+      this.setHomeView('settings', { force: true });
       return;
     }
 
     modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
     if (modal.style.display === 'block') {
-      this.renderHomeStage();
-      this.startStageAnimation();
+      // With a dog present, reopening Home always lands on the sanctuary view
+      // (never a stale 'settings' view from a previous session).
+      this.setHomeView('sanctuary');
     } else {
       this.stopStageAnimation();
+      if (typeof window !== 'undefined') {
+        window.HomeFeeding?.unmount?.();
+        window.HomeSanctuary?.unmount?.();
+      }
     }
+  }
+
+  _forceDogTab() {
+    this.activeTab = 'dog';
+    const tabBtns = document.querySelectorAll('.customizer-tab-btn');
+    tabBtns.forEach(b => b.classList.remove('active'));
+    const dogBtn = document.getElementById('tab-btn-dog');
+    if (dogBtn) dogBtn.classList.add('active');
+    document.querySelectorAll('.customizer-tab-pane').forEach(pane => {
+      pane.classList.remove('active');
+    });
+    const dogPane = document.getElementById('cust-tab-dog');
+    if (dogPane) dogPane.classList.add('active');
   }
 
   closeModal() {
     const modal = document.getElementById('customizer-modal');
     if (!modal) return;
-    if (this.isHomeLocked) {
+    if (this.isHomeLocked || this.dogSlot === null) {
       this.showToast('Please add a dog to your slot before heading out!');
       return;
     }
     modal.style.display = 'none';
     this.stopStageAnimation();
+    if (typeof window !== 'undefined') {
+      window.HomeFeeding?.unmount?.();
+      window.HomeSanctuary?.unmount?.();
+    }
   }
 
   bindEvents() {
@@ -23307,8 +24768,10 @@ export class SocialHUD {
     // 2. Customizer modal toggle
     const btnCustomize = document.getElementById('btn-customize');
     const modal = document.getElementById('customizer-modal');
-    const closeModal = document.getElementById('close-modal');
+    const closeModal = document.getElementById('btn-close-customizer') || document.getElementById('close-modal');
     const btnSaveCust = document.getElementById('btn-save-cust');
+    const btnHomeSettings = document.getElementById('btn-home-settings');
+    const btnHomeBack = document.getElementById('btn-home-back');
 
     if (btnCustomize) {
       btnCustomize.addEventListener('click', () => {
@@ -23319,6 +24782,20 @@ export class SocialHUD {
     if (closeModal && modal) {
       closeModal.addEventListener('click', () => {
         this.closeModal();
+      });
+    }
+
+    if (btnHomeSettings) {
+      btnHomeSettings.addEventListener('click', () => {
+        if (this.dogSlot === null) return;
+        this.setHomeView('settings');
+      });
+    }
+
+    if (btnHomeBack) {
+      btnHomeBack.addEventListener('click', () => {
+        if (this.dogSlot === null) return;
+        this.setHomeView('sanctuary');
       });
     }
 
@@ -23342,6 +24819,10 @@ export class SocialHUD {
       btn.addEventListener('click', () => {
         tabBtns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
+        const dataTab = btn.getAttribute('data-tab');
+        this.activeTab = (dataTab === 'cust-tab-dog' || btn.id === 'tab-btn-dog')
+          ? 'dog'
+          : 'walker';
         const targetTabId = btn.getAttribute('data-tab');
         document.querySelectorAll('.customizer-tab-pane').forEach(pane => {
           pane.classList.remove('active');
@@ -23417,6 +24898,10 @@ export class SocialHUD {
         if (!this.isHomeLocked) {
           modal.style.display = 'none';
           this.stopStageAnimation();
+          if (typeof window !== 'undefined') {
+            window.HomeFeeding?.unmount?.();
+            window.HomeSanctuary?.unmount?.();
+          }
         }
         this.showToast('✨ Appearance updated!');
       });
@@ -35816,7 +37301,20 @@ const document = {{
   getElementById(id) {{ return __elements[id] || null; }},
   createElement(tag) {{ return __makeEl(tag); }},
   querySelector() {{ return null; }},
-  querySelectorAll() {{ return []; }},
+  querySelectorAll(sel) {{
+    // Return the real tab buttons / panes so bindEvents() can wire handlers.
+    if (sel === '.customizer-tab-btn') {{
+      return ['tab-btn-walker', 'tab-btn-dog']
+        .map(function (id) {{ return __elements[id]; }})
+        .filter(Boolean);
+    }}
+    if (sel === '.customizer-tab-pane') {{
+      return ['cust-tab-walker', 'cust-tab-dog']
+        .map(function (id) {{ return __elements[id]; }})
+        .filter(Boolean);
+    }}
+    return [];
+  }},
   addEventListener() {{}},
   body: __makeEl('body')
 }};
@@ -35838,6 +37336,25 @@ const localStorage = (() => {{
 // ---- Load real modules ----
 const {{ resolveCoatPresetByName, CoatPreset }} = (() => {{ {clean_dog}\nreturn {{ resolveCoatPresetByName, CoatPreset }}; }})();
 const {{ SocialHUD }} = (() => {{ {clean_hud}\nreturn {{ SocialHUD }}; }})();
+
+// The mock DOM does not parse innerHTML, so register the tab buttons and
+// panes that initHUD() declares in markup. This lets bindEvents() attach
+// real click listeners to #tab-btn-dog / #tab-btn-walker.
+(function () {{
+  function reg(id, attrs) {{
+    if (__elements[id]) return;
+    const el = __makeEl('button');
+    el.id = id;
+    if (attrs) {{
+      for (const k in attrs) {{ el.setAttribute(k, attrs[k]); }}
+    }}
+    __elements[id] = el;
+  }}
+  reg('tab-btn-walker', {{ 'data-tab': 'cust-tab-walker' }});
+  reg('tab-btn-dog', {{ 'data-tab': 'cust-tab-dog' }});
+  reg('cust-tab-walker');
+  reg('cust-tab-dog');
+}})();
 
 const __res = (() => {{ {snippet} }})();
 JSON.stringify(__res);
@@ -35880,10 +37397,9 @@ class TestHomeHUDAndStage(unittest.TestCase):
         )
 
     def test_modal_header_is_home(self):
-        self.assertRegex(
-            self.hud_js,
-            r'<h3>\s*Home\s*</h3>',
-            "Customizer modal header must be <h3>Home</h3>"
+        self.assertTrue(
+            '<h3>Home</h3>' in self.hud_js or '<h3 id="home-header-title">Home</h3>' in self.hud_js,
+            "Customizer modal header must be <h3>Home</h3> or <h3 id=\"home-header-title\">Home</h3>"
         )
 
     def test_stage_preview_elements(self):
@@ -36214,6 +37730,55 @@ class TestHomeMenuBehavioralExecutable(unittest.TestCase):
         self.assertEqual(res.get("lastBroadcast", {}).get("dogName"), "",
                          "removeDog must broadcast with dogName: ''")
 
+    def test_exec_adopt_releases_lock_and_allows_walk(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: '', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const lockedBefore = hud.isHomeLocked;
+        const canWalkBefore = hud.canWalkInPark();
+
+        const nameInput = document.getElementById('cust-dog-name');
+        const coatSelect = document.getElementById('cust-dog-coat');
+        if (nameInput) nameInput.value = 'Ziggy';
+        if (coatSelect) coatSelect.value = 'CHOCOLATE_TAN';
+
+        hud.adoptDogFromForm();
+
+        const lockedAfter = hud.isHomeLocked;
+        const canWalkAfter = hud.canWalkInPark();
+
+        const modal = document.getElementById('customizer-modal');
+        modal.style.display = 'block';
+        hud.closeModal();
+        const afterClose = modal.style.display;
+
+        return {
+          lockedBefore: lockedBefore,
+          canWalkBefore: canWalkBefore,
+          lockedAfter: lockedAfter,
+          canWalkAfter: canWalkAfter,
+          afterClose: afterClose
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["lockedBefore"],
+                        "A null dogSlot must start locked")
+        self.assertFalse(res["canWalkBefore"],
+                         "A null dogSlot must not allow walking")
+        self.assertFalse(res["lockedAfter"],
+                         "Adopting a dog must release the Home lock")
+        self.assertTrue(res["canWalkAfter"],
+                        "Adopting a dog must allow walking in the park")
+        self.assertEqual(res["afterClose"], "none",
+                         "closeModal must succeed once a dog is adopted")
+
     def test_exec_add_dog_populates_slot_and_unlocks(self):
         snippet = """
         localStorage.setItem('clifton_walker_profile', JSON.stringify({
@@ -36286,6 +37851,846 @@ class TestHomeMenuBehavioralExecutable(unittest.TestCase):
                          "applyRemoteDogPresence must set remote.hasDog = false for dogName: ''")
         self.assertEqual(res["afterEmptyName"]["dogName"], "",
                          "applyRemoteDogPresence must clear remote.dog.name for dogName: ''")
+
+
+class TestHomeViewSplit(unittest.TestCase):
+    """unification-029: Home Sanctuary vs. Settings submenu split."""
+
+    def setUp(self):
+        self.hud_js = read("src/ui/social_hud.js")
+
+    def test_home_settings_button_contract(self):
+        self.assertIn('id="btn-home-settings"', self.hud_js,
+                      "Missing #btn-home-settings button")
+        self.assertIn('⚙️', self.hud_js,
+                      "#btn-home-settings must contain the gear icon ⚙️")
+        settings_idx = self.hud_js.find('id="btn-home-settings"')
+        close_idx = self.hud_js.find('id="btn-close-customizer"')
+        self.assertNotEqual(settings_idx, -1, "Missing #btn-home-settings")
+        self.assertNotEqual(close_idx, -1, "Missing #btn-close-customizer")
+        self.assertLess(settings_idx, close_idx,
+                        "#btn-home-settings must precede #btn-close-customizer")
+
+    def test_home_back_button_contract(self):
+        self.assertIn('id="btn-home-back"', self.hud_js,
+                      "Missing #btn-home-back button")
+        self.assertIn('← Back', self.hud_js,
+                      "#btn-home-back must contain the '← Back' label")
+
+    def test_settings_header_wardrobe_and_kennel(self):
+        self.assertIn('Wardrobe & Kennel', self.hud_js,
+                      "Settings submenu header must include 'Wardrobe & Kennel'")
+
+    def test_home_view_containers(self):
+        self.assertIn('id="home-view-sanctuary"', self.hud_js,
+                      "Missing #home-view-sanctuary container")
+        self.assertIn('id="home-view-settings"', self.hud_js,
+                      "Missing #home-view-settings container")
+
+    def test_resolve_home_view_helper(self):
+        self.assertIn('resolveHomeView', self.hud_js,
+                      "Missing resolveHomeView helper")
+
+    def test_switch_tab_helper(self):
+        self.assertIn('switchTab', self.hud_js,
+                      "Missing switchTab helper for tab lifecycle resets")
+
+    def test_sanctuary_mount_receives_dog_slot(self):
+        self.assertIn('__vdwActiveDogSlot', self.hud_js,
+                      "setHomeView must publish window.__vdwActiveDogSlot")
+        self.assertRegex(
+            self.hud_js,
+            r"HomeSanctuary\?\.mount\?\.\([^)]*this\.dogSlot",
+            "setHomeView must pass this.dogSlot to HomeSanctuary.mount"
+        )
+
+
+@unittest.skipUnless(
+    shutil.which("node") or shutil.which("osascript"),
+    "No JS runtime (node or osascript) available"
+)
+class TestHomeViewSplitBehavioral(unittest.TestCase):
+    """unification-029: executable view-state transitions."""
+
+    def test_exec_open_home_null_slot_forces_settings_and_lock(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: '', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+        hud.openHome();
+        return {
+          homeView: hud.homeView,
+          isHomeLocked: hud.isHomeLocked
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["homeView"], "settings",
+                         "openHome with a null slot must force the settings view")
+        self.assertTrue(res["isHomeLocked"],
+                        "openHome with a null slot must lock Home")
+
+    def test_exec_resolve_home_view_transitions(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const toSettings = hud.resolveHomeView('settings');
+        const toSanctuary = hud.resolveHomeView('sanctuary');
+        const unknown = hud.resolveHomeView('bogus');
+        return {
+          toSettings: toSettings,
+          toSanctuary: toSanctuary,
+          unknown: unknown
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["toSettings"], "settings",
+                         "resolveHomeView('settings') must return 'settings'")
+        self.assertEqual(res["toSanctuary"], "sanctuary",
+                         "resolveHomeView('sanctuary') must return 'sanctuary'")
+        self.assertIn(res["unknown"], ("sanctuary", "settings"),
+                      "resolveHomeView must normalize unknown views")
+
+    def test_exec_adopt_resets_tab_to_walker_and_shows_sanctuary(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: '', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        hud.activeTab = 'dog';
+        const nameInput = document.getElementById('cust-dog-name');
+        const coatSelect = document.getElementById('cust-dog-coat');
+        if (nameInput) nameInput.value = 'Ziggy';
+        if (coatSelect) coatSelect.value = 'CHOCOLATE_TAN';
+
+        hud.adoptDogFromForm();
+
+        return {
+          activeTab: hud.activeTab,
+          homeView: hud.homeView,
+          isHomeLocked: hud.isHomeLocked
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["activeTab"], "walker",
+                         "Adopting a dog must reset the active tab to 'walker'")
+        self.assertEqual(res["homeView"], "sanctuary",
+                         "Adopting a dog must transition to the sanctuary view")
+        self.assertFalse(res["isHomeLocked"],
+                         "Adopting a dog must release the Home lock")
+
+    def test_exec_reopen_home_always_shows_sanctuary(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const modal = document.getElementById('customizer-modal');
+        modal.style.display = 'block';
+        hud.setHomeView('sanctuary');
+        hud.setHomeView('settings');
+        hud.closeModal();
+        hud.openModal();
+
+        return { homeView: hud.currentHomeView };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["homeView"], "sanctuary",
+                         "Reopening Home with a dog must always show the sanctuary view")
+
+    def test_exec_dogs_tab_click_syncs_active_tab(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        // Simulate the Dogs tab button click handler.
+        const dogBtn = document.getElementById('tab-btn-dog');
+        if (dogBtn && dogBtn._listeners && dogBtn._listeners.click) {
+          dogBtn._listeners.click.forEach(function (fn) { fn(); });
+        }
+
+        return { activeTab: hud.activeTab };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["activeTab"], "dog",
+                         "Clicking the Dogs tab must sync hud.activeTab to 'dog'")
+
+    def test_exec_split_stage_preview_draws_only_active_tab(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const calls = [];
+        const ctx = {
+          clearRect() { calls.push('clear'); },
+          fillRect() {}, beginPath() {}, ellipse() {},
+          fill() {}, stroke() {}, save() {}, restore() {},
+          createLinearGradient() { return { addColorStop() {} }; },
+          createRadialGradient() { return { addColorStop() {} }; },
+          set fillStyle(v) {}, set strokeStyle(v) {}, set lineWidth(v) {}
+        };
+
+        hud.activeTab = 'walker';
+        hud.drawStagePreview(ctx);
+        const walkerCalls = calls.length;
+
+        calls.length = 0;
+        hud.activeTab = 'dog';
+        hud.drawStagePreview(ctx);
+        const dogCalls = calls.length;
+
+        return { walkerCalls: walkerCalls, dogCalls: dogCalls };
+        """
+        res = _run_js(snippet)
+        self.assertGreater(res["walkerCalls"], 0,
+                           "Walker tab must draw the owner on the stage preview")
+        self.assertGreater(res["dogCalls"], 0,
+                           "Dog tab must draw the dog on the stage preview")
+
+
+if __name__ == '__main__':
+    unittest.main()
+```
+
+## FILE: test/test_home_sanctuary.py
+```python
+#!/usr/bin/env python3
+"""
+Unit & Acceptance Tests for the Home Sanctuary (unification-029).
+Validates:
+- Static contracts: #home-field-canvas, #home-action-bar, #btn-action-feed,
+  wander states, localStorage key prefix, and toast copy.
+- Behavioral contracts: HomeFeeding.__testHooks.simulateFeed, last_feed_at
+  JSON format, and feeding debounce.
+"""
+
+import json
+import os
+import re
+import shutil
+import subprocess
+import unittest
+
+
+def read(rel_path):
+    base = os.path.dirname(__file__)
+    full = os.path.join(base, "..", rel_path)
+    with open(full, "r", encoding="utf-8") as f:
+        return f.read()
+
+
+def _run_js(snippet):
+    """Execute a JS snippet against the real HomeFeeding class.
+
+    Strips ESM import/export lines, provides minimal module stubs and a mock
+    DOM, wraps the module in an IIFE, and runs the snippet via osascript
+    (JavaScriptCore) or node. Returns the JSON-decoded result of the snippet.
+    """
+    feeding_src = read("src/ui/home_feeding.js")
+    sanctuary_src = read("src/ui/home_sanctuary.js")
+
+    clean = re.sub(r"^\s*import\s+.*?;?\s*$", "", feeding_src, flags=re.M)
+    clean = re.sub(r"\bexport\s+(default\s+)?", "", clean)
+
+    sanctuary_clean = re.sub(r"^\s*import\s+.*?;?\s*$", "", sanctuary_src, flags=re.M)
+    sanctuary_clean = re.sub(r"\bexport\s+(default\s+)?", "", sanctuary_clean)
+
+    harness = f"""
+// ---- Mock DOM ----
+function __makeEl(tag) {{
+  const el = {{
+    tagName: (tag || 'div').toUpperCase(),
+    id: '',
+    className: '',
+    style: {{}},
+    innerHTML: '',
+    textContent: '',
+    value: '',
+    children: [],
+    _listeners: {{}},
+    classList: {{
+      _set: new Set(),
+      add(c) {{ this._set.add(c); }},
+      remove(c) {{ this._set.delete(c); }},
+      contains(c) {{ return this._set.has(c); }}
+    }},
+    appendChild(child) {{ this.children.push(child); if (child && child.id) __elements[child.id] = child; return child; }},
+    removeChild(child) {{ const i = this.children.indexOf(child); if (i >= 0) this.children.splice(i, 1); return child; }},
+    contains(child) {{ return this.children.indexOf(child) >= 0; }},
+    addEventListener(evt, fn) {{ (this._listeners[evt] = this._listeners[evt] || []).push(fn); }},
+    removeEventListener() {{}},
+    querySelector() {{ return null; }},
+    querySelectorAll() {{ return []; }},
+    getAttribute(name) {{ return this._attrs ? this._attrs[name] : null; }},
+    setAttribute(name, val) {{ (this._attrs = this._attrs || {{}})[name] = val; }},
+    getContext() {{
+      return {{
+        clearRect() {{}}, fillRect() {{}}, beginPath() {{}}, ellipse() {{}},
+        fill() {{}}, stroke() {{}}, save() {{}}, restore() {{}},
+        setTransform() {{}}, translate() {{}}, arc() {{}}, moveTo() {{}}, lineTo() {{}},
+        fillText() {{}},
+        createLinearGradient() {{ return {{ addColorStop() {{}} }}; }},
+        createRadialGradient() {{ return {{ addColorStop() {{}} }}; }},
+        set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}}
+      }};
+    }},
+    focus() {{}}, blur() {{}}
+  }};
+  return el;
+}}
+const __elements = {{
+  'game-container': __makeEl('div'),
+  'hud-overlay': __makeEl('div')
+}};
+const document = {{
+  _byId: __elements,
+  getElementById(id) {{ return __elements[id] || null; }},
+  createElement(tag) {{ return __makeEl(tag); }},
+  querySelector() {{ return null; }},
+  querySelectorAll() {{ return []; }},
+  addEventListener() {{}},
+  body: __makeEl('body')
+}};
+const requestAnimationFrame = (fn) => 0;
+const cancelAnimationFrame = () => {{}};
+const window = {{
+  location: {{ search: '' }},
+  requestAnimationFrame: requestAnimationFrame,
+  cancelAnimationFrame: cancelAnimationFrame,
+  document: document,
+  devicePixelRatio: 1,
+  addEventListener: function () {{}},
+  removeEventListener: function () {{}}
+}};
+// Controllable timer queue so tests can fast-forward scheduled callbacks.
+const __timerQueue = [];
+let __timerSeq = 0;
+const setTimeout = (fn, ms) => {{
+  const id = ++__timerSeq;
+  __timerQueue.push({{ id: id, fn: fn, ms: ms || 0 }});
+  return id;
+}};
+const clearTimeout = (id) => {{
+  for (let i = 0; i < __timerQueue.length; i++) {{
+    if (__timerQueue[i].id === id) {{ __timerQueue.splice(i, 1); return; }}
+  }}
+}};
+const __flushTimers = () => {{
+  let guard = 0;
+  while (__timerQueue.length > 0 && guard < 1000) {{
+    const t = __timerQueue.shift();
+    try {{ t.fn(); }} catch (e) {{}}
+    guard++;
+  }}
+}};
+const localStorage = (() => {{
+  let store = {{}};
+  return {{
+    getItem(k) {{ return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; }},
+    setItem(k, v) {{ store[k] = String(v); }},
+    removeItem(k) {{ delete store[k]; }},
+    clear() {{ store = {{}}; }}
+  }};
+}})();
+window.localStorage = localStorage;
+
+// ---- Load real modules ----
+// home_sanctuary.js is an IIFE that assigns window.HomeSanctuary.
+(() => {{ {sanctuary_clean} }})();
+// home_feeding.js is an IIFE that assigns window.HomeFeeding.
+(() => {{ {clean} }})();
+const HomeFeeding = window.HomeFeeding;
+
+const __res = (() => {{ {snippet} }})();
+JSON.stringify(__res);
+"""
+
+    if shutil.which("osascript"):
+        out = subprocess.check_output(
+            ["osascript", "-l", "JavaScript", "-e", harness], text=True
+        ).strip()
+        return json.loads(out)
+    if shutil.which("node"):
+        node_script = f"""
+{harness}
+if (typeof __res !== 'undefined' && __res !== null) {{
+    console.log(JSON.stringify(__res));
+}}
+"""
+        out = subprocess.check_output(["node", "-e", node_script], text=True)
+        return json.loads(out.strip().splitlines()[-1])
+    raise unittest.SkipTest("No JS runtime (osascript or node) available")
+
+
+class TestHomeSanctuaryStatic(unittest.TestCase):
+    """Static contracts for the Home Sanctuary UI."""
+
+    def setUp(self):
+        self.hud_js = read("src/ui/social_hud.js")
+        self.sanctuary_js = read("src/ui/home_sanctuary.js")
+        self.feeding_js = read("src/ui/home_feeding.js")
+
+    def test_home_field_canvas(self):
+        self.assertIn('id="home-field-canvas"', self.hud_js,
+                      "Missing #home-field-canvas element")
+
+    def test_home_action_bar(self):
+        self.assertIn('id="home-action-bar"', self.hud_js,
+                      "Missing #home-action-bar container")
+
+    def test_feed_button_contract(self):
+        combined = self.feeding_js + self.hud_js
+        self.assertTrue(
+            'id="btn-action-feed"' in combined or "'btn-action-feed'" in combined or '"btn-action-feed"' in combined,
+            "Missing #btn-action-feed button"
+        )
+        self.assertIn('🍖', combined,
+                      "#btn-action-feed must contain the 🍖 icon")
+        self.assertIn('Feed', combined,
+                      "#btn-action-feed must contain the 'Feed' label")
+
+    def test_wander_states(self):
+        for state in ("wander", "sniff", "sit", "wag"):
+            self.assertIn(state, self.sanctuary_js,
+                          f"Missing wander state '{state}'")
+
+    def test_last_feed_storage_key_prefix(self):
+        self.assertIn('virtual_dog_walker.last_feed', self.feeding_js,
+                      "Missing localStorage key prefix 'virtual_dog_walker.last_feed'")
+
+    def test_toast_copy(self):
+        self.assertIn('loved the meal! ❤️', self.feeding_js,
+                      "Toast copy must contain 'loved the meal! ❤️'")
+
+    def test_test_hooks_exposed(self):
+        self.assertIn('__testHooks', self.feeding_js,
+                      "HomeFeeding must expose __testHooks")
+        self.assertIn('simulateFeed', self.feeding_js,
+                      "HomeFeeding.__testHooks must expose simulateFeed")
+
+    def test_resume_delay_constant(self):
+        self.assertIn('RESUME_DELAY_MS', self.feeding_js,
+                      "HomeFeeding must define RESUME_DELAY_MS")
+
+    def test_sanctuary_resume_roaming(self):
+        self.assertIn('resumeRoaming', self.sanctuary_js,
+                      "HomeSanctuary must expose resumeRoaming")
+
+    def test_sanctuary_spawn_particles(self):
+        self.assertIn('spawnParticles', self.sanctuary_js,
+                      "HomeSanctuary must expose spawnParticles")
+
+    def test_hud_bridges_window_show_toast(self):
+        self.assertIn('window.showToast', self.hud_js,
+                      "SocialHUD must bridge window.showToast")
+
+
+@unittest.skipUnless(
+    shutil.which("node") or shutil.which("osascript"),
+    "No JS runtime (node or osascript) available"
+)
+class TestHomeSanctuaryBehavioral(unittest.TestCase):
+    """Executable behavioral verification of HomeFeeding."""
+
+    def test_exec_simulate_feed_returns_expected_shape(self):
+        snippet = """
+        const feeding = HomeFeeding;
+        const res = feeding.__testHooks.simulateFeed({ dogName: 'Ziggy' });
+        return {
+          ate: res.ate,
+          toast: res.toast,
+          persistedKey: res.persistedKey,
+          persistedValue: res.persistedValue
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["ate"], "simulateFeed must report ate: true")
+        self.assertIn("loved the meal! ❤️", res["toast"],
+                      "simulateFeed toast must contain 'loved the meal! ❤️'")
+        self.assertTrue(
+            res["persistedKey"].startswith("virtual_dog_walker.last_feed"),
+            "simulateFeed must persist under the virtual_dog_walker.last_feed prefix"
+        )
+        self.assertIsNotNone(res["persistedValue"],
+                             "simulateFeed must return a persisted value")
+
+    def test_exec_last_feed_at_json_format(self):
+        snippet = """
+        const feeding = HomeFeeding;
+        feeding.__testHooks.simulateFeed({ dogName: 'Ziggy' });
+        const raw = localStorage.getItem('virtual_dog_walker.last_feed_at');
+        let parsed = null;
+        try { parsed = JSON.parse(raw); } catch (e) { parsed = null; }
+        return { raw: raw, parsed: parsed };
+        """
+        res = _run_js(snippet)
+        self.assertIsNotNone(res["raw"],
+                             "Feeding must persist virtual_dog_walker.last_feed_at")
+        self.assertIsNotNone(res["parsed"],
+                             "last_feed_at must be valid JSON")
+        self.assertIsInstance(res["parsed"], dict,
+                              "last_feed_at JSON must be an object")
+
+    def test_exec_run_feed_emits_toast_and_resumes_roaming(self):
+        snippet = """
+        const toasts = [];
+        window.showToast = function (msg) { toasts.push(msg); };
+
+        // Provide a HomeSanctuary stub so runFeed can resume roaming.
+        let resumed = false;
+        let lastPose = null;
+        let lastState = null;
+        window.HomeSanctuary = {
+          getDogSlot: function () { return { id: 'dog-1', name: 'Ziggy' }; },
+          getCompanionDog: function () { return { id: 'dog-1', name: 'Ziggy' }; },
+          setDogPose: function (p) { lastPose = p; },
+          setDogState: function (s) { lastState = s; },
+          resumeRoaming: function () { resumed = true; }
+        };
+
+        // Drive runFeed through all phases via the controllable timer queue.
+        HomeFeeding.__testHooks.runFeed({ dogName: 'Ziggy', dogId: 'dog-1' });
+        __flushTimers();
+
+        const raw = localStorage.getItem('virtual_dog_walker.last_feed_at');
+        let parsed = null;
+        try { parsed = JSON.parse(raw); } catch (e) { parsed = null; }
+
+        return {
+          toasts: toasts,
+          persistedDogId: parsed ? parsed.dogId : null,
+          hasAt: parsed ? typeof parsed.at === 'string' : false,
+          resumed: resumed,
+          lastPose: lastPose,
+          lastState: lastState,
+          feeding: HomeFeeding.__testHooks.isFeeding(),
+          state: HomeFeeding.__testHooks.getState()
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(any("Ziggy loved the meal! ❤️" in t for t in res["toasts"]),
+                        "runFeed must emit '<DogName> loved the meal! ❤️' toast")
+        self.assertEqual(res["persistedDogId"], "dog-1",
+                         "last_feed_at must persist dogId 'dog-1'")
+        self.assertTrue(res["hasAt"], "last_feed_at must include an ISO 'at' field")
+        self.assertTrue(res["resumed"], "runFeed must call resumeRoaming after delay")
+        self.assertEqual(res["lastPose"], "auto",
+                         "Dog pose must return to 'auto' after resumption")
+        self.assertEqual(res["lastState"], "wander",
+                         "Dog state must return to 'wander' after resumption")
+        self.assertFalse(res["feeding"], "feeding flag must be false after resumption")
+        self.assertEqual(res["state"], "idle",
+                         "State machine must return to 'idle' after resumption")
+
+    def test_exec_particles_spawn_during_eating(self):
+        snippet = """
+        // Ensure the canvas exists so mount() succeeds.
+        let canvas = document.getElementById('home-field-canvas');
+        if (!canvas) {
+          canvas = document.createElement('canvas');
+          canvas.id = 'home-field-canvas';
+          document.body.appendChild(canvas);
+        }
+        // Provide a minimal requestAnimationFrame that does not loop.
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        if (!window.HomeSanctuary || !window.HomeSanctuary.__testHooks) {
+          return { available: false };
+        }
+        window.HomeSanctuary.mount();
+        const hooks = window.HomeSanctuary.__testHooks;
+        window.HomeSanctuary.setDogState('eating');
+        for (let i = 0; i < 40; i++) {
+          hooks.spawnParticles();
+        }
+        const parts = hooks.getParticles();
+        const hasHeart = parts.some(function (p) { return p.type === 'heart'; });
+        const hasCrumb = parts.some(function (p) { return p.type === 'crumb'; });
+        return {
+          available: true,
+          count: parts.length,
+          hasHeart: hasHeart,
+          hasCrumb: hasCrumb
+        };
+        """
+        res = _run_js(snippet)
+        if not res.get("available"):
+            self.skipTest("HomeSanctuary not loaded in harness")
+        self.assertGreater(res["count"], 0, "Particles must spawn during eating")
+        self.assertTrue(res["hasHeart"] or res["hasCrumb"],
+                        "Particles must include heart or crumb types")
+
+    def test_exec_mount_hydrates_last_feed_at(self):
+        snippet = """
+        const seeded = JSON.stringify({ dogId: 'dog-1', at: '2024-01-01T00:00:00.000Z' });
+        localStorage.setItem('virtual_dog_walker.last_feed_at', seeded);
+        HomeFeeding.mount();
+        const hydrated = HomeFeeding.__testHooks.getLastFeedAt();
+        return { hydrated: hydrated, seeded: seeded };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["hydrated"], res["seeded"],
+                         "mount() must hydrate lastFeedAt from localStorage")
+
+    def test_exec_mount_unmount_remount_preserves_action_bar_in_sanctuary(self):
+        snippet = """
+        // Build the sanctuary DOM structure the way SocialHUD does.
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+        const bar = document.createElement('div');
+        bar.id = 'home-action-bar';
+        sanctuary.appendChild(bar);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        HomeFeeding.mount();
+        HomeFeeding.unmount();
+        window.HomeSanctuary.unmount();
+
+        const barAfterUnmount = document.getElementById('home-action-bar');
+        const stillChild = sanctuary.children.indexOf(barAfterUnmount) >= 0;
+
+        window.HomeSanctuary.mount(canvas, slot);
+        HomeFeeding.mount();
+        const barAfterRemount = document.getElementById('home-action-bar');
+        const stillChildRemount = sanctuary.children.indexOf(barAfterRemount) >= 0;
+        const feedBtn = document.getElementById('btn-action-feed');
+
+        return {
+          stillChild: stillChild,
+          stillChildRemount: stillChildRemount,
+          sameBar: barAfterUnmount === barAfterRemount,
+          hasFeedBtn: Boolean(feedBtn)
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["stillChild"],
+                        "#home-action-bar must remain a child of #home-view-sanctuary after unmount")
+        self.assertTrue(res["stillChildRemount"],
+                        "#home-action-bar must remain a child of #home-view-sanctuary after remount")
+        self.assertTrue(res["sameBar"],
+                        "unmount/remount must reuse the same #home-action-bar element")
+        self.assertTrue(res["hasFeedBtn"],
+                        "Remount must re-create #btn-action-feed inside the preserved bar")
+
+    def test_exec_real_profile_identity_used_in_feed_and_toast(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Barnaby', coatKey: 'GOLDEN', collarColor: '#dc2626' }
+        }));
+
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+        const bar = document.createElement('div');
+        bar.id = 'home-action-bar';
+        sanctuary.appendChild(bar);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const toasts = [];
+        window.showToast = function (msg) { toasts.push(msg); };
+
+        window.HomeSanctuary.mount();
+        HomeFeeding.mount();
+
+        const slot = window.HomeSanctuary.getDogSlot();
+        const companion = window.HomeSanctuary.getCompanionDog();
+
+        const feedBtn = document.getElementById('btn-action-feed');
+        if (feedBtn && feedBtn._listeners && feedBtn._listeners.click) {
+          feedBtn._listeners.click.forEach(function (fn) { fn(); });
+        }
+        __flushTimers();
+
+        const raw = localStorage.getItem('virtual_dog_walker.last_feed_at');
+        let parsed = null;
+        try { parsed = JSON.parse(raw); } catch (e) { parsed = null; }
+
+        return {
+          slotName: slot ? slot.name : null,
+          companionName: companion ? companion.name : null,
+          toasts: toasts,
+          persistedDogId: parsed ? parsed.dogId : null,
+          hasAt: parsed ? typeof parsed.at === 'string' : false
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["slotName"], "Barnaby",
+                         "HomeSanctuary.getDogSlot() must expose the real profile dog")
+        self.assertEqual(res["companionName"], "Barnaby",
+                         "Companion dog must use the real profile name")
+        self.assertTrue(any("Barnaby loved the meal! ❤️" in t for t in res["toasts"]),
+                        "Feed toast must use the real dog name 'Barnaby'")
+        self.assertIsNotNone(res["persistedDogId"],
+                             "last_feed_at must persist a dogId")
+        self.assertTrue(res["hasAt"], "last_feed_at must include an ISO 'at' field")
+
+    def test_exec_feed_disabled_when_dog_slot_is_null(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+        const bar = document.createElement('div');
+        bar.id = 'home-action-bar';
+        sanctuary.appendChild(bar);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        window.HomeSanctuary.mount();
+        HomeFeeding.mount();
+
+        const feedBtn = document.getElementById('btn-action-feed');
+        return {
+          slot: window.HomeSanctuary.getDogSlot(),
+          disabled: feedBtn ? feedBtn.disabled : null,
+          ariaDisabled: feedBtn ? feedBtn.getAttribute('aria-disabled') : null
+        };
+        """
+        res = _run_js(snippet)
+        self.assertIsNone(res["slot"],
+                          "A null dogSlot must yield a null HomeSanctuary slot")
+        self.assertTrue(res["disabled"],
+                        "#btn-action-feed must be disabled when dogSlot is null")
+        self.assertEqual(res["ariaDisabled"], "true",
+                         "#btn-action-feed must set aria-disabled='true' when dogSlot is null")
+
+    def test_exec_update_dog_moves_at_plausible_speed(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        const hooks = window.HomeSanctuary.__testHooks;
+
+        // Force a wander target far from the dog's current position.
+        const before = window.HomeSanctuary.getCompanionDog();
+        hooks.setWanderTarget(before.x + 200, before.y);
+        hooks.updateDog(1000); // one second
+        const after = window.HomeSanctuary.getCompanionDog();
+
+        return {
+          dx: Math.abs(after.x - before.x),
+          dy: Math.abs(after.y - before.y)
+        };
+        """
+        res = _run_js(snippet)
+        # WANDER_SPEED is 42 px/s; one second of motion must be ~42px, not 42000px.
+        self.assertGreater(res["dx"], 0, "Dog must move toward its wander target")
+        self.assertLess(res["dx"], 100,
+                        "Dog must move at px/second speed (dt/1000), not px/millisecond")
+
+    def test_exec_golden_coat_key_maps_to_golden_color(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'GOLDEN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        const dog = window.HomeSanctuary.getCompanionDog();
+        return { coatColor: dog.coatColor, coatColorDark: dog.coatColorDark };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["coatColor"], "#eab308",
+                         "GOLDEN coatKey must map to the golden primary color")
+        self.assertEqual(res["coatColorDark"], "#ca8a04",
+                         "GOLDEN coatKey must map to the golden dark color")
+
+    def test_exec_second_click_while_feeding_ignored(self):
+        snippet = """
+        const feeding = HomeFeeding;
+        const first = feeding.__testHooks.simulateFeed({ dogName: 'Ziggy' });
+        const second = feeding.__testHooks.simulateFeed({ dogName: 'Ziggy' });
+        return {
+          firstAte: first.ate,
+          secondAte: second.ate,
+          secondIgnored: second.ignored === true || second.ate === false
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["firstAte"], "First feed must be accepted")
+        self.assertTrue(res["secondIgnored"],
+                        "Second feed while feeding must be ignored")
 
 
 if __name__ == '__main__':

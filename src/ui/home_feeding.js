@@ -16,6 +16,7 @@
   var FACING_MS = 200; // <= 250ms
   var BOWL_MS = 150; // <= 200ms
   var EATING_MS = 3500; // within 3000-4000ms, target 3500ms
+  var RESUME_DELAY_MS = 800; // delay before autonomous roaming resumes
 
   var state = 'idle';
   var mounted = false;
@@ -242,21 +243,27 @@
             // Phase 4: complete (instant)
             setState('complete');
             clearBowl();
-            setDogState('idle');
-            setDogPose('idle');
 
             var toast = dogName + ' loved the meal! ❤️';
             emitToast(toast);
 
-            persistFeed(dogId);
-
-            setState('idle');
-            feeding = false;
-            updateDisabledState();
+            persistFeed(dogName);
 
             // Expose duration for test hooks via closure variable.
             runFeed.__lastDuration = Math.round(now() - start);
-            resolve();
+
+            // Phase 5: resume autonomous roaming after a short delay.
+            schedule(function () {
+              setState('idle');
+              feeding = false;
+              setDogPose('auto');
+              setDogState('wander');
+              if (window.HomeSanctuary && typeof window.HomeSanctuary.resumeRoaming === 'function') {
+                try { window.HomeSanctuary.resumeRoaming(); } catch (e) {}
+              }
+              updateDisabledState();
+              resolve();
+            }, RESUME_DELAY_MS);
           }, EATING_MS);
         }, BOWL_MS);
       }, FACING_MS);

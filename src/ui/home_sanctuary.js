@@ -54,6 +54,9 @@
   var grassBlades = [];
   var noiseSeed = 1337;
 
+  var particles = [];
+  var particleFrame = 0;
+
   // ---------------------------------------------------------------------------
   // Utilities
   // ---------------------------------------------------------------------------
@@ -415,11 +418,72 @@
     ctx.restore();
   }
 
+  function spawnParticles() {
+    if (!dog) return;
+    particleFrame++;
+    if (particleFrame % 10 !== 0) return;
+
+    if (Math.random() < 0.5) {
+      particles.push({
+        x: dog.x + (Math.random() - 0.5) * 30,
+        y: dog.y - 10,
+        vy: -0.8 - Math.random() * 0.5,
+        alpha: 1.0,
+        type: 'heart',
+        text: '❤️',
+        size: 14
+      });
+    } else {
+      particles.push({
+        x: dog.x + (Math.random() - 0.5) * 20,
+        y: dog.y + 15,
+        vx: (Math.random() - 0.5) * 1.5,
+        vy: -0.5 - Math.random() * 0.5,
+        alpha: 1.0,
+        type: 'crumb',
+        color: '#b45309',
+        radius: 2.5
+      });
+    }
+  }
+
+  function updateAndDrawParticles() {
+    if (!ctx) return;
+    for (var i = particles.length - 1; i >= 0; i--) {
+      var p = particles[i];
+      p.x += (p.vx || 0);
+      p.y += p.vy;
+      p.alpha -= 0.015;
+
+      if (p.alpha <= 0) {
+        particles.splice(i, 1);
+        continue;
+      }
+
+      ctx.globalAlpha = p.alpha;
+      if (p.type === 'heart') {
+        ctx.font = (p.size || 14) + 'px sans-serif';
+        ctx.fillText(p.text, p.x, p.y);
+      } else if (p.type === 'crumb') {
+        ctx.fillStyle = p.color;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1.0;
+  }
+
   function render() {
     if (!ctx) return;
     ctx.clearRect(0, 0, fieldWidth, fieldHeight);
     drawField();
     drawDog();
+
+    if (forcedState === 'eating' || (dog && dog.state === 'eating')) {
+      spawnParticles();
+    }
+    updateAndDrawParticles();
   }
 
   // ---------------------------------------------------------------------------
@@ -547,6 +611,8 @@
     dog = null;
     forcedState = null;
     grassBlades = [];
+    particles = [];
+    particleFrame = 0;
   }
 
   function getCompanionDog() {
@@ -579,11 +645,30 @@
   }
 
   function setDogState(nextState) {
-    if (STATES.indexOf(nextState) === -1) return;
     if (!dog) return;
+
+    if (nextState === 'wander' || nextState === null) {
+      forcedState = null;
+      dog.state = 'wander';
+      pickWanderTarget();
+      stateTimer = 0;
+      return;
+    }
+
+    if (STATES.indexOf(nextState) === -1) return;
 
     forcedState = nextState;
     enterState(nextState);
+  }
+
+  function resumeRoaming() {
+    pose = 'auto';
+    forcedState = null;
+    if (dog) {
+      dog.state = 'wander';
+      stateTimer = 0;
+      pickWanderTarget();
+    }
   }
 
   function getFieldSize() {
@@ -596,6 +681,7 @@
     getCompanionDog: getCompanionDog,
     setDogPose: setDogPose,
     setDogState: setDogState,
+    resumeRoaming: resumeRoaming,
     getFieldSize: getFieldSize
   };
 

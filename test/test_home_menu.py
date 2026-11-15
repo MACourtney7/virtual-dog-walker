@@ -498,6 +498,55 @@ class TestHomeMenuBehavioralExecutable(unittest.TestCase):
         self.assertEqual(res.get("lastBroadcast", {}).get("dogName"), "",
                          "removeDog must broadcast with dogName: ''")
 
+    def test_exec_adopt_releases_lock_and_allows_walk(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: '', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const lockedBefore = hud.isHomeLocked;
+        const canWalkBefore = hud.canWalkInPark();
+
+        const nameInput = document.getElementById('cust-dog-name');
+        const coatSelect = document.getElementById('cust-dog-coat');
+        if (nameInput) nameInput.value = 'Ziggy';
+        if (coatSelect) coatSelect.value = 'CHOCOLATE_TAN';
+
+        hud.adoptDogFromForm();
+
+        const lockedAfter = hud.isHomeLocked;
+        const canWalkAfter = hud.canWalkInPark();
+
+        const modal = document.getElementById('customizer-modal');
+        modal.style.display = 'block';
+        hud.closeModal();
+        const afterClose = modal.style.display;
+
+        return {
+          lockedBefore: lockedBefore,
+          canWalkBefore: canWalkBefore,
+          lockedAfter: lockedAfter,
+          canWalkAfter: canWalkAfter,
+          afterClose: afterClose
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["lockedBefore"],
+                        "A null dogSlot must start locked")
+        self.assertFalse(res["canWalkBefore"],
+                         "A null dogSlot must not allow walking")
+        self.assertFalse(res["lockedAfter"],
+                         "Adopting a dog must release the Home lock")
+        self.assertTrue(res["canWalkAfter"],
+                        "Adopting a dog must allow walking in the park")
+        self.assertEqual(res["afterClose"], "none",
+                         "closeModal must succeed once a dog is adopted")
+
     def test_exec_add_dog_populates_slot_and_unlocks(self):
         snippet = """
         localStorage.setItem('clifton_walker_profile', JSON.stringify({

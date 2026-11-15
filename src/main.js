@@ -7,6 +7,8 @@ import { TennisBall } from './entities/toy.js';
 import { NetworkManager, NetStatus } from './net/network.js';
 import { Protocol, PacketType } from './net/protocol.js';
 import { SocialHUD } from './ui/social_hud.js';
+import './ui/home_sanctuary.js';
+import './ui/home_feeding.js';
 import { sound } from './systems/audio.js';
 import { TouchControls } from './ui/touch_controls.js';
 import { ProximityChat } from './ui/proximity_chat.js';

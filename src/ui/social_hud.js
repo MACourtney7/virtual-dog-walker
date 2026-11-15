@@ -248,6 +248,12 @@ export class SocialHUD {
     `;
     this.container.appendChild(toast);
 
+    // Bridge a global toast helper so side-effect modules (HomeSanctuary,
+    // HomeFeeding) can surface messages through the HUD.
+    if (typeof window !== 'undefined') {
+      window.showToast = (msg) => this.showToast(msg);
+    }
+
     // Load saved profile from localStorage if available
     this.loadSavedProfile();
 
@@ -301,7 +307,7 @@ export class SocialHUD {
     const titleEl = document.getElementById('home-header-title');
 
     const isSettings = this.currentHomeView === 'settings';
-    const locked = this.dogSlot === null;
+    const locked = Boolean(this.isHomeLocked || this.dogSlot === null);
 
     if (sanctuary) sanctuary.style.display = isSettings ? 'none' : '';
     if (settings) settings.style.display = isSettings ? '' : 'none';
@@ -614,6 +620,9 @@ export class SocialHUD {
     };
 
     this.dogSlot = { name, coatKey, collarColor, personality };
+    // Adopting a dog always releases the Home lock so the player is never
+    // trapped in the modal after creating a dog.
+    this.isHomeLocked = false;
 
     if (this.dog) {
       this.dog.name = name;

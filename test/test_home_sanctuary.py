@@ -174,6 +174,22 @@ class TestHomeSanctuaryStatic(unittest.TestCase):
         self.assertIn('simulateFeed', self.feeding_js,
                       "HomeFeeding.__testHooks must expose simulateFeed")
 
+    def test_resume_delay_constant(self):
+        self.assertIn('RESUME_DELAY_MS', self.feeding_js,
+                      "HomeFeeding must define RESUME_DELAY_MS")
+
+    def test_sanctuary_resume_roaming(self):
+        self.assertIn('resumeRoaming', self.sanctuary_js,
+                      "HomeSanctuary must expose resumeRoaming")
+
+    def test_sanctuary_spawn_particles(self):
+        self.assertIn('spawnParticles', self.sanctuary_js,
+                      "HomeSanctuary must expose spawnParticles")
+
+    def test_hud_bridges_window_show_toast(self):
+        self.assertIn('window.showToast', self.hud_js,
+                      "SocialHUD must bridge window.showToast")
+
 
 @unittest.skipUnless(
     shutil.which("node") or shutil.which("osascript"),

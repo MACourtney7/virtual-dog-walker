@@ -113,7 +113,7 @@ class TestCompanionDogNameAndToasts(unittest.TestCase):
     def test_companion_dog_name_default(self):
         self.assertRegex(
             self.dog_js,
-            r"this\.name\s*=\s*['\"]Ziggy['\"]",
+            r"this\.name\s*=\s*(?:name\s*\|\|\s*)?['\"]Ziggy['\"]",
             "CompanionDog must default this.name to 'Ziggy'"
         )
 

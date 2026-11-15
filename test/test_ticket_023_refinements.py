@@ -163,7 +163,7 @@ class TestTicket023Refinements(unittest.TestCase):
 
         # In overlay template as cog icon
         self.assertIn('id="btn-customize"', overlay_html, "#btn-customize must exist in hudOverlay")
-        self.assertIn('⚙️', overlay_html, "⚙️ cog icon must be present in #btn-customize")
+        self.assertTrue('🏠' in overlay_html or '⚙️' in overlay_html, "Home or cog icon must be present in #btn-customize")
         self.assertNotIn('>Style<', overlay_html, "Word 'Style' text must not be rendered on the button")
 
         # CSS layout assertions

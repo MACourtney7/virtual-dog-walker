@@ -15929,11 +15929,15 @@ export const PacketType = {
 
 export class Protocol {
   static createHello(peerId, name, jacketColor, dogCoatName, extraMeta = {}) {
-    const resolvedDogName = (extraMeta && typeof extraMeta.dogName === 'string')
-      ? extraMeta.dogName
-      : (typeof extraMeta.dogName === 'string' ? extraMeta.dogName : 'Ziggy');
-    const resolvedHasDog = (extraMeta && typeof extraMeta.hasDog === 'boolean')
-      ? extraMeta.hasDog
+    const meta = extraMeta || {};
+    // Honor an explicitly provided dogName verbatim (including the empty string).
+    // Only fall back to the default 'Ziggy' when no dogName key is supplied at all.
+    const resolvedDogName = (typeof meta.dogName === 'string')
+      ? meta.dogName
+      : 'Ziggy';
+    // Honor an explicit hasDog boolean; otherwise derive it from the dog name/coat.
+    const resolvedHasDog = (typeof meta.hasDog === 'boolean')
+      ? meta.hasDog
       : ((typeof resolvedDogName === 'string' && resolvedDogName.length > 0) || Boolean(dogCoatName));
     return {
       type: PacketType.HELLO,

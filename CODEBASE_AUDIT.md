@@ -21110,8 +21110,30 @@ export default weatherClient;
         return null;
       }
     }
-    // Fallback: treat presence of the canvas as a mounted slot.
-    return getCanvas() ? {} : null;
+
+    // Fallback: an explicitly published active slot.
+    if (window.__vdwActiveDogSlot !== undefined) {
+      return window.__vdwActiveDogSlot;
+    }
+
+    // Last resort: read the persisted walker profile. Never assume a dog
+    // exists merely because the canvas element is present.
+    try {
+      if (typeof localStorage !== 'undefined' && localStorage) {
+        var raw = localStorage.getItem('clifton_walker_profile');
+        if (raw) {
+          var parsed = JSON.parse(raw);
+          if (parsed && typeof parsed === 'object') {
+            if (parsed.dogSlot === null) return null;
+            if (parsed.dogSlot && typeof parsed.dogSlot === 'object') return parsed.dogSlot;
+            if (parsed.dogName) return { name: parsed.dogName };
+          }
+        }
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return null;
   }
 
   function setDogPose(pose) {
@@ -21189,6 +21211,8 @@ export default weatherClient;
     if (actionBarEl && document.body.contains(actionBarEl)) {
       return actionBarEl;
     }
+    // Prefer the existing container (e.g. rendered by SocialHUD) so we never
+    // detach it from its parent.
     actionBarEl = document.getElementById('home-action-bar');
     if (!actionBarEl) {
       actionBarEl = document.createElement('div');
@@ -21220,7 +21244,7 @@ export default weatherClient;
 
   function updateDisabledState() {
     if (!feedBtnEl) return;
-    var disabled = getDogSlot() === null || !getCanvas();
+    var disabled = getDogSlot() === null;
     feedBtnEl.disabled = !!disabled;
     feedBtnEl.setAttribute('aria-disabled', disabled ? 'true' : 'false');
   }
@@ -21358,10 +21382,11 @@ export default weatherClient;
       feedBtnEl.removeEventListener('click', onFeedClick);
       feedBtnEl.__homeFeedingBound = false;
     }
-    if (actionBarEl && actionBarEl.parentNode) {
-      actionBarEl.parentNode.removeChild(actionBarEl);
+    // Preserve the #home-action-bar container in the DOM; only clear its
+    // children so a subsequent mount() can re-populate it in place.
+    if (actionBarEl) {
+      actionBarEl.innerHTML = '';
     }
-    actionBarEl = null;
     feedBtnEl = null;
   }
 
@@ -21489,6 +21514,7 @@ export default weatherClient;
   var fieldHeight = 0;
 
   var dog = null;
+  var activeDogSlot = null;
   var pose = 'auto'; // 'auto' | 'camera'
   var stateTimer = 0;
   var forcedState = null; // when set via setDogState, holds until cleared
@@ -21533,6 +21559,40 @@ export default weatherClient;
 
   function readProfile() {
     if (typeof global.localStorage === 'undefined') return null;
+
+    // Primary source of truth: the SocialHUD-persisted walker profile.
+    var rawProfile = null;
+    try {
+      rawProfile = global.localStorage.getItem('clifton_walker_profile');
+    } catch (err) {
+      rawProfile = null;
+    }
+    if (rawProfile) {
+      var profile = safeParse(rawProfile);
+      if (profile && typeof profile === 'object') {
+        // An explicitly empty kennel means there is no companion dog.
+        if (profile.dogSlot === null) return null;
+
+        if (profile.dogSlot && typeof profile.dogSlot === 'object') {
+          var slot = profile.dogSlot;
+          return {
+            id: slot.id || 'dog-1',
+            name: slot.name || profile.dogName || 'Ziggy',
+            coatKey: slot.coatKey || profile.coatKey,
+            collar: slot.collarColor || profile.collarColor
+          };
+        }
+
+        if (profile.dogName) {
+          return {
+            id: 'dog-1',
+            name: profile.dogName,
+            coatKey: profile.coatKey,
+            collar: profile.collarColor
+          };
+        }
+      }
+    }
 
     var keys = [
       'vdw.activeProfile',
@@ -21594,6 +21654,7 @@ export default weatherClient;
 
     if (profile.id != null) appearance.id = String(profile.id);
     if (profile.name) appearance.name = String(profile.name);
+    if (profile.coatKey) appearance.coatKey = String(profile.coatKey);
 
     var coat =
       profile.coat ||
@@ -21997,10 +22058,10 @@ export default weatherClient;
   // Public API
   // ---------------------------------------------------------------------------
 
-  function mount() {
+  function mount(canvasEl, explicitDogSlot) {
     if (mounted) return;
 
-    var el = global.document && global.document.getElementById(CANVAS_ID);
+    var el = canvasEl || (global.document && global.document.getElementById(CANVAS_ID));
     if (!el) {
       // Graceful no-op when the canvas is not present.
       return;
@@ -22015,8 +22076,18 @@ export default weatherClient;
 
     resizeCanvas();
 
-    var appearance = resolveAppearance(readProfile());
+    var slot = explicitDogSlot;
+    if (slot === undefined) {
+      slot = readProfile();
+    }
+    activeDogSlot = slot || null;
+
+    var appearance = resolveAppearance(activeDogSlot);
     dog = createDog(appearance);
+    if (activeDogSlot) {
+      dog.name = activeDogSlot.name || 'Ziggy';
+      dog.id = activeDogSlot.id || 'dog-1';
+    }
     pose = 'auto';
     forcedState = null;
     enterState('wander');
@@ -22051,10 +22122,15 @@ export default weatherClient;
     canvas = null;
     ctx = null;
     dog = null;
+    activeDogSlot = null;
     forcedState = null;
     grassBlades = [];
     particles = [];
     particleFrame = 0;
+  }
+
+  function getDogSlot() {
+    return activeDogSlot;
   }
 
   function getCompanionDog() {
@@ -22120,6 +22196,7 @@ export default weatherClient;
   var HomeSanctuary = {
     mount: mount,
     unmount: unmount,
+    getDogSlot: getDogSlot,
     getCompanionDog: getCompanionDog,
     setDogPose: setDogPose,
     setDogState: setDogState,
@@ -23714,7 +23791,9 @@ export class SocialHUD {
 
     if (target === 'sanctuary') {
       if (typeof window !== 'undefined') {
-        window.HomeSanctuary?.mount?.();
+        window.__vdwActiveDogSlot = this.dogSlot;
+        const canvas = document.getElementById('home-field-canvas');
+        window.HomeSanctuary?.mount?.(canvas, this.dogSlot);
         window.HomeFeeding?.mount?.();
       }
       this.stopStageAnimation();
@@ -24070,8 +24149,25 @@ export class SocialHUD {
     this.persistProfile();
     this.broadcastProfile();
 
-    // Unlock: transition to the sanctuary view now that a dog exists.
+    // Unlock: reset to the walker tab and transition to the sanctuary view.
+    this.switchTab('walker');
     this.setHomeView('sanctuary');
+  }
+
+  // Switch the active settings tab ('walker' | 'dog') and sync the DOM.
+  switchTab(tab) {
+    const target = tab === 'dog' ? 'dog' : 'walker';
+    this.activeTab = target;
+    const tabBtns = document.querySelectorAll('.customizer-tab-btn');
+    tabBtns.forEach(b => b.classList.remove('active'));
+    const btn = document.getElementById(target === 'dog' ? 'tab-btn-dog' : 'tab-btn-walker');
+    if (btn) btn.classList.add('active');
+    document.querySelectorAll('.customizer-tab-pane').forEach(pane => {
+      pane.classList.remove('active');
+    });
+    const pane = document.getElementById(target === 'dog' ? 'cust-tab-dog' : 'cust-tab-walker');
+    if (pane) pane.classList.add('active');
+    this.renderHomeStage();
   }
 
   updateCloseButtonState() {
@@ -24570,6 +24666,7 @@ export class SocialHUD {
 
     modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
     if (modal.style.display === 'block') {
+      // With a dog present, opening Home defaults to the sanctuary view.
       this.setHomeView(this.currentHomeView === 'settings' ? 'settings' : 'sanctuary');
     } else {
       this.stopStageAnimation();
@@ -37717,6 +37814,19 @@ class TestHomeViewSplit(unittest.TestCase):
         self.assertIn('resolveHomeView', self.hud_js,
                       "Missing resolveHomeView helper")
 
+    def test_switch_tab_helper(self):
+        self.assertIn('switchTab', self.hud_js,
+                      "Missing switchTab helper for tab lifecycle resets")
+
+    def test_sanctuary_mount_receives_dog_slot(self):
+        self.assertIn('__vdwActiveDogSlot', self.hud_js,
+                      "setHomeView must publish window.__vdwActiveDogSlot")
+        self.assertRegex(
+            self.hud_js,
+            r"HomeSanctuary\?\.mount\?\.\([^)]*this\.dogSlot",
+            "setHomeView must pass this.dogSlot to HomeSanctuary.mount"
+        )
+
 
 @unittest.skipUnless(
     shutil.which("node") or shutil.which("osascript"),
@@ -37775,6 +37885,39 @@ class TestHomeViewSplitBehavioral(unittest.TestCase):
                          "resolveHomeView('sanctuary') must return 'sanctuary'")
         self.assertIn(res["unknown"], ("sanctuary", "settings"),
                       "resolveHomeView must normalize unknown views")
+
+    def test_exec_adopt_resets_tab_to_walker_and_shows_sanctuary(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: '', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        hud.activeTab = 'dog';
+        const nameInput = document.getElementById('cust-dog-name');
+        const coatSelect = document.getElementById('cust-dog-coat');
+        if (nameInput) nameInput.value = 'Ziggy';
+        if (coatSelect) coatSelect.value = 'CHOCOLATE_TAN';
+
+        hud.adoptDogFromForm();
+
+        return {
+          activeTab: hud.activeTab,
+          homeView: hud.homeView,
+          isHomeLocked: hud.isHomeLocked
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["activeTab"], "walker",
+                         "Adopting a dog must reset the active tab to 'walker'")
+        self.assertEqual(res["homeView"], "sanctuary",
+                         "Adopting a dog must transition to the sanctuary view")
+        self.assertFalse(res["isHomeLocked"],
+                         "Adopting a dog must release the Home lock")
 
     def test_exec_split_stage_preview_draws_only_active_tab(self):
         snippet = """
@@ -38201,6 +38344,153 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
         res = _run_js(snippet)
         self.assertEqual(res["hydrated"], res["seeded"],
                          "mount() must hydrate lastFeedAt from localStorage")
+
+    def test_exec_mount_unmount_remount_preserves_action_bar_in_sanctuary(self):
+        snippet = """
+        // Build the sanctuary DOM structure the way SocialHUD does.
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+        const bar = document.createElement('div');
+        bar.id = 'home-action-bar';
+        sanctuary.appendChild(bar);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        HomeFeeding.mount();
+        HomeFeeding.unmount();
+        window.HomeSanctuary.unmount();
+
+        const barAfterUnmount = document.getElementById('home-action-bar');
+        const stillChild = sanctuary.children.indexOf(barAfterUnmount) >= 0;
+
+        window.HomeSanctuary.mount(canvas, slot);
+        HomeFeeding.mount();
+        const barAfterRemount = document.getElementById('home-action-bar');
+        const stillChildRemount = sanctuary.children.indexOf(barAfterRemount) >= 0;
+        const feedBtn = document.getElementById('btn-action-feed');
+
+        return {
+          stillChild: stillChild,
+          stillChildRemount: stillChildRemount,
+          sameBar: barAfterUnmount === barAfterRemount,
+          hasFeedBtn: Boolean(feedBtn)
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["stillChild"],
+                        "#home-action-bar must remain a child of #home-view-sanctuary after unmount")
+        self.assertTrue(res["stillChildRemount"],
+                        "#home-action-bar must remain a child of #home-view-sanctuary after remount")
+        self.assertTrue(res["sameBar"],
+                        "unmount/remount must reuse the same #home-action-bar element")
+        self.assertTrue(res["hasFeedBtn"],
+                        "Remount must re-create #btn-action-feed inside the preserved bar")
+
+    def test_exec_real_profile_identity_used_in_feed_and_toast(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Barnaby', coatKey: 'GOLDEN', collarColor: '#dc2626' }
+        }));
+
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+        const bar = document.createElement('div');
+        bar.id = 'home-action-bar';
+        sanctuary.appendChild(bar);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const toasts = [];
+        window.showToast = function (msg) { toasts.push(msg); };
+
+        window.HomeSanctuary.mount();
+        HomeFeeding.mount();
+
+        const slot = window.HomeSanctuary.getDogSlot();
+        const companion = window.HomeSanctuary.getCompanionDog();
+
+        const feedBtn = document.getElementById('btn-action-feed');
+        if (feedBtn && feedBtn._listeners && feedBtn._listeners.click) {
+          feedBtn._listeners.click.forEach(function (fn) { fn(); });
+        }
+        __flushTimers();
+
+        const raw = localStorage.getItem('virtual_dog_walker.last_feed_at');
+        let parsed = null;
+        try { parsed = JSON.parse(raw); } catch (e) { parsed = null; }
+
+        return {
+          slotName: slot ? slot.name : null,
+          companionName: companion ? companion.name : null,
+          toasts: toasts,
+          persistedDogId: parsed ? parsed.dogId : null,
+          hasAt: parsed ? typeof parsed.at === 'string' : false
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["slotName"], "Barnaby",
+                         "HomeSanctuary.getDogSlot() must expose the real profile dog")
+        self.assertEqual(res["companionName"], "Barnaby",
+                         "Companion dog must use the real profile name")
+        self.assertTrue(any("Barnaby loved the meal! ❤️" in t for t in res["toasts"]),
+                        "Feed toast must use the real dog name 'Barnaby'")
+        self.assertIsNotNone(res["persistedDogId"],
+                             "last_feed_at must persist a dogId")
+        self.assertTrue(res["hasAt"], "last_feed_at must include an ISO 'at' field")
+
+    def test_exec_feed_disabled_when_dog_slot_is_null(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+        const bar = document.createElement('div');
+        bar.id = 'home-action-bar';
+        sanctuary.appendChild(bar);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        window.HomeSanctuary.mount();
+        HomeFeeding.mount();
+
+        const feedBtn = document.getElementById('btn-action-feed');
+        return {
+          slot: window.HomeSanctuary.getDogSlot(),
+          disabled: feedBtn ? feedBtn.disabled : null,
+          ariaDisabled: feedBtn ? feedBtn.getAttribute('aria-disabled') : null
+        };
+        """
+        res = _run_js(snippet)
+        self.assertIsNone(res["slot"],
+                          "A null dogSlot must yield a null HomeSanctuary slot")
+        self.assertTrue(res["disabled"],
+                        "#btn-action-feed must be disabled when dogSlot is null")
+        self.assertEqual(res["ariaDisabled"], "true",
+                         "#btn-action-feed must set aria-disabled='true' when dogSlot is null")
 
     def test_exec_second_click_while_feeding_ignored(self):
         snippet = """

@@ -264,8 +264,7 @@ body {
 
 @keyframes pulseContextualBtn {
 
-  0%,
-  100% {
+  0%, 100% {
     transform: scale(1);
   }
 
@@ -737,8 +736,7 @@ body {
 
 @keyframes pulseBadge {
 
-  0%,
-  100% {
+  0%, 100% {
     transform: scale(1);
   }
 

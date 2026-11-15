@@ -56,7 +56,9 @@
 
   var dog = null;
   var activeDogSlot = null;
-  var liveDogEntity = null; // optional real CompanionDog instance
+  // Optional render-only delegate: its draw(ctx) method may be used, but its
+  // position, angle, leash, and other world state are NEVER read or written.
+  var drawDelegate = null;
   var pose = 'auto'; // 'auto' | 'camera'
   var stateTimer = 0;
   var forcedState = null; // when set via setDogState, holds until cleared
@@ -258,7 +260,11 @@
       state: 'wander',
       targetX: fieldWidth / 2,
       targetY: fieldHeight / 2,
-      bob: 0
+      bob: 0,
+      // The sanctuary dog is always off-leash and fully self-contained.
+      isLeashed: false,
+      leash: null,
+      leashActive: false
     };
   }
 
@@ -482,22 +488,23 @@
     return entity;
   }
 
-  // Build a render-only adapter that copies visual properties from a live
-  // CompanionDog entity WITHOUT mutating it. The live entity is treated as
-  // strictly read-only.
-  function buildRenderAdapter(live) {
-    var coatObj = live.coat && typeof live.coat === 'object'
-      ? Object.assign({}, live.coat)
+  // Build a render-only adapter that borrows the delegate's draw() method
+  // WITHOUT mutating it and WITHOUT reading its position, angle, or leash
+  // state. All spatial/state fields come from the sanctuary dog so the
+  // sanctuary is fully self-contained and always off-leash.
+  function buildRenderAdapter(delegate) {
+    var coatObj = delegate.coat && typeof delegate.coat === 'object'
+      ? Object.assign({}, delegate.coat)
       : {
-          bodyColor: live.coatColor || live.coat || DEFAULT_COAT,
-          tanColor: live.coatColorDark || live.coatDark || DEFAULT_COAT_DARK,
+          bodyColor: delegate.coatColor || delegate.coat || DEFAULT_COAT,
+          tanColor: delegate.coatColorDark || delegate.coatDark || DEFAULT_COAT_DARK,
           bibColor: '#f5f0e6',
-          darkColor: live.coatColorDark || live.coatDark || DEFAULT_COAT_DARK
+          darkColor: delegate.coatColorDark || delegate.coatDark || DEFAULT_COAT_DARK
         };
-    // Prototype-chain the live entity so its prototype methods remain
-    // available, then shadow only the render-time fields. The live entity
-    // itself is never written to.
-    var adapter = Object.create(live);
+    // Prototype-chain the delegate so its prototype methods remain available,
+    // then shadow only the render-time fields. The delegate itself is never
+    // written to, and its world position/leash are never consulted.
+    var adapter = Object.create(delegate);
     adapter.x = dog.x;
     adapter.y = dog.y;
     adapter.angle = pose === 'camera' ? Math.PI / 2 : dog.facing;
@@ -508,12 +515,16 @@
     adapter.isSitting = dog.state === 'sit';
     adapter.isSniffing = dog.state === 'sniff';
     adapter.coat = coatObj;
-    adapter.coatColor = live.coatColor || dog.coatColor;
-    adapter.coatColorDark = live.coatColorDark || dog.coatColorDark;
-    adapter.coatDark = live.coatDark || dog.coatDark;
-    adapter.collarColor = live.collarColor || dog.collar;
-    adapter.name = live.name || dog.name;
+    adapter.coatColor = delegate.coatColor || dog.coatColor;
+    adapter.coatColorDark = delegate.coatColorDark || dog.coatColorDark;
+    adapter.coatDark = delegate.coatDark || dog.coatDark;
+    adapter.collarColor = delegate.collarColor || dog.collar;
+    adapter.name = delegate.name || dog.name;
     adapter.state = dog.state;
+    // Sanctuary dogs are always off-leash.
+    adapter.isLeashed = false;
+    adapter.leash = null;
+    adapter.leashActive = false;
     return adapter;
   }
 
@@ -672,9 +683,10 @@
   function drawDog() {
     if (!ctx || !dog) return;
 
-    // Prefer a real CompanionDog entity when available, but never mutate it:
-    // build a render-only adapter that copies visual properties.
-    var entity = liveDogEntity ? buildRenderAdapter(liveDogEntity) : buildDogEntity();
+    // Prefer a draw delegate when available, but never mutate it and never
+    // read its position/leash: build a render-only adapter that copies only
+    // visual properties.
+    var entity = drawDelegate ? buildRenderAdapter(drawDelegate) : buildDogEntity();
 
     var CompanionDogClass = getCompanionDogClass();
     var drawFn = (typeof entity.draw === 'function' ? entity.draw : null) ||
@@ -810,9 +822,22 @@
   function resizeCanvas() {
     if (!canvas) return;
 
+    // Prefer the parent container's layout box so the canvas fills it
+    // seamlessly; fall back to the canvas's own measured size.
+    var parent = canvas.parentElement || null;
     var rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : null;
-    var cssWidth = (rect && rect.width) || canvas.clientWidth || canvas.width || 320;
-    var cssHeight = (rect && rect.height) || canvas.clientHeight || canvas.height || 240;
+    var cssWidth =
+      (parent && parent.clientWidth) ||
+      (rect && rect.width) ||
+      canvas.clientWidth ||
+      canvas.width ||
+      320;
+    var cssHeight =
+      (parent && parent.clientHeight) ||
+      (rect && rect.height) ||
+      canvas.clientHeight ||
+      canvas.height ||
+      240;
 
     var dpr = global.devicePixelRatio || 1;
 
@@ -822,9 +847,9 @@
     canvas.width = Math.round(fieldWidth * dpr);
     canvas.height = Math.round(fieldHeight * dpr);
 
-    // Pin the CSS layout box so DPR scaling never expands the DOM element.
-    canvas.style.width = fieldWidth + 'px';
-    canvas.style.height = fieldHeight + 'px';
+    // Fill the container seamlessly; never pin fixed pixel dimensions.
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
 
     if (ctx) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -869,8 +894,9 @@
     }
     activeDogSlot = slot || null;
 
-    // Accept an explicit live CompanionDog entity, else a globally published one.
-    liveDogEntity = liveDog || global.__vdwLiveDog || null;
+    // Accept an optional draw delegate (render-only). Its world position and
+    // leash state are never used; the sanctuary dog is fully self-contained.
+    drawDelegate = liveDog || null;
 
     var appearance = resolveAppearance(activeDogSlot);
     dog = createDog(appearance);
@@ -913,7 +939,7 @@
     ctx = null;
     dog = null;
     activeDogSlot = null;
-    liveDogEntity = null;
+    drawDelegate = null;
     forcedState = null;
     grassBlades = [];
     particles = [];

@@ -289,9 +289,10 @@ export class SocialHUD {
     if (target === 'sanctuary') {
       if (typeof window !== 'undefined') {
         window.__vdwActiveDogSlot = this.dogSlot;
-        window.__vdwLiveDog = this.dog;
         const canvas = document.getElementById('home-field-canvas');
-        window.HomeSanctuary?.mount?.(canvas, this.dogSlot, this.dog);
+        // The sanctuary dog is a self-contained, always off-leash entity
+        // initialized from the dog slot; never pass the world dog entity.
+        window.HomeSanctuary?.mount?.(canvas, this.dogSlot);
         window.HomeFeeding?.mount?.();
       }
       this.stopStageAnimation();

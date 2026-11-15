@@ -101,7 +101,20 @@ const document = {{
   getElementById(id) {{ return __elements[id] || null; }},
   createElement(tag) {{ return __makeEl(tag); }},
   querySelector() {{ return null; }},
-  querySelectorAll() {{ return []; }},
+  querySelectorAll(sel) {{
+    // Return the real tab buttons / panes so bindEvents() can wire handlers.
+    if (sel === '.customizer-tab-btn') {{
+      return ['tab-btn-walker', 'tab-btn-dog']
+        .map(function (id) {{ return __elements[id]; }})
+        .filter(Boolean);
+    }}
+    if (sel === '.customizer-tab-pane') {{
+      return ['cust-tab-walker', 'cust-tab-dog']
+        .map(function (id) {{ return __elements[id]; }})
+        .filter(Boolean);
+    }}
+    return [];
+  }},
   addEventListener() {{}},
   body: __makeEl('body')
 }};
@@ -123,6 +136,25 @@ const localStorage = (() => {{
 // ---- Load real modules ----
 const {{ resolveCoatPresetByName, CoatPreset }} = (() => {{ {clean_dog}\nreturn {{ resolveCoatPresetByName, CoatPreset }}; }})();
 const {{ SocialHUD }} = (() => {{ {clean_hud}\nreturn {{ SocialHUD }}; }})();
+
+// The mock DOM does not parse innerHTML, so register the tab buttons and
+// panes that initHUD() declares in markup. This lets bindEvents() attach
+// real click listeners to #tab-btn-dog / #tab-btn-walker.
+(function () {{
+  function reg(id, attrs) {{
+    if (__elements[id]) return;
+    const el = __makeEl('button');
+    el.id = id;
+    if (attrs) {{
+      for (const k in attrs) {{ el.setAttribute(k, attrs[k]); }}
+    }}
+    __elements[id] = el;
+  }}
+  reg('tab-btn-walker', {{ 'data-tab': 'cust-tab-walker' }});
+  reg('tab-btn-dog', {{ 'data-tab': 'cust-tab-dog' }});
+  reg('cust-tab-walker');
+  reg('cust-tab-dog');
+}})();
 
 const __res = (() => {{ {snippet} }})();
 JSON.stringify(__res);

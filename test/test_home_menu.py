@@ -220,8 +220,8 @@ class TestHomeHUDAndStage(unittest.TestCase):
         preview_idx = css.find('.home-field-preview')
         self.assertNotEqual(preview_idx, -1, "Missing .home-field-preview CSS rule")
         preview_block = css[preview_idx:preview_idx + 400]
-        self.assertIn('height: 220px;', preview_block,
-                      ".home-field-preview must set height: 220px;")
+        self.assertIn('aspect-ratio: 1 / 1;', preview_block,
+                      ".home-field-preview must set aspect-ratio: 1 / 1;")
         self.assertIn('background: #3e6b2c;', preview_block,
                       ".home-field-preview must use the 'The Downs' turf background #3e6b2c")
 

@@ -438,3 +438,173 @@
 +All 45 tests must pass (0 failures, 0 errors).
 +
 +
+
+# 2026-11-15 16:01:04.930814
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-08-review-remediations"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/social_hud.js"
++  - "virtual_dog_walker/src/ui/home_sanctuary.js"
++  - "virtual_dog_walker/src/ui/home_feeding.js"
++  - "virtual_dog_walker/src/main.js"
++  - "virtual_dog_walker/test/test_home_sanctuary.py"
++  - "virtual_dog_walker/test/test_home_menu.py"
++test_cmd: "cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"
++---
++
++# Implementer Brief 08: Resolve Reviewer Remediation Points
++
++## Reviewer Findings & Specific Fixes Required
++
++### 1. Fix Post-Feed Autonomous Resumption (`home_feeding.js` & `home_sanctuary.js`)
++- In `virtual_dog_walker/src/ui/home_feeding.js`:
++  - Define `var RESUME_DELAY_MS = 800;`
++  - In the feeding completion handler, after `EATING_MS`:
++    - Remove the food bowl element.
++    - Persist the feed timestamp.
++    - Show the toast (`"<DogName> loved the meal! ❤️"`).
++    - Schedule a callback after `RESUME_DELAY_MS`:
++      - Call `setDogPose('auto')`.
++      - Call `setDogState('wander')`.
++      - If `window.HomeSanctuary.resumeRoaming` exists, call it.
++      - Reset `feeding = false` and `state = 'idle'`.
++- In `virtual_dog_walker/src/ui/home_sanctuary.js`:
++  - Ensure `setDogPose('auto')` correctly clears any camera lock (`pose = 'auto'`).
++  - Ensure `setDogState('wander')` or `setDogState(null)` clears `forcedState` and allows autonomous cycling (`wander`, `sniff`, `sit`, `wag`) to resume locomotion.
++  - Expose `resumeRoaming()` on `window.HomeSanctuary` that sets `pose = 'auto'`, clears `forcedState`, and sets dog state to `'wander'`.
++
++### 2. Munch & Heart Particles during Eating (`home_sanctuary.js`)
++- In `home_sanctuary.js`:
++  - Add a lightweight particle system for the eating state on `#home-field-canvas`:
++    - When `state === 'eating'` or `forcedState === 'eating'`, spawn floating heart (`❤️`) and crumb/munch particles around the dog's head/bowl.
++    - Update and draw particles each frame (float upward, fade out, gentle wobble).
++
++### 3. Clear `isHomeLocked` on Dog Creation / Adoption (`social_hud.js`)
++- In `social_hud.js`:
++  - In `handleSaveDog()` / `createDog()` / when a dog slot is filled from an empty slot:
++    - Explicitly set `this.isHomeLocked = false;`
++  - In `_applyHomeViewDom()`:
++    - Compute `locked = this.isHomeLocked || this.dogSlot === null;` so that both button visibility and modal gating are strictly consistent.
++  - When `this.dogSlot !== null` and `!this.isHomeLocked`, `canWalkInPark()` must return `true`, and `closeModal()` must allow closing.
++
++### 4. Wire Global Module Imports (`src/main.js` & `social_hud.js`)
++- In `virtual_dog_walker/src/main.js`:
++  - Add side-effect imports:
++    ```javascript
++    import './ui/home_sanctuary.js';
++    import './ui/home_feeding.js';
++    ```
++  - This ensures `window.HomeSanctuary` and `window.HomeFeeding` are loaded at runtime in production.
++- In `virtual_dog_walker/src/ui/social_hud.js`:
++  - Expose `window.showToast = (msg) => this.showToast(msg);` so that `emitToast` in `home_feeding.js` successfully triggers the game HUD toast notification.
++
++### 5. Behavioral Test Assertions
++- In `virtual_dog_walker/test/test_home_sanctuary.py`:
++  - Add behavioral tests verifying:
++    - `RESUME_DELAY_MS` constant and post-feed resumption (`setDogPose('auto')`, `setDogState('wander')`).
++    - Particles spawn during eating state.
++    - Toast emission triggers `window.showToast` or HUD toast.
++- In `virtual_dog_walker/test/test_home_menu.py`:
++  - Add test verifying that after creating a dog, `isHomeLocked` is `false`, `canWalkInPark()` is `true`, and `closeModal()` successfully hides the modal.
++
++## Verification
++Run:
++`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
++All tests must pass (0 failures, 0 errors).
++
++
+
+# 2026-11-15 16:01:04.931108
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-08-review-remediations"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/social_hud.js"
++  - "virtual_dog_walker/src/ui/home_sanctuary.js"
++  - "virtual_dog_walker/src/ui/home_feeding.js"
++  - "virtual_dog_walker/src/main.js"
++  - "virtual_dog_walker/test/test_home_sanctuary.py"
++  - "virtual_dog_walker/test/test_home_menu.py"
++test_cmd: "cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"
++---
++
++# Implementer Brief 08: Resolve Reviewer Remediation Points
++
++## Reviewer Findings & Specific Fixes Required
++
++### 1. Fix Post-Feed Autonomous Resumption (`home_feeding.js` & `home_sanctuary.js`)
++- In `virtual_dog_walker/src/ui/home_feeding.js`:
++  - Define `var RESUME_DELAY_MS = 800;`
++  - In the feeding completion handler, after `EATING_MS`:
++    - Remove the food bowl element.
++    - Persist the feed timestamp.
++    - Show the toast (`"<DogName> loved the meal! ❤️"`).
++    - Schedule a callback after `RESUME_DELAY_MS`:
++      - Call `setDogPose('auto')`.
++      - Call `setDogState('wander')`.
++      - If `window.HomeSanctuary.resumeRoaming` exists, call it.
++      - Reset `feeding = false` and `state = 'idle'`.
++- In `virtual_dog_walker/src/ui/home_sanctuary.js`:
++  - Ensure `setDogPose('auto')` correctly clears any camera lock (`pose = 'auto'`).
++  - Ensure `setDogState('wander')` or `setDogState(null)` clears `forcedState` and allows autonomous cycling (`wander`, `sniff`, `sit`, `wag`) to resume locomotion.
++  - Expose `resumeRoaming()` on `window.HomeSanctuary` that sets `pose = 'auto'`, clears `forcedState`, and sets dog state to `'wander'`.
++
++### 2. Munch & Heart Particles during Eating (`home_sanctuary.js`)
++- In `home_sanctuary.js`:
++  - Add a lightweight particle system for the eating state on `#home-field-canvas`:
++    - When `state === 'eating'` or `forcedState === 'eating'`, spawn floating heart (`❤️`) and crumb/munch particles around the dog's head/bowl.
++    - Update and draw particles each frame (float upward, fade out, gentle wobble).
++
++### 3. Clear `isHomeLocked` on Dog Creation / Adoption (`social_hud.js`)
++- In `social_hud.js`:
++  - In `handleSaveDog()` / `createDog()` / when a dog slot is filled from an empty slot:
++    - Explicitly set `this.isHomeLocked = false;`
++  - In `_applyHomeViewDom()`:
++    - Compute `locked = this.isHomeLocked || this.dogSlot === null;` so that both button visibility and modal gating are strictly consistent.
++  - When `this.dogSlot !== null` and `!this.isHomeLocked`, `canWalkInPark()` must return `true`, and `closeModal()` must allow closing.
++
++### 4. Wire Global Module Imports (`src/main.js` & `social_hud.js`)
++- In `virtual_dog_walker/src/main.js`:
++  - Add side-effect imports:
++    ```javascript
++    import './ui/home_sanctuary.js';
++    import './ui/home_feeding.js';
++    ```
++  - This ensures `window.HomeSanctuary` and `window.HomeFeeding` are loaded at runtime in production.
++- In `virtual_dog_walker/src/ui/social_hud.js`:
++  - Expose `window.showToast = (msg) => this.showToast(msg);` so that `emitToast` in `home_feeding.js` successfully triggers the game HUD toast notification.
++
++### 5. Behavioral Test Assertions
++- In `virtual_dog_walker/test/test_home_sanctuary.py`:
++  - Add behavioral tests verifying:
++    - `RESUME_DELAY_MS` constant and post-feed resumption (`setDogPose('auto')`, `setDogState('wander')`).
++    - Particles spawn during eating state.
++    - Toast emission triggers `window.showToast` or HUD toast.
++- In `virtual_dog_walker/test/test_home_menu.py`:
++  - Add test verifying that after creating a dog, `isHomeLocked` is `false`, `canWalkInPark()` is `true`, and `closeModal()` successfully hides the modal.
++
++## Verification
++Run:
++`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
++All tests must pass (0 failures, 0 errors).
++
++

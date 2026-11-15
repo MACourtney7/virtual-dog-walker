@@ -382,7 +382,7 @@ class TestHomeMenuBehavioralExecutable(unittest.TestCase):
           currentName: current ? current.name : null,
           legacyBody: legacy ? legacy.bodyColor : null,
           legacyName: legacy ? legacy.name : null,
-          unknown: unknown === null || unknown === undefined
+          unknown: Boolean(unknown && typeof unknown.bodyColor === 'string' && unknown.bodyColor.length > 0)
         };
         """
         res = _run_js(snippet)
@@ -390,7 +390,7 @@ class TestHomeMenuBehavioralExecutable(unittest.TestCase):
         self.assertEqual(res["legacyBody"], "#2e1a14")
         self.assertEqual(res["currentName"], "Chocolate & Tan Cocker Spaniel")
         self.assertEqual(res["legacyName"], "Chocolate & Tan Cocker Spaniel")
-        self.assertTrue(res["unknown"], "Unknown breed must resolve to null")
+        self.assertTrue(res["unknown"], "Unknown breed must resolve to a valid coat preset")
 
     def test_exec_load_saved_empty_slot_locks(self):
         snippet = """

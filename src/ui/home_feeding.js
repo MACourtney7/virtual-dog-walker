@@ -5,7 +5,7 @@
  * feeding state machine (facing -> bowl -> eating -> complete) and persists
  * the last feed timestamp to localStorage.
  *
- * Exposes window.HomeFeeding.
+ * Exposes HomeFeeding on the module root (window in browsers).
  */
 (function () {
   'use strict';

@@ -608,3 +608,175 @@
 +All tests must pass (0 failures, 0 errors).
 +
 +
+
+# 2026-11-15 16:03:46.792953
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-09-feeding-resumption-and-particles"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/home_feeding.js"
++  - "virtual_dog_walker/src/ui/home_sanctuary.js"
++test_cmd: "cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py"
++---
++
++# Implementer Brief 09: Feeding Resumption & Sanctuary Eating Particles
++
++## Context
++In `virtual_dog_walker`, fix the post-feed autonomous resumption bug and add eating particles to the sanctuary canvas.
++
++## Required Edits
++
++### 1. `virtual_dog_walker/src/ui/home_feeding.js`
++- Define `var RESUME_DELAY_MS = 800;`
++- In the feeding machine completion phase (after `EATING_MS`):
++  - Clear the bowl element: `clearBowl();`
++  - Emit toast: `var toast = dogName + ' loved the meal! ❤️'; emitToast(toast);`
++  - Persist feed: `persistFeed(dogName);`
++  - Schedule a timeout after `RESUME_DELAY_MS` (800ms):
++    ```javascript
++    schedule(function () {
++      setState('idle');
++      feeding = false;
++      setDogPose('auto');
++      setDogState('wander');
++      if (window.HomeSanctuary && typeof window.HomeSanctuary.resumeRoaming === 'function') {
++        try { window.HomeSanctuary.resumeRoaming(); } catch (e) {}
++      }
++    }, RESUME_DELAY_MS);
++    ```
++
++### 2. `virtual_dog_walker/src/ui/home_sanctuary.js`
++- In `setDogPose(pose)`:
++  - If `pose === 'auto'` or `pose === 'camera'`, update `currentPose = pose;`.
++  - When `currentPose === 'auto'`, ensure `updateDog()` is not blocked and allows movement/turning.
++- In `setDogState(dogState)`:
++  - If `dogState === 'wander'` or `dogState === null`:
++    - Set `forcedState = null;`
++    - Set companion dog state to `'wander'`.
++  - Otherwise if `STATES.includes(dogState)` or `dogState === 'eating'`:
++    - Set `forcedState = dogState;`
++- Add `resumeRoaming()` method exposed on `window.HomeSanctuary`:
++  ```javascript
++  resumeRoaming: function () {
++    currentPose = 'auto';
++    forcedState = null;
++    if (dog) {
++      dog.state = 'wander';
++      dog.timer = 0;
++    }
++  }
++  ```
++- Eating Particles on `#home-field-canvas`:
++  - Maintain an array of active particles `particles = []`.
++  - In `render()`:
++    - If `forcedState === 'eating'` or `(dog && dog.state === 'eating')`:
++      - Every ~10 frames, spawn a new particle near dog position:
++        - Heart particle: `{ x: dog.x + (Math.random() - 0.5) * 30, y: dog.y - 10, vy: -0.8 - Math.random() * 0.5, alpha: 1.0, type: 'heart', text: '❤️', size: 14 }`
++        - Or crumb particle: `{ x: dog.x + (Math.random() - 0.5) * 20, y: dog.y + 15, vx: (Math.random() - 0.5) * 1.5, vy: -0.5 - Math.random() * 0.5, alpha: 1.0, type: 'crumb', color: '#b45309', radius: 2.5 }`
++    - Update & render particles on `ctx`:
++      - Move: `p.x += (p.vx || 0); p.y += p.vy; p.alpha -= 0.015;`
++      - Draw: if `p.type === 'heart'`, `ctx.globalAlpha = p.alpha; ctx.fillText(p.text, p.x, p.y);`
++      - If `p.type === 'crumb'`, `ctx.globalAlpha = p.alpha; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2); ctx.fill();`
++      - Filter out particles where `p.alpha <= 0`.
++      - Reset `ctx.globalAlpha = 1.0;`.
++
++## Verification
++`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py`
++Must pass with 0 errors.
++
++
+
+# 2026-11-15 16:03:46.793210
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-09-feeding-resumption-and-particles"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/home_feeding.js"
++  - "virtual_dog_walker/src/ui/home_sanctuary.js"
++test_cmd: "cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py"
++---
++
++# Implementer Brief 09: Feeding Resumption & Sanctuary Eating Particles
++
++## Context
++In `virtual_dog_walker`, fix the post-feed autonomous resumption bug and add eating particles to the sanctuary canvas.
++
++## Required Edits
++
++### 1. `virtual_dog_walker/src/ui/home_feeding.js`
++- Define `var RESUME_DELAY_MS = 800;`
++- In the feeding machine completion phase (after `EATING_MS`):
++  - Clear the bowl element: `clearBowl();`
++  - Emit toast: `var toast = dogName + ' loved the meal! ❤️'; emitToast(toast);`
++  - Persist feed: `persistFeed(dogName);`
++  - Schedule a timeout after `RESUME_DELAY_MS` (800ms):
++    ```javascript
++    schedule(function () {
++      setState('idle');
++      feeding = false;
++      setDogPose('auto');
++      setDogState('wander');
++      if (window.HomeSanctuary && typeof window.HomeSanctuary.resumeRoaming === 'function') {
++        try { window.HomeSanctuary.resumeRoaming(); } catch (e) {}
++      }
++    }, RESUME_DELAY_MS);
++    ```
++
++### 2. `virtual_dog_walker/src/ui/home_sanctuary.js`
++- In `setDogPose(pose)`:
++  - If `pose === 'auto'` or `pose === 'camera'`, update `currentPose = pose;`.
++  - When `currentPose === 'auto'`, ensure `updateDog()` is not blocked and allows movement/turning.
++- In `setDogState(dogState)`:
++  - If `dogState === 'wander'` or `dogState === null`:
++    - Set `forcedState = null;`
++    - Set companion dog state to `'wander'`.
++  - Otherwise if `STATES.includes(dogState)` or `dogState === 'eating'`:
++    - Set `forcedState = dogState;`
++- Add `resumeRoaming()` method exposed on `window.HomeSanctuary`:
++  ```javascript
++  resumeRoaming: function () {
++    currentPose = 'auto';
++    forcedState = null;
++    if (dog) {
++      dog.state = 'wander';
++      dog.timer = 0;
++    }
++  }
++  ```
++- Eating Particles on `#home-field-canvas`:
++  - Maintain an array of active particles `particles = []`.
++  - In `render()`:
++    - If `forcedState === 'eating'` or `(dog && dog.state === 'eating')`:
++      - Every ~10 frames, spawn a new particle near dog position:
++        - Heart particle: `{ x: dog.x + (Math.random() - 0.5) * 30, y: dog.y - 10, vy: -0.8 - Math.random() * 0.5, alpha: 1.0, type: 'heart', text: '❤️', size: 14 }`
++        - Or crumb particle: `{ x: dog.x + (Math.random() - 0.5) * 20, y: dog.y + 15, vx: (Math.random() - 0.5) * 1.5, vy: -0.5 - Math.random() * 0.5, alpha: 1.0, type: 'crumb', color: '#b45309', radius: 2.5 }`
++    - Update & render particles on `ctx`:
++      - Move: `p.x += (p.vx || 0); p.y += p.vy; p.alpha -= 0.015;`
++      - Draw: if `p.type === 'heart'`, `ctx.globalAlpha = p.alpha; ctx.fillText(p.text, p.x, p.y);`
++      - If `p.type === 'crumb'`, `ctx.globalAlpha = p.alpha; ctx.fillStyle = p.color; ctx.beginPath(); ctx.arc(p.x, p.y, p.radius, 0, Math.PI * 2); ctx.fill();`
++      - Filter out particles where `p.alpha <= 0`.
++      - Reset `ctx.globalAlpha = 1.0;`.
++
++## Verification
++`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py`
++Must pass with 0 errors.
++
++

@@ -188,6 +188,9 @@ jobs:
 .factory/
 .agents/
 
+# Aider
+.aider*
+
 # Operating System files
 .DS_Store
 Thumbs.db
@@ -18524,12 +18527,16 @@ body {
 }
 
 @keyframes pulseContextualBtn {
-  0%, 100% {
+  0% {
     transform: scale(1);
   }
 
   50% {
     transform: scale(1.08);
+  }
+
+  100% {
+    transform: scale(1);
   }
 }
 
@@ -18582,6 +18589,130 @@ body {
 
 .customizer-close:hover {
   opacity: 1;
+}
+
+/* Header Action Buttons (Settings / Back) */
+.customizer-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.customizer-settings {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #f8fafc;
+  font-size: 1.1rem;
+  width: 32px;
+  height: 32px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.customizer-settings:hover {
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.25);
+  transform: translateY(-1px);
+}
+
+.customizer-back {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  color: #cbd5e1;
+  font-size: 0.82rem;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.customizer-back:hover {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
+}
+
+/* Home Sanctuary View & Field Canvas */
+#home-view-sanctuary {
+  overflow: hidden;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.home-field-preview {
+  width: 100%;
+  height: 220px;
+  border-radius: 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: #3e6b2c;
+  position: relative;
+  box-shadow: inset 0 2px 8px rgba(0, 0, 0, 0.4);
+}
+
+#home-field-canvas {
+  width: 100%;
+  height: 100%;
+  display: block;
+}
+
+/* Care Action Bar & Feed Button */
+#home-action-bar,
+.home-action-bar {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0 2px 0;
+  width: 100%;
+}
+
+.btn-action-feed,
+#btn-action-feed {
+  background: rgba(16, 185, 129, 0.16);
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  color: #ecfdf5;
+  font-weight: 600;
+  font-size: 0.92rem;
+  padding: 8px 20px;
+  border-radius: 10px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  transition: all 0.2s ease;
+  box-shadow: 0 4px 12px rgba(16, 185, 129, 0.15);
+  font-family: inherit;
+}
+
+.btn-action-feed:hover,
+#btn-action-feed:hover {
+  background: rgba(16, 185, 129, 0.26);
+  border-color: rgba(16, 185, 129, 0.65);
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px rgba(16, 185, 129, 0.25);
+}
+
+.btn-action-feed:active,
+#btn-action-feed:active {
+  transform: translateY(0);
+}
+
+.btn-action-feed:disabled,
+#btn-action-feed:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  transform: none;
+  box-shadow: none;
 }
 
 /* Glassmorphic Tab Bar */
@@ -18995,12 +19126,16 @@ body {
 }
 
 @keyframes pulseBadge {
-  0%, 100% {
+  0% {
     transform: scale(1);
   }
 
   50% {
     transform: scale(1.12);
+  }
+
+  100% {
+    transform: scale(1);
   }
 }
 
@@ -21052,10 +21187,13 @@ export default weatherClient;
  * feeding state machine (facing -> bowl -> eating -> complete) and persists
  * the last feed timestamp to localStorage.
  *
- * Exposes window.HomeFeeding.
+ * Exposes HomeFeeding on the module root (window in browsers).
  */
 (function () {
   'use strict';
+
+  // SSR / non-browser safe module root.
+  var root = typeof window !== 'undefined' ? window : (typeof globalThis !== 'undefined' ? globalThis : {});
 
   var STORAGE_KEY = 'virtual_dog_walker.last_feed_at';
 
@@ -21072,7 +21210,6 @@ export default weatherClient;
   var timers = [];
   var actionBarEl = null;
   var feedBtnEl = null;
-  var bowlEl = null;
   var lastFeedAt = null;
   var pendingResolve = null;
 
@@ -21104,17 +21241,17 @@ export default weatherClient;
   }
 
   function getDogSlot() {
-    if (window.HomeSanctuary && typeof window.HomeSanctuary.getDogSlot === 'function') {
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.getDogSlot === 'function') {
       try {
-        return window.HomeSanctuary.getDogSlot();
+        return root.HomeSanctuary.getDogSlot();
       } catch (e) {
         return null;
       }
     }
 
     // Fallback: an explicitly published active slot.
-    if (window.__vdwActiveDogSlot !== undefined) {
-      return window.__vdwActiveDogSlot;
+    if (root.__vdwActiveDogSlot !== undefined) {
+      return root.__vdwActiveDogSlot;
     }
 
     // Last resort: read the persisted walker profile. Never assume a dog
@@ -21138,9 +21275,9 @@ export default weatherClient;
   }
 
   function setDogPose(pose) {
-    if (window.HomeSanctuary && typeof window.HomeSanctuary.setDogPose === 'function') {
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.setDogPose === 'function') {
       try {
-        window.HomeSanctuary.setDogPose(pose);
+        root.HomeSanctuary.setDogPose(pose);
       } catch (e) {
         /* ignore */
       }
@@ -21148,9 +21285,9 @@ export default weatherClient;
   }
 
   function setDogState(dogState) {
-    if (window.HomeSanctuary && typeof window.HomeSanctuary.setDogState === 'function') {
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.setDogState === 'function') {
       try {
-        window.HomeSanctuary.setDogState(dogState);
+        root.HomeSanctuary.setDogState(dogState);
       } catch (e) {
         /* ignore */
       }
@@ -21158,17 +21295,17 @@ export default weatherClient;
   }
 
   function emitToast(message) {
-    if (window.HomeSanctuary && typeof window.HomeSanctuary.toast === 'function') {
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.toast === 'function') {
       try {
-        window.HomeSanctuary.toast(message);
+        root.HomeSanctuary.toast(message);
         return;
       } catch (e) {
         /* fall through */
       }
     }
-    if (typeof window.showToast === 'function') {
+    if (typeof root.showToast === 'function') {
       try {
-        window.showToast(message);
+        root.showToast(message);
         return;
       } catch (e) {
         /* fall through */
@@ -21250,27 +21387,17 @@ export default weatherClient;
     feedBtnEl.setAttribute('aria-disabled', disabled ? 'true' : 'false');
   }
 
+  // The food bowl is rendered natively on the canvas by
+  // HomeSanctuary.drawFoodBowl(); no DOM element is ever injected.
   function showBowl() {
-    if (bowlEl && document.body.contains(bowlEl)) return bowlEl;
-    bowlEl = document.createElement('div');
-    bowlEl.id = 'home-food-bowl';
-    bowlEl.className = 'home-food-bowl';
-    bowlEl.textContent = '🥣';
-    bowlEl.setAttribute('aria-hidden', 'true');
-    var canvas = getCanvas();
-    if (canvas && canvas.parentNode) {
-      canvas.parentNode.appendChild(bowlEl);
-    } else {
-      document.body.appendChild(bowlEl);
-    }
-    return bowlEl;
+    // No-op: bowl rendering is owned by HomeSanctuary.
   }
 
   function clearBowl() {
-    if (bowlEl && bowlEl.parentNode) {
-      bowlEl.parentNode.removeChild(bowlEl);
+    // Notify the sanctuary so any state-driven bowl rendering is cleared too.
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.clearBowl === 'function') {
+      try { root.HomeSanctuary.clearBowl(); } catch (e) { /* ignore */ }
     }
-    bowlEl = null;
   }
 
   // ---------------------------------------------------------------------------
@@ -21331,8 +21458,8 @@ export default weatherClient;
               feeding = false;
               setDogPose('auto');
               setDogState('wander');
-              if (window.HomeSanctuary && typeof window.HomeSanctuary.resumeRoaming === 'function') {
-                try { window.HomeSanctuary.resumeRoaming(); } catch (e) {}
+              if (root.HomeSanctuary && typeof root.HomeSanctuary.resumeRoaming === 'function') {
+                try { root.HomeSanctuary.resumeRoaming(); } catch (e) {}
               }
               updateDisabledState();
               pendingResolve = null;
@@ -21347,12 +21474,12 @@ export default weatherClient;
   function onFeedClick() {
     if (feeding) return;
     var dogSlot = null;
-    if (window.HomeSanctuary && typeof window.HomeSanctuary.getDogSlot === 'function') {
-      try { dogSlot = window.HomeSanctuary.getDogSlot(); } catch (e) {}
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.getDogSlot === 'function') {
+      try { dogSlot = root.HomeSanctuary.getDogSlot(); } catch (e) {}
     }
     var dog = null;
-    if (window.HomeSanctuary && typeof window.HomeSanctuary.getCompanionDog === 'function') {
-      try { dog = window.HomeSanctuary.getCompanionDog(); } catch (e) {}
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.getCompanionDog === 'function') {
+      try { dog = root.HomeSanctuary.getCompanionDog(); } catch (e) {}
     }
     var name = (dogSlot && dogSlot.name) || (dog && dog.name) || 'Ziggy';
     var id = (dogSlot && (dogSlot.id || dogSlot.dogId)) || (dog && dog.id) || 'dog-1';
@@ -21463,7 +21590,7 @@ export default weatherClient;
     }
   };
 
-  window.HomeFeeding = {
+  root.HomeFeeding = {
     mount: mount,
     unmount: unmount,
     feed: feed,
@@ -21491,7 +21618,7 @@ export default weatherClient;
   var CANVAS_ID = 'home-field-canvas';
   var SANCTUARY_ID = 'home-view-sanctuary';
 
-  var STATES = ['wander', 'sniff', 'sit', 'wag', 'eating'];
+  var STATES = ['wander', 'sniff', 'sit', 'wag', 'eating', 'bowl'];
   var AUTONOMOUS_STATES = ['wander', 'sniff', 'sit', 'wag'];
 
   var FIELD_PADDING = 28; // soft padding from canvas edges (px)
@@ -21509,6 +21636,14 @@ export default weatherClient;
   var DEFAULT_COAT_DARK = '#a86f38';
   var DEFAULT_COLLAR = '#d94f4f';
 
+  // "The Downs" turf palette (mirrors src/world/field.js).
+  var GRASS_BASE = '#3e6b2c';
+  var GRASS_DARK = '#335824';
+  var GRASS_LIGHT = '#4c8237';
+  var GRASS_MOWN = '#447831';
+  var BLADE_COLOR = '#5da347';
+  var MOWN_STRIPE = 'rgba(76, 130, 55, 0.14)';
+
   // ---------------------------------------------------------------------------
   // Module state
   // ---------------------------------------------------------------------------
@@ -21524,6 +21659,7 @@ export default weatherClient;
 
   var dog = null;
   var activeDogSlot = null;
+  var liveDogEntity = null; // optional real CompanionDog instance
   var pose = 'auto'; // 'auto' | 'camera'
   var stateTimer = 0;
   var forcedState = null; // when set via setDogState, holds until cleared
@@ -21829,7 +21965,7 @@ export default weatherClient;
         y: seededRandom() * fieldHeight,
         h: 3 + seededRandom() * 5,
         lean: (seededRandom() - 0.5) * 3,
-        tone: seededRandom() > 0.5 ? '#7fbf5a' : '#6aa84f'
+        tone: seededRandom() > 0.5 ? BLADE_COLOR : GRASS_LIGHT
       });
     }
   }
@@ -21837,28 +21973,54 @@ export default weatherClient;
   function drawField() {
     if (!ctx) return;
 
-    // Base lawn gradient (hue 100–140).
-    var grad = ctx.createLinearGradient(0, 0, 0, fieldHeight);
-    grad.addColorStop(0, '#a8d98a'); // light green
-    grad.addColorStop(1, '#7cb85c'); // deeper green
-    ctx.fillStyle = grad;
+    // Base turf fill.
+    ctx.fillStyle = GRASS_BASE;
     ctx.fillRect(0, 0, fieldWidth, fieldHeight);
 
-    // Subtle dither / noise patches for texture.
+    // Diagonal mown meadow stripes (alternating GRASS_MOWN bands).
     ctx.save();
-    ctx.globalAlpha = 0.08;
-    for (var i = 0; i < 120; i++) {
+    var stripeWidth = 46;
+    var span = fieldWidth + fieldHeight;
+    for (var s = -fieldHeight; s < span; s += stripeWidth * 2) {
+      // Solid mown-turf band.
+      ctx.fillStyle = GRASS_MOWN;
+      ctx.globalAlpha = 0.35;
+      ctx.beginPath();
+      ctx.moveTo(s, 0);
+      ctx.lineTo(s + stripeWidth, 0);
+      ctx.lineTo(s + stripeWidth - fieldHeight, fieldHeight);
+      ctx.lineTo(s - fieldHeight, fieldHeight);
+      ctx.closePath();
+      ctx.fill();
+
+      // Soft overlay stripe for depth.
+      ctx.fillStyle = MOWN_STRIPE;
+      ctx.globalAlpha = 1;
+      ctx.beginPath();
+      ctx.moveTo(s + stripeWidth, 0);
+      ctx.lineTo(s + stripeWidth * 2, 0);
+      ctx.lineTo(s + stripeWidth * 2 - fieldHeight, fieldHeight);
+      ctx.lineTo(s + stripeWidth - fieldHeight, fieldHeight);
+      ctx.closePath();
+      ctx.fill();
+    }
+    ctx.restore();
+
+    // Procedural grass variation patches (light + dark).
+    ctx.save();
+    ctx.globalAlpha = 0.16;
+    for (var i = 0; i < 90; i++) {
       var px = seededRandom() * fieldWidth;
       var py = seededRandom() * fieldHeight;
-      var r = 6 + seededRandom() * 18;
-      ctx.fillStyle = seededRandom() > 0.5 ? '#5f9e45' : '#c3e6a8';
+      var r = 8 + seededRandom() * 22;
+      ctx.fillStyle = seededRandom() > 0.5 ? GRASS_LIGHT : GRASS_DARK;
       ctx.beginPath();
       ctx.arc(px, py, r, 0, Math.PI * 2);
       ctx.fill();
     }
     ctx.restore();
 
-    // Grass blades.
+    // Subtle blade flecks.
     ctx.lineWidth = 1.2;
     ctx.lineCap = 'round';
     for (var b = 0; b < grassBlades.length; b++) {
@@ -21869,87 +22031,280 @@ export default weatherClient;
       ctx.lineTo(blade.x + blade.lean, blade.y - blade.h);
       ctx.stroke();
     }
+
+    // Soft inner vignette darkening the perimeter.
+    var vignette = ctx.createRadialGradient(
+      fieldWidth / 2, fieldHeight / 2, Math.min(fieldWidth, fieldHeight) * 0.35,
+      fieldWidth / 2, fieldHeight / 2, Math.max(fieldWidth, fieldHeight) * 0.75
+    );
+    vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
+    vignette.addColorStop(1, 'rgba(0, 0, 0, 0.28)');
+    ctx.fillStyle = vignette;
+    ctx.fillRect(0, 0, fieldWidth, fieldHeight);
+  }
+
+  // Resolve a CompanionDog constructor from the global/module scope, if present.
+  function getCompanionDogClass() {
+    if (global.CompanionDog && typeof global.CompanionDog === 'function') {
+      return global.CompanionDog;
+    }
+    if (typeof CompanionDog !== 'undefined' && typeof CompanionDog === 'function') {
+      return CompanionDog;
+    }
+    return null;
+  }
+
+  // Build a lightweight entity shaped like a CompanionDog for articulated drawing.
+  // `coat` is populated as an object (bodyColor/tanColor/bibColor) so that
+  // CompanionDog.prototype.draw can consume it without throwing.
+  function buildDogEntity() {
+    var coatObj = {
+      bodyColor: dog.coatColor || dog.coat || DEFAULT_COAT,
+      tanColor: dog.coatSecondary || dog.coatDark || DEFAULT_COAT_DARK,
+      bibColor: dog.coatSecondary || '#f5f0e6',
+      darkColor: dog.coatColorDark || dog.coatDark || DEFAULT_COAT_DARK
+    };
+    var entity = {
+      x: dog.x,
+      y: dog.y,
+      angle: pose === 'camera' ? Math.PI / 2 : dog.facing,
+      tailAngle: 0,
+      legPhase: dog.bob,
+      gaitMode: dog.state === 'wander' ? 'walk' : 'idle',
+      gaitPhase: dog.bob,
+      isSitting: dog.state === 'sit',
+      isSniffing: dog.state === 'sniff',
+      coat: coatObj,
+      coatColor: dog.coatColor,
+      coatColorDark: dog.coatColorDark,
+      coatDark: dog.coatDark,
+      collarColor: dog.collar,
+      name: dog.name,
+      state: dog.state
+    };
+    return entity;
+  }
+
+  // Build a render-only adapter that copies visual properties from a live
+  // CompanionDog entity WITHOUT mutating it. The live entity is treated as
+  // strictly read-only.
+  function buildRenderAdapter(live) {
+    var coatObj = live.coat && typeof live.coat === 'object'
+      ? Object.assign({}, live.coat)
+      : {
+          bodyColor: live.coatColor || live.coat || DEFAULT_COAT,
+          tanColor: live.coatColorDark || live.coatDark || DEFAULT_COAT_DARK,
+          bibColor: '#f5f0e6',
+          darkColor: live.coatColorDark || live.coatDark || DEFAULT_COAT_DARK
+        };
+    // Prototype-chain the live entity so its prototype methods remain
+    // available, then shadow only the render-time fields. The live entity
+    // itself is never written to.
+    var adapter = Object.create(live);
+    adapter.x = dog.x;
+    adapter.y = dog.y;
+    adapter.angle = pose === 'camera' ? Math.PI / 2 : dog.facing;
+    adapter.tailAngle = Math.sin((dog.bob || 0) * 1.6) * 0.5;
+    adapter.legPhase = dog.bob;
+    adapter.gaitMode = dog.state === 'wander' ? 'walk' : 'idle';
+    adapter.gaitPhase = dog.bob;
+    adapter.isSitting = dog.state === 'sit';
+    adapter.isSniffing = dog.state === 'sniff';
+    adapter.coat = coatObj;
+    adapter.coatColor = live.coatColor || dog.coatColor;
+    adapter.coatColorDark = live.coatColorDark || dog.coatColorDark;
+    adapter.coatDark = live.coatDark || dog.coatDark;
+    adapter.collarColor = live.collarColor || dog.collar;
+    adapter.name = live.name || dog.name;
+    adapter.state = dog.state;
+    return adapter;
+  }
+
+  // Draw the articulated top-down canine body (CompanionDog-style).
+  function drawArticulatedDog(entity) {
+    var coatObj = entity.coat && typeof entity.coat === 'object' ? entity.coat : null;
+    var coat = entity.coatColor || (coatObj && coatObj.bodyColor) ||
+      (typeof entity.coat === 'string' ? entity.coat : null) || DEFAULT_COAT;
+    var coatDark = entity.coatColorDark || entity.coatDark ||
+      (coatObj && (coatObj.darkColor || coatObj.tanColor)) || DEFAULT_COAT_DARK;
+    var collar = entity.collarColor || entity.collar || DEFAULT_COLLAR;
+    var angle = entity.angle;
+    var R = DOG_RADIUS;
+
+    ctx.save();
+    ctx.translate(entity.x, entity.y);
+
+    // Shadow.
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+    ctx.beginPath();
+    ctx.ellipse(0, R * 0.85, R * 1.05, R * 0.45, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Local geometry has the head along +Y and the tail along -Y.
+    // Canvas angles are standard math orientation (0 = +X, PI/2 = +Y),
+    // so subtract PI/2 to align the head with the entity's heading.
+    ctx.rotate(angle - Math.PI / 2);
+
+    // Legs (articulated paws with leg cycling while walking).
+    var legSwing = Math.sin(entity.legPhase || 0) * (entity.isSitting ? 0 : 3);
+    ctx.fillStyle = coatDark;
+    var legPositions = entity.isSitting
+      ? [[-R * 0.5, R * 0.55], [R * 0.5, R * 0.55]]
+      : [[-R * 0.55, R * 0.5 + legSwing], [R * 0.55, R * 0.5 - legSwing],
+         [-R * 0.55, -R * 0.5 - legSwing], [R * 0.55, -R * 0.5 + legSwing]];
+    for (var l = 0; l < legPositions.length; l++) {
+      ctx.beginPath();
+      ctx.ellipse(legPositions[l][0], legPositions[l][1], R * 0.22, R * 0.32, 0, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Torso.
+    ctx.fillStyle = coat;
+    ctx.beginPath();
+    ctx.ellipse(0, 0, R * 0.7, R * 1.05, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Darker back patch.
+    ctx.fillStyle = coatDark;
+    ctx.beginPath();
+    ctx.ellipse(0, -R * 0.15, R * 0.5, R * 0.7, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Collar.
+    ctx.strokeStyle = collar;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(0, R * 0.55, R * 0.5, 0.1 * Math.PI, 0.9 * Math.PI);
+    ctx.stroke();
+
+    // Tail — wags during wander/wag.
+    var tailWag = Math.sin((entity.legPhase || 0) * 1.6) * 0.6;
+    ctx.strokeStyle = coatDark;
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(0, -R * 0.9);
+    ctx.lineTo(Math.sin(tailWag) * R * 0.6, -R * 1.5);
+    ctx.stroke();
+
+    // Head — drops toward ground when sniffing.
+    var headY = entity.isSniffing ? R * 0.95 : R * 0.85;
+    var headR = R * 0.55;
+
+    // Floppy ears.
+    ctx.fillStyle = coatDark;
+    ctx.beginPath();
+    ctx.ellipse(-headR * 0.85, headY, headR * 0.35, headR * 0.6, 0.3, 0, Math.PI * 2);
+    ctx.ellipse(headR * 0.85, headY, headR * 0.35, headR * 0.6, -0.3, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Head.
+    ctx.fillStyle = coat;
+    ctx.beginPath();
+    ctx.arc(0, headY, headR, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Snout.
+    ctx.fillStyle = coatDark;
+    ctx.beginPath();
+    ctx.ellipse(0, headY + headR * 0.55, headR * 0.4, headR * 0.3, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Eyes.
+    ctx.fillStyle = '#1f1f1f';
+    ctx.beginPath();
+    ctx.arc(-headR * 0.35, headY - headR * 0.1, 1.8, 0, Math.PI * 2);
+    ctx.arc(headR * 0.35, headY - headR * 0.1, 1.8, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Nose.
+    ctx.fillStyle = '#111';
+    ctx.beginPath();
+    ctx.arc(0, headY + headR * 0.7, 2, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+
+    // Name tag (drawn unrotated above the dog).
+    if (entity.name) {
+      ctx.save();
+      ctx.font = '10px sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+      ctx.fillText(entity.name, entity.x, entity.y - R * 1.7);
+      ctx.restore();
+    }
+  }
+
+  function drawFoodBowl() {
+    if (!ctx || !dog) return;
+    var bx = dog.x;
+    var by = dog.y + 18;
+
+    // Bowl body.
+    ctx.save();
+    ctx.fillStyle = '#e8e2d6';
+    ctx.beginPath();
+    ctx.ellipse(bx, by, 16, 8, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Rim.
+    ctx.strokeStyle = '#b8b0a0';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.ellipse(bx, by, 16, 8, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // Interior depth shadow.
+    ctx.fillStyle = '#c9c1b0';
+    ctx.beginPath();
+    ctx.ellipse(bx, by, 12, 5.5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Kibbles.
+    ctx.fillStyle = '#8a5a2b';
+    var kibbles = [[-5, -1], [0, 1], [5, -1], [-2, 2], [3, 2]];
+    for (var k = 0; k < kibbles.length; k++) {
+      ctx.beginPath();
+      ctx.arc(bx + kibbles[k][0], by + kibbles[k][1], 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.restore();
   }
 
   function drawDog() {
     if (!ctx || !dog) return;
 
-    var bob = Math.sin(dog.bob) * 1.5;
-    var cx = dog.x;
-    var cy = dog.y + bob;
+    // Prefer a real CompanionDog entity when available, but never mutate it:
+    // build a render-only adapter that copies visual properties.
+    var entity = liveDogEntity ? buildRenderAdapter(liveDogEntity) : buildDogEntity();
 
-    ctx.save();
-    ctx.translate(cx, cy);
+    var CompanionDogClass = getCompanionDogClass();
+    var drawFn = (typeof entity.draw === 'function' ? entity.draw : null) ||
+                 (CompanionDogClass && typeof CompanionDogClass.prototype.draw === 'function'
+                   ? CompanionDogClass.prototype.draw
+                   : null);
+    if (drawFn) {
+      try {
+        drawFn.call(entity, ctx);
+      } catch (e) {
+        drawArticulatedDog(entity);
+      }
+    } else {
+      drawArticulatedDog(entity);
+    }
 
-    // Shadow.
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
-    ctx.beginPath();
-    ctx.ellipse(0, DOG_RADIUS * 0.9, DOG_RADIUS * 0.9, DOG_RADIUS * 0.4, 0, 0, Math.PI * 2);
-    ctx.fill();
+    // Food bowl during bowl/eating phases.
+    if (isBowlVisible()) {
+      drawFoodBowl();
+    }
+  }
 
-    // Body.
-    ctx.fillStyle = dog.coat;
-    ctx.beginPath();
-    ctx.ellipse(0, 0, DOG_RADIUS, DOG_RADIUS * 0.8, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Darker back patch.
-    ctx.fillStyle = dog.coatDark;
-    ctx.beginPath();
-    ctx.ellipse(0, -DOG_RADIUS * 0.25, DOG_RADIUS * 0.7, DOG_RADIUS * 0.4, 0, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Collar.
-    ctx.strokeStyle = dog.collar;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.arc(0, DOG_RADIUS * 0.15, DOG_RADIUS * 0.55, 0.15 * Math.PI, 0.85 * Math.PI);
-    ctx.stroke();
-
-    // Head — position depends on facing.
-    var headAngle = pose === 'camera' ? Math.PI / 2 : dog.facing;
-    var hx = Math.cos(headAngle) * DOG_RADIUS * 0.85;
-    var hy = Math.sin(headAngle) * DOG_RADIUS * 0.85;
-
-    ctx.fillStyle = dog.coat;
-    ctx.beginPath();
-    ctx.arc(hx, hy, DOG_RADIUS * 0.55, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Ears.
-    ctx.fillStyle = dog.coatDark;
-    ctx.beginPath();
-    ctx.arc(hx - DOG_RADIUS * 0.3, hy - DOG_RADIUS * 0.35, DOG_RADIUS * 0.22, 0, Math.PI * 2);
-    ctx.arc(hx + DOG_RADIUS * 0.3, hy - DOG_RADIUS * 0.35, DOG_RADIUS * 0.22, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Eyes.
-    ctx.fillStyle = '#2b2b2b';
-    ctx.beginPath();
-    ctx.arc(hx - DOG_RADIUS * 0.18, hy - DOG_RADIUS * 0.05, 1.6, 0, Math.PI * 2);
-    ctx.arc(hx + DOG_RADIUS * 0.18, hy - DOG_RADIUS * 0.05, 1.6, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Nose.
-    ctx.fillStyle = '#1f1f1f';
-    ctx.beginPath();
-    ctx.arc(hx, hy + DOG_RADIUS * 0.22, 2, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Tail — wags faster in 'wag' state.
-    var wagSpeed = dog.state === 'wag' ? 0.02 : 0.006;
-    var tailAngle = Math.sin(dog.bob * (wagSpeed / 0.006)) * 0.5;
-    ctx.strokeStyle = dog.coatDark;
-    ctx.lineWidth = 3;
-    ctx.beginPath();
-    ctx.moveTo(-Math.cos(headAngle) * DOG_RADIUS * 0.8, -Math.sin(headAngle) * DOG_RADIUS * 0.8);
-    ctx.lineTo(
-      -Math.cos(headAngle) * DOG_RADIUS * 1.4 + Math.sin(tailAngle) * 6,
-      -Math.sin(headAngle) * DOG_RADIUS * 1.4 - Math.cos(tailAngle) * 6
-    );
-    ctx.stroke();
-
-    ctx.restore();
+  // Bowl is visible during both the 'bowl' and 'eating' phases.
+  function isBowlVisible() {
+    if (forcedState === 'eating' || forcedState === 'bowl') return true;
+    if (dog && (dog.state === 'eating' || dog.state === 'bowl')) return true;
+    return false;
   }
 
   function spawnParticles() {
@@ -22014,7 +22369,7 @@ export default weatherClient;
     drawField();
     drawDog();
 
-    if (forcedState === 'eating' || (dog && dog.state === 'eating')) {
+    if (isBowlVisible()) {
       spawnParticles();
     }
     updateAndDrawParticles();
@@ -22070,6 +22425,10 @@ export default weatherClient;
     canvas.width = Math.round(fieldWidth * dpr);
     canvas.height = Math.round(fieldHeight * dpr);
 
+    // Pin the CSS layout box so DPR scaling never expands the DOM element.
+    canvas.style.width = fieldWidth + 'px';
+    canvas.style.height = fieldHeight + 'px';
+
     if (ctx) {
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
@@ -22089,7 +22448,7 @@ export default weatherClient;
   // Public API
   // ---------------------------------------------------------------------------
 
-  function mount(canvasEl, explicitDogSlot) {
+  function mount(canvasEl, explicitDogSlot, liveDog) {
     if (mounted) return;
 
     var el = canvasEl || (global.document && global.document.getElementById(CANVAS_ID));
@@ -22112,6 +22471,9 @@ export default weatherClient;
       slot = readProfile();
     }
     activeDogSlot = slot || null;
+
+    // Accept an explicit live CompanionDog entity, else a globally published one.
+    liveDogEntity = liveDog || global.__vdwLiveDog || null;
 
     var appearance = resolveAppearance(activeDogSlot);
     dog = createDog(appearance);
@@ -22154,6 +22516,7 @@ export default weatherClient;
     ctx = null;
     dog = null;
     activeDogSlot = null;
+    liveDogEntity = null;
     forcedState = null;
     grassBlades = [];
     particles = [];
@@ -22226,6 +22589,14 @@ export default weatherClient;
     return { width: fieldWidth, height: fieldHeight };
   }
 
+  // Clear any state-driven bowl rendering (called by HomeFeeding on completion).
+  function clearBowl() {
+    if (dog && (dog.state === 'eating' || dog.state === 'bowl')) {
+      dog.state = 'wander';
+    }
+    forcedState = null;
+  }
+
   var HomeSanctuary = {
     mount: mount,
     unmount: unmount,
@@ -22235,12 +22606,14 @@ export default weatherClient;
     setDogState: setDogState,
     resumeRoaming: resumeRoaming,
     getFieldSize: getFieldSize,
+    clearBowl: clearBowl,
     __testHooks: {
       getParticles: function () { return particles; },
       spawnParticles: spawnParticles,
       getForcedState: function () { return forcedState; },
       getPose: function () { return pose; },
       updateDog: function (dt) { updateDog(dt); },
+      render: function () { render(); },
       setWanderTarget: function (x, y) {
         if (!dog) return;
         dog.targetX = x;
@@ -23668,7 +24041,7 @@ export class SocialHUD {
       <!-- Sanctuary View -->
       <div id="home-view-sanctuary" class="home-view">
         <div class="home-field-preview">
-          <canvas id="home-field-canvas" width="340" height="180"></canvas>
+          <canvas id="home-field-canvas" width="340" height="220"></canvas>
         </div>
         <div id="home-action-bar" class="home-action-bar"></div>
       </div>
@@ -23831,8 +24204,9 @@ export class SocialHUD {
     if (target === 'sanctuary') {
       if (typeof window !== 'undefined') {
         window.__vdwActiveDogSlot = this.dogSlot;
+        window.__vdwLiveDog = this.dog;
         const canvas = document.getElementById('home-field-canvas');
-        window.HomeSanctuary?.mount?.(canvas, this.dogSlot);
+        window.HomeSanctuary?.mount?.(canvas, this.dogSlot, this.dog);
         window.HomeFeeding?.mount?.();
       }
       this.stopStageAnimation();
@@ -37413,6 +37787,40 @@ class TestHomeHUDAndStage(unittest.TestCase):
         self.assertIn('👤 You', self.hud_js, "Missing '👤 You' tab button label")
         self.assertIn('🐕 Dogs', self.hud_js, "Missing '🐕 Dogs' tab button label")
 
+    def test_glassmorphic_css_rules_present(self):
+        css = self.style_css
+
+        # .home-field-preview must be a fixed-height turf panel.
+        preview_idx = css.find('.home-field-preview')
+        self.assertNotEqual(preview_idx, -1, "Missing .home-field-preview CSS rule")
+        preview_block = css[preview_idx:preview_idx + 400]
+        self.assertIn('height: 220px;', preview_block,
+                      ".home-field-preview must set height: 220px;")
+        self.assertIn('background: #3e6b2c;', preview_block,
+                      ".home-field-preview must use the 'The Downs' turf background #3e6b2c")
+
+        # .customizer-settings must be glassmorphic (rgba background).
+        settings_idx = css.find('.customizer-settings')
+        self.assertNotEqual(settings_idx, -1, "Missing .customizer-settings CSS rule")
+        settings_block = css[settings_idx:settings_idx + 400]
+        self.assertIn('rgba(', settings_block,
+                      ".customizer-settings must use a glassmorphic rgba background")
+
+        # .btn-action-feed must be emerald glassmorphic.
+        feed_idx = css.find('.btn-action-feed')
+        self.assertNotEqual(feed_idx, -1, "Missing .btn-action-feed CSS rule")
+        feed_block = css[feed_idx:feed_idx + 600]
+        self.assertIn('rgba(16, 185, 129', feed_block,
+                      ".btn-action-feed must use an emerald rgba(16, 185, 129 ...) background/border")
+
+    def test_modal_header_actions_layout(self):
+        css = self.style_css
+        idx = css.find('.customizer-header-actions')
+        self.assertNotEqual(idx, -1, "Missing .customizer-header-actions CSS rule")
+        block = css[idx:idx + 300]
+        self.assertIn('display: flex;', block,
+                      ".customizer-header-actions must be styled with display: flex;")
+
 
 class TestDogSlotKennelAndLocking(unittest.TestCase):
     """REQ-028.3: Single-slot immutable kennel and first-time / empty-slot lock."""
@@ -38164,11 +38572,14 @@ function __makeEl(tag) {{
       return {{
         clearRect() {{}}, fillRect() {{}}, beginPath() {{}}, ellipse() {{}},
         fill() {{}}, stroke() {{}}, save() {{}}, restore() {{}},
-        setTransform() {{}}, translate() {{}}, arc() {{}}, moveTo() {{}}, lineTo() {{}},
-        fillText() {{}},
+        setTransform() {{}}, translate() {{}}, rotate() {{}}, scale() {{}},
+        arc() {{}}, moveTo() {{}}, lineTo() {{}}, closePath() {{}}, rect() {{}},
+        fillText() {{}}, strokeText() {{}}, measureText() {{ return {{ width: 0 }}; }},
         createLinearGradient() {{ return {{ addColorStop() {{}} }}; }},
         createRadialGradient() {{ return {{ addColorStop() {{}} }}; }},
-        set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}}
+        set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}},
+        set lineCap(v) {{}}, set lineJoin(v) {{}}, set globalAlpha(v) {{}},
+        set font(v) {{}}, set textAlign(v) {{}}, set textBaseline(v) {{}}
       }};
     }},
     focus() {{}}, blur() {{}}
@@ -38317,9 +38728,68 @@ class TestHomeSanctuaryStatic(unittest.TestCase):
         self.assertIn('spawnParticles', self.sanctuary_js,
                       "HomeSanctuary must expose spawnParticles")
 
+    def test_gitignore_includes_aider(self):
+        gitignore = read(".gitignore")
+        self.assertIn(".aider", gitignore,
+                      ".gitignore must ignore .aider* files")
+
     def test_hud_bridges_window_show_toast(self):
         self.assertIn('window.showToast', self.hud_js,
                       "SocialHUD must bridge window.showToast")
+
+    def test_downs_grass_palette_constants(self):
+        for color in ("#3e6b2c", "#335824", "#4c8237", "#5da347"):
+            self.assertIn(color, self.sanctuary_js,
+                          f"Missing 'The Downs' turf palette constant {color}")
+
+    def test_canvas_style_dimensions_pinned(self):
+        self.assertIn('canvas.style.width', self.sanctuary_js,
+                      "Canvas CSS width must be pinned via canvas.style.width")
+        self.assertIn('canvas.style.height', self.sanctuary_js,
+                      "Canvas CSS height must be pinned via canvas.style.height")
+
+    def test_food_bowl_rendering(self):
+        self.assertIn('drawFoodBowl', self.sanctuary_js,
+                      "Missing drawFoodBowl renderer")
+        self.assertIn('kibbles', self.sanctuary_js,
+                      "Food bowl must render kibbles")
+
+    def test_bowl_visible_in_bowl_and_eating(self):
+        self.assertIn("isBowlVisible", self.sanctuary_js,
+                      "HomeSanctuary must define isBowlVisible()")
+        self.assertRegex(
+            self.sanctuary_js,
+            r"forcedState\s*===\s*'eating'\s*\|\|\s*forcedState\s*===\s*'bowl'",
+            "Bowl visibility must include both 'eating' and 'bowl' forced states"
+        )
+
+    def test_grass_mown_used_in_draw_field(self):
+        self.assertIn("GRASS_MOWN", self.sanctuary_js,
+                      "HomeSanctuary must define GRASS_MOWN")
+        self.assertRegex(
+            self.sanctuary_js,
+            r"ctx\.fillStyle\s*=\s*GRASS_MOWN",
+            "drawField must actively use GRASS_MOWN for turf shading"
+        )
+
+    def test_live_dog_entity_not_mutated_static(self):
+        self.assertIn("buildRenderAdapter", self.sanctuary_js,
+                      "HomeSanctuary must use a non-mutating render adapter")
+        # The old mutation pattern must be gone.
+        self.assertNotIn("entity.x = dog.x", self.sanctuary_js,
+                         "drawDog must not mutate the live entity's x")
+        self.assertNotIn("entity.y = dog.y", self.sanctuary_js,
+                         "drawDog must not mutate the live entity's y")
+
+    def test_feeding_ssr_safe_root(self):
+        self.assertIn("var root = typeof window !== 'undefined'",
+                      self.feeding_js,
+                      "home_feeding.js must define an SSR-safe root reference")
+        # No bare `window.HomeSanctuary` / `window.HomeFeeding` references.
+        self.assertNotIn("window.HomeSanctuary", self.feeding_js,
+                         "home_feeding.js must not reference bare window.HomeSanctuary")
+        self.assertNotIn("window.HomeFeeding", self.feeding_js,
+                         "home_feeding.js must not reference bare window.HomeFeeding")
 
 
 @unittest.skipUnless(
@@ -38675,6 +39145,286 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
                          "GOLDEN coatKey must map to the golden primary color")
         self.assertEqual(res["coatColorDark"], "#ca8a04",
                          "GOLDEN coatKey must map to the golden dark color")
+
+    def test_exec_mount_draws_downs_turf(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        // Instrument the 2D context to record fillStyle assignments.
+        const fills = [];
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          return new Proxy(ctx, {
+            set(target, prop, value) {
+              if (prop === 'fillStyle') { fills.push(value); }
+              target[prop] = value;
+              return true;
+            }
+          });
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.__testHooks.render();
+
+        return { fills: fills };
+        """
+        res = _run_js(snippet)
+        self.assertIn("#3e6b2c", res["fills"],
+                      "render() must fill the field with the 'The Downs' turf base #3e6b2c")
+
+    def test_exec_camera_pose_orientation_faces_down(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        // Instrument ctx.rotate so we can observe the effective rotation
+        // applied by drawArticulatedDog during render().
+        const rotations = [];
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          const originalRotate = ctx.rotate.bind(ctx);
+          ctx.rotate = function (angle) {
+            rotations.push(angle);
+            return originalRotate(angle);
+          };
+          return ctx;
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.setDogPose('camera');
+        const dog = window.HomeSanctuary.getCompanionDog();
+
+        rotations.length = 0;
+        window.HomeSanctuary.__testHooks.render();
+
+        return {
+          facing: dog.facing,
+          expected: Math.PI / 2,
+          rotations: rotations
+        };
+        """
+        res = _run_js(snippet)
+        self.assertAlmostEqual(res["facing"], res["expected"], places=6,
+                               msg="Camera pose must face down (angle = Math.PI / 2)")
+        self.assertTrue(len(res["rotations"]) > 0,
+                        "render() must rotate the dog body via ctx.rotate")
+        # drawArticulatedDog rotates by (angle - PI/2); with angle = PI/2 the
+        # effective rotation must be 0 so the head points down at +Y.
+        self.assertAlmostEqual(res["rotations"][0], 0.0, places=6,
+                               msg="Camera pose must rotate by 0 (head faces +Y)")
+
+    def test_exec_live_dog_entity_not_mutated(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const live = {
+          x: 999, y: 888, angle: 0.123, legPhase: 0,
+          isSitting: false, isSniffing: false,
+          coat: { bodyColor: '#111111', tanColor: '#222222', bibColor: '#333333' },
+          collarColor: '#444444', name: 'LiveDog'
+        };
+        const snapshot = JSON.stringify(live);
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot, live);
+
+        // Force a full render pass (drawDog -> buildRenderAdapter) through the
+        // public test hook path.
+        const hooks = window.HomeSanctuary.__testHooks;
+        hooks.updateDog(16);
+        hooks.render();
+        return {
+          before: snapshot,
+          after: JSON.stringify(live),
+          x: live.x,
+          y: live.y,
+          angle: live.angle
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["before"], res["after"],
+                         "liveDogEntity must not be mutated during rendering")
+        self.assertEqual(res["x"], 999, "liveDogEntity.x must remain unchanged")
+        self.assertEqual(res["y"], 888, "liveDogEntity.y must remain unchanged")
+        self.assertAlmostEqual(res["angle"], 0.123, places=6,
+                               msg="liveDogEntity.angle must remain unchanged")
+
+    def test_exec_bowl_visible_in_bowl_and_eating_states(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+
+        window.HomeSanctuary.setDogState('bowl');
+        const bowlForced = window.HomeSanctuary.__testHooks.getForcedState();
+
+        window.HomeSanctuary.setDogState('eating');
+        const eatingForced = window.HomeSanctuary.__testHooks.getForcedState();
+
+        return { bowlForced: bowlForced, eatingForced: eatingForced };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["bowlForced"], "bowl",
+                         "setDogState('bowl') must set forcedState to 'bowl'")
+        self.assertEqual(res["eatingForced"], "eating",
+                         "setDogState('eating') must set forcedState to 'eating'")
+
+    def test_exec_clear_bowl_resets_bowl_and_eating_state(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+
+        window.HomeSanctuary.setDogState('bowl');
+        const forcedBefore = window.HomeSanctuary.__testHooks.getForcedState();
+        window.HomeSanctuary.clearBowl();
+        const forcedAfter = window.HomeSanctuary.__testHooks.getForcedState();
+        const dogAfter = window.HomeSanctuary.getCompanionDog();
+
+        window.HomeSanctuary.setDogState('eating');
+        window.HomeSanctuary.clearBowl();
+        const forcedAfterEating = window.HomeSanctuary.__testHooks.getForcedState();
+        const dogAfterEating = window.HomeSanctuary.getCompanionDog();
+
+        return {
+          forcedBefore: forcedBefore,
+          forcedAfter: forcedAfter,
+          dogStateAfter: dogAfter.state,
+          forcedAfterEating: forcedAfterEating,
+          dogStateAfterEating: dogAfterEating.state
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["forcedBefore"], "bowl",
+                         "setDogState('bowl') must set forcedState to 'bowl'")
+        self.assertIsNone(res["forcedAfter"],
+                          "clearBowl() must clear forcedState from 'bowl'")
+        self.assertNotIn(res["dogStateAfter"], ("bowl", "eating"),
+                         "clearBowl() must reset the dog out of bowl/eating state")
+        self.assertIsNone(res["forcedAfterEating"],
+                          "clearBowl() must clear forcedState from 'eating'")
+        self.assertNotIn(res["dogStateAfterEating"], ("bowl", "eating"),
+                         "clearBowl() must reset the dog out of eating state")
+
+    def test_exec_draw_delegates_to_live_dog_draw_method(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        let drawCalled = false;
+        const live = {
+          x: 10, y: 10, angle: 0, legPhase: 0,
+          isSitting: false, isSniffing: false,
+          coat: { bodyColor: '#111111', tanColor: '#222222', bibColor: '#333333' },
+          collarColor: '#444444', name: 'LiveDog',
+          draw: function (ctx) { drawCalled = true; }
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot, live);
+        window.HomeSanctuary.__testHooks.render();
+
+        return { drawCalled: drawCalled };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["drawCalled"],
+                        "drawDog must delegate to the live entity's draw(ctx) method")
+
+    def test_home_feeding_no_dom_bowl_created(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+        const bar = document.createElement('div');
+        bar.id = 'home-action-bar';
+        sanctuary.appendChild(bar);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        HomeFeeding.mount();
+
+        HomeFeeding.__testHooks.runFeed({ dogName: 'Ziggy', dogId: 'dog-1' });
+        __flushTimers();
+
+        const byId = document.getElementById('home-food-bowl');
+        const byClass = document.querySelector('.home-food-bowl');
+        return {
+          byId: Boolean(byId),
+          byClass: Boolean(byClass)
+        };
+        """
+        res = _run_js(snippet)
+        self.assertFalse(res["byId"],
+                         "home_feeding must not inject a #home-food-bowl DOM element")
+        self.assertFalse(res["byClass"],
+                         "home_feeding must not inject a .home-food-bowl DOM element")
 
     def test_exec_second_click_while_feeding_ignored(self):
         snippet = """

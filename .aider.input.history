@@ -1,0 +1,224 @@
+
+# 2026-11-15 15:53:12.390147
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-06-fix-test-contracts"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/social_hud.js"
++  - "virtual_dog_walker/test/test_home_menu.py"
++  - "virtual_dog_walker/test/test_home_sanctuary.py"
++test_cmd: "cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"
++---
++
++# Implementer Brief 06: Align Method Aliases and Test Contracts
++
++## Context
++In `virtual_dog_walker`, recent changes added `home_sanctuary.js` and `home_feeding.js`. We need to align the method aliases on `SocialHUD`, test hooks, and test file loading so that `test_home_sanctuary.py` and `test_home_menu.py` pass with 0 errors and 0 failures.
++
++## Instructions & Edits to Perform
++
++### 1. `virtual_dog_walker/src/ui/social_hud.js`
++1. Update `resolveHomeView(requestedView, opts = {})`:
++   Support both signatures:
++   - `resolveHomeView('settings')` -> returns `'settings'`
++   - `resolveHomeView('sanctuary')` -> returns `'sanctuary'` (unless `this.dogSlot === null`, which forces `'settings'`)
++   - `resolveHomeView({ dogSlot, requestedView, currentTab })` -> respects `dogSlot` and `requestedView` from the object
++   Implementation:
++   ```javascript
++   resolveHomeView(requestedView, opts = {}) {
++     let req = requestedView;
++     let slot = this.dogSlot;
++     if (typeof requestedView === 'object' && requestedView !== null) {
++       req = requestedView.requestedView;
++       if ('dogSlot' in requestedView) slot = requestedView.dogSlot;
++     } else if (opts && 'dogSlot' in opts) {
++       slot = opts.dogSlot;
++     }
++     if (slot === null) return 'settings';
++     if (req === 'settings') return 'settings';
++     if (req === 'sanctuary') return 'sanctuary';
++     return this.currentHomeView === 'settings' ? 'settings' : 'sanctuary';
++   }
++   ```
++2. Update `exposeTestHooks()` to forward arguments to `resolveHomeView`:
++   ```javascript
++   window.__vdwHomeTestHooks = {
++     resolveHomeView: (req, opts) => this.resolveHomeView(req, opts),
++     canWalkInPark: () => this.canWalkInPark()
++   };
++   ```
++3. Add alias methods on `SocialHUD.prototype`:
++   ```javascript
++   openHome() {
++     return this.openModal();
++   }
++
++   drawStagePreview(ctx) {
++     return this.renderHomeStage(ctx);
++   }
++   ```
++
++### 2. `virtual_dog_walker/test/test_home_menu.py`
++In `test_modal_header_is_home(self)`:
++Accept either `<h3>Home</h3>` or `<h3 id="home-header-title">Home</h3>`:
++```python
++    def test_modal_header_is_home(self):
++        self.assertTrue(
++            '<h3>Home</h3>' in self.hud_js or '<h3 id="home-header-title">Home</h3>' in self.hud_js,
++            "Customizer modal header must be <h3>Home</h3> or <h3 id=\"home-header-title\">Home</h3>"
++        )
++```
++
++### 3. `virtual_dog_walker/test/test_home_sanctuary.py`
++1. In `_run_js`:
++   Replace reading of `src/ui/home_sanctuary.js` with `src/ui/home_feeding.js`:
++   ```python
++   feeding_src = read("src/ui/home_feeding.js")
++   clean = re.sub(r"^\s*import\s+.*?;?\s*$", "", feeding_src, flags=re.M)
++   clean = re.sub(r"\bexport\s+(default\s+)?", "", clean)
++   ```
++   And load `HomeFeeding`:
++   ```javascript
++   // ---- Load real module ----
++   const HomeFeeding = (() => {
++     {clean}
++     return window.HomeFeeding || (typeof module !== 'undefined' ? module.exports : null);
++   })();
++   ```
++2. In `TestHomeSanctuaryStatic.setUp(self)`:
++   Add:
++   ```python
++   self.feeding_js = read("src/ui/home_feeding.js")
++   ```
++3. In `test_feed_button_contract(self)`:
++   Check `combined = self.feeding_js + self.hud_js` for `#btn-action-feed`, `🍖`, and `Feed`.
++4. In `test_last_feed_storage_key_prefix`, `test_toast_copy`, and `test_test_hooks_exposed`:
++   Assert against `self.feeding_js` instead of `self.sanctuary_js`.
++
++## Verification Command
++Run:
++`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
++Both test suites must pass 100% with 0 errors and 0 failures.
++
++
+
+# 2026-11-15 15:53:12.392778
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-06-fix-test-contracts"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/social_hud.js"
++  - "virtual_dog_walker/test/test_home_menu.py"
++  - "virtual_dog_walker/test/test_home_sanctuary.py"
++test_cmd: "cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"
++---
++
++# Implementer Brief 06: Align Method Aliases and Test Contracts
++
++## Context
++In `virtual_dog_walker`, recent changes added `home_sanctuary.js` and `home_feeding.js`. We need to align the method aliases on `SocialHUD`, test hooks, and test file loading so that `test_home_sanctuary.py` and `test_home_menu.py` pass with 0 errors and 0 failures.
++
++## Instructions & Edits to Perform
++
++### 1. `virtual_dog_walker/src/ui/social_hud.js`
++1. Update `resolveHomeView(requestedView, opts = {})`:
++   Support both signatures:
++   - `resolveHomeView('settings')` -> returns `'settings'`
++   - `resolveHomeView('sanctuary')` -> returns `'sanctuary'` (unless `this.dogSlot === null`, which forces `'settings'`)
++   - `resolveHomeView({ dogSlot, requestedView, currentTab })` -> respects `dogSlot` and `requestedView` from the object
++   Implementation:
++   ```javascript
++   resolveHomeView(requestedView, opts = {}) {
++     let req = requestedView;
++     let slot = this.dogSlot;
++     if (typeof requestedView === 'object' && requestedView !== null) {
++       req = requestedView.requestedView;
++       if ('dogSlot' in requestedView) slot = requestedView.dogSlot;
++     } else if (opts && 'dogSlot' in opts) {
++       slot = opts.dogSlot;
++     }
++     if (slot === null) return 'settings';
++     if (req === 'settings') return 'settings';
++     if (req === 'sanctuary') return 'sanctuary';
++     return this.currentHomeView === 'settings' ? 'settings' : 'sanctuary';
++   }
++   ```
++2. Update `exposeTestHooks()` to forward arguments to `resolveHomeView`:
++   ```javascript
++   window.__vdwHomeTestHooks = {
++     resolveHomeView: (req, opts) => this.resolveHomeView(req, opts),
++     canWalkInPark: () => this.canWalkInPark()
++   };
++   ```
++3. Add alias methods on `SocialHUD.prototype`:
++   ```javascript
++   openHome() {
++     return this.openModal();
++   }
++
++   drawStagePreview(ctx) {
++     return this.renderHomeStage(ctx);
++   }
++   ```
++
++### 2. `virtual_dog_walker/test/test_home_menu.py`
++In `test_modal_header_is_home(self)`:
++Accept either `<h3>Home</h3>` or `<h3 id="home-header-title">Home</h3>`:
++```python
++    def test_modal_header_is_home(self):
++        self.assertTrue(
++            '<h3>Home</h3>' in self.hud_js or '<h3 id="home-header-title">Home</h3>' in self.hud_js,
++            "Customizer modal header must be <h3>Home</h3> or <h3 id=\"home-header-title\">Home</h3>"
++        )
++```
++
++### 3. `virtual_dog_walker/test/test_home_sanctuary.py`
++1. In `_run_js`:
++   Replace reading of `src/ui/home_sanctuary.js` with `src/ui/home_feeding.js`:
++   ```python
++   feeding_src = read("src/ui/home_feeding.js")
++   clean = re.sub(r"^\s*import\s+.*?;?\s*$", "", feeding_src, flags=re.M)
++   clean = re.sub(r"\bexport\s+(default\s+)?", "", clean)
++   ```
++   And load `HomeFeeding`:
++   ```javascript
++   // ---- Load real module ----
++   const HomeFeeding = (() => {
++     {clean}
++     return window.HomeFeeding || (typeof module !== 'undefined' ? module.exports : null);
++   })();
++   ```
++2. In `TestHomeSanctuaryStatic.setUp(self)`:
++   Add:
++   ```python
++   self.feeding_js = read("src/ui/home_feeding.js")
++   ```
++3. In `test_feed_button_contract(self)`:
++   Check `combined = self.feeding_js + self.hud_js` for `#btn-action-feed`, `🍖`, and `Feed`.
++4. In `test_last_feed_storage_key_prefix`, `test_toast_copy`, and `test_test_hooks_exposed`:
++   Assert against `self.feeding_js` instead of `self.sanctuary_js`.
++
++## Verification Command
++Run:
++`cd virtual_dog_walker && python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
++Both test suites must pass 100% with 0 errors and 0 failures.
++
++

@@ -18,6 +18,9 @@ export class SocialHUD {
     this.dogSlot = null;
     this.isHomeLocked = false;
 
+    // Home modal view state machine: 'sanctuary' | 'settings'
+    this.currentHomeView = 'sanctuary';
+
     // Stage preview animation loop handle
     this.stageAnimId = null;
 
@@ -27,6 +30,26 @@ export class SocialHUD {
 
     this.toastTimer = null;
     this.initHUD();
+    this.exposeTestHooks();
+  }
+
+  // Resolve the effective Home view, honoring the empty-kennel lock.
+  resolveHomeView() {
+    if (this.dogSlot === null) return 'settings';
+    return this.currentHomeView === 'settings' ? 'settings' : 'sanctuary';
+  }
+
+  // Whether the walker may leave Home and walk in the park.
+  canWalkInPark() {
+    return this.dogSlot !== null && !this.isHomeLocked;
+  }
+
+  exposeTestHooks() {
+    if (typeof window === 'undefined') return;
+    window.__vdwHomeTestHooks = {
+      resolveHomeView: () => this.resolveHomeView(),
+      canWalkInPark: () => this.canWalkInPark()
+    };
   }
 
   initHUD() {
@@ -69,23 +92,39 @@ export class SocialHUD {
     modal.id = 'customizer-modal';
     modal.innerHTML = `
       <div class="customizer-header">
-        <h3>Home</h3>
-        <button class="customizer-close" id="close-modal" aria-label="Close">&times;</button>
+        <h3 id="home-header-title">Home</h3>
+        <div class="customizer-header-actions">
+          <button class="customizer-settings" id="btn-home-settings" aria-label="Settings" title="Settings">⚙️</button>
+          <button class="customizer-back" id="btn-home-back" aria-label="Back" title="Back" style="display: none;">← Back</button>
+          <button class="customizer-close" id="btn-close-customizer" aria-label="Close">&times;</button>
+        </div>
       </div>
 
-      <!-- Top Stylized Stage Preview -->
-      <div class="home-stage-preview">
-        <canvas id="home-stage-canvas" width="340" height="140"></canvas>
+      <!-- Sanctuary View -->
+      <div id="home-view-sanctuary" class="home-view">
+        <div class="home-field-preview">
+          <canvas id="home-field-canvas" width="340" height="180"></canvas>
+        </div>
+        <div id="home-action-bar" class="home-action-bar"></div>
       </div>
 
-      <!-- Tab Navigation -->
-      <div class="customizer-tabs">
-        <button class="customizer-tab-btn active" id="tab-btn-walker" data-tab="cust-tab-walker">👤 You</button>
-        <button class="customizer-tab-btn" id="tab-btn-dog" data-tab="cust-tab-dog">🐕 Dogs</button>
-      </div>
+      <!-- Settings View -->
+      <div id="home-view-settings" class="home-view" style="display: none;">
+        <div class="settings-submenu-title">Wardrobe &amp; Kennel</div>
 
-      <!-- Tab 1: Walker -->
-      <div class="customizer-tab-pane active" id="cust-tab-walker">
+        <!-- Top Stylized Stage Preview -->
+        <div class="home-stage-preview">
+          <canvas id="home-stage-canvas" width="340" height="140"></canvas>
+        </div>
+
+        <!-- Tab Navigation -->
+        <div class="customizer-tabs">
+          <button class="customizer-tab-btn active" id="tab-btn-walker" data-tab="cust-tab-walker">👤 You</button>
+          <button class="customizer-tab-btn" id="tab-btn-dog" data-tab="cust-tab-dog">🐕 Dogs</button>
+        </div>
+
+        <!-- Tab 1: Walker -->
+        <div class="customizer-tab-pane active" id="cust-tab-walker">
         <div class="cust-form-group">
           <label class="cust-label" for="cust-name">Walker Name</label>
           <input type="text" id="cust-name" class="cust-input" value="${this.owner.name || 'Walker'}" maxlength="14" autocomplete="off" />
@@ -156,12 +195,13 @@ export class SocialHUD {
         </div>
       </div>
 
-      <!-- Tab 2: Dogs (Single-Slot Immutable Kennel) -->
-      <div class="customizer-tab-pane" id="cust-tab-dog">
-        <div id="dog-slot-container"></div>
-      </div>
+        <!-- Tab 2: Dogs (Single-Slot Immutable Kennel) -->
+        <div class="customizer-tab-pane" id="cust-tab-dog">
+          <div id="dog-slot-container"></div>
+        </div>
 
-      <button id="btn-save-cust" class="btn-primary-cust">Save & Walk</button>
+        <button id="btn-save-cust" class="btn-primary-cust">Save & Walk</button>
+      </div>
     `;
     this.container.appendChild(modal);
 
@@ -189,6 +229,76 @@ export class SocialHUD {
     this.loadSavedProfile();
 
     this.bindEvents();
+
+    // Apply initial view state (honors empty-kennel lock).
+    this.setHomeView(this.resolveHomeView(), { force: true });
+  }
+
+  // Transition the Home modal between 'sanctuary' and 'settings'.
+  setHomeView(view, opts = {}) {
+    const target = view === 'settings' ? 'settings' : 'sanctuary';
+    const prev = this.currentHomeView;
+
+    // Empty-kennel lock: never allow sanctuary while no dog is adopted.
+    if (target === 'sanctuary' && this.dogSlot === null) {
+      this.currentHomeView = 'settings';
+      this._applyHomeViewDom();
+      return;
+    }
+
+    this.currentHomeView = target;
+
+    if (prev === 'sanctuary' && target !== 'sanctuary') {
+      if (typeof window !== 'undefined') {
+        window.HomeFeeding?.unmount?.();
+        window.HomeSanctuary?.unmount?.();
+      }
+    }
+
+    this._applyHomeViewDom();
+
+    if (target === 'sanctuary') {
+      if (typeof window !== 'undefined') {
+        window.HomeSanctuary?.mount?.();
+        window.HomeFeeding?.mount?.();
+      }
+      this.stopStageAnimation();
+    } else {
+      this.renderHomeStage();
+      this.startStageAnimation();
+    }
+  }
+
+  _applyHomeViewDom() {
+    const sanctuary = document.getElementById('home-view-sanctuary');
+    const settings = document.getElementById('home-view-settings');
+    const settingsBtn = document.getElementById('btn-home-settings');
+    const backBtn = document.getElementById('btn-home-back');
+    const closeBtn = document.getElementById('btn-close-customizer');
+    const titleEl = document.getElementById('home-header-title');
+
+    const isSettings = this.currentHomeView === 'settings';
+    const locked = this.dogSlot === null;
+
+    if (sanctuary) sanctuary.style.display = isSettings ? 'none' : '';
+    if (settings) settings.style.display = isSettings ? '' : 'none';
+
+    if (titleEl) {
+      titleEl.textContent = isSettings ? 'Wardrobe & Kennel' : 'Home';
+    }
+
+    if (settingsBtn) {
+      settingsBtn.style.display = (!isSettings && !locked) ? '' : 'none';
+      settingsBtn.disabled = locked;
+    }
+    if (backBtn) {
+      backBtn.style.display = (isSettings && !locked) ? '' : 'none';
+      backBtn.disabled = locked;
+    }
+    if (closeBtn) {
+      closeBtn.style.display = locked ? 'none' : '';
+      closeBtn.disabled = locked;
+    }
   }
 
   // Read-only lock accessor (used by main.js to gate movement).
@@ -425,6 +535,10 @@ export class SocialHUD {
     this.updateCloseButtonState();
     this.persistProfile();
 
+    // Empty kennel: force the settings view on the dog tab.
+    this._forceDogTab();
+    this.setHomeView('settings', { force: true });
+
     if (this.net && typeof this.net.setLocalMeta === 'function') {
       this.net.setLocalMeta({
         name: this.owner.name,
@@ -488,16 +602,23 @@ export class SocialHUD {
     this.updateCloseButtonState();
     this.persistProfile();
     this.broadcastProfile();
+
+    // Unlock: transition to the sanctuary view now that a dog exists.
+    this.setHomeView('sanctuary');
   }
 
   updateCloseButtonState() {
-    const closeBtn = document.getElementById('close-modal');
-    if (!closeBtn) return;
-    if (this.isHomeLocked) {
-      closeBtn.style.display = 'none';
-    } else {
-      closeBtn.style.display = '';
+    const closeBtn = document.getElementById('btn-close-customizer') || document.getElementById('close-modal');
+    if (closeBtn) {
+      if (this.isHomeLocked) {
+        closeBtn.style.display = 'none';
+        closeBtn.disabled = true;
+      } else {
+        closeBtn.style.display = '';
+        closeBtn.disabled = false;
+      }
     }
+    this._applyHomeViewDom();
   }
 
   // Build a preview dog descriptor from the empty-slot creation form.
@@ -574,23 +695,38 @@ export class SocialHUD {
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    // Draw owner
-    if (this.owner && typeof this.owner.draw === 'function') {
-      const saved = { x: this.owner.x, y: this.owner.y, angle: this.owner.angle };
-      this.owner.x = 110;
-      this.owner.y = 100;
-      this.owner.angle = Math.PI / 2;
-      try {
-        this.owner.draw(ctx);
-      } catch (e) {
-        console.warn('Home stage owner draw failed:', e);
+    // Determine which tab is active so we render only one subject.
+    const dogTabBtn = document.getElementById('tab-btn-dog');
+    const walkerTabBtn = document.getElementById('tab-btn-walker');
+    const isDogTab = Boolean(dogTabBtn && dogTabBtn.classList.contains('active'));
+    const isWalkerTab = Boolean(walkerTabBtn && walkerTabBtn.classList.contains('active'));
+    // Default to walker when neither is explicitly active.
+    const showDog = isDogTab && !isWalkerTab;
+
+    const centerX = stageW / 2;
+    const centerY = stageH * 0.62;
+
+    if (!showDog) {
+      // Walker-only preview, centered in the spotlight.
+      if (this.owner && typeof this.owner.draw === 'function') {
+        const saved = { x: this.owner.x, y: this.owner.y, angle: this.owner.angle };
+        this.owner.x = centerX;
+        this.owner.y = centerY;
+        this.owner.angle = Math.PI / 2;
+        try {
+          this.owner.draw(ctx);
+        } catch (e) {
+          console.warn('Home stage owner draw failed:', e);
+        }
+        this.owner.x = saved.x;
+        this.owner.y = saved.y;
+        this.owner.angle = saved.angle;
       }
-      this.owner.x = saved.x;
-      this.owner.y = saved.y;
-      this.owner.angle = saved.angle;
+      return;
     }
 
-    // Draw dog. When the slot is empty, build a live preview from the form.
+    // Dog-only preview, centered in the spotlight. When the slot is empty,
+    // build a live preview from the form.
     const effectiveDogData = previewDogData || this.dogSlot || this._readEmptySlotPreview();
     const hasDog = Boolean(effectiveDogData);
     if (hasDog && this.dog && typeof this.dog.draw === 'function') {
@@ -612,8 +748,8 @@ export class SocialHUD {
         if (data.name) this.dog.name = data.name;
       }
 
-      this.dog.x = 220;
-      this.dog.y = 102;
+      this.dog.x = centerX;
+      this.dog.y = centerY;
       this.dog.angle = Math.PI / 2;
       try {
         this.dog.draw(ctx);
@@ -701,6 +837,7 @@ export class SocialHUD {
           this.net.setLocalMeta({ dogName: '', hasDog: false });
         }
         this.updateModalActiveSelections();
+        this._forceDogTab();
         this.openModal();
         this.updateCloseButtonState();
         this.renderHomeStage();
@@ -720,6 +857,7 @@ export class SocialHUD {
           this.net.setLocalMeta({ dogName: '', hasDog: false });
         }
         this.updateModalActiveSelections();
+        this._forceDogTab();
         this.openModal();
         this.updateCloseButtonState();
         this.renderHomeStage();
@@ -772,6 +910,7 @@ export class SocialHUD {
         }
         this.updateCloseButtonState();
         this.updateModalActiveSelections();
+        this._forceDogTab();
         this.openModal();
         this.renderHomeStage();
         return;
@@ -820,6 +959,10 @@ export class SocialHUD {
       this.updateCloseButtonState();
 
       this.updateModalActiveSelections();
+
+      // A dog exists: default to the sanctuary view.
+      this.currentHomeView = 'sanctuary';
+      this._applyHomeViewDom();
 
       if (this.net && typeof this.net.setLocalMeta === 'function') {
         const personality = this.dog && this.dog.personality ? this.dog.personality : personalityDefaults;
@@ -930,32 +1073,52 @@ export class SocialHUD {
     this.renderDogSlot();
     this.updateCloseButtonState();
 
-    // When Home is locked, the modal must stay open (never toggle closed).
-    if (this.isHomeLocked) {
+    // When Home is locked, the modal must stay open (never toggle closed)
+    // and must force the settings view on the dog tab.
+    if (this.isHomeLocked || this.dogSlot === null) {
       modal.style.display = 'block';
-      this.renderHomeStage();
-      this.startStageAnimation();
+      this._forceDogTab();
+      this.setHomeView('settings', { force: true });
       return;
     }
 
     modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
     if (modal.style.display === 'block') {
-      this.renderHomeStage();
-      this.startStageAnimation();
+      this.setHomeView(this.currentHomeView === 'settings' ? 'settings' : 'sanctuary');
     } else {
       this.stopStageAnimation();
+      if (typeof window !== 'undefined') {
+        window.HomeFeeding?.unmount?.();
+        window.HomeSanctuary?.unmount?.();
+      }
     }
+  }
+
+  _forceDogTab() {
+    const tabBtns = document.querySelectorAll('.customizer-tab-btn');
+    tabBtns.forEach(b => b.classList.remove('active'));
+    const dogBtn = document.getElementById('tab-btn-dog');
+    if (dogBtn) dogBtn.classList.add('active');
+    document.querySelectorAll('.customizer-tab-pane').forEach(pane => {
+      pane.classList.remove('active');
+    });
+    const dogPane = document.getElementById('cust-tab-dog');
+    if (dogPane) dogPane.classList.add('active');
   }
 
   closeModal() {
     const modal = document.getElementById('customizer-modal');
     if (!modal) return;
-    if (this.isHomeLocked) {
+    if (this.isHomeLocked || this.dogSlot === null) {
       this.showToast('Please add a dog to your slot before heading out!');
       return;
     }
     modal.style.display = 'none';
     this.stopStageAnimation();
+    if (typeof window !== 'undefined') {
+      window.HomeFeeding?.unmount?.();
+      window.HomeSanctuary?.unmount?.();
+    }
   }
 
   bindEvents() {
@@ -981,8 +1144,10 @@ export class SocialHUD {
     // 2. Customizer modal toggle
     const btnCustomize = document.getElementById('btn-customize');
     const modal = document.getElementById('customizer-modal');
-    const closeModal = document.getElementById('close-modal');
+    const closeModal = document.getElementById('btn-close-customizer') || document.getElementById('close-modal');
     const btnSaveCust = document.getElementById('btn-save-cust');
+    const btnHomeSettings = document.getElementById('btn-home-settings');
+    const btnHomeBack = document.getElementById('btn-home-back');
 
     if (btnCustomize) {
       btnCustomize.addEventListener('click', () => {
@@ -993,6 +1158,20 @@ export class SocialHUD {
     if (closeModal && modal) {
       closeModal.addEventListener('click', () => {
         this.closeModal();
+      });
+    }
+
+    if (btnHomeSettings) {
+      btnHomeSettings.addEventListener('click', () => {
+        if (this.dogSlot === null) return;
+        this.setHomeView('settings');
+      });
+    }
+
+    if (btnHomeBack) {
+      btnHomeBack.addEventListener('click', () => {
+        if (this.dogSlot === null) return;
+        this.setHomeView('sanctuary');
       });
     }
 
@@ -1091,6 +1270,10 @@ export class SocialHUD {
         if (!this.isHomeLocked) {
           modal.style.display = 'none';
           this.stopStageAnimation();
+          if (typeof window !== 'undefined') {
+            window.HomeFeeding?.unmount?.();
+            window.HomeSanctuary?.unmount?.();
+          }
         }
         this.showToast('✨ Appearance updated!');
       });

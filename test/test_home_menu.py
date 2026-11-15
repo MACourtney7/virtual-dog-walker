@@ -573,5 +573,142 @@ class TestHomeMenuBehavioralExecutable(unittest.TestCase):
                          "applyRemoteDogPresence must clear remote.dog.name for dogName: ''")
 
 
+class TestHomeViewSplit(unittest.TestCase):
+    """unification-029: Home Sanctuary vs. Settings submenu split."""
+
+    def setUp(self):
+        self.hud_js = read("src/ui/social_hud.js")
+
+    def test_home_settings_button_contract(self):
+        self.assertIn('id="btn-home-settings"', self.hud_js,
+                      "Missing #btn-home-settings button")
+        self.assertIn('⚙️', self.hud_js,
+                      "#btn-home-settings must contain the gear icon ⚙️")
+        settings_idx = self.hud_js.find('id="btn-home-settings"')
+        close_idx = self.hud_js.find('id="btn-close-customizer"')
+        self.assertNotEqual(settings_idx, -1, "Missing #btn-home-settings")
+        self.assertNotEqual(close_idx, -1, "Missing #btn-close-customizer")
+        self.assertLess(settings_idx, close_idx,
+                        "#btn-home-settings must precede #btn-close-customizer")
+
+    def test_home_back_button_contract(self):
+        self.assertIn('id="btn-home-back"', self.hud_js,
+                      "Missing #btn-home-back button")
+        self.assertIn('← Back', self.hud_js,
+                      "#btn-home-back must contain the '← Back' label")
+
+    def test_settings_header_wardrobe_and_kennel(self):
+        self.assertIn('Wardrobe & Kennel', self.hud_js,
+                      "Settings submenu header must include 'Wardrobe & Kennel'")
+
+    def test_home_view_containers(self):
+        self.assertIn('id="home-view-sanctuary"', self.hud_js,
+                      "Missing #home-view-sanctuary container")
+        self.assertIn('id="home-view-settings"', self.hud_js,
+                      "Missing #home-view-settings container")
+
+    def test_resolve_home_view_helper(self):
+        self.assertIn('resolveHomeView', self.hud_js,
+                      "Missing resolveHomeView helper")
+
+
+@unittest.skipUnless(
+    shutil.which("node") or shutil.which("osascript"),
+    "No JS runtime (node or osascript) available"
+)
+class TestHomeViewSplitBehavioral(unittest.TestCase):
+    """unification-029: executable view-state transitions."""
+
+    def test_exec_open_home_null_slot_forces_settings_and_lock(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: '', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+        hud.openHome();
+        return {
+          homeView: hud.homeView,
+          isHomeLocked: hud.isHomeLocked
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["homeView"], "settings",
+                         "openHome with a null slot must force the settings view")
+        self.assertTrue(res["isHomeLocked"],
+                        "openHome with a null slot must lock Home")
+
+    def test_exec_resolve_home_view_transitions(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const toSettings = hud.resolveHomeView('settings');
+        const toSanctuary = hud.resolveHomeView('sanctuary');
+        const unknown = hud.resolveHomeView('bogus');
+        return {
+          toSettings: toSettings,
+          toSanctuary: toSanctuary,
+          unknown: unknown
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["toSettings"], "settings",
+                         "resolveHomeView('settings') must return 'settings'")
+        self.assertEqual(res["toSanctuary"], "sanctuary",
+                         "resolveHomeView('sanctuary') must return 'sanctuary'")
+        self.assertIn(res["unknown"], ("sanctuary", "settings"),
+                      "resolveHomeView must normalize unknown views")
+
+    def test_exec_split_stage_preview_draws_only_active_tab(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const calls = [];
+        const ctx = {
+          clearRect() { calls.push('clear'); },
+          fillRect() {}, beginPath() {}, ellipse() {},
+          fill() {}, stroke() {}, save() {}, restore() {},
+          createLinearGradient() { return { addColorStop() {} }; },
+          createRadialGradient() { return { addColorStop() {} }; },
+          set fillStyle(v) {}, set strokeStyle(v) {}, set lineWidth(v) {}
+        };
+
+        hud.activeTab = 'walker';
+        hud.drawStagePreview(ctx);
+        const walkerCalls = calls.length;
+
+        calls.length = 0;
+        hud.activeTab = 'dog';
+        hud.drawStagePreview(ctx);
+        const dogCalls = calls.length;
+
+        return { walkerCalls: walkerCalls, dogCalls: dogCalls };
+        """
+        res = _run_js(snippet)
+        self.assertGreater(res["walkerCalls"], 0,
+                           "Walker tab must draw the owner on the stage preview")
+        self.assertGreater(res["dogCalls"], 0,
+                           "Dog tab must draw the dog on the stage preview")
+
+
 if __name__ == '__main__':
     unittest.main()

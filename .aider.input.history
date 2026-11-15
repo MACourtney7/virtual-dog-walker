@@ -780,3 +780,147 @@
 +Must pass with 0 errors.
 +
 +
+
+# 2026-11-15 16:05:03.023209
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-10-hud-lock-toast-and-tests"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/main.js"
++  - "virtual_dog_walker/src/ui/social_hud.js"
++  - "virtual_dog_walker/test/test_home_sanctuary.py"
++  - "virtual_dog_walker/test/test_home_menu.py"
++test_cmd: "python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"
++---
++
++# Implementer Brief 10: HUD Lock Release, Toast Bridge, Main Wire-up, and Tests
++
++## Context
++Complete the remaining review remediation points:
++1. Wire `./ui/home_sanctuary.js` and `./ui/home_feeding.js` into `src/main.js`.
++2. Clear `isHomeLocked = false` on dog adoption and compute `locked = this.isHomeLocked || this.dogSlot === null` in `_applyHomeViewDom()`.
++3. Bridge `window.showToast = (msg) => this.showToast(msg)` in `social_hud.js`.
++4. Add behavioral unit tests verifying resumption, particles, and lock release.
++
++## Required Edits
++
++### 1. `virtual_dog_walker/src/main.js`
++Near the top where `SocialHUD` is imported, add side-effect imports:
++```javascript
++import './ui/home_sanctuary.js';
++import './ui/home_feeding.js';
++```
++
++### 2. `virtual_dog_walker/src/ui/social_hud.js`
++1. In `initHUD()`:
++   Expose `window.showToast`:
++   ```javascript
++   if (typeof window !== 'undefined') {
++     window.showToast = (msg) => this.showToast(msg);
++   }
++   ```
++2. In `_applyHomeViewDom()`:
++   Change `const locked = this.dogSlot === null;` to:
++   ```javascript
++   const locked = Boolean(this.isHomeLocked || this.dogSlot === null);
++   ```
++3. In `saveDogSlot` / adoption handler (where `this.dogSlot = ...` is set upon dog creation/customization):
++   Ensure `this.isHomeLocked = false;` is explicitly set so the player is never trapped after creating a dog.
++
++### 3. `virtual_dog_walker/test/test_home_sanctuary.py`
++Add tests asserting:
++- `self.assertIn('RESUME_DELAY_MS', self.feeding_js)`
++- `self.assertIn('resumeRoaming', self.sanctuary_js)`
++- `self.assertIn('spawnParticles', self.sanctuary_js)`
++- `self.assertIn('window.showToast', self.hud_js)`
++
++### 4. `virtual_dog_walker/test/test_home_menu.py`
++Add behavioral test verifying:
++- When a player with `dogSlot: null` creates/adopts a dog, `hud.isHomeLocked` becomes `false`, `hud.canWalkInPark()` returns `true`, and `hud.closeModal()` successfully closes the modal.
++
++## Verification
++`python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
++All tests must pass (0 failures, 0 errors).
++
++
+
+# 2026-11-15 16:05:03.023573
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-10-hud-lock-toast-and-tests"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/main.js"
++  - "virtual_dog_walker/src/ui/social_hud.js"
++  - "virtual_dog_walker/test/test_home_sanctuary.py"
++  - "virtual_dog_walker/test/test_home_menu.py"
++test_cmd: "python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py"
++---
++
++# Implementer Brief 10: HUD Lock Release, Toast Bridge, Main Wire-up, and Tests
++
++## Context
++Complete the remaining review remediation points:
++1. Wire `./ui/home_sanctuary.js` and `./ui/home_feeding.js` into `src/main.js`.
++2. Clear `isHomeLocked = false` on dog adoption and compute `locked = this.isHomeLocked || this.dogSlot === null` in `_applyHomeViewDom()`.
++3. Bridge `window.showToast = (msg) => this.showToast(msg)` in `social_hud.js`.
++4. Add behavioral unit tests verifying resumption, particles, and lock release.
++
++## Required Edits
++
++### 1. `virtual_dog_walker/src/main.js`
++Near the top where `SocialHUD` is imported, add side-effect imports:
++```javascript
++import './ui/home_sanctuary.js';
++import './ui/home_feeding.js';
++```
++
++### 2. `virtual_dog_walker/src/ui/social_hud.js`
++1. In `initHUD()`:
++   Expose `window.showToast`:
++   ```javascript
++   if (typeof window !== 'undefined') {
++     window.showToast = (msg) => this.showToast(msg);
++   }
++   ```
++2. In `_applyHomeViewDom()`:
++   Change `const locked = this.dogSlot === null;` to:
++   ```javascript
++   const locked = Boolean(this.isHomeLocked || this.dogSlot === null);
++   ```
++3. In `saveDogSlot` / adoption handler (where `this.dogSlot = ...` is set upon dog creation/customization):
++   Ensure `this.isHomeLocked = false;` is explicitly set so the player is never trapped after creating a dog.
++
++### 3. `virtual_dog_walker/test/test_home_sanctuary.py`
++Add tests asserting:
++- `self.assertIn('RESUME_DELAY_MS', self.feeding_js)`
++- `self.assertIn('resumeRoaming', self.sanctuary_js)`
++- `self.assertIn('spawnParticles', self.sanctuary_js)`
++- `self.assertIn('window.showToast', self.hud_js)`
++
++### 4. `virtual_dog_walker/test/test_home_menu.py`
++Add behavioral test verifying:
++- When a player with `dogSlot: null` creates/adopts a dog, `hud.isHomeLocked` becomes `false`, `hud.canWalkInPark()` returns `true`, and `hud.closeModal()` successfully closes the modal.
++
++## Verification
++`python3 -m unittest test/test_home_sanctuary.py test/test_home_menu.py`
++All tests must pass (0 failures, 0 errors).
++
++

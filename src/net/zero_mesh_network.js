@@ -334,8 +334,14 @@ export class ZeroMeshNetworkManager {
     }
   }
 
-  setLocalMeta(meta) {
+  setLocalMeta(meta = {}) {
     this.localMeta = { ...this.localMeta, ...meta };
+    if (typeof meta.hasDog === 'boolean') {
+      this.localMeta.hasDog = meta.hasDog;
+    }
+    if (typeof meta.dogName === 'string') {
+      this.localMeta.dogName = meta.dogName;
+    }
   }
 
   setStatus(status) {
@@ -356,7 +362,10 @@ export class ZeroMeshNetworkManager {
           name: meta.name || 'Walker',
           jacketColor: meta.jacketColor || '#1e3a8a',
           coatName: meta.coatName || 'Chocolate & Tan (Ziggy)',
-          dogName: meta.dogName || 'Ziggy',
+          dogName: (typeof meta.dogName === 'string') ? meta.dogName : 'Ziggy',
+          hasDog: (typeof meta.hasDog === 'boolean')
+            ? meta.hasDog
+            : (Boolean(meta.dogName) || Boolean(meta.dogCoat || meta.coatName)),
           hairStyle: meta.hairStyle,
           hairColor: meta.hairColor,
           pantsColor: meta.pantsColor,
@@ -367,11 +376,12 @@ export class ZeroMeshNetworkManager {
         }
       };
       this.remotePeers.set(peerId, peerData);
-    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality)) {
+    } else if (meta && (meta.name || meta.jacketColor || meta.coatName || meta.personality || typeof meta.hasDog === 'boolean' || typeof meta.dogName === 'string')) {
       if (meta.name) peerData.meta.name = meta.name;
       if (meta.jacketColor) peerData.meta.jacketColor = meta.jacketColor;
       if (meta.coatName) peerData.meta.coatName = meta.coatName;
-      if (meta.dogName) peerData.meta.dogName = meta.dogName;
+      if (typeof meta.dogName === 'string') peerData.meta.dogName = meta.dogName;
+      if (typeof meta.hasDog === 'boolean') peerData.meta.hasDog = meta.hasDog;
       if (meta.hairStyle) peerData.meta.hairStyle = meta.hairStyle;
       if (meta.hairColor) peerData.meta.hairColor = meta.hairColor;
       if (meta.pantsColor) peerData.meta.pantsColor = meta.pantsColor;
@@ -1509,7 +1519,12 @@ export class ZeroMeshNetworkManager {
           name: packet.name || 'Walker',
           jacketColor: packet.jacketColor || '#1e3a8a',
           coatName: packet.dogCoatName || packet.coatName || 'Chocolate & Tan (Ziggy)',
-          dogName: packet.dogName || (packet.extraMeta && packet.extraMeta.dogName) || 'Ziggy',
+          dogName: (typeof packet.dogName === 'string')
+            ? packet.dogName
+            : ((packet.extraMeta && typeof packet.extraMeta.dogName === 'string') ? packet.extraMeta.dogName : 'Ziggy'),
+          hasDog: (typeof packet.hasDog === 'boolean')
+            ? packet.hasDog
+            : ((typeof packet.dogName === 'string' && packet.dogName.length > 0) || Boolean(packet.dogCoatName)),
           hairStyle: packet.hairStyle,
           hairColor: packet.hairColor,
           pantsColor: packet.pantsColor,
@@ -1573,7 +1588,10 @@ export class ZeroMeshNetworkManager {
               name: p.name,
               jacketColor: p.jacketColor,
               coatName: p.coatName || p.dogCoatName,
-              dogName: p.dogName || 'Ziggy',
+              dogName: (typeof p.dogName === 'string') ? p.dogName : 'Ziggy',
+              hasDog: (typeof p.hasDog === 'boolean')
+                ? p.hasDog
+                : ((typeof p.dogName === 'string' && p.dogName.length > 0) || Boolean(p.dogCoatName || p.coatName)),
               hairStyle: p.hairStyle,
               hairColor: p.hairColor,
               pantsColor: p.pantsColor,

@@ -56,9 +56,6 @@
 
   var dog = null;
   var activeDogSlot = null;
-  // Optional render-only delegate: its draw(ctx) method may be used, but its
-  // position, angle, leash, and other world state are NEVER read or written.
-  var drawDelegate = null;
   var pose = 'auto'; // 'auto' | 'camera'
   var stateTimer = 0;
   var forcedState = null; // when set via setDogState, holds until cleared
@@ -253,6 +250,7 @@
       coatColor: appearance.coat,
       coatColorDark: appearance.coatDark,
       coatSecondary: appearance.coatSecondary,
+      coatKey: appearance.coatKey,
       collar: appearance.collar,
       x: fieldWidth / 2,
       y: fieldHeight / 2,
@@ -488,46 +486,6 @@
     return entity;
   }
 
-  // Build a render-only adapter that borrows the delegate's draw() method
-  // WITHOUT mutating it and WITHOUT reading its position, angle, or leash
-  // state. All spatial/state fields come from the sanctuary dog so the
-  // sanctuary is fully self-contained and always off-leash.
-  function buildRenderAdapter(delegate) {
-    var coatObj = delegate.coat && typeof delegate.coat === 'object'
-      ? Object.assign({}, delegate.coat)
-      : {
-          bodyColor: delegate.coatColor || delegate.coat || DEFAULT_COAT,
-          tanColor: delegate.coatColorDark || delegate.coatDark || DEFAULT_COAT_DARK,
-          bibColor: '#f5f0e6',
-          darkColor: delegate.coatColorDark || delegate.coatDark || DEFAULT_COAT_DARK
-        };
-    // Prototype-chain the delegate so its prototype methods remain available,
-    // then shadow only the render-time fields. The delegate itself is never
-    // written to, and its world position/leash are never consulted.
-    var adapter = Object.create(delegate);
-    adapter.x = dog.x;
-    adapter.y = dog.y;
-    adapter.angle = pose === 'camera' ? Math.PI / 2 : dog.facing;
-    adapter.tailAngle = Math.sin((dog.bob || 0) * 1.6) * 0.5;
-    adapter.legPhase = dog.bob;
-    adapter.gaitMode = dog.state === 'wander' ? 'walk' : 'idle';
-    adapter.gaitPhase = dog.bob;
-    adapter.isSitting = dog.state === 'sit';
-    adapter.isSniffing = dog.state === 'sniff';
-    adapter.coat = coatObj;
-    adapter.coatColor = delegate.coatColor || dog.coatColor;
-    adapter.coatColorDark = delegate.coatColorDark || dog.coatColorDark;
-    adapter.coatDark = delegate.coatDark || dog.coatDark;
-    adapter.collarColor = delegate.collarColor || dog.collar;
-    adapter.name = delegate.name || dog.name;
-    adapter.state = dog.state;
-    // Sanctuary dogs are always off-leash.
-    adapter.isLeashed = false;
-    adapter.leash = null;
-    adapter.leashActive = false;
-    return adapter;
-  }
-
   // Draw the articulated top-down canine body (CompanionDog-style).
   function drawArticulatedDog(entity) {
     var coatObj = entity.coat && typeof entity.coat === 'object' ? entity.coat : null;
@@ -683,16 +641,15 @@
   function drawDog() {
     if (!ctx || !dog) return;
 
-    // Prefer a draw delegate when available, but never mutate it and never
-    // read its position/leash: build a render-only adapter that copies only
-    // visual properties.
-    var entity = drawDelegate ? buildRenderAdapter(drawDelegate) : buildDogEntity();
+    // The sanctuary dog is fully self-contained: build a clean visual entity
+    // from the sanctuary's own state. No world dog entity is ever consulted,
+    // so there is zero prototype or world-state leakage.
+    var entity = buildDogEntity();
 
     var CompanionDogClass = getCompanionDogClass();
-    var drawFn = (typeof entity.draw === 'function' ? entity.draw : null) ||
-                 (CompanionDogClass && typeof CompanionDogClass.prototype.draw === 'function'
-                   ? CompanionDogClass.prototype.draw
-                   : null);
+    var drawFn = (CompanionDogClass && typeof CompanionDogClass.prototype.draw === 'function')
+      ? CompanionDogClass.prototype.draw
+      : null;
     if (drawFn) {
       try {
         drawFn.call(entity, ctx);
@@ -870,7 +827,7 @@
   // Public API
   // ---------------------------------------------------------------------------
 
-  function mount(canvasEl, explicitDogSlot, liveDog) {
+  function mount(canvasEl, explicitDogSlot) {
     if (mounted) return;
 
     var el = canvasEl || (global.document && global.document.getElementById(CANVAS_ID));
@@ -893,10 +850,6 @@
       slot = readProfile();
     }
     activeDogSlot = slot || null;
-
-    // Accept an optional draw delegate (render-only). Its world position and
-    // leash state are never used; the sanctuary dog is fully self-contained.
-    drawDelegate = liveDog || null;
 
     var appearance = resolveAppearance(activeDogSlot);
     dog = createDog(appearance);
@@ -939,7 +892,6 @@
     ctx = null;
     dog = null;
     activeDogSlot = null;
-    drawDelegate = null;
     forcedState = null;
     grassBlades = [];
     particles = [];
@@ -970,6 +922,8 @@
       state: dog.state,
       coatColor: dog.coatColor,
       coatColorDark: dog.coatColorDark,
+      coatKey: dog.coatKey,
+      collar: dog.collar,
       isLeashed: dog.isLeashed,
       leash: dog.leash
     };

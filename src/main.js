@@ -105,7 +105,7 @@ export class CliftonDownGame {
 
     // Dog Stray Run-Off and Waste Drop Event Callbacks
     this.dog.onStrayTriggered = (dog) => {
-      this.hud.showToast('Your dog ran off! Check the compass arrow 🐕');
+      this.hud.showToast(`${this.dog.name || 'Your dog'} ran off! Check the compass arrow 🐕`);
       this.navArrow.setTarget(dog.x, dog.y, 'DOG', 'Find your dog!', '#f59e0b');
     };
 
@@ -113,14 +113,14 @@ export class CliftonDownGame {
       if (this.navArrow.target && this.navArrow.target.type === 'DOG') {
         this.navArrow.clearTarget();
       }
-      this.hud.showToast('Reunited with your dog! ❤️');
+      this.hud.showToast(`Reunited with ${this.dog.name || 'your dog'}! ❤️`);
     };
 
     this.dog.onPoopDropped = (dog, poopPile) => {
       if (this.field && typeof this.field.addPoopPile === 'function') {
         this.field.addPoopPile(poopPile);
       }
-      this.hud.showToast('Your dog did a poop! Please pick it up 🟤');
+      this.hud.showToast(`${this.dog.name || 'Your dog'} did a poop! Please pick it up 🟤`);
     };
 
     // Proximity Chat HUD & Dynamic Spatial Clustering
@@ -353,6 +353,7 @@ export class CliftonDownGame {
         if (meta.accessory !== undefined) existing.owner.accessory = meta.accessory || 'NONE';
         if (meta.skinTone) existing.owner.skinTone = meta.skinTone;
         if (meta.collarColor) existing.dog.collarColor = meta.collarColor;
+        if (meta.dogName) existing.dog.name = meta.dogName;
         if (meta.personality) {
           if (typeof existing.dog.setPersonality === 'function') {
             existing.dog.setPersonality(meta.personality);
@@ -373,6 +374,7 @@ export class CliftonDownGame {
       if (meta?.skinTone) remoteOwner.skinTone = meta.skinTone;
 
       const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
+      remoteDog.name = (meta && meta.dogName) ? meta.dogName : 'Ziggy';
       if (meta?.collarColor) remoteDog.collarColor = meta.collarColor;
       if (meta?.personality) {
         if (typeof remoteDog.setPersonality === 'function') {
@@ -1413,6 +1415,7 @@ export class CliftonDownGame {
         const remoteOwner = new Owner(this.owner.x, this.owner.y, meta.name || 'Walker', false);
         remoteOwner.jacketColor = meta.jacketColor || '#1e3a8a';
         const remoteDog = new CompanionDog(this.owner.x + 30, this.owner.y + 20, remoteOwner, coat);
+        remoteDog.name = (meta && meta.dogName) ? meta.dogName : 'Ziggy';
         remote = { owner: remoteOwner, dog: remoteDog };
         this.remotePlayers.set(peerId, remote);
         this.hud.updatePlayerCount(this.remotePlayers.size + 1);
@@ -1426,6 +1429,9 @@ export class CliftonDownGame {
         }
         if (meta.coatName && remote.dog.coat !== coat) {
           remote.dog.coat = coat;
+        }
+        if (meta.dogName && remote.dog.name !== meta.dogName) {
+          remote.dog.name = meta.dogName;
         }
         if (meta.personality) {
           if (typeof remote.dog.setPersonality === 'function') {

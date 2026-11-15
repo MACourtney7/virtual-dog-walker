@@ -95,9 +95,17 @@ const document = {{
   addEventListener() {{}},
   body: __makeEl('body')
 }};
-const window = {{ location: {{ search: '' }}, requestAnimationFrame: null }};
 const requestAnimationFrame = (fn) => 0;
 const cancelAnimationFrame = () => {{}};
+const window = {{
+  location: {{ search: '' }},
+  requestAnimationFrame: requestAnimationFrame,
+  cancelAnimationFrame: cancelAnimationFrame,
+  document: document,
+  devicePixelRatio: 1,
+  addEventListener: function () {{}},
+  removeEventListener: function () {{}}
+}};
 // Controllable timer queue so tests can fast-forward scheduled callbacks.
 const __timerQueue = [];
 let __timerSeq = 0;
@@ -128,6 +136,8 @@ const localStorage = (() => {{
     clear() {{ store = {{}}; }}
   }};
 }})();
+window.localStorage = localStorage;
+window.localStorage = localStorage;
 
 // ---- Load real modules ----
 // home_sanctuary.js is an IIFE that assigns window.HomeSanctuary.

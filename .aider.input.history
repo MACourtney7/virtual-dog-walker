@@ -1,0 +1,96 @@
+
+# 2026-11-15 16:12:58.461708
++You are an autonomous Implementer worker for the Agentic Software Factory.
++Follow all instructions in this task brief strictly.
++Make all edits directly to the relevant files in the chat.
++NOTE: If a target file is declared as `<submodule>/<path>` (e.g. `virtual_dog_walker/src/world/field.js`), and aider adds it to the chat as `<path>` (e.g. `src/world/field.js`), they are the EXACT SAME FILE. Apply your edits immediately to the file present in the chat using SEARCH/REPLACE blocks. Never ask clarifying questions or ask for files to be added again; execute the edits immediately.
++Ensure the code builds and passes all acceptance criteria and tests.
++
++=== TASK BRIEF ===
++---
++brief_id: "brief-11-dog-identity-and-behavioral-tests"
++role: "IMPLEMENTER"
++thinking_level: "MEDIUM"
++target_package: "virtual_dog_walker"
++target_files:
++  - "virtual_dog_walker/src/ui/home_feeding.js"
++  - "virtual_dog_walker/src/ui/home_sanctuary.js"
++  - "virtual_dog_walker/test/test_home_sanctuary.py"
++test_cmd: "python3 -m unittest test/test_home_sanctuary.py"
++---
++
++# Implementer Brief 11: Dog Identity Semantics, Mount Hydration & Behavioral Test Coverage
++
++## Required Changes
++
++### 1. `virtual_dog_walker/src/ui/home_feeding.js`
++1. In `onFeedClick()`:
++   Retrieve the dog name and id from `HomeSanctuary`:
++   ```javascript
++   function onFeedClick() {
++     if (feeding) return;
++     var dogSlot = null;
++     if (window.HomeSanctuary && typeof window.HomeSanctuary.getDogSlot === 'function') {
++       try { dogSlot = window.HomeSanctuary.getDogSlot(); } catch (e) {}
++     }
++     var dog = null;
++     if (window.HomeSanctuary && typeof window.HomeSanctuary.getCompanionDog === 'function') {
++       try { dog = window.HomeSanctuary.getCompanionDog(); } catch (e) {}
++     }
++     var name = (dogSlot && dogSlot.name) || (dog && dog.name) || 'Ziggy';
++     var id = (dogSlot && (dogSlot.id || dogSlot.dogId)) || (dog && dog.id) || 'dog-1';
++     runFeed({ dogName: name, dogId: id });
++   }
++   ```
++2. In `runFeed(opts)`:
++   - `var dogName = opts.dogName || 'Ziggy';`
++   - `var dogId = opts.dogId || 'dog-1';`
++   - Phase 4 toast uses `dogName`: `var toast = dogName + ' loved the meal! ❤️'; emitToast(toast);`
++   - Phase 4 persistence uses `dogId`: `persistFeed(dogId);`
++3. In `mount()`:
++   Hydrate `lastFeedAt`:
++   ```javascript
++   lastFeedAt = readLastFeedAt();
++   ```
++4. Expose `runFeed` and `onFeedClick` in `__testHooks`:
++   ```javascript
++   window.HomeFeeding.__testHooks = {
++     simulateFeed: simulateFeed,
++     runFeed: runFeed,
++     onFeedClick: onFeedClick,
++     getState: function () { return state; },
++     isFeeding: function () { return feeding; },
++     getTimers: function () { return timers; }
++   };
++   ```
++
++### 2. `virtual_dog_walker/src/ui/home_sanctuary.js`
++In `__testHooks` on `HomeSanctuary`:
++Expose particle and state inspection hooks:
++```javascript
++window.HomeSanctuary.__testHooks = {
++  getParticles: function () { return particles; },
++  spawnParticles: spawnParticles,
++  getForcedState: function () { return forcedState; },
++  getPose: function () { return pose; }
++};
++```
++
++### 3. `virtual_dog_walker/test/test_home_sanctuary.py`
++Add executable behavioral tests:
++1. `test_exec_run_feed_emits_toast_and_resumes_roaming`:
++   Drive `runFeed` under mock timers / fast-forward and assert that:
++   - `window.showToast` is invoked with `"<DogName> loved the meal! ❤️"`
++   - `last_feed_at` stored in `localStorage` has `dogId: 'dog-1'` (or the specified id)
++   - after resumption delay, dog pose is `'auto'`, dog state returns to `'wander'`, and `feeding` is `false`.
++2. `test_exec_particles_spawn_during_eating`:
++   Set state to `'eating'`, run particle spawn, and assert `particles.length > 0` and includes heart / crumb.
++3. `test_exec_mount_hydrates_last_feed_at`:
++   Pre-seed `localStorage` with `virtual_dog_walker.last_feed_at`, call `mount()`, and assert `getLastFeedAt()` returns the hydrated JSON string.
++
++## Verification
++Run:
++`python3 -m unittest test/test_home_sanctuary.py`
++All tests must pass (0 failures, 0 errors).
++
++

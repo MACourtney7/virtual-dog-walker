@@ -71,11 +71,14 @@ function __makeEl(tag) {{
       return {{
         clearRect() {{}}, fillRect() {{}}, beginPath() {{}}, ellipse() {{}},
         fill() {{}}, stroke() {{}}, save() {{}}, restore() {{}},
-        setTransform() {{}}, translate() {{}}, arc() {{}}, moveTo() {{}}, lineTo() {{}},
-        fillText() {{}},
+        setTransform() {{}}, translate() {{}}, rotate() {{}}, scale() {{}},
+        arc() {{}}, moveTo() {{}}, lineTo() {{}}, closePath() {{}}, rect() {{}},
+        fillText() {{}}, strokeText() {{}}, measureText() {{ return {{ width: 0 }}; }},
         createLinearGradient() {{ return {{ addColorStop() {{}} }}; }},
         createRadialGradient() {{ return {{ addColorStop() {{}} }}; }},
-        set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}}
+        set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}},
+        set lineCap(v) {{}}, set lineJoin(v) {{}}, set globalAlpha(v) {{}},
+        set font(v) {{}}, set textAlign(v) {{}}, set textBaseline(v) {{}}
       }};
     }},
     focus() {{}}, blur() {{}}

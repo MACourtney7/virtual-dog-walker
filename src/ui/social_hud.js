@@ -390,6 +390,13 @@ export class SocialHUD {
   removeDog() {
     this.dogSlot = null;
     this.isHomeLocked = true;
+
+    // Reset the live dog entity so no stale name tag renders in the world
+    // while the kennel slot is empty.
+    if (this.dog) {
+      this.dog.name = '';
+    }
+
     this.renderDogSlot();
     this.renderHomeStage();
     this.updateCloseButtonState();

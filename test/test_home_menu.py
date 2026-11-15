@@ -9,8 +9,11 @@ Validates:
 - REQ-028.5: Browser localStorage Persistence & zero_network Broadcast
 """
 
+import json
 import os
 import re
+import shutil
+import subprocess
 import unittest
 
 
@@ -19,6 +22,117 @@ def read(rel_path):
     full = os.path.join(base, "..", rel_path)
     with open(full, "r", encoding="utf-8") as f:
         return f.read()
+
+
+def _run_js(snippet):
+    """Execute a JS snippet against the real SocialHUD class.
+
+    Strips ESM import/export lines, provides minimal module stubs and a mock
+    DOM, wraps the module in an IIFE, and runs the snippet via osascript
+    (JavaScriptCore) or node. Returns the JSON-decoded result of the snippet.
+    """
+    hud_src = read("src/ui/social_hud.js")
+    dog_src = read("src/entities/companion_dog.js")
+
+    clean_hud = re.sub(r"^\s*import\s+.*?;?\s*$", "", hud_src, flags=re.M)
+    clean_hud = re.sub(r"\bexport\s+(default\s+)?", "", clean_hud)
+
+    clean_dog = re.sub(r"^\s*import\s+.*?;?\s*$", "", dog_src, flags=re.M)
+    clean_dog = re.sub(r"\bexport\s+(default\s+)?", "", clean_dog)
+
+    harness = f"""
+// ---- Minimal module stubs ----
+const Protocol = {{
+  createHello(peerId, name, jacketColor, coatName, extraMeta) {{
+    return {{ type: 'HELLO', senderId: peerId, name, jacketColor, coatName, ...(extraMeta || {{}}) }};
+  }}
+}};
+class TouchControls {{}}
+const WSStatus = {{ CONNECTED: 'CONNECTED', CONNECTING: 'CONNECTING', RECONNECTING: 'RECONNECTING', OFFLINE: 'OFFLINE', ERROR: 'ERROR' }};
+const NetStatus = {{ CONNECTED_PEER: 'CONNECTED_PEER', HOSTING: 'HOSTING', CONNECTING: 'CONNECTING', OFFLINE: 'OFFLINE', ERROR: 'ERROR' }};
+const PUBLIC_ZONE_IDS = [];
+function isPublicZoneId() {{ return false; }}
+
+// ---- Mock DOM ----
+const __elements = {{}};
+function __makeEl(tag) {{
+  const el = {{
+    tagName: (tag || 'div').toUpperCase(),
+    id: '',
+    className: '',
+    style: {{}},
+    innerHTML: '',
+    textContent: '',
+    value: '',
+    children: [],
+    _listeners: {{}},
+    classList: {{
+      _set: new Set(),
+      add(c) {{ this._set.add(c); }},
+      remove(c) {{ this._set.delete(c); }},
+      contains(c) {{ return this._set.has(c); }}
+    }},
+    appendChild(child) {{ this.children.push(child); if (child && child.id) __elements[child.id] = child; return child; }},
+    addEventListener(evt, fn) {{ (this._listeners[evt] = this._listeners[evt] || []).push(fn); }},
+    removeEventListener() {{}},
+    querySelector() {{ return null; }},
+    querySelectorAll() {{ return []; }},
+    getAttribute(name) {{ return this._attrs ? this._attrs[name] : null; }},
+    setAttribute(name, val) {{ (this._attrs = this._attrs || {{}})[name] = val; }},
+    getContext() {{
+      return {{
+        clearRect() {{}}, fillRect() {{}}, beginPath() {{}}, ellipse() {{}},
+        fill() {{}}, stroke() {{}}, save() {{}}, restore() {{}},
+        createLinearGradient() {{ return {{ addColorStop() {{}} }}; }},
+        createRadialGradient() {{ return {{ addColorStop() {{}} }}; }},
+        set fillStyle(v) {{}}, set strokeStyle(v) {{}}, set lineWidth(v) {{}}
+      }};
+    }},
+    focus() {{}}, blur() {{}}
+  }};
+  return el;
+}}
+const document = {{
+  _byId: __elements,
+  getElementById(id) {{ return __elements[id] || null; }},
+  createElement(tag) {{ return __makeEl(tag); }},
+  querySelector() {{ return null; }},
+  querySelectorAll() {{ return []; }},
+  addEventListener() {{}},
+  body: __makeEl('body')
+}};
+const window = {{ location: {{ search: '' }}, requestAnimationFrame: null }};
+const requestAnimationFrame = (fn) => 0;
+const cancelAnimationFrame = () => {{}};
+const localStorage = (() => {{
+  let store = {{}};
+  return {{
+    getItem(k) {{ return Object.prototype.hasOwnProperty.call(store, k) ? store[k] : null; }},
+    setItem(k, v) {{ store[k] = String(v); }},
+    removeItem(k) {{ delete store[k]; }},
+    clear() {{ store = {{}}; }}
+  }};
+}})();
+
+// ---- Load real modules ----
+const {{ resolveCoatPresetByName, CoatPreset }} = (() => {{ {clean_dog}\nreturn {{ resolveCoatPresetByName, CoatPreset }}; }})();
+const {{ SocialHUD }} = (() => {{ {clean_hud}\nreturn {{ SocialHUD }}; }})();
+
+const __res = (() => {{ {snippet} }})();
+JSON.stringify(__res);
+"""
+
+    if shutil.which("osascript"):
+        out = subprocess.check_output(
+            ["osascript", "-l", "JavaScript", "-e", harness], text=True
+        ).strip()
+        return json.loads(out)
+    if shutil.which("node"):
+        out = subprocess.check_output(
+            ["node", "-e", f"console.log({harness})"], text=True
+        ).strip()
+        return json.loads(out)
+    raise unittest.SkipTest("No JS runtime (osascript or node) available")
 
 
 class TestHomeHUDAndStage(unittest.TestCase):
@@ -253,6 +367,152 @@ class TestNetworkProtocolAndStorage(unittest.TestCase):
         self.assertIn('clifton_walker_profile', self.hud_js, "Missing clifton_walker_profile localStorage key")
         self.assertIn('dogSlot', self.hud_js, "localStorage save must include dogSlot")
         self.assertIn('dogName', self.hud_js, "localStorage save must include dogName")
+
+
+class TestHomeMenuBehavioralExecutable(unittest.TestCase):
+    """Brief 09: executable behavioral verification of the Home menu."""
+
+    def test_exec_resolve_coat_preset_by_name(self):
+        snippet = """
+        const current = resolveCoatPresetByName('Chocolate & Tan Cocker Spaniel');
+        const legacy = resolveCoatPresetByName('Chocolate & Tan (Ziggy)');
+        const unknown = resolveCoatPresetByName('Not A Real Breed');
+        return {
+          currentBody: current ? current.bodyColor : null,
+          currentName: current ? current.name : null,
+          legacyBody: legacy ? legacy.bodyColor : null,
+          legacyName: legacy ? legacy.name : null,
+          unknown: unknown === null || unknown === undefined
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["currentBody"], "#2e1a14")
+        self.assertEqual(res["legacyBody"], "#2e1a14")
+        self.assertEqual(res["currentName"], "Chocolate & Tan Cocker Spaniel")
+        self.assertEqual(res["legacyName"], "Chocolate & Tan Cocker Spaniel")
+        self.assertTrue(res["unknown"], "Unknown breed must resolve to null")
+
+    def test_exec_load_saved_empty_slot_locks(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+        return {
+          dogSlot: hud.dogSlot,
+          isHomeLocked: hud.isHomeLocked
+        };
+        """
+        res = _run_js(snippet)
+        self.assertIsNone(res["dogSlot"], "Saved empty slot must leave dogSlot null")
+        self.assertTrue(res["isHomeLocked"], "Saved empty slot must lock Home")
+
+    def test_exec_lock_blocks_modal_dismissal(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+        const modal = document.getElementById('customizer-modal');
+        modal.style.display = 'block';
+        hud.isHomeLocked = true;
+
+        hud.openModal();
+        const afterOpen = modal.style.display;
+        hud.closeModal();
+        const afterClose = modal.style.display;
+
+        return { afterOpen: afterOpen, afterClose: afterClose };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["afterOpen"], "block",
+                         "openModal must not toggle closed while locked")
+        self.assertEqual(res["afterClose"], "block",
+                         "closeModal must refuse to close while locked")
+
+    def test_exec_remove_dog_persists_null_and_resets_dog(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        let broadcastCount = 0;
+        const net = { setLocalMeta() {}, broadcast() { broadcastCount++; }, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+        const hadSlot = hud.dogSlot !== null;
+
+        hud.removeDog();
+
+        const saved = JSON.parse(localStorage.getItem('clifton_walker_profile'));
+        return {
+          hadSlot: hadSlot,
+          dogSlot: hud.dogSlot,
+          isHomeLocked: hud.isHomeLocked,
+          dogName: hud.dog.name,
+          savedDogSlot: saved.dogSlot,
+          broadcastCount: broadcastCount
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["hadSlot"], "Test setup must start with an occupied slot")
+        self.assertIsNone(res["dogSlot"], "removeDog must clear dogSlot")
+        self.assertTrue(res["isHomeLocked"], "removeDog must lock Home")
+        self.assertEqual(res["dogName"], "", "removeDog must reset the live dog name")
+        self.assertIsNone(res["savedDogSlot"], "removeDog must persist dogSlot: null")
+        self.assertGreaterEqual(res["broadcastCount"], 1,
+                                "removeDog must broadcast the empty profile")
+
+    def test_exec_add_dog_populates_slot_and_unlocks(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: null
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: '', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        // The empty-slot form is rendered by renderDogSlot(); populate the
+        // inputs it creates and adopt.
+        const nameInput = document.getElementById('cust-dog-name');
+        const coatSelect = document.getElementById('cust-dog-coat');
+        if (nameInput) nameInput.value = 'Ziggy';
+        if (coatSelect) coatSelect.value = 'CHOCOLATE_TAN';
+
+        hud.adoptDogFromForm();
+
+        const modal = document.getElementById('customizer-modal');
+        modal.style.display = 'block';
+        hud.closeModal();
+        const afterClose = modal.style.display;
+
+        return {
+          dogSlotName: hud.dogSlot ? hud.dogSlot.name : null,
+          isHomeLocked: hud.isHomeLocked,
+          dogName: hud.dog.name,
+          afterClose: afterClose
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["dogSlotName"], "Ziggy",
+                         "Adopting must populate the slot with the default name")
+        self.assertFalse(res["isHomeLocked"], "Adopting must unlock Home")
+        self.assertEqual(res["dogName"], "Ziggy",
+                         "Adopting must set the live dog name")
+        self.assertEqual(res["afterClose"], "none",
+                         "Modal must be closable once a dog is adopted")
 
 
 if __name__ == '__main__':

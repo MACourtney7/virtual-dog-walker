@@ -15,7 +15,7 @@
   var CANVAS_ID = 'home-field-canvas';
   var SANCTUARY_ID = 'home-view-sanctuary';
 
-  var STATES = ['wander', 'sniff', 'sit', 'wag', 'eating'];
+  var STATES = ['wander', 'sniff', 'sit', 'wag', 'eating', 'bowl'];
   var AUTONOMOUS_STATES = ['wander', 'sniff', 'sit', 'wag'];
 
   var FIELD_PADDING = 28; // soft padding from canvas edges (px)
@@ -374,17 +374,30 @@
     ctx.fillStyle = GRASS_BASE;
     ctx.fillRect(0, 0, fieldWidth, fieldHeight);
 
-    // Diagonal mown meadow stripes.
+    // Diagonal mown meadow stripes (alternating GRASS_MOWN bands).
     ctx.save();
-    ctx.fillStyle = MOWN_STRIPE;
     var stripeWidth = 46;
     var span = fieldWidth + fieldHeight;
     for (var s = -fieldHeight; s < span; s += stripeWidth * 2) {
+      // Solid mown-turf band.
+      ctx.fillStyle = GRASS_MOWN;
+      ctx.globalAlpha = 0.35;
       ctx.beginPath();
       ctx.moveTo(s, 0);
       ctx.lineTo(s + stripeWidth, 0);
       ctx.lineTo(s + stripeWidth - fieldHeight, fieldHeight);
       ctx.lineTo(s - fieldHeight, fieldHeight);
+      ctx.closePath();
+      ctx.fill();
+
+      // Soft overlay stripe for depth.
+      ctx.fillStyle = MOWN_STRIPE;
+      ctx.globalAlpha = 1;
+      ctx.beginPath();
+      ctx.moveTo(s + stripeWidth, 0);
+      ctx.lineTo(s + stripeWidth * 2, 0);
+      ctx.lineTo(s + stripeWidth * 2 - fieldHeight, fieldHeight);
+      ctx.lineTo(s + stripeWidth - fieldHeight, fieldHeight);
       ctx.closePath();
       ctx.fill();
     }
@@ -439,16 +452,26 @@
   }
 
   // Build a lightweight entity shaped like a CompanionDog for articulated drawing.
+  // `coat` is populated as an object (bodyColor/tanColor/bibColor) so that
+  // CompanionDog.prototype.draw can consume it without throwing.
   function buildDogEntity() {
+    var coatObj = {
+      bodyColor: dog.coatColor || dog.coat || DEFAULT_COAT,
+      tanColor: dog.coatSecondary || dog.coatDark || DEFAULT_COAT_DARK,
+      bibColor: dog.coatSecondary || '#f5f0e6',
+      darkColor: dog.coatColorDark || dog.coatDark || DEFAULT_COAT_DARK
+    };
     var entity = {
       x: dog.x,
       y: dog.y,
       angle: pose === 'camera' ? Math.PI / 2 : dog.facing,
       tailAngle: 0,
       legPhase: dog.bob,
+      gaitMode: dog.state === 'wander' ? 'walk' : 'idle',
+      gaitPhase: dog.bob,
       isSitting: dog.state === 'sit',
       isSniffing: dog.state === 'sniff',
-      coat: dog.coat,
+      coat: coatObj,
       coatColor: dog.coatColor,
       coatColorDark: dog.coatColorDark,
       coatDark: dog.coatDark,
@@ -459,10 +482,45 @@
     return entity;
   }
 
+  // Build a render-only adapter that copies visual properties from a live
+  // CompanionDog entity WITHOUT mutating it. The live entity is treated as
+  // strictly read-only.
+  function buildRenderAdapter(live) {
+    var coatObj = live.coat && typeof live.coat === 'object'
+      ? live.coat
+      : {
+          bodyColor: live.coatColor || live.coat || DEFAULT_COAT,
+          tanColor: live.coatColorDark || live.coatDark || DEFAULT_COAT_DARK,
+          bibColor: '#f5f0e6',
+          darkColor: live.coatColorDark || live.coatDark || DEFAULT_COAT_DARK
+        };
+    return {
+      x: dog.x,
+      y: dog.y,
+      angle: pose === 'camera' ? Math.PI / 2 : dog.facing,
+      tailAngle: live.tailAngle || 0,
+      legPhase: dog.bob,
+      gaitMode: dog.state === 'wander' ? 'walk' : 'idle',
+      gaitPhase: dog.bob,
+      isSitting: dog.state === 'sit',
+      isSniffing: dog.state === 'sniff',
+      coat: coatObj,
+      coatColor: live.coatColor || dog.coatColor,
+      coatColorDark: live.coatColorDark || dog.coatColorDark,
+      coatDark: live.coatDark || dog.coatDark,
+      collarColor: live.collarColor || dog.collar,
+      name: live.name || dog.name,
+      state: dog.state
+    };
+  }
+
   // Draw the articulated top-down canine body (CompanionDog-style).
   function drawArticulatedDog(entity) {
-    var coat = entity.coatColor || entity.coat || DEFAULT_COAT;
-    var coatDark = entity.coatColorDark || entity.coatDark || DEFAULT_COAT_DARK;
+    var coatObj = entity.coat && typeof entity.coat === 'object' ? entity.coat : null;
+    var coat = entity.coatColor || (coatObj && coatObj.bodyColor) ||
+      (typeof entity.coat === 'string' ? entity.coat : null) || DEFAULT_COAT;
+    var coatDark = entity.coatColorDark || entity.coatDark ||
+      (coatObj && (coatObj.darkColor || coatObj.tanColor)) || DEFAULT_COAT_DARK;
     var collar = entity.collarColor || entity.collar || DEFAULT_COLLAR;
     var angle = entity.angle;
     var R = DOG_RADIUS;
@@ -608,16 +666,9 @@
   function drawDog() {
     if (!ctx || !dog) return;
 
-    // Prefer a real CompanionDog entity when available.
-    var entity = liveDogEntity || buildDogEntity();
-    if (liveDogEntity) {
-      entity.x = dog.x;
-      entity.y = dog.y;
-      entity.angle = pose === 'camera' ? Math.PI / 2 : dog.facing;
-      entity.legPhase = dog.bob;
-      entity.isSitting = dog.state === 'sit';
-      entity.isSniffing = dog.state === 'sniff';
-    }
+    // Prefer a real CompanionDog entity when available, but never mutate it:
+    // build a render-only adapter that copies visual properties.
+    var entity = liveDogEntity ? buildRenderAdapter(liveDogEntity) : buildDogEntity();
 
     var CompanionDogClass = getCompanionDogClass();
     if (CompanionDogClass && typeof CompanionDogClass.prototype.draw === 'function') {
@@ -631,9 +682,16 @@
     }
 
     // Food bowl during bowl/eating phases.
-    if (forcedState === 'eating' || (dog && dog.state === 'eating')) {
+    if (isBowlVisible()) {
       drawFoodBowl();
     }
+  }
+
+  // Bowl is visible during both the 'bowl' and 'eating' phases.
+  function isBowlVisible() {
+    if (forcedState === 'eating' || forcedState === 'bowl') return true;
+    if (dog && (dog.state === 'eating' || dog.state === 'bowl')) return true;
+    return false;
   }
 
   function spawnParticles() {
@@ -698,7 +756,7 @@
     drawField();
     drawDog();
 
-    if (forcedState === 'eating' || (dog && dog.state === 'eating')) {
+    if (isBowlVisible()) {
       spawnParticles();
     }
     updateAndDrawParticles();

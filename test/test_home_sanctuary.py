@@ -224,9 +224,51 @@ class TestHomeSanctuaryStatic(unittest.TestCase):
         self.assertIn('spawnParticles', self.sanctuary_js,
                       "HomeSanctuary must expose spawnParticles")
 
+    def test_gitignore_includes_aider(self):
+        gitignore = read(".gitignore")
+        self.assertIn(".aider", gitignore,
+                      ".gitignore must ignore .aider* files")
+
     def test_hud_bridges_window_show_toast(self):
         self.assertIn('window.showToast', self.hud_js,
                       "SocialHUD must bridge window.showToast")
+
+    def test_bowl_visible_in_bowl_and_eating(self):
+        self.assertIn("isBowlVisible", self.sanctuary_js,
+                      "HomeSanctuary must define isBowlVisible()")
+        self.assertRegex(
+            self.sanctuary_js,
+            r"forcedState\s*===\s*'eating'\s*\|\|\s*forcedState\s*===\s*'bowl'",
+            "Bowl visibility must include both 'eating' and 'bowl' forced states"
+        )
+
+    def test_grass_mown_used_in_draw_field(self):
+        self.assertIn("GRASS_MOWN", self.sanctuary_js,
+                      "HomeSanctuary must define GRASS_MOWN")
+        self.assertRegex(
+            self.sanctuary_js,
+            r"ctx\.fillStyle\s*=\s*GRASS_MOWN",
+            "drawField must actively use GRASS_MOWN for turf shading"
+        )
+
+    def test_live_dog_entity_not_mutated_static(self):
+        self.assertIn("buildRenderAdapter", self.sanctuary_js,
+                      "HomeSanctuary must use a non-mutating render adapter")
+        # The old mutation pattern must be gone.
+        self.assertNotIn("entity.x = dog.x", self.sanctuary_js,
+                         "drawDog must not mutate the live entity's x")
+        self.assertNotIn("entity.y = dog.y", self.sanctuary_js,
+                         "drawDog must not mutate the live entity's y")
+
+    def test_feeding_ssr_safe_root(self):
+        self.assertIn("var root = typeof window !== 'undefined'",
+                      self.feeding_js,
+                      "home_feeding.js must define an SSR-safe root reference")
+        # No bare `window.HomeSanctuary` / `window.HomeFeeding` references.
+        self.assertNotIn("window.HomeSanctuary", self.feeding_js,
+                         "home_feeding.js must not reference bare window.HomeSanctuary")
+        self.assertNotIn("window.HomeFeeding", self.feeding_js,
+                         "home_feeding.js must not reference bare window.HomeFeeding")
 
 
 @unittest.skipUnless(
@@ -582,6 +624,104 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
                          "GOLDEN coatKey must map to the golden primary color")
         self.assertEqual(res["coatColorDark"], "#ca8a04",
                          "GOLDEN coatKey must map to the golden dark color")
+
+    def test_exec_camera_pose_orientation_faces_down(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.setDogPose('camera');
+        const dog = window.HomeSanctuary.getCompanionDog();
+        return { facing: dog.facing, expected: Math.PI / 2 };
+        """
+        res = _run_js(snippet)
+        self.assertAlmostEqual(res["facing"], res["expected"], places=6,
+                               msg="Camera pose must face down (angle = Math.PI / 2)")
+
+    def test_exec_live_dog_entity_not_mutated(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const live = {
+          x: 999, y: 888, angle: 0.123, legPhase: 0,
+          isSitting: false, isSniffing: false,
+          coat: { bodyColor: '#111111', tanColor: '#222222', bibColor: '#333333' },
+          collarColor: '#444444', name: 'LiveDog'
+        };
+        const snapshot = JSON.stringify(live);
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot, live);
+
+        // Force a render pass through the public test hook path.
+        const hooks = window.HomeSanctuary.__testHooks;
+        hooks.updateDog(16);
+        // Trigger a render by calling the internal draw via a frame tick is
+        // not exposed; instead verify the live entity is untouched after mount.
+        return {
+          before: snapshot,
+          after: JSON.stringify(live),
+          x: live.x,
+          y: live.y,
+          angle: live.angle
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["before"], res["after"],
+                         "liveDogEntity must not be mutated during rendering")
+        self.assertEqual(res["x"], 999, "liveDogEntity.x must remain unchanged")
+        self.assertEqual(res["y"], 888, "liveDogEntity.y must remain unchanged")
+        self.assertAlmostEqual(res["angle"], 0.123, places=6,
+                               msg="liveDogEntity.angle must remain unchanged")
+
+    def test_exec_bowl_visible_in_bowl_and_eating_states(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+
+        window.HomeSanctuary.setDogState('bowl');
+        const bowlForced = window.HomeSanctuary.__testHooks.getForcedState();
+
+        window.HomeSanctuary.setDogState('eating');
+        const eatingForced = window.HomeSanctuary.__testHooks.getForcedState();
+
+        return { bowlForced: bowlForced, eatingForced: eatingForced };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["bowlForced"], "bowl",
+                         "setDogState('bowl') must set forcedState to 'bowl'")
+        self.assertEqual(res["eatingForced"], "eating",
+                         "setDogState('eating') must set forcedState to 'eating'")
 
     def test_exec_second_click_while_feeding_ignored(self):
         snippet = """

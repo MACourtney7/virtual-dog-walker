@@ -21074,6 +21074,7 @@ export default weatherClient;
   var feedBtnEl = null;
   var bowlEl = null;
   var lastFeedAt = null;
+  var pendingResolve = null;
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -21244,7 +21245,7 @@ export default weatherClient;
 
   function updateDisabledState() {
     if (!feedBtnEl) return;
-    var disabled = getDogSlot() === null;
+    var disabled = getDogSlot() === null || !getCanvas();
     feedBtnEl.disabled = !!disabled;
     feedBtnEl.setAttribute('aria-disabled', disabled ? 'true' : 'false');
   }
@@ -21293,6 +21294,7 @@ export default weatherClient;
       }
       feeding = true;
       clearTimers();
+      pendingResolve = resolve;
 
       var start = now();
 
@@ -21333,6 +21335,7 @@ export default weatherClient;
                 try { window.HomeSanctuary.resumeRoaming(); } catch (e) {}
               }
               updateDisabledState();
+              pendingResolve = null;
               resolve();
             }, RESUME_DELAY_MS);
           }, EATING_MS);
@@ -21378,6 +21381,12 @@ export default weatherClient;
     clearBowl();
     feeding = false;
     setState('idle');
+    // Resolve any in-flight runFeed promise so callers are never left dangling.
+    if (pendingResolve) {
+      var r = pendingResolve;
+      pendingResolve = null;
+      try { r(); } catch (e) { /* ignore */ }
+    }
     if (feedBtnEl && feedBtnEl.__homeFeedingBound) {
       feedBtnEl.removeEventListener('click', onFeedClick);
       feedBtnEl.__homeFeedingBound = false;
@@ -21641,6 +21650,15 @@ export default weatherClient;
     return null;
   }
 
+  // Known breed coat keys mapped to a primary / dark / secondary color trio.
+  var COAT_KEY_COLORS = {
+    CHOCOLATE_TAN: { primary: '#3e2723', dark: '#2b1712', secondary: '#d7ccc8' },
+    GOLDEN: { primary: '#eab308', dark: '#ca8a04', secondary: '#fef08a' },
+    BLACK_LAB: { primary: '#1e293b', dark: '#0f172a', secondary: '#475569' },
+    BEAGLE: { primary: '#b45309', dark: '#78350f', secondary: '#ffffff' },
+    DALMATIAN: { primary: '#f8fafc', dark: '#0f172a', secondary: '#0f172a' }
+  };
+
   function resolveAppearance(profile) {
     var appearance = {
       coat: DEFAULT_COAT,
@@ -21656,18 +21674,27 @@ export default weatherClient;
     if (profile.name) appearance.name = String(profile.name);
     if (profile.coatKey) appearance.coatKey = String(profile.coatKey);
 
+    // Breed coat-key mapping takes precedence so breed choices render
+    // accurately regardless of any stale explicit color fields.
+    var mapped = appearance.coatKey ? COAT_KEY_COLORS[appearance.coatKey] : null;
+    if (mapped) {
+      appearance.coat = mapped.primary;
+      appearance.coatDark = mapped.dark;
+      appearance.coatSecondary = mapped.secondary;
+    }
+
     var coat =
       profile.coat ||
       profile.coatColor ||
       profile.color ||
       (profile.appearance && (profile.appearance.coat || profile.appearance.color));
-    if (coat) appearance.coat = String(coat);
+    if (coat && !mapped) appearance.coat = String(coat);
 
     var coatDark =
       profile.coatDark ||
       profile.coatSecondary ||
       (profile.appearance && (profile.appearance.coatDark || profile.appearance.coatSecondary));
-    if (coatDark) appearance.coatDark = String(coatDark);
+    if (coatDark && !mapped) appearance.coatDark = String(coatDark);
 
     var collar =
       profile.collar ||
@@ -21688,6 +21715,9 @@ export default weatherClient;
       name: appearance.name,
       coat: appearance.coat,
       coatDark: appearance.coatDark,
+      coatColor: appearance.coat,
+      coatColorDark: appearance.coatDark,
+      coatSecondary: appearance.coatSecondary,
       collar: appearance.collar,
       x: fieldWidth / 2,
       y: fieldHeight / 2,
@@ -21760,7 +21790,8 @@ export default weatherClient;
           pickWanderTarget();
         }
       } else {
-        var step = WANDER_SPEED * dt;
+        // dt is in milliseconds; WANDER_SPEED is px/second.
+        var step = WANDER_SPEED * (dt / 1000);
         var nx = dx / dist;
         var ny = dy / dist;
         dog.x += nx * step;
@@ -22150,7 +22181,9 @@ export default weatherClient;
       x: dog.x,
       y: dog.y,
       facing: dog.facing,
-      state: dog.state
+      state: dog.state,
+      coatColor: dog.coatColor,
+      coatColorDark: dog.coatColorDark
     };
   }
 
@@ -22206,7 +22239,13 @@ export default weatherClient;
       getParticles: function () { return particles; },
       spawnParticles: spawnParticles,
       getForcedState: function () { return forcedState; },
-      getPose: function () { return pose; }
+      getPose: function () { return pose; },
+      updateDog: function (dt) { updateDog(dt); },
+      setWanderTarget: function (x, y) {
+        if (!dog) return;
+        dog.targetX = x;
+        dog.targetY = y;
+      }
     }
   };
 
@@ -24666,8 +24705,9 @@ export class SocialHUD {
 
     modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
     if (modal.style.display === 'block') {
-      // With a dog present, opening Home defaults to the sanctuary view.
-      this.setHomeView(this.currentHomeView === 'settings' ? 'settings' : 'sanctuary');
+      // With a dog present, reopening Home always lands on the sanctuary view
+      // (never a stale 'settings' view from a previous session).
+      this.setHomeView('sanctuary');
     } else {
       this.stopStageAnimation();
       if (typeof window !== 'undefined') {
@@ -24678,6 +24718,7 @@ export class SocialHUD {
   }
 
   _forceDogTab() {
+    this.activeTab = 'dog';
     const tabBtns = document.querySelectorAll('.customizer-tab-btn');
     tabBtns.forEach(b => b.classList.remove('active'));
     const dogBtn = document.getElementById('tab-btn-dog');
@@ -24778,6 +24819,10 @@ export class SocialHUD {
       btn.addEventListener('click', () => {
         tabBtns.forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
+        const dataTab = btn.getAttribute('data-tab');
+        this.activeTab = (dataTab === 'cust-tab-dog' || btn.id === 'tab-btn-dog')
+          ? 'dog'
+          : 'walker';
         const targetTabId = btn.getAttribute('data-tab');
         document.querySelectorAll('.customizer-tab-pane').forEach(pane => {
           pane.classList.remove('active');
@@ -37256,7 +37301,20 @@ const document = {{
   getElementById(id) {{ return __elements[id] || null; }},
   createElement(tag) {{ return __makeEl(tag); }},
   querySelector() {{ return null; }},
-  querySelectorAll() {{ return []; }},
+  querySelectorAll(sel) {{
+    // Return the real tab buttons / panes so bindEvents() can wire handlers.
+    if (sel === '.customizer-tab-btn') {{
+      return ['tab-btn-walker', 'tab-btn-dog']
+        .map(function (id) {{ return __elements[id]; }})
+        .filter(Boolean);
+    }}
+    if (sel === '.customizer-tab-pane') {{
+      return ['cust-tab-walker', 'cust-tab-dog']
+        .map(function (id) {{ return __elements[id]; }})
+        .filter(Boolean);
+    }}
+    return [];
+  }},
   addEventListener() {{}},
   body: __makeEl('body')
 }};
@@ -37278,6 +37336,25 @@ const localStorage = (() => {{
 // ---- Load real modules ----
 const {{ resolveCoatPresetByName, CoatPreset }} = (() => {{ {clean_dog}\nreturn {{ resolveCoatPresetByName, CoatPreset }}; }})();
 const {{ SocialHUD }} = (() => {{ {clean_hud}\nreturn {{ SocialHUD }}; }})();
+
+// The mock DOM does not parse innerHTML, so register the tab buttons and
+// panes that initHUD() declares in markup. This lets bindEvents() attach
+// real click listeners to #tab-btn-dog / #tab-btn-walker.
+(function () {{
+  function reg(id, attrs) {{
+    if (__elements[id]) return;
+    const el = __makeEl('button');
+    el.id = id;
+    if (attrs) {{
+      for (const k in attrs) {{ el.setAttribute(k, attrs[k]); }}
+    }}
+    __elements[id] = el;
+  }}
+  reg('tab-btn-walker', {{ 'data-tab': 'cust-tab-walker' }});
+  reg('tab-btn-dog', {{ 'data-tab': 'cust-tab-dog' }});
+  reg('cust-tab-walker');
+  reg('cust-tab-dog');
+}})();
 
 const __res = (() => {{ {snippet} }})();
 JSON.stringify(__res);
@@ -37919,6 +37996,55 @@ class TestHomeViewSplitBehavioral(unittest.TestCase):
         self.assertFalse(res["isHomeLocked"],
                          "Adopting a dog must release the Home lock")
 
+    def test_exec_reopen_home_always_shows_sanctuary(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const modal = document.getElementById('customizer-modal');
+        modal.style.display = 'block';
+        hud.setHomeView('sanctuary');
+        hud.setHomeView('settings');
+        hud.closeModal();
+        hud.openModal();
+
+        return { homeView: hud.currentHomeView };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["homeView"], "sanctuary",
+                         "Reopening Home with a dog must always show the sanctuary view")
+
+    def test_exec_dogs_tab_click_syncs_active_tab(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        // Simulate the Dogs tab button click handler.
+        const dogBtn = document.getElementById('tab-btn-dog');
+        if (dogBtn && dogBtn._listeners && dogBtn._listeners.click) {
+          dogBtn._listeners.click.forEach(function (fn) { fn(); });
+        }
+
+        return { activeTab: hud.activeTab };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["activeTab"], "dog",
+                         "Clicking the Dogs tab must sync hud.activeTab to 'dog'")
+
     def test_exec_split_stage_preview_draws_only_active_tab(self):
         snippet = """
         localStorage.setItem('clifton_walker_profile', JSON.stringify({
@@ -38491,6 +38617,64 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
                         "#btn-action-feed must be disabled when dogSlot is null")
         self.assertEqual(res["ariaDisabled"], "true",
                          "#btn-action-feed must set aria-disabled='true' when dogSlot is null")
+
+    def test_exec_update_dog_moves_at_plausible_speed(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        const hooks = window.HomeSanctuary.__testHooks;
+
+        // Force a wander target far from the dog's current position.
+        const before = window.HomeSanctuary.getCompanionDog();
+        hooks.setWanderTarget(before.x + 200, before.y);
+        hooks.updateDog(1000); // one second
+        const after = window.HomeSanctuary.getCompanionDog();
+
+        return {
+          dx: Math.abs(after.x - before.x),
+          dy: Math.abs(after.y - before.y)
+        };
+        """
+        res = _run_js(snippet)
+        # WANDER_SPEED is 42 px/s; one second of motion must be ~42px, not 42000px.
+        self.assertGreater(res["dx"], 0, "Dog must move toward its wander target")
+        self.assertLess(res["dx"], 100,
+                        "Dog must move at px/second speed (dt/1000), not px/millisecond")
+
+    def test_exec_golden_coat_key_maps_to_golden_color(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'GOLDEN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        const dog = window.HomeSanctuary.getCompanionDog();
+        return { coatColor: dog.coatColor, coatColorDark: dog.coatColorDark };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["coatColor"], "#eab308",
+                         "GOLDEN coatKey must map to the golden primary color")
+        self.assertEqual(res["coatColorDark"], "#ca8a04",
+                         "GOLDEN coatKey must map to the golden dark color")
 
     def test_exec_second_click_while_feeding_ignored(self):
         snippet = """

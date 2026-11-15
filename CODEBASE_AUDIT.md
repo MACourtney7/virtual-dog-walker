@@ -22522,6 +22522,29 @@ export class SocialHUD {
     return Boolean(this.isHomeLocked);
   }
 
+  /**
+   * Apply a peer's dog-presence metadata to a remote player entry.
+   * Mirrors CliftonDownGame.applyRemoteDogPresence so the same semantics are
+   * available on the HUD (and testable in isolation).
+   */
+  applyRemoteDogPresence(entry, meta) {
+    if (!entry || !entry.dog) return;
+    const hasDogFlag = meta ? meta.hasDog : undefined;
+    const dogName = meta ? meta.dogName : undefined;
+    const noDog = hasDogFlag === false || dogName === '';
+    if (noDog) {
+      entry.dog.name = '';
+      entry.hasDog = false;
+      return;
+    }
+    if (typeof dogName === 'string' && dogName.length > 0) {
+      entry.dog.name = dogName;
+      entry.hasDog = true;
+    } else if (hasDogFlag === true) {
+      entry.hasDog = true;
+    }
+  }
+
   getBreedLabel(coatKey) {
     const labels = {
       CHOCOLATE_TAN: 'Chocolate & Tan Cocker Spaniel',

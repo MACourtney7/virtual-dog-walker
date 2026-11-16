@@ -189,6 +189,39 @@ class TestDogStateStore(unittest.TestCase):
         self.assertEqual(data["snap"]["needs"]["hunger"]["durationMs"], 120000)
         self.assertEqual(data["persisted"]["needs"]["hunger"]["durationMs"], 120000)
 
+    def test_clock_rollback_clamps_elapsed(self):
+        data = run_node(
+            "const store = new DogStateStore({ storage: null, now: () => 0 });"
+            "store.feed(100000);"
+            "const h = store.getHunger(50000);"
+            "console.log(JSON.stringify(h));"
+        )
+        self.assertEqual(data["elapsedMs"], 0)
+        self.assertEqual(data["remainingMs"], data["durationMs"])
+        self.assertFalse(data["isHungry"])
+
+    def test_feed_preserves_custom_duration_and_metadata(self):
+        data = run_node(
+            "const mem = {};"
+            "const storage = {"
+            "  getItem: (k) => (k in mem ? mem[k] : null),"
+            "  setItem: (k, v) => { mem[k] = String(v); }"
+            "};"
+            "const store = new DogStateStore({ storage, now: () => 0 });"
+            "store._state.needs.hunger = {"
+            "  lastFedAt: 0, durationMs: 30000, customFlag: 'keep-me'"
+            "};"
+            "const snap = store.feed(500);"
+            "const persisted = JSON.parse(mem['virtual_dog_walker.dog_state.v1']);"
+            "console.log(JSON.stringify({ snap, persisted }));"
+        )
+        self.assertEqual(data["snap"]["needs"]["hunger"]["lastFedAt"], 500)
+        self.assertEqual(data["snap"]["needs"]["hunger"]["durationMs"], 30000)
+        self.assertEqual(data["snap"]["needs"]["hunger"]["customFlag"], "keep-me")
+        self.assertEqual(data["persisted"]["needs"]["hunger"]["lastFedAt"], 500)
+        self.assertEqual(data["persisted"]["needs"]["hunger"]["durationMs"], 30000)
+        self.assertEqual(data["persisted"]["needs"]["hunger"]["customFlag"], "keep-me")
+
     def test_subscribe_and_unsubscribe(self):
         data = run_node(
             "const store = new DogStateStore({ storage: null, now: () => 0 });"

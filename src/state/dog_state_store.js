@@ -139,13 +139,17 @@ export class DogStateStore {
 
   feed(nowMs = this._now()) {
     const existingNeeds = (this._state && this._state.needs) || {};
+    const existingHunger = existingNeeds.hunger || {};
     this._state = {
       version: 1,
       needs: {
         ...existingNeeds,
         hunger: {
+          ...existingHunger,
           lastFedAt: nowMs,
-          durationMs: this._hungerDurationMs
+          durationMs: Number.isFinite(existingHunger.durationMs) && existingHunger.durationMs > 0
+            ? existingHunger.durationMs
+            : this._hungerDurationMs
         }
       }
     };

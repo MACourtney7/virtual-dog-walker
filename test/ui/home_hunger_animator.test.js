@@ -183,6 +183,6 @@ describe('HomeHungerAnimator', () => {
   });
 
   it('exposes a default animation interval constant', () => {
-    expect(DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS).toBe(2 * 60 * 1000);
+    expect(DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS).toBe(5000);
   });
 });

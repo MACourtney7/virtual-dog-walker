@@ -191,6 +191,40 @@ console.log(JSON.stringify({ afterFirst, afterFed, afterHungryAgain }));
         # (lastAnimationAt was reset).
         self.assertEqual(result["afterHungryAgain"], 2)
 
+    def test_swallows_throwing_dog_hooks(self):
+        script = """
+import { HomeHungerAnimator } from './src/ui/home_hunger_animator.js';
+
+const dog = {
+  setHunger() { throw new Error('setHunger boom'); },
+  playHungryAnimation() { throw new Error('playHungryAnimation boom'); }
+};
+const store = {
+  getHunger: () => ({ isHungry: true })
+};
+const animator = new HomeHungerAnimator({
+  dogStateStore: store,
+  dog,
+  animationIntervalMs: 5000,
+  now: () => 0,
+  setIntervalFn: () => 1,
+  clearIntervalFn: () => {}
+});
+
+let threw = false;
+try {
+  animator.tick(0);
+  animator.tick(5000);
+  animator.tick(10000);
+} catch (e) {
+  threw = true;
+}
+
+console.log(JSON.stringify({ threw }));
+"""
+        result = run_node(script)
+        self.assertFalse(result["threw"])
+
     def test_swallows_store_errors(self):
         script = """
 import { HomeHungerAnimator } from './src/ui/home_hunger_animator.js';

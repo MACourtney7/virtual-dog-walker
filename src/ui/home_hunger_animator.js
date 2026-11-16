@@ -11,9 +11,11 @@
  * never need to wait on real timers.
  */
 
-// Default cadence for re-triggering the hungry animation while the dog remains
-// hungry. Matches spec.md R8 (DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = 5000).
-export const DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = 5000; // 5 seconds
+// Single source of truth for the hungry-animation cadence lives in the state
+// store. Re-export it here so existing imports keep working.
+import { DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS } from '../state/dog_state_store.js';
+
+export { DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS };
 
 export class HomeHungerAnimator {
   /**
@@ -86,7 +88,11 @@ export class HomeHungerAnimator {
 
     const dog = this._dog;
     if (dog && typeof dog.setHunger === 'function') {
-      dog.setHunger(hungerInfo);
+      try {
+        dog.setHunger(hungerInfo);
+      } catch (_err) {
+        // A throwing dog hook must never break the animation loop.
+      }
     }
 
     if (!hungerInfo || !hungerInfo.isHungry) {
@@ -97,13 +103,25 @@ export class HomeHungerAnimator {
     const canPlay = dog && typeof dog.playHungryAnimation === 'function';
 
     if (this._lastAnimationAt === null) {
-      if (canPlay) dog.playHungryAnimation();
+      if (canPlay) {
+        try {
+          dog.playHungryAnimation();
+        } catch (_err) {
+          // Swallow: a throwing hook must not break the interval loop.
+        }
+      }
       this._lastAnimationAt = nowMs;
       return;
     }
 
     if (nowMs - this._lastAnimationAt >= this._animationIntervalMs) {
-      if (canPlay) dog.playHungryAnimation();
+      if (canPlay) {
+        try {
+          dog.playHungryAnimation();
+        } catch (_err) {
+          // Swallow: a throwing hook must not break the interval loop.
+        }
+      }
       this._lastAnimationAt = nowMs;
     }
   }

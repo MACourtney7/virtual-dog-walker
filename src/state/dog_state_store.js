@@ -71,10 +71,14 @@ export class DogStateStore {
       try {
         const parsed = JSON.parse(raw);
         if (isValidState(parsed)) {
-          // Normalise durationMs in case it was missing/invalid.
-          if (typeof parsed.needs.hunger.durationMs !== 'number' ||
-              !Number.isFinite(parsed.needs.hunger.durationMs)) {
-            parsed.needs.hunger.durationMs = this._hungerDurationMs;
+          const durationMs = parsed.needs.hunger.durationMs;
+          if (typeof durationMs !== 'number' ||
+              !Number.isFinite(durationMs) ||
+              durationMs <= 0) {
+            // Invalid duration: reset to a clean initial state and persist it.
+            const initial = createInitialDogState(this._now(), this._hungerDurationMs);
+            this._persist(initial);
+            return initial;
           }
           return parsed;
         }
@@ -114,14 +118,16 @@ export class DogStateStore {
     const durationMs = hunger.durationMs;
     const elapsedMs = Math.max(0, nowMs - lastFedAt);
     const remainingMs = Math.max(0, durationMs - elapsedMs);
+    const hungryAt = lastFedAt + durationMs;
     const isHungry = elapsedMs >= durationMs;
-    return { lastFedAt, durationMs, elapsedMs, remainingMs, isHungry };
+    return { lastFedAt, durationMs, elapsedMs, remainingMs, hungryAt, isHungry };
   }
 
   getSnapshot(nowMs = this._now()) {
     return {
       version: 1,
       needs: {
+        ...this._state.needs,
         hunger: this.getHunger(nowMs)
       }
     };
@@ -132,9 +138,11 @@ export class DogStateStore {
   }
 
   feed(nowMs = this._now()) {
+    const existingNeeds = (this._state && this._state.needs) || {};
     this._state = {
       version: 1,
       needs: {
+        ...existingNeeds,
         hunger: {
           lastFedAt: nowMs,
           durationMs: this._hungerDurationMs
@@ -148,7 +156,15 @@ export class DogStateStore {
   }
 
   reset(nowMs = this._now()) {
-    this._state = createInitialDogState(nowMs, this._hungerDurationMs);
+    const existingNeeds = (this._state && this._state.needs) || {};
+    const initial = createInitialDogState(nowMs, this._hungerDurationMs);
+    this._state = {
+      version: 1,
+      needs: {
+        ...existingNeeds,
+        hunger: initial.needs.hunger
+      }
+    };
     this._persist(this._state);
     const snapshot = this.getSnapshot(nowMs);
     this._notify(snapshot);

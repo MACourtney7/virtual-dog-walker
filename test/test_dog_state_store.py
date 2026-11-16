@@ -73,6 +73,7 @@ class TestDogStateStore(unittest.TestCase):
         self.assertFalse(data["isHungry"])
         self.assertEqual(data["remainingMs"], 1)
         self.assertEqual(data["elapsedMs"], 119999)
+        self.assertEqual(data["hungryAt"], data["lastFedAt"] + data["durationMs"])
 
     def test_hungry_at_120000ms(self):
         data = run_node(
@@ -83,6 +84,7 @@ class TestDogStateStore(unittest.TestCase):
         )
         self.assertTrue(data["isHungry"])
         self.assertEqual(data["remainingMs"], 0)
+        self.assertEqual(data["hungryAt"], data["lastFedAt"] + data["durationMs"])
 
     def test_feed_resets_and_persists(self):
         data = run_node(
@@ -150,6 +152,42 @@ class TestDogStateStore(unittest.TestCase):
         )
         self.assertEqual(data["snap"]["version"], 1)
         self.assertFalse(data["h"]["isHungry"])
+
+    def test_other_needs_preserved_on_feed_and_snapshot(self):
+        data = run_node(
+            "const mem = {};"
+            "const storage = {"
+            "  getItem: (k) => (k in mem ? mem[k] : null),"
+            "  setItem: (k, v) => { mem[k] = String(v); }"
+            "};"
+            "const store = new DogStateStore({ storage, now: () => 0 });"
+            "store._state.needs.thirst = { lastDrankAt: 5, durationMs: 60000 };"
+            "const snap = store.feed(100);"
+            "const persisted = JSON.parse(mem['virtual_dog_walker.dog_state.v1']);"
+            "console.log(JSON.stringify({ snap, persisted }));"
+        )
+        self.assertEqual(data["snap"]["needs"]["thirst"]["lastDrankAt"], 5)
+        self.assertEqual(data["snap"]["needs"]["hunger"]["lastFedAt"], 100)
+        self.assertEqual(data["persisted"]["needs"]["thirst"]["lastDrankAt"], 5)
+        self.assertEqual(data["persisted"]["needs"]["hunger"]["lastFedAt"], 100)
+
+    def test_invalid_duration_resets_to_default(self):
+        data = run_node(
+            "const mem = { 'virtual_dog_walker.dog_state.v1': JSON.stringify({"
+            "  version: 1,"
+            "  needs: { hunger: { lastFedAt: 0, durationMs: 0 } }"
+            "}) };"
+            "const storage = {"
+            "  getItem: (k) => (k in mem ? mem[k] : null),"
+            "  setItem: (k, v) => { mem[k] = String(v); }"
+            "};"
+            "const store = new DogStateStore({ storage, now: () => 0 });"
+            "const snap = store.getSnapshot(0);"
+            "const persisted = JSON.parse(mem['virtual_dog_walker.dog_state.v1']);"
+            "console.log(JSON.stringify({ snap, persisted }));"
+        )
+        self.assertEqual(data["snap"]["needs"]["hunger"]["durationMs"], 120000)
+        self.assertEqual(data["persisted"]["needs"]["hunger"]["durationMs"], 120000)
 
     def test_subscribe_and_unsubscribe(self):
         data = run_node(

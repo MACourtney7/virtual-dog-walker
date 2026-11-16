@@ -1000,6 +1000,37 @@ class TestHomeViewSplitBehavioral(unittest.TestCase):
         self.assertGreater(res["dogCalls"], 0,
                            "Dog tab must draw the dog on the stage preview")
 
+    def test_exec_init_while_hidden_defers_sanctuary_mount_until_open(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+
+        let mountCalls = 0;
+        window.HomeSanctuary = {
+          mount: function () { mountCalls++; },
+          unmount: function () {}
+        };
+
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const afterInit = mountCalls;
+        hud.openModal();
+        const afterOpen = mountCalls;
+
+        return { afterInit: afterInit, afterOpen: afterOpen };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["afterInit"], 0,
+                         "Sanctuary must not mount while the Home modal is hidden")
+        self.assertGreaterEqual(res["afterOpen"], 1,
+                                "Opening the Home modal must mount the sanctuary")
+
 
 if __name__ == '__main__':
     unittest.main()

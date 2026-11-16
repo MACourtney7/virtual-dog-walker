@@ -386,7 +386,8 @@ body {
 
 .home-field-preview {
   width: 100%;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 5 / 4;
+  max-height: 52vh;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -1257,7 +1258,7 @@ body {
   }
 
   #customizer-modal {
-    max-width: 92vw;
+    max-width: min(360px, 92vw);
     padding: 18px 16px;
   }
 

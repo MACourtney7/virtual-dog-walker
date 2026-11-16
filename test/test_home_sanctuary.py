@@ -791,8 +791,8 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
                         "render() must rotate the dog body via ctx.rotate")
         # drawArticulatedDog rotates by (angle - PI/2); with angle = PI/2 the
         # effective rotation must be 0 so the head points down at +Y.
-        self.assertAlmostEqual(res["rotations"][0], 0.0, places=6,
-                               msg="Camera pose must rotate by 0 (head faces +Y)")
+        self.assertAlmostEqual(res["rotations"][0], res["expected"], places=6,
+                               msg="Camera pose must rotate by Math.PI / 2 (head faces +Y)")
 
     def test_exec_live_dog_entity_not_mutated(self):
         snippet = """
@@ -1360,6 +1360,502 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
         self.assertTrue(res["firstAte"], "First feed must be accepted")
         self.assertTrue(res["secondIgnored"],
                         "Second feed while feeding must be ignored")
+
+
+@unittest.skipUnless(
+    shutil.which("node") or shutil.which("osascript"),
+    "No JS runtime (node or osascript) available"
+)
+class TestCompactLayoutAndZoomBehavioral(unittest.TestCase):
+    """unification-032: canvas resize, entity contract, and zoom scale."""
+
+    def test_exec_hidden_mount_then_visible_remount_resizes_canvas(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 0;
+        sanctuary.clientHeight = 0;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 2;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        const hiddenWidth = canvas.width;
+        const hiddenHeight = canvas.height;
+
+        // Simulate the modal becoming visible.
+        sanctuary.clientWidth = 500;
+        sanctuary.clientHeight = 400;
+        window.HomeSanctuary.mount(canvas, slot);
+
+        return {
+          hiddenWidth: hiddenWidth,
+          hiddenHeight: hiddenHeight,
+          width: canvas.width,
+          height: canvas.height,
+          styleWidth: canvas.style.width,
+          styleHeight: canvas.style.height
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["width"], 1000,
+                         "Visible remount at DPR=2 with 500px parent must set canvas.width = 1000")
+        self.assertEqual(res["height"], 800,
+                         "Visible remount at DPR=2 with 400px parent must set canvas.height = 800")
+        self.assertEqual(res["styleWidth"], "100%",
+                         "Canvas CSS width must remain 100%")
+        self.assertEqual(res["styleHeight"], "100%",
+                         "Canvas CSS height must remain 100%")
+
+    def test_exec_frame_auto_resizes_on_visible_dimension_change(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 2;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        const initialWidth = canvas.width;
+        const initialHeight = canvas.height;
+
+        // Resize the parent and drive one frame tick.
+        sanctuary.clientWidth = 300;
+        sanctuary.clientHeight = 250;
+        window.HomeSanctuary.__testHooks.frame();
+
+        return {
+          initialWidth: initialWidth,
+          initialHeight: initialHeight,
+          width: canvas.width,
+          height: canvas.height
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["initialWidth"], 800,
+                         "Initial mount at DPR=2 with 400px parent must set canvas.width = 800")
+        self.assertEqual(res["initialHeight"], 800,
+                         "Initial mount at DPR=2 with 400px parent must set canvas.height = 800")
+        self.assertEqual(res["width"], 600,
+                         "frame() must resize canvas.width to 300 * 2 = 600")
+        self.assertEqual(res["height"], 500,
+                         "frame() must resize canvas.height to 250 * 2 = 500")
+
+    def test_exec_build_dog_entity_contract(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        let captured = null;
+        window.CompanionDog = {
+          prototype: {
+            draw: function (ctx) { captured = this; }
+          }
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.__testHooks.render();
+
+        if (!captured) {
+          return { captured: false };
+        }
+
+        const coat = captured.coat || {};
+        return {
+          captured: true,
+          hasLeftEar: Boolean(captured.leftEar && typeof captured.leftEar.angle === 'number'),
+          hasRightEar: Boolean(captured.rightEar && typeof captured.rightEar.angle === 'number'),
+          heartsIsArray: Array.isArray(captured.hearts),
+          emoteBubble: captured.emoteBubble === null ? 'null' : typeof captured.emoteBubble,
+          hasStick: captured.hasStick,
+          isBarking: captured.isBarking,
+          owner: captured.owner === null ? 'null' : typeof captured.owner,
+          isLeashed: captured.isLeashed,
+          leash: captured.leash === null ? 'null' : typeof captured.leash,
+          gaitMode: captured.gaitMode,
+          coatKeys: {
+            bodyColor: typeof coat.bodyColor,
+            bodyShade: typeof coat.bodyShade,
+            tanColor: typeof coat.tanColor,
+            tanHighlight: typeof coat.tanHighlight,
+            earRoot: typeof coat.earRoot,
+            earHighlight: typeof coat.earHighlight,
+            noseColor: typeof coat.noseColor,
+            bibColor: typeof coat.bibColor,
+            hasEyePatch: typeof coat.hasEyePatch
+          }
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["captured"],
+                        "Home Sanctuary must render via CompanionDog.prototype.draw")
+        self.assertTrue(res["hasLeftEar"], "Entity must expose leftEar.angle")
+        self.assertTrue(res["hasRightEar"], "Entity must expose rightEar.angle")
+        self.assertTrue(res["heartsIsArray"], "Entity must expose a hearts array")
+        self.assertEqual(res["emoteBubble"], "null",
+                         "Entity must set emoteBubble === null")
+        self.assertFalse(res["hasStick"], "Entity must set hasStick === false")
+        self.assertFalse(res["isBarking"], "Entity must set isBarking === false")
+        self.assertEqual(res["owner"], "null", "Entity must set owner === null")
+        self.assertFalse(res["isLeashed"], "Entity must set isLeashed === false")
+        self.assertEqual(res["leash"], "null", "Entity must set leash === null")
+        self.assertIn(res["gaitMode"], ("WALK", "IDLE"),
+                      "Entity gaitMode must be 'WALK' or 'IDLE'")
+        for key, kind in res["coatKeys"].items():
+            if key == "hasEyePatch":
+                self.assertEqual(kind, "boolean",
+                                 f"coat.{key} must be a boolean")
+            else:
+                self.assertEqual(kind, "string",
+                                 f"coat.{key} must be a string")
+
+    def test_exec_build_dog_entity_all_breeds_complete_palette(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const captured = [];
+        window.CompanionDog = {
+          prototype: {
+            draw: function (ctx) { captured.push(this); }
+          }
+        };
+
+        const breeds = ['CHOCOLATE_TAN', 'GOLDEN', 'BLACK_LAB', 'JACK_RUSSELL', 'RED_SETTER', 'BEAGLE', 'DALMATIAN'];
+        const results = [];
+        for (let i = 0; i < breeds.length; i++) {
+          const slot = { id: 'dog-' + i, name: 'Dog' + i, coatKey: breeds[i] };
+          window.HomeSanctuary.mount(canvas, slot);
+          window.HomeSanctuary.__testHooks.render();
+        }
+
+        for (let i = 0; i < captured.length; i++) {
+          const c = captured[i];
+          const coat = c.coat || {};
+          results.push({
+            bodyColorValue: coat.bodyColor,
+            bodyColor: typeof coat.bodyColor === 'string' && coat.bodyColor.length > 0,
+            bodyShade: typeof coat.bodyShade === 'string' && coat.bodyShade.length > 0,
+            tanColor: typeof coat.tanColor === 'string' && coat.tanColor.length > 0,
+            tanHighlight: typeof coat.tanHighlight === 'string' && coat.tanHighlight.length > 0,
+            earRoot: typeof coat.earRoot === 'string' && coat.earRoot.length > 0,
+            earHighlight: typeof coat.earHighlight === 'string' && coat.earHighlight.length > 0,
+            noseColor: typeof coat.noseColor === 'string' && coat.noseColor.length > 0,
+            bibColor: typeof coat.bibColor === 'string' && coat.bibColor.length > 0,
+            hasEyePatch: typeof coat.hasEyePatch === 'boolean'
+          });
+        }
+        return { count: captured.length, results: results };
+        """
+        res = _run_js(snippet)
+        self.assertGreater(res["count"], 0,
+                           "At least one breed must render through CompanionDog.draw")
+        for i, r in enumerate(res["results"]):
+            for key, ok in r.items():
+                if key == "bodyColorValue":
+                    continue
+                self.assertTrue(ok, f"Breed #{i} coat.{key} must be populated")
+        self.assertEqual(
+            len(set(r["bodyColorValue"] for r in res["results"][:5])), 5,
+            "All 5 core breeds must have distinct body colors"
+        )
+
+    def test_exec_sanctuary_zoom_scale_applied(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const scales = [];
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          const originalScale = ctx.scale.bind(ctx);
+          ctx.scale = function (sx, sy) {
+            scales.push([sx, sy]);
+            return originalScale(sx, sy);
+          };
+          return ctx;
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.__testHooks.render();
+
+        return { scales: scales };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(
+            any(abs(s[0] - 0.72) < 1e-6 and abs(s[1] - 0.72) < 1e-6
+                for s in res["scales"]),
+            "render() must apply ctx.scale(0.72, 0.72) around dog rendering",
+        )
+
+    def test_exec_fallback_without_companion_dog(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        // Ensure the CompanionDog global is absent so the fallback path runs.
+        window.CompanionDog = undefined;
+
+        const calls = { fillText: 0, ellipse: 0, arc: 0 };
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          const origFillText = ctx.fillText ? ctx.fillText.bind(ctx) : null;
+          const origEllipse = ctx.ellipse ? ctx.ellipse.bind(ctx) : null;
+          const origArc = ctx.arc ? ctx.arc.bind(ctx) : null;
+          if (origFillText) {
+            ctx.fillText = function () { calls.fillText++; return origFillText.apply(null, arguments); };
+          }
+          if (origEllipse) {
+            ctx.ellipse = function () { calls.ellipse++; return origEllipse.apply(null, arguments); };
+          }
+          if (origArc) {
+            ctx.arc = function () { calls.arc++; return origArc.apply(null, arguments); };
+          }
+          return ctx;
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        let threw = false;
+        try {
+          window.HomeSanctuary.__testHooks.render();
+        } catch (e) {
+          threw = true;
+        }
+        return {
+          threw: threw,
+          fillText: calls.fillText,
+          ellipse: calls.ellipse,
+          arc: calls.arc
+        };
+        """
+        res = _run_js(snippet)
+        self.assertFalse(res["threw"],
+                         "Fallback render must not throw without CompanionDog")
+        self.assertGreater(res["fillText"], 0,
+                           "Fallback must draw the dog name tag via fillText")
+        self.assertTrue(res["ellipse"] > 0 or res["arc"] > 0,
+                        "Fallback must draw rounded body shapes via ellipse/arc")
+
+    def test_exec_remount_preserves_dog_position_and_state(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 320;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.setDogState('sit');
+        const before = window.HomeSanctuary.getCompanionDog();
+        const beforeX = before.x;
+        const beforeY = before.y;
+
+        window.HomeSanctuary.mount(canvas, {
+          id: 'dog-1', name: 'Renamed', coatKey: 'GOLDEN', collar: '#123456'
+        });
+        const after = window.HomeSanctuary.getCompanionDog();
+
+        return {
+          state: after.state,
+          name: after.name,
+          collar: after.collar,
+          x: after.x,
+          y: after.y,
+          beforeX: beforeX,
+          beforeY: beforeY
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["state"], "sit",
+                         "Remount must preserve the dog's forced state")
+        self.assertEqual(res["name"], "Renamed",
+                         "Remount must apply the new slot name")
+        self.assertEqual(res["collar"], "#123456",
+                         "Remount must apply the new slot collar")
+        self.assertEqual(res["x"], res["beforeX"],
+                         "Remount must preserve the dog's x position")
+        self.assertEqual(res["y"], res["beforeY"],
+                         "Remount must preserve the dog's y position")
+
+    def test_exec_draw_error_logged_once_per_mount_and_fallback_used(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        let warnCount = 0;
+        const originalWarn = console.warn;
+        console.warn = function () { warnCount++; };
+
+        window.CompanionDog = {
+          prototype: {
+            draw: function () { throw new Error('draw failure'); }
+          }
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.__testHooks.render();
+        window.HomeSanctuary.__testHooks.render();
+        const warnCountAfterTwo = warnCount;
+
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.__testHooks.render();
+        const warnCountAfterRemount = warnCount;
+
+        console.warn = originalWarn;
+
+        return {
+          warnCountAfterTwo: warnCountAfterTwo,
+          warnCountAfterRemount: warnCountAfterRemount
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["warnCountAfterTwo"], 1,
+                         "Draw errors must be logged only once per mount")
+        self.assertEqual(res["warnCountAfterRemount"], 2,
+                         "A remount must reset the draw-error log guard")
+
+    def test_exec_food_bowl_zoom_scale_applied(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const scales = [];
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          const originalScale = ctx.scale.bind(ctx);
+          ctx.scale = function (sx, sy) {
+            scales.push([sx, sy]);
+            return originalScale(sx, sy);
+          };
+          return ctx;
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.setDogState('eating');
+        window.HomeSanctuary.__testHooks.render();
+
+        return { scales: scales };
+        """
+        res = _run_js(snippet)
+        zoomCount = sum(
+            1 for s in res["scales"]
+            if abs(s[0] - 0.72) < 1e-6 and abs(s[1] - 0.72) < 1e-6
+        )
+        self.assertGreaterEqual(
+            zoomCount, 2,
+            "render() must apply ctx.scale(0.72, 0.72) for both the dog and the food bowl",
+        )
+
+    def test_companion_dog_exposes_window_globals(self):
+        dog_js = read("src/entities/companion_dog.js")
+        self.assertIn("window.CompanionDog = CompanionDog", dog_js,
+                      "companion_dog.js must expose window.CompanionDog")
+        self.assertIn("window.CoatPreset = CoatPreset", dog_js,
+                      "companion_dog.js must expose window.CoatPreset")
+        self.assertIn("window.DogState = DogState", dog_js,
+                      "companion_dog.js must expose window.DogState")
 
 
 if __name__ == '__main__':

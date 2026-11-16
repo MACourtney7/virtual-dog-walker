@@ -57,6 +57,16 @@ export class SocialHUD {
     return this.dogSlot !== null && !this.isHomeLocked;
   }
 
+  // Determine whether the Home modal is currently visible, accounting for
+  // both inline `display: block` and class-based visibility toggles.
+  _isModalVisible(modalEl) {
+    const el = modalEl || (typeof document !== 'undefined' ? document.getElementById('customizer-modal') : null);
+    if (!el) return false;
+    if (el.style && el.style.display === 'block') return true;
+    if (el.classList && typeof el.classList.contains === 'function' && (el.classList.contains('open') || el.classList.contains('active'))) return true;
+    return false;
+  }
+
   // Alias: open the Home modal (used by tests and external callers).
   openHome() {
     return this.openModal();
@@ -259,8 +269,17 @@ export class SocialHUD {
 
     this.bindEvents();
 
-    // Apply initial view state (honors empty-kennel lock).
-    this.setHomeView(this.resolveHomeView(), { force: true });
+    // Apply initial view state (honors empty-kennel lock). When the modal is
+    // still hidden, only sync the DOM — never mount the sanctuary/feeding
+    // canvases while they are invisible (they would measure 0x0).
+    const modalEl = document.getElementById('customizer-modal');
+    const modalHidden = !this._isModalVisible(modalEl);
+    if (modalHidden && !this.isHomeLocked) {
+      this.currentHomeView = this.resolveHomeView();
+      this._applyHomeViewDom();
+    } else {
+      this.setHomeView(this.resolveHomeView(), { force: true });
+    }
   }
 
   // Transition the Home modal between 'sanctuary' and 'settings'.
@@ -1166,8 +1185,20 @@ export class SocialHUD {
     modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
     if (modal.style.display === 'block') {
       // With a dog present, reopening Home always lands on the sanctuary view
-      // (never a stale 'settings' view from a previous session).
+      // (never a stale 'settings' view from a previous session). The modal is
+      // already visible here, so setHomeView may safely mount the canvases.
       this.setHomeView('sanctuary');
+
+      // Re-sync the sanctuary canvas after browser layout computes the
+      // visible aspect-ratio box, so it matches the exact laid-out size.
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          if (this.currentHomeView === 'sanctuary' && modal.style.display === 'block') {
+            const c = document.getElementById('home-field-canvas');
+            window.HomeSanctuary?.mount?.(c, this.dogSlot);
+          }
+        });
+      }
     } else {
       this.stopStageAnimation();
       if (typeof window !== 'undefined') {

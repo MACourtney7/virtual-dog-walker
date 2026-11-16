@@ -7332,6 +7332,12 @@ export class CompanionDog {
     this.leashTugTarget = null;
     this.socialGazeTimer = 0;
     this.socialGazeAngle = 0;
+
+    // Hunger state (driven by an external DogStateStore via setDogStateStore).
+    this.hunger = null;
+    this.isHungry = false;
+    this.dogStateStore = null;
+    this._dogStateUnsubscribe = null;
   }
 
   // packPlayTimer is an alias of packPlayRoleTimer (kept in sync via accessor).
@@ -7475,6 +7481,142 @@ export class CompanionDog {
   setChat(text, duration = 3.5) {
     this.emoteBubble = text;
     this.emoteTimer = duration;
+  }
+
+  // Store the hunger snapshot and derive the boolean hungry flag.
+  // Idempotent and safe when passed undefined/null.
+  setHunger(hungerInfo) {
+    this.hunger = hungerInfo === undefined ? null : hungerInfo;
+    this.isHungry = Boolean(hungerInfo && hungerInfo.isHungry);
+    return this.isHungry;
+  }
+
+  // Attach an external DogStateStore. Subscribes (if supported), syncs
+  // immediately from the current snapshot, and stores an unsubscribe handle.
+  // Never throws when the store is null or lacks expected methods.
+  setDogStateStore(store) {
+    // Tear down any previous subscription before replacing the store.
+    if (typeof this._dogStateUnsubscribe === 'function') {
+      try {
+        this._dogStateUnsubscribe();
+      } catch (_err) {
+        // Ignore cleanup errors from a stale store.
+      }
+    }
+    this._dogStateUnsubscribe = null;
+    this.dogStateStore = store || null;
+
+    if (!store || typeof store !== 'object') {
+      return null;
+    }
+
+    // Subscribe first so we don't miss notifications between sync and listen.
+    if (typeof store.subscribe === 'function') {
+      try {
+        const unsub = store.subscribe((snapshot) => {
+          this._applyHungerSnapshot(snapshot);
+        });
+        if (typeof unsub === 'function') {
+          this._dogStateUnsubscribe = unsub;
+        }
+      } catch (_err) {
+        // A misbehaving store must never break the dog entity.
+      }
+    }
+
+    // Immediate sync from the current snapshot.
+    let snapshot = null;
+    try {
+      if (typeof store.getSnapshot === 'function') {
+        snapshot = store.getSnapshot();
+      } else if (typeof store.getHunger === 'function') {
+        snapshot = store.getHunger();
+      }
+    } catch (_err) {
+      snapshot = null;
+    }
+    this._applyHungerSnapshot(snapshot);
+
+    return this._dogStateUnsubscribe;
+  }
+
+  // Internal: normalise a store snapshot into a hunger info object.
+  // Accepts all persisted shapes:
+  //   - Full state: { version, needs: { hunger: { lastFedAt, durationMs } } }
+  //   - Wrapper:    { hunger: { ... } }
+  //   - Bare:       { lastFedAt, durationMs, isHungry? }
+  // When `isHungry` is not an explicit boolean it is derived from
+  // `nowMs - lastFedAt >= durationMs`.
+  _applyHungerSnapshot(snapshot, nowMs = Date.now()) {
+    if (snapshot === undefined || snapshot === null) {
+      this.setHunger(undefined);
+      return;
+    }
+    if (typeof snapshot !== 'object') {
+      this.setHunger(undefined);
+      return;
+    }
+
+    let hungerInfo = null;
+    if (snapshot.needs && typeof snapshot.needs === 'object' && snapshot.needs.hunger !== undefined) {
+      hungerInfo = snapshot.needs.hunger;
+    } else if (snapshot.hunger !== undefined) {
+      hungerInfo = snapshot.hunger;
+    } else {
+      hungerInfo = snapshot;
+    }
+
+    if (hungerInfo === undefined || hungerInfo === null || typeof hungerInfo !== 'object') {
+      this.setHunger(undefined);
+      return;
+    }
+
+    // Derive isHungry when not explicitly provided as a boolean.
+    if (typeof hungerInfo.isHungry !== 'boolean') {
+      const lastFedAt = Number(hungerInfo.lastFedAt);
+      const durationMs = Number(hungerInfo.durationMs);
+      if (isFinite(lastFedAt) && isFinite(durationMs)) {
+        const elapsedMs = Math.max(0, nowMs - lastFedAt);
+        hungerInfo = {
+          ...hungerInfo,
+          elapsedMs,
+          remainingMs: Math.max(0, durationMs - elapsedMs),
+          isHungry: elapsedMs >= durationMs
+        };
+      }
+    }
+
+    this.setHunger(hungerInfo);
+  }
+
+  // Delegate to the existing emote/cue system for the hungry reaction.
+  // Guarded so it is a no-op when animation dependencies are unavailable.
+  playHungryAnimation() {
+    try {
+      this.setEmote('🍖', 2.0);
+      this.wagSpeed = Math.max(this.wagSpeed || 0, 8);
+      if (this.audio && typeof this.audio.playWhine === 'function') {
+        this.audio.playWhine();
+      }
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  // Delegate to the existing emote/cue system for the feed reaction.
+  // Guarded so it is a no-op when animation dependencies are unavailable.
+  playFeedReaction() {
+    try {
+      this.setEmote('❤️', 2.2);
+      this.wagSpeed = Math.max(this.wagSpeed || 0, 18);
+      if (this.audio && typeof this.audio.playPant === 'function') {
+        this.audio.playPant();
+      }
+      return true;
+    } catch (_err) {
+      return false;
+    }
   }
 
   setEmote(emote, duration = 2.5) {
@@ -13443,6 +13585,8 @@ import { Protocol, PacketType } from './net/protocol.js';
 import { SocialHUD } from './ui/social_hud.js';
 import './ui/home_sanctuary.js';
 import './ui/home_feeding.js';
+import { DogStateStore } from './state/dog_state_store.js';
+import './ui/home_hunger_animator.js';
 import { sound } from './systems/audio.js';
 import { TouchControls } from './ui/touch_controls.js';
 import { ProximityChat } from './ui/proximity_chat.js';
@@ -13528,6 +13672,19 @@ export class CliftonDownGame {
 
     if (this.net.activeNpcs && this.net.activeNpcs.size > 0 && this.npcs.size === 0) {
       this.handleNpcSnapshot(Array.from(this.net.activeNpcs.values()), Date.now());
+    }
+
+    // Shared dog state store (hunger timer) + periodic hungry animator.
+    // Published globally so the home view modules can resolve the same
+    // instance without a hard import cycle.
+    this.dogStateStore = new DogStateStore();
+    if (typeof window !== 'undefined') {
+      window.__vdwDogStateStore = this.dogStateStore;
+    }
+    // Wire the shared store into the dog so it can reflect hunger state.
+    // The home-view hungry animator is owned by HomeSanctuary's lifecycle.
+    if (this.dog && typeof this.dog.setDogStateStore === 'function') {
+      this.dog.setDogStateStore(this.dogStateStore);
     }
 
     // UI HUD
@@ -18267,6 +18424,214 @@ export class ZeroMeshNetworkManager {
 }
 ```
 
+## FILE: src/state/dog_state_store.js
+```javascript
+// DogStateStore: persistent hunger/needs state for the companion dog.
+// ES module with a globalThis fallback for non-module consumers.
+
+export const DOG_STATE_STORAGE_KEY = 'virtual_dog_walker.dog_state.v1';
+export const DEFAULT_HUNGER_DURATION_MS = 120000; // 2 minutes
+export const DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = 5000; // 5 seconds
+
+export function createInitialDogState(nowMs = Date.now(), hungerDurationMs = DEFAULT_HUNGER_DURATION_MS) {
+  return {
+    version: 1,
+    needs: {
+      hunger: {
+        lastFedAt: nowMs,
+        durationMs: hungerDurationMs
+      }
+    }
+  };
+}
+
+function defaultStorage() {
+  try {
+    if (typeof globalThis !== 'undefined' && globalThis.localStorage) {
+      return globalThis.localStorage;
+    }
+  } catch (_e) {
+    // Access to localStorage can throw (e.g. security errors); fall through.
+  }
+  return null;
+}
+
+function isValidState(state) {
+  return Boolean(
+    state &&
+    typeof state === 'object' &&
+    state.version === 1 &&
+    state.needs &&
+    typeof state.needs === 'object' &&
+    state.needs.hunger &&
+    typeof state.needs.hunger === 'object' &&
+    typeof state.needs.hunger.lastFedAt === 'number' &&
+    Number.isFinite(state.needs.hunger.lastFedAt)
+  );
+}
+
+export class DogStateStore {
+  constructor({
+    storage = defaultStorage(),
+    now = () => Date.now(),
+    storageKey = DOG_STATE_STORAGE_KEY,
+    hungerDurationMs = DEFAULT_HUNGER_DURATION_MS
+  } = {}) {
+    this._storage = storage;
+    this._now = typeof now === 'function' ? now : () => Date.now();
+    this._storageKey = storageKey;
+    this._hungerDurationMs = hungerDurationMs;
+    this._listeners = new Set();
+    this._state = this._load();
+  }
+
+  _load() {
+    let raw = null;
+    try {
+      if (this._storage && typeof this._storage.getItem === 'function') {
+        raw = this._storage.getItem(this._storageKey);
+      }
+    } catch (_e) {
+      raw = null;
+    }
+
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (isValidState(parsed)) {
+          const durationMs = parsed.needs.hunger.durationMs;
+          if (typeof durationMs !== 'number' ||
+              !Number.isFinite(durationMs) ||
+              durationMs <= 0) {
+            // Invalid duration: reset to a clean initial state and persist it.
+            const initial = createInitialDogState(this._now(), this._hungerDurationMs);
+            this._persist(initial);
+            return initial;
+          }
+          // Strip any stale persisted `isHungry` field: it must always be
+          // derived from lastFedAt/durationMs, never trusted from storage.
+          if (parsed.needs.hunger &&
+              Object.prototype.hasOwnProperty.call(parsed.needs.hunger, 'isHungry')) {
+            delete parsed.needs.hunger.isHungry;
+          }
+          return parsed;
+        }
+      } catch (_e) {
+        // Corrupt JSON: fall through to reset.
+      }
+    }
+
+    const initial = createInitialDogState(this._now(), this._hungerDurationMs);
+    this._persist(initial);
+    return initial;
+  }
+
+  _persist(state) {
+    try {
+      if (this._storage && typeof this._storage.setItem === 'function') {
+        this._storage.setItem(this._storageKey, JSON.stringify(state));
+      }
+    } catch (_e) {
+      // Quota / security errors must not crash the store.
+    }
+  }
+
+  _notify(snapshot) {
+    for (const listener of Array.from(this._listeners)) {
+      try {
+        listener(snapshot);
+      } catch (_e) {
+        // Listener errors must not break other listeners.
+      }
+    }
+  }
+
+  getHunger(nowMs = this._now()) {
+    const hunger = this._state.needs.hunger;
+    const lastFedAt = hunger.lastFedAt;
+    const durationMs = hunger.durationMs;
+    const elapsedMs = Math.max(0, nowMs - lastFedAt);
+    const remainingMs = Math.max(0, durationMs - elapsedMs);
+    const hungryAt = lastFedAt + durationMs;
+    const isHungry = elapsedMs >= durationMs;
+    return { lastFedAt, durationMs, elapsedMs, remainingMs, hungryAt, isHungry };
+  }
+
+  getSnapshot(nowMs = this._now()) {
+    return {
+      version: 1,
+      needs: {
+        ...this._state.needs,
+        hunger: {
+          ...this._state.needs.hunger,
+          ...this.getHunger(nowMs)
+        }
+      }
+    };
+  }
+
+  isHungry(nowMs = this._now()) {
+    return this.getHunger(nowMs).isHungry;
+  }
+
+  feed(nowMs = this._now()) {
+    const existingNeeds = (this._state && this._state.needs) || {};
+    const existingHunger = existingNeeds.hunger || {};
+    this._state = {
+      version: 1,
+      needs: {
+        ...existingNeeds,
+        hunger: {
+          ...existingHunger,
+          lastFedAt: nowMs,
+          durationMs: Number.isFinite(existingHunger.durationMs) && existingHunger.durationMs > 0
+            ? existingHunger.durationMs
+            : this._hungerDurationMs
+        }
+      }
+    };
+    this._persist(this._state);
+    const snapshot = this.getSnapshot(nowMs);
+    this._notify(snapshot);
+    return snapshot;
+  }
+
+  reset(nowMs = this._now()) {
+    const existingNeeds = (this._state && this._state.needs) || {};
+    const initial = createInitialDogState(nowMs, this._hungerDurationMs);
+    this._state = {
+      version: 1,
+      needs: {
+        ...existingNeeds,
+        hunger: initial.needs.hunger
+      }
+    };
+    this._persist(this._state);
+    const snapshot = this.getSnapshot(nowMs);
+    this._notify(snapshot);
+    return snapshot;
+  }
+
+  subscribe(listener) {
+    if (typeof listener !== 'function') {
+      return () => {};
+    }
+    this._listeners.add(listener);
+    return () => {
+      this._listeners.delete(listener);
+    };
+  }
+}
+
+if (typeof globalThis !== 'undefined') {
+  globalThis.DogStateStore = DogStateStore;
+  globalThis.createInitialDogState = createInitialDogState;
+  globalThis.DOG_STATE_STORAGE_KEY = DOG_STATE_STORAGE_KEY;
+  globalThis.DEFAULT_HUNGER_DURATION_MS = DEFAULT_HUNGER_DURATION_MS;
+  globalThis.DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS;
+}
+```
+
 ## FILE: src/style.css
 ```css
 @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;700;800&family=Press+Start+2P&display=swap');
@@ -21223,6 +21588,13 @@ export default weatherClient;
   var feedBtnEl = null;
   var lastFeedAt = null;
   var pendingResolve = null;
+  var dogStateStore = null;
+  // Per-feed token: guarantees store.feed() and playFeedReaction() run at
+  // most once per feed action, even if multiple completion paths fire.
+  var feedToken = 0;
+  var committedFeedToken = -1;
+  // Optional injected dog adapter (used by tests / alternate hosts).
+  var injectedDog = null;
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -21232,6 +21604,52 @@ export default weatherClient;
     return typeof performance !== 'undefined' && performance.now
       ? performance.now()
       : Date.now();
+  }
+
+  // Resolve the shared DogStateStore. Prefer an explicitly injected store,
+  // then a globally published one, then lazily construct a fresh instance.
+  function resolveDogStateStore() {
+    if (dogStateStore) return dogStateStore;
+    if (root.__vdwDogStateStore) {
+      dogStateStore = root.__vdwDogStateStore;
+      return dogStateStore;
+    }
+    try {
+      if (typeof DogStateStore === 'function') {
+        dogStateStore = new DogStateStore();
+        // Publish so HomeSanctuary shares the exact same instance.
+        root.__vdwDogStateStore = dogStateStore;
+        return dogStateStore;
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function getDogStateStore() {
+    return resolveDogStateStore();
+  }
+
+  function setDogStateStore(store) {
+    dogStateStore = store || null;
+    if (dogStateStore) {
+      root.__vdwDogStateStore = dogStateStore;
+    }
+    return dogStateStore;
+  }
+
+  // Reset the hunger timer on the shared store (if available).
+  function resetHungerTimer() {
+    var store = resolveDogStateStore();
+    if (!store || typeof store.feed !== 'function') return;
+    try {
+      // Call with no args so DogStateStore uses its own epoch clock
+      // (Date.now() or an injected test clock), not performance.now().
+      store.feed();
+    } catch (e) {
+      /* ignore */
+    }
   }
 
   function clearTimers() {
@@ -21303,6 +21721,34 @@ export default weatherClient;
         /* ignore */
       }
     }
+  }
+
+  // Resolve the companion dog, preferring an explicitly injected adapter so
+  // callers (and tests) can supply a stable object.
+  function resolveCompanionDog() {
+    if (injectedDog) return injectedDog;
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.getCompanionDog === 'function') {
+      try { return root.HomeSanctuary.getCompanionDog(); } catch (e) { return null; }
+    }
+    return null;
+  }
+
+  // Invoke the companion dog's feed reaction exactly once, if available.
+  function triggerFeedReaction() {
+    var dog = resolveCompanionDog();
+    if (dog && typeof dog.playFeedReaction === 'function') {
+      try { dog.playFeedReaction(); } catch (e) { /* ignore */ }
+    }
+  }
+
+  // Commit the side effects of a feed exactly once per feed token.
+  function commitFeed(token, dogId) {
+    if (token === committedFeedToken) return false;
+    committedFeedToken = token;
+    persistFeed(dogId);
+    resetHungerTimer();
+    triggerFeedReaction();
+    return true;
   }
 
   function emitToast(message) {
@@ -21433,6 +21879,8 @@ export default weatherClient;
       feeding = true;
       clearTimers();
       pendingResolve = resolve;
+      feedToken += 1;
+      var token = feedToken;
 
       var start = now();
 
@@ -21458,7 +21906,7 @@ export default weatherClient;
             var toast = dogName + ' loved the meal! ❤️';
             emitToast(toast);
 
-            persistFeed(dogId);
+            commitFeed(token, dogId);
 
             // Expose duration for test hooks via closure variable.
             runFeed.__lastDuration = Math.round(now() - start);
@@ -21488,10 +21936,7 @@ export default weatherClient;
     if (root.HomeSanctuary && typeof root.HomeSanctuary.getDogSlot === 'function') {
       try { dogSlot = root.HomeSanctuary.getDogSlot(); } catch (e) {}
     }
-    var dog = null;
-    if (root.HomeSanctuary && typeof root.HomeSanctuary.getCompanionDog === 'function') {
-      try { dog = root.HomeSanctuary.getCompanionDog(); } catch (e) {}
-    }
+    var dog = resolveCompanionDog();
     var name = (dogSlot && dogSlot.name) || (dog && dog.name) || 'Ziggy';
     var id = (dogSlot && (dogSlot.id || dogSlot.dogId)) || (dog && dog.id) || 'dog-1';
     runFeed({ dogName: name, dogId: id });
@@ -21501,7 +21946,16 @@ export default weatherClient;
   // Public API
   // ---------------------------------------------------------------------------
 
-  function mount() {
+  function mount(opts) {
+    opts = opts || {};
+    if (opts.dogStateStore) {
+      setDogStateStore(opts.dogStateStore);
+    } else {
+      resolveDogStateStore();
+    }
+    if (opts.dog) {
+      injectedDog = opts.dog;
+    }
     if (mounted) {
       updateDisabledState();
       return;
@@ -21535,6 +21989,8 @@ export default weatherClient;
       actionBarEl.innerHTML = '';
     }
     feedBtnEl = null;
+    actionBarEl = null;
+    injectedDog = null;
   }
 
   function feed(opts) {
@@ -21567,7 +22023,10 @@ export default weatherClient;
       lastSimulatedFeedAt = t;
 
       var toast = dogName + ' loved the meal! ❤️';
-      var persistedValue = persistFeed(dogId);
+      feedToken += 1;
+      var token = feedToken;
+      commitFeed(token, dogId);
+      var persistedValue = lastFeedAt;
       var durationMs = fullDuration;
 
       // Keep state consistent for observers.
@@ -21605,9 +22064,152 @@ export default weatherClient;
     mount: mount,
     unmount: unmount,
     feed: feed,
+    getDogStateStore: getDogStateStore,
+    setDogStateStore: setDogStateStore,
     __testHooks: __testHooks
   };
 })();
+```
+
+## FILE: src/ui/home_hunger_animator.js
+```javascript
+/**
+ * HomeHungerAnimator
+ *
+ * Periodically triggers the dog's hungry animation while the player is in the
+ * home view. The controller is intentionally dumb: it only reads hunger state
+ * from an injected store and invokes optional animation hooks on an injected
+ * dog object. It has no knowledge of the Feed button, the home menu DOM, or any
+ * other view concerns.
+ *
+ * All timing primitives (clock + interval functions) are injectable so tests
+ * never need to wait on real timers.
+ */
+
+// Single source of truth for the hungry-animation cadence lives in the state
+// store. Re-export it here so existing imports keep working.
+import { DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS } from '../state/dog_state_store.js';
+
+export { DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS };
+
+export class HomeHungerAnimator {
+  /**
+   * @param {Object} options
+   * @param {Object} options.dogStateStore - Store exposing getHunger(nowMs).
+   * @param {Object} options.dog - Dog instance exposing optional
+   *   setHunger(hungerInfo) and playHungryAnimation() hooks.
+   * @param {number} [options.tickIntervalMs=1000] - How often to poll hunger.
+   * @param {number} [options.animationIntervalMs] - Minimum gap between hungry
+   *   animation triggers while the dog stays hungry.
+   * @param {Function} [options.now] - Clock returning epoch ms.
+   * @param {Function} [options.setIntervalFn] - setInterval-compatible fn.
+   * @param {Function} [options.clearIntervalFn] - clearInterval-compatible fn.
+   */
+  constructor({
+    dogStateStore,
+    dog,
+    tickIntervalMs = 1000,
+    animationIntervalMs = DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS,
+    now = () => Date.now(),
+    setIntervalFn = setInterval,
+    clearIntervalFn = clearInterval
+  } = {}) {
+    this._dogStateStore = dogStateStore;
+    this._dog = dog;
+    this._tickIntervalMs = tickIntervalMs;
+    this._animationIntervalMs = animationIntervalMs;
+    this._now = now;
+    this._setIntervalFn = setIntervalFn;
+    this._clearIntervalFn = clearIntervalFn;
+
+    this._intervalId = null;
+    this._lastAnimationAt = null;
+  }
+
+  /**
+   * Begin polling hunger state. Idempotent: calling twice will not create a
+   * second interval.
+   */
+  start() {
+    if (this._intervalId !== null) return;
+    this._intervalId = this._setIntervalFn(() => this.tick(), this._tickIntervalMs);
+  }
+
+  /**
+   * Stop polling. Safe to call multiple times.
+   */
+  stop() {
+    if (this._intervalId === null) return;
+    this._clearIntervalFn(this._intervalId);
+    this._intervalId = null;
+  }
+
+  /**
+   * Evaluate hunger once and trigger the hungry animation as needed.
+   * @param {number} [nowMs] - Current time in epoch ms.
+   */
+  tick(nowMs = this._now()) {
+    const store = this._dogStateStore;
+    if (!store || typeof store.getHunger !== 'function') return;
+
+    // Defensive: a malformed or throwing injected store must never crash the
+    // animation loop.
+    let hungerInfo;
+    try {
+      hungerInfo = store.getHunger(nowMs);
+    } catch (_err) {
+      return;
+    }
+
+    const dog = this._dog;
+    if (dog && typeof dog.setHunger === 'function') {
+      try {
+        dog.setHunger(hungerInfo);
+      } catch (_err) {
+        // A throwing dog hook must never break the animation loop.
+      }
+    }
+
+    if (!hungerInfo || !hungerInfo.isHungry) {
+      this._lastAnimationAt = null;
+      return;
+    }
+
+    const canPlay = dog && typeof dog.playHungryAnimation === 'function';
+
+    if (this._lastAnimationAt === null) {
+      if (canPlay) {
+        try {
+          dog.playHungryAnimation();
+        } catch (_err) {
+          // Swallow: a throwing hook must not break the interval loop.
+        }
+      }
+      this._lastAnimationAt = nowMs;
+      return;
+    }
+
+    if (nowMs - this._lastAnimationAt >= this._animationIntervalMs) {
+      if (canPlay) {
+        try {
+          dog.playHungryAnimation();
+        } catch (_err) {
+          // Swallow: a throwing hook must not break the interval loop.
+        }
+      }
+      this._lastAnimationAt = nowMs;
+    }
+  }
+}
+
+export default HomeHungerAnimator;
+
+// Expose on globalThis so non-module / IIFE consumers (e.g. home_sanctuary.js)
+// can resolve `global.HomeHungerAnimator` without a hard import cycle.
+if (typeof globalThis !== 'undefined') {
+  globalThis.HomeHungerAnimator = HomeHungerAnimator;
+  globalThis.DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS;
+}
 ```
 
 ## FILE: src/ui/home_sanctuary.js
@@ -21681,6 +22283,13 @@ export default weatherClient;
 
   var particles = [];
   var particleFrame = 0;
+
+  // Hunger integration state.
+  var hungerStore = null;
+  var hungerAnimator = null;
+  var hungerUnsubscribe = null;
+  var hungerIntervalId = null;
+  var hungerIntegrationActive = false;
 
   // ---------------------------------------------------------------------------
   // Utilities
@@ -22843,6 +23452,9 @@ export default weatherClient;
 
       startLoop();
     }
+
+    // Wire hunger integration (idempotent).
+    startHungerIntegration();
   }
 
   function unmount() {
@@ -22850,6 +23462,7 @@ export default weatherClient;
 
     mounted = false;
     stopLoop();
+    stopHungerIntegration();
 
     if (resizeHandler && global.removeEventListener) {
       global.removeEventListener('resize', resizeHandler);
@@ -22898,7 +23511,12 @@ export default weatherClient;
       coatKey: dog.coatKey,
       collar: dog.collar,
       isLeashed: dog.isLeashed,
-      leash: dog.leash
+      leash: dog.leash,
+      isHungry: Boolean(dog.isHungry),
+      hunger: dog.hunger || null,
+      setHunger: dogSetHunger,
+      playHungryAnimation: dogPlayHungryAnimation,
+      playFeedReaction: dogPlayFeedReaction
     };
   }
 
@@ -22941,6 +23559,138 @@ export default weatherClient;
     return { width: fieldWidth, height: fieldHeight };
   }
 
+  // ---------------------------------------------------------------------------
+  // Hunger integration
+  // ---------------------------------------------------------------------------
+
+  function resolveHungerStore() {
+    if (hungerStore) return hungerStore;
+    if (global.__vdwDogStateStore) {
+      hungerStore = global.__vdwDogStateStore;
+      return hungerStore;
+    }
+    try {
+      if (typeof DogStateStore === 'function') {
+        hungerStore = new DogStateStore();
+        // Publish so HomeFeeding shares the exact same instance.
+        global.__vdwDogStateStore = hungerStore;
+        return hungerStore;
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return null;
+  }
+
+  // Apply a hunger snapshot to the sanctuary dog so renderers can react.
+  function applyHungerToDog(hungerInfo) {
+    if (!dog) return;
+    dog.hunger = hungerInfo || null;
+    dog.isHungry = Boolean(hungerInfo && hungerInfo.isHungry);
+  }
+
+  // Dog-facing hooks consumed by HomeHungerAnimator.
+  function dogSetHunger(hungerInfo) {
+    applyHungerToDog(hungerInfo);
+    return Boolean(dog && dog.isHungry);
+  }
+
+  function dogPlayHungryAnimation() {
+    if (!dog) return false;
+    // Brief wag/whine flourish; does not permanently override roaming.
+    if (!forcedState) {
+      dog.state = 'wag';
+      stateTimer = Math.max(stateTimer, STATE_MIN_MS);
+    }
+    dog.bob += 0.5;
+    return true;
+  }
+
+  // Dog-facing hook invoked once when a feed completes.
+  function dogPlayFeedReaction() {
+    if (!dog) return false;
+    // Happy wag flourish; does not permanently override roaming.
+    if (!forcedState) {
+      dog.state = 'wag';
+      stateTimer = Math.max(stateTimer, STATE_MIN_MS);
+    }
+    dog.bob += 0.5;
+    return true;
+  }
+
+  function startHungerIntegration() {
+    if (hungerIntegrationActive) return;
+    var store = resolveHungerStore();
+    if (!store) return;
+
+    hungerIntegrationActive = true;
+
+    // Initial sync.
+    try {
+      if (typeof store.getHunger === 'function') {
+        applyHungerToDog(store.getHunger());
+      }
+    } catch (e) {
+      /* ignore */
+    }
+
+    // Subscribe to store updates so the dog reflects feed events.
+    if (typeof store.subscribe === 'function') {
+      try {
+        hungerUnsubscribe = store.subscribe(function () {
+          try {
+            applyHungerToDog(store.getHunger());
+          } catch (e) {
+            /* ignore */
+          }
+        });
+      } catch (e) {
+        hungerUnsubscribe = null;
+      }
+    }
+
+    // Periodic hungry animation via HomeHungerAnimator (5000ms default).
+    var AnimatorClass = (typeof HomeHungerAnimator === 'function')
+      ? HomeHungerAnimator
+      : (global.HomeHungerAnimator || null);
+    if (AnimatorClass) {
+      try {
+        hungerAnimator = new AnimatorClass({
+          dogStateStore: store,
+          dog: {
+            setHunger: dogSetHunger,
+            playHungryAnimation: dogPlayHungryAnimation
+          }
+        });
+        if (typeof hungerAnimator.start === 'function') {
+          hungerAnimator.start();
+        } else if (typeof hungerAnimator.tick === 'function') {
+          hungerIntervalId = global.setInterval(function () {
+            try { hungerAnimator.tick(); } catch (e) { /* ignore */ }
+          }, 1000);
+        }
+      } catch (e) {
+        hungerAnimator = null;
+      }
+    }
+  }
+
+  function stopHungerIntegration() {
+    if (hungerIntervalId != null) {
+      try { global.clearInterval(hungerIntervalId); } catch (e) { /* ignore */ }
+      hungerIntervalId = null;
+    }
+    if (hungerAnimator && typeof hungerAnimator.stop === 'function') {
+      try { hungerAnimator.stop(); } catch (e) { /* ignore */ }
+    }
+    hungerAnimator = null;
+    if (typeof hungerUnsubscribe === 'function') {
+      try { hungerUnsubscribe(); } catch (e) { /* ignore */ }
+    }
+    hungerUnsubscribe = null;
+    hungerIntegrationActive = false;
+  }
+
   // Clear any state-driven bowl rendering (called by HomeFeeding on completion).
   function clearBowl() {
     if (dog && (dog.state === 'eating' || dog.state === 'bowl')) {
@@ -22967,6 +23717,12 @@ export default weatherClient;
       getPose: function () { return pose; },
       updateDog: function (dt) { updateDog(dt); },
       render: function () { render(); },
+      getDog: function () { return dog; },
+      isHungerIntegrationActive: function () { return hungerIntegrationActive; },
+      hasHungerSubscription: function () { return typeof hungerUnsubscribe === 'function'; },
+      getHungerAnimator: function () { return hungerAnimator; },
+      setHunger: dogSetHunger,
+      playHungryAnimation: dogPlayHungryAnimation,
       setWanderTarget: function (x, y) {
         if (!dog) return;
         dog.targetX = x;
@@ -34034,6 +34790,163 @@ export function registerZone(zoneConfig) {
 
 ```
 
+## FILE: test/entities/companion_dog.hunger.test.js
+```javascript
+import { describe, it, expect, vi } from 'vitest';
+import { CompanionDog } from '../../src/entities/companion_dog.js';
+
+function makeDog() {
+  // No owner => off-leash roaming; construction must not require a game loop.
+  return new CompanionDog(100, 100, null);
+}
+
+describe('CompanionDog hunger state', () => {
+  it('setHunger({ isHungry: true }) flips dog.isHungry', () => {
+    const dog = makeDog();
+    expect(dog.isHungry).toBe(false);
+    dog.setHunger({ isHungry: true });
+    expect(dog.isHungry).toBe(true);
+    expect(dog.hunger).toEqual({ isHungry: true });
+  });
+
+  it('setHunger({ isHungry: false }) clears it', () => {
+    const dog = makeDog();
+    dog.setHunger({ isHungry: true });
+    dog.setHunger({ isHungry: false });
+    expect(dog.isHungry).toBe(false);
+  });
+
+  it('setHunger(undefined) does not throw and clears state', () => {
+    const dog = makeDog();
+    dog.setHunger({ isHungry: true });
+    expect(() => dog.setHunger(undefined)).not.toThrow();
+    expect(dog.isHungry).toBe(false);
+    expect(dog.hunger).toBeNull();
+  });
+
+  it('setHunger is idempotent', () => {
+    const dog = makeDog();
+    dog.setHunger({ isHungry: true });
+    dog.setHunger({ isHungry: true });
+    expect(dog.isHungry).toBe(true);
+  });
+});
+
+describe('CompanionDog animation hooks', () => {
+  it('playHungryAnimation invokes the emote/cue system', () => {
+    const dog = makeDog();
+    const spy = vi.spyOn(dog, 'setEmote');
+    const result = dog.playHungryAnimation();
+    expect(result).toBe(true);
+    expect(spy).toHaveBeenCalled();
+    expect(dog.emoteBubble).toBe('🍖');
+  });
+
+  it('playFeedReaction invokes the emote/cue system', () => {
+    const dog = makeDog();
+    const spy = vi.spyOn(dog, 'setEmote');
+    const result = dog.playFeedReaction();
+    expect(result).toBe(true);
+    expect(spy).toHaveBeenCalled();
+    expect(dog.emoteBubble).toBe('❤️');
+  });
+
+  it('animation hooks are guarded when dependencies are unavailable', () => {
+    const dog = makeDog();
+    // Force the emote system to throw to prove the guard swallows it.
+    dog.setEmote = () => { throw new Error('boom'); };
+    expect(() => dog.playHungryAnimation()).not.toThrow();
+    expect(() => dog.playFeedReaction()).not.toThrow();
+    expect(dog.playHungryAnimation()).toBe(false);
+    expect(dog.playFeedReaction()).toBe(false);
+  });
+});
+
+describe('CompanionDog setDogStateStore', () => {
+  function makeStore(initial) {
+    let snapshot = initial;
+    const listeners = new Set();
+    return {
+      getSnapshot: () => snapshot,
+      subscribe: (fn) => {
+        listeners.add(fn);
+        return () => listeners.delete(fn);
+      },
+      emit: (next) => {
+        snapshot = next;
+        for (const fn of listeners) fn(snapshot);
+      },
+      listenerCount: () => listeners.size
+    };
+  }
+
+  it('subscribes and syncs immediately from getSnapshot', () => {
+    const dog = makeDog();
+    const store = makeStore({ hunger: { isHungry: true } });
+    dog.setDogStateStore(store);
+    expect(store.listenerCount()).toBe(1);
+    expect(dog.isHungry).toBe(true);
+  });
+
+  it('syncs immediately from getHunger when getSnapshot is absent', () => {
+    const dog = makeDog();
+    const store = {
+      getHunger: () => ({ isHungry: true }),
+      subscribe: () => () => {}
+    };
+    dog.setDogStateStore(store);
+    expect(dog.isHungry).toBe(true);
+  });
+
+  it('subsequent store notifications update dog hunger', () => {
+    const dog = makeDog();
+    const store = makeStore({ hunger: { isHungry: false } });
+    dog.setDogStateStore(store);
+    expect(dog.isHungry).toBe(false);
+    store.emit({ hunger: { isHungry: true } });
+    expect(dog.isHungry).toBe(true);
+    store.emit({ hunger: { isHungry: false } });
+    expect(dog.isHungry).toBe(false);
+  });
+
+  it('accepts a bare hunger object from the store', () => {
+    const dog = makeDog();
+    const store = makeStore({ isHungry: true });
+    dog.setDogStateStore(store);
+    expect(dog.isHungry).toBe(true);
+  });
+
+  it('unsubscribe/cleanup does not throw', () => {
+    const dog = makeDog();
+    const store = makeStore({ hunger: { isHungry: true } });
+    const unsub = dog.setDogStateStore(store);
+    expect(typeof unsub).toBe('function');
+    expect(() => unsub()).not.toThrow();
+    expect(store.listenerCount()).toBe(0);
+  });
+
+  it('does not throw for null or malformed stores', () => {
+    const dog = makeDog();
+    expect(() => dog.setDogStateStore(null)).not.toThrow();
+    expect(() => dog.setDogStateStore(undefined)).not.toThrow();
+    expect(() => dog.setDogStateStore({})).not.toThrow();
+    expect(() => dog.setDogStateStore({ subscribe: () => { throw new Error('x'); } })).not.toThrow();
+  });
+
+  it('replacing the store tears down the previous subscription', () => {
+    const dog = makeDog();
+    const first = makeStore({ hunger: { isHungry: true } });
+    const second = makeStore({ hunger: { isHungry: false } });
+    dog.setDogStateStore(first);
+    expect(first.listenerCount()).toBe(1);
+    dog.setDogStateStore(second);
+    expect(first.listenerCount()).toBe(0);
+    expect(second.listenerCount()).toBe(1);
+    expect(dog.isHungry).toBe(false);
+  });
+});
+```
+
 ## FILE: test/run_tests.py
 ```python
 #!/usr/bin/env python3
@@ -34105,7 +35018,10 @@ def run_all():
         "test/test_zone_warps.py",
         "test/test_coastal_water.py",
         "test/test_canine_behavior_overhaul.py",
-        "test/test_movement_redesign.py"
+        "test/test_movement_redesign.py",
+        "test/test_dog_state_store.py",
+        "test/test_dog_hunger_behavior.py",
+        "test/test_home_hunger_integration.py"
     ]
     for t in test_suites:
         res = subprocess.run([sys.executable, t])
@@ -36204,6 +37120,275 @@ if __name__ == "__main__":
     unittest.main()
 ```
 
+## FILE: test/test_dog_hunger_behavior.py
+```python
+"""Behavioural tests for CompanionDog hunger normalization and HomeHungerAnimator.
+
+These tests shell out to `node` so they exercise the real ES modules rather
+than re-implementing their logic in Python.
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import unittest
+
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def node_available():
+    return shutil.which("node") is not None
+
+
+def run_node(script):
+    """Run a Node ESM script from the project root and return parsed JSON."""
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            f"node exited with {result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        )
+    out = result.stdout.strip()
+    # Take the last non-empty line so stray console output doesn't break parsing.
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    if not lines:
+        raise AssertionError(f"node produced no output\nSTDERR:\n{result.stderr}")
+    return json.loads(lines[-1])
+
+
+@unittest.skipUnless(node_available(), "node is required for these tests")
+class TestCompanionDogHungerNormalization(unittest.TestCase):
+    def _run_dog_case(self, snapshot_js, now_ms):
+        script = f"""
+import {{ CompanionDog }} from './src/entities/companion_dog.js';
+
+const dog = new CompanionDog();
+const snapshot = {snapshot_js};
+dog._applyHungerSnapshot(snapshot, {now_ms});
+console.log(JSON.stringify({{
+  isHungry: dog.isHungry,
+  hunger: dog.hunger,
+}}));
+"""
+        return run_node(script)
+
+    def test_full_state_shape_not_hungry_before_duration(self):
+        snapshot = "{ version: 1, needs: { hunger: { lastFedAt: 1000, durationMs: 120000 } } }"
+        result = self._run_dog_case(snapshot, 1000 + 60000)
+        self.assertFalse(result["isHungry"])
+        self.assertIsNotNone(result["hunger"])
+        self.assertEqual(result["hunger"]["durationMs"], 120000)
+        self.assertEqual(result["hunger"]["lastFedAt"], 1000)
+
+    def test_full_state_shape_hungry_after_duration(self):
+        snapshot = "{ version: 1, needs: { hunger: { lastFedAt: 1000, durationMs: 120000 } } }"
+        result = self._run_dog_case(snapshot, 1000 + 120000)
+        self.assertTrue(result["isHungry"])
+
+    def test_full_state_shape_hungry_well_after_duration(self):
+        snapshot = "{ version: 1, needs: { hunger: { lastFedAt: 1000, durationMs: 120000 } } }"
+        result = self._run_dog_case(snapshot, 1000 + 200000)
+        self.assertTrue(result["isHungry"])
+
+    def test_wrapper_shape(self):
+        snapshot = "{ hunger: { lastFedAt: 0, durationMs: 1000 } }"
+        result = self._run_dog_case(snapshot, 500)
+        self.assertFalse(result["isHungry"])
+        result = self._run_dog_case(snapshot, 1500)
+        self.assertTrue(result["isHungry"])
+
+    def test_bare_shape(self):
+        snapshot = "{ lastFedAt: 0, durationMs: 1000 }"
+        result = self._run_dog_case(snapshot, 500)
+        self.assertFalse(result["isHungry"])
+        result = self._run_dog_case(snapshot, 1500)
+        self.assertTrue(result["isHungry"])
+
+    def test_explicit_is_hungry_is_respected(self):
+        snapshot = "{ lastFedAt: 0, durationMs: 1000, isHungry: false }"
+        result = self._run_dog_case(snapshot, 5000)
+        self.assertFalse(result["isHungry"])
+
+    def test_null_snapshot_clears_hunger(self):
+        result = self._run_dog_case("null", 0)
+        self.assertFalse(result["isHungry"])
+        self.assertIsNone(result["hunger"])
+
+
+@unittest.skipUnless(node_available(), "node is required for these tests")
+class TestHomeHungerAnimator(unittest.TestCase):
+    def test_default_interval_is_5000(self):
+        script = """
+import { DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS } from './src/ui/home_hunger_animator.js';
+console.log(JSON.stringify({ value: DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS }));
+"""
+        result = run_node(script)
+        self.assertEqual(result["value"], 5000)
+
+    def test_triggers_periodically_when_hungry(self):
+        script = """
+import { HomeHungerAnimator, DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS } from './src/ui/home_hunger_animator.js';
+
+let calls = 0;
+const dog = {
+  setHunger() {},
+  playHungryAnimation() { calls += 1; }
+};
+const store = {
+  getHunger: () => ({ isHungry: true })
+};
+const animator = new HomeHungerAnimator({
+  dogStateStore: store,
+  dog,
+  animationIntervalMs: DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS,
+  now: () => 0,
+  setIntervalFn: () => 1,
+  clearIntervalFn: () => {}
+});
+
+animator.tick(0);
+const afterFirst = calls;
+animator.tick(1000);
+const afterEarly = calls;
+animator.tick(5000);
+const afterInterval = calls;
+animator.tick(6000);
+const afterSecondEarly = calls;
+animator.tick(10000);
+const afterSecondInterval = calls;
+
+console.log(JSON.stringify({
+  afterFirst, afterEarly, afterInterval, afterSecondEarly, afterSecondInterval
+}));
+"""
+        result = run_node(script)
+        self.assertEqual(result["afterFirst"], 1)
+        self.assertEqual(result["afterEarly"], 1)
+        self.assertEqual(result["afterInterval"], 2)
+        self.assertEqual(result["afterSecondEarly"], 2)
+        self.assertEqual(result["afterSecondInterval"], 3)
+
+    def test_stops_triggering_when_fed(self):
+        script = """
+import { HomeHungerAnimator } from './src/ui/home_hunger_animator.js';
+
+let calls = 0;
+let hungry = true;
+const dog = {
+  setHunger() {},
+  playHungryAnimation() { calls += 1; }
+};
+const store = {
+  getHunger: () => ({ isHungry: hungry })
+};
+const animator = new HomeHungerAnimator({
+  dogStateStore: store,
+  dog,
+  animationIntervalMs: 5000,
+  now: () => 0,
+  setIntervalFn: () => 1,
+  clearIntervalFn: () => {}
+});
+
+animator.tick(0);
+const afterFirst = calls;
+hungry = false;
+animator.tick(5000);
+const afterFed = calls;
+hungry = true;
+animator.tick(10000);
+const afterHungryAgain = calls;
+
+console.log(JSON.stringify({ afterFirst, afterFed, afterHungryAgain }));
+"""
+        result = run_node(script)
+        self.assertEqual(result["afterFirst"], 1)
+        self.assertEqual(result["afterFed"], 1)
+        # After being fed, the next hungry tick should trigger immediately
+        # (lastAnimationAt was reset).
+        self.assertEqual(result["afterHungryAgain"], 2)
+
+    def test_swallows_throwing_dog_hooks(self):
+        script = """
+import { HomeHungerAnimator } from './src/ui/home_hunger_animator.js';
+
+const dog = {
+  setHunger() { throw new Error('setHunger boom'); },
+  playHungryAnimation() { throw new Error('playHungryAnimation boom'); }
+};
+const store = {
+  getHunger: () => ({ isHungry: true })
+};
+const animator = new HomeHungerAnimator({
+  dogStateStore: store,
+  dog,
+  animationIntervalMs: 5000,
+  now: () => 0,
+  setIntervalFn: () => 1,
+  clearIntervalFn: () => {}
+});
+
+let threw = false;
+try {
+  animator.tick(0);
+  animator.tick(5000);
+  animator.tick(10000);
+} catch (e) {
+  threw = true;
+}
+
+console.log(JSON.stringify({ threw }));
+"""
+        result = run_node(script)
+        self.assertFalse(result["threw"])
+
+    def test_swallows_store_errors(self):
+        script = """
+import { HomeHungerAnimator } from './src/ui/home_hunger_animator.js';
+
+let calls = 0;
+const dog = {
+  setHunger() {},
+  playHungryAnimation() { calls += 1; }
+};
+const store = {
+  getHunger: () => { throw new Error('boom'); }
+};
+const animator = new HomeHungerAnimator({
+  dogStateStore: store,
+  dog,
+  animationIntervalMs: 5000,
+  now: () => 0,
+  setIntervalFn: () => 1,
+  clearIntervalFn: () => {}
+});
+
+let threw = false;
+try {
+  animator.tick(0);
+  animator.tick(5000);
+} catch (e) {
+  threw = true;
+}
+
+console.log(JSON.stringify({ threw, calls }));
+"""
+        result = run_node(script)
+        self.assertFalse(result["threw"])
+        self.assertEqual(result["calls"], 0)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
 ## FILE: test/test_dog_personality_leash.py
 ```python
 #!/usr/bin/env python3
@@ -36628,6 +37813,250 @@ class TestDogPersonalityLeash(unittest.TestCase):
             "personality": peer.meta.get("personality")
         }]
         self.assertEqual(existing_peers[0]["personality"], sample_personality)
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: test/test_dog_state_store.py
+```python
+import json
+import os
+import shutil
+import subprocess
+import unittest
+
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(HERE, ".."))
+MODULE_PATH = os.path.join(PROJECT_ROOT, "src", "state", "dog_state_store.js")
+
+
+def run_node(script):
+    """Run a Node.js script that imports the DogStateStore module and prints JSON."""
+    node = shutil.which("node")
+    if not node:
+        raise unittest.SkipTest("node executable not found on PATH")
+
+    module_url = "file://" + MODULE_PATH.replace(os.sep, "/")
+    full_script = (
+        "import { DogStateStore, createInitialDogState, "
+        "DOG_STATE_STORAGE_KEY, DEFAULT_HUNGER_DURATION_MS, "
+        "DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS } from %s;\n" % json.dumps(module_url)
+    ) + script
+
+    result = subprocess.run(
+        [node, "--input-type=module", "-e", full_script],
+        capture_output=True,
+        text=True,
+        cwd=PROJECT_ROOT,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            "node script failed (exit %s)\nSTDOUT:\n%s\nSTDERR:\n%s"
+            % (result.returncode, result.stdout, result.stderr)
+        )
+    out = result.stdout.strip()
+    return json.loads(out) if out else None
+
+
+class TestDogStateStore(unittest.TestCase):
+    def test_module_exists(self):
+        self.assertTrue(os.path.exists(MODULE_PATH), "dog_state_store.js missing")
+
+    def test_constants(self):
+        data = run_node(
+            "console.log(JSON.stringify({"
+            " key: DOG_STATE_STORAGE_KEY,"
+            " dur: DEFAULT_HUNGER_DURATION_MS,"
+            " anim: DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS"
+            "}));"
+        )
+        self.assertEqual(data["key"], "virtual_dog_walker.dog_state.v1")
+        self.assertEqual(data["dur"], 120000)
+        self.assertEqual(data["anim"], 5000)
+
+    def test_initial_state_shape(self):
+        data = run_node(
+            "const s = createInitialDogState(1000, 5000);"
+            "console.log(JSON.stringify(s));"
+        )
+        self.assertEqual(data["version"], 1)
+        self.assertEqual(data["needs"]["hunger"]["lastFedAt"], 1000)
+        self.assertEqual(data["needs"]["hunger"]["durationMs"], 5000)
+
+    def test_not_hungry_at_119999ms(self):
+        data = run_node(
+            "const store = new DogStateStore({ storage: null, now: () => 0 });"
+            "store.feed(0);"
+            "const h = store.getHunger(119999);"
+            "console.log(JSON.stringify(h));"
+        )
+        self.assertFalse(data["isHungry"])
+        self.assertEqual(data["remainingMs"], 1)
+        self.assertEqual(data["elapsedMs"], 119999)
+        self.assertEqual(data["hungryAt"], data["lastFedAt"] + data["durationMs"])
+
+    def test_hungry_at_120000ms(self):
+        data = run_node(
+            "const store = new DogStateStore({ storage: null, now: () => 0 });"
+            "store.feed(0);"
+            "const h = store.getHunger(120000);"
+            "console.log(JSON.stringify(h));"
+        )
+        self.assertTrue(data["isHungry"])
+        self.assertEqual(data["remainingMs"], 0)
+        self.assertEqual(data["hungryAt"], data["lastFedAt"] + data["durationMs"])
+
+    def test_feed_resets_and_persists(self):
+        data = run_node(
+            "const mem = {};"
+            "const storage = {"
+            "  getItem: (k) => (k in mem ? mem[k] : null),"
+            "  setItem: (k, v) => { mem[k] = String(v); }"
+            "};"
+            "const s1 = new DogStateStore({ storage, now: () => 0 });"
+            "s1.feed(0);"
+            "const before = s1.getHunger(200000);"
+            "s1.feed(200000);"
+            "const after = s1.getHunger(200000);"
+            "const s2 = new DogStateStore({ storage, now: () => 200000 });"
+            "const reloaded = s2.getHunger(200000);"
+            "console.log(JSON.stringify({ before, after, reloaded }));"
+        )
+        self.assertTrue(data["before"]["isHungry"])
+        self.assertFalse(data["after"]["isHungry"])
+        self.assertEqual(data["after"]["lastFedAt"], 200000)
+        self.assertFalse(data["reloaded"]["isHungry"])
+        self.assertEqual(data["reloaded"]["lastFedAt"], 200000)
+
+    def test_corrupt_json_resets_cleanly(self):
+        data = run_node(
+            "const mem = { 'virtual_dog_walker.dog_state.v1': '{not valid json' };"
+            "const storage = {"
+            "  getItem: (k) => (k in mem ? mem[k] : null),"
+            "  setItem: (k, v) => { mem[k] = String(v); }"
+            "};"
+            "const store = new DogStateStore({ storage, now: () => 42 });"
+            "const snap = store.getSnapshot(42);"
+            "console.log(JSON.stringify({ snap, persisted: mem['virtual_dog_walker.dog_state.v1'] }));"
+        )
+        self.assertEqual(data["snap"]["version"], 1)
+        self.assertEqual(data["snap"]["needs"]["hunger"]["lastFedAt"], 42)
+        self.assertFalse(data["snap"]["needs"]["hunger"]["isHungry"])
+        # Persisted value should now be valid JSON.
+        parsed = json.loads(data["persisted"])
+        self.assertEqual(parsed["version"], 1)
+
+    def test_invalid_shape_resets_cleanly(self):
+        data = run_node(
+            "const mem = { 'virtual_dog_walker.dog_state.v1': JSON.stringify({ version: 2 }) };"
+            "const storage = {"
+            "  getItem: (k) => (k in mem ? mem[k] : null),"
+            "  setItem: (k, v) => { mem[k] = String(v); }"
+            "};"
+            "const store = new DogStateStore({ storage, now: () => 7 });"
+            "console.log(JSON.stringify(store.getSnapshot(7)));"
+        )
+        self.assertEqual(data["version"], 1)
+        self.assertEqual(data["needs"]["hunger"]["lastFedAt"], 7)
+
+    def test_storage_errors_do_not_crash(self):
+        data = run_node(
+            "const storage = {"
+            "  getItem: () => { throw new Error('boom-get'); },"
+            "  setItem: () => { throw new Error('boom-set'); }"
+            "};"
+            "const store = new DogStateStore({ storage, now: () => 0 });"
+            "const snap = store.feed(0);"
+            "const h = store.getHunger(0);"
+            "console.log(JSON.stringify({ snap, h }));"
+        )
+        self.assertEqual(data["snap"]["version"], 1)
+        self.assertFalse(data["h"]["isHungry"])
+
+    def test_other_needs_preserved_on_feed_and_snapshot(self):
+        data = run_node(
+            "const mem = {};"
+            "const storage = {"
+            "  getItem: (k) => (k in mem ? mem[k] : null),"
+            "  setItem: (k, v) => { mem[k] = String(v); }"
+            "};"
+            "const store = new DogStateStore({ storage, now: () => 0 });"
+            "store._state.needs.thirst = { lastDrankAt: 5, durationMs: 60000 };"
+            "const snap = store.feed(100);"
+            "const persisted = JSON.parse(mem['virtual_dog_walker.dog_state.v1']);"
+            "console.log(JSON.stringify({ snap, persisted }));"
+        )
+        self.assertEqual(data["snap"]["needs"]["thirst"]["lastDrankAt"], 5)
+        self.assertEqual(data["snap"]["needs"]["hunger"]["lastFedAt"], 100)
+        self.assertEqual(data["persisted"]["needs"]["thirst"]["lastDrankAt"], 5)
+        self.assertEqual(data["persisted"]["needs"]["hunger"]["lastFedAt"], 100)
+
+    def test_invalid_duration_resets_to_default(self):
+        data = run_node(
+            "const mem = { 'virtual_dog_walker.dog_state.v1': JSON.stringify({"
+            "  version: 1,"
+            "  needs: { hunger: { lastFedAt: 0, durationMs: 0 } }"
+            "}) };"
+            "const storage = {"
+            "  getItem: (k) => (k in mem ? mem[k] : null),"
+            "  setItem: (k, v) => { mem[k] = String(v); }"
+            "};"
+            "const store = new DogStateStore({ storage, now: () => 0 });"
+            "const snap = store.getSnapshot(0);"
+            "const persisted = JSON.parse(mem['virtual_dog_walker.dog_state.v1']);"
+            "console.log(JSON.stringify({ snap, persisted }));"
+        )
+        self.assertEqual(data["snap"]["needs"]["hunger"]["durationMs"], 120000)
+        self.assertEqual(data["persisted"]["needs"]["hunger"]["durationMs"], 120000)
+
+    def test_clock_rollback_clamps_elapsed(self):
+        data = run_node(
+            "const store = new DogStateStore({ storage: null, now: () => 0 });"
+            "store.feed(100000);"
+            "const h = store.getHunger(50000);"
+            "console.log(JSON.stringify(h));"
+        )
+        self.assertEqual(data["elapsedMs"], 0)
+        self.assertEqual(data["remainingMs"], data["durationMs"])
+        self.assertFalse(data["isHungry"])
+
+    def test_feed_preserves_custom_duration_and_metadata(self):
+        data = run_node(
+            "const mem = {};"
+            "const storage = {"
+            "  getItem: (k) => (k in mem ? mem[k] : null),"
+            "  setItem: (k, v) => { mem[k] = String(v); }"
+            "};"
+            "const store = new DogStateStore({ storage, now: () => 0 });"
+            "store._state.needs.hunger = {"
+            "  lastFedAt: 0, durationMs: 30000, customFlag: 'keep-me'"
+            "};"
+            "const snap = store.feed(500);"
+            "const persisted = JSON.parse(mem['virtual_dog_walker.dog_state.v1']);"
+            "console.log(JSON.stringify({ snap, persisted }));"
+        )
+        self.assertEqual(data["snap"]["needs"]["hunger"]["lastFedAt"], 500)
+        self.assertEqual(data["snap"]["needs"]["hunger"]["durationMs"], 30000)
+        self.assertEqual(data["snap"]["needs"]["hunger"]["customFlag"], "keep-me")
+        self.assertEqual(data["persisted"]["needs"]["hunger"]["lastFedAt"], 500)
+        self.assertEqual(data["persisted"]["needs"]["hunger"]["durationMs"], 30000)
+        self.assertEqual(data["persisted"]["needs"]["hunger"]["customFlag"], "keep-me")
+
+    def test_subscribe_and_unsubscribe(self):
+        data = run_node(
+            "const store = new DogStateStore({ storage: null, now: () => 0 });"
+            "const events = [];"
+            "const unsub = store.subscribe((snap) => events.push(snap.needs.hunger.lastFedAt));"
+            "store.feed(100);"
+            "store.reset(200);"
+            "unsub();"
+            "store.feed(300);"
+            "console.log(JSON.stringify({ events }));"
+        )
+        self.assertEqual(data["events"], [100, 200])
 
 
 if __name__ == "__main__":
@@ -37953,6 +39382,544 @@ if __name__ == "__main__":
     test_collectible_scoring()
     test_goal_gate_victory()
     print("🎉 All gameplay tests passed!")
+```
+
+## FILE: test/test_home_hunger_integration.py
+```python
+"""Integration tests for HomeFeeding + DogStateStore and HomeSanctuary hunger wiring.
+
+These tests shell out to `node` so they exercise the real browser modules
+(loaded via a minimal DOM shim) rather than re-implementing their logic.
+"""
+
+import json
+import os
+import shutil
+import subprocess
+import unittest
+
+
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def node_available():
+    return shutil.which("node") is not None
+
+
+def run_node(script):
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", script],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            f"node exited with {result.returncode}\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        )
+    out = result.stdout.strip()
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    if not lines:
+        raise AssertionError(f"node produced no output\nSTDERR:\n{result.stderr}")
+    return json.loads(lines[-1])
+
+
+# Minimal DOM shim shared by the tests. The modules are IIFEs that attach to
+# `window`/`globalThis`, so we install a tiny document + localStorage + a
+# canvas 2D context stub before importing them.
+DOM_SHIM = r"""
+const elements = new Map();
+function makeCtx() {
+  const noop = () => {};
+  return {
+    save: noop, restore: noop, translate: noop, rotate: noop, scale: noop,
+    setTransform: noop, clearRect: noop, fillRect: noop, strokeRect: noop,
+    beginPath: noop, closePath: noop, moveTo: noop, lineTo: noop,
+    arc: noop, ellipse: noop, rect: noop, roundRect: noop,
+    fill: noop, stroke: noop, fillText: noop, strokeText: noop,
+    measureText: () => ({ width: 10 }),
+    createRadialGradient: () => ({ addColorStop: noop }),
+    createLinearGradient: () => ({ addColorStop: noop }),
+    globalAlpha: 1, fillStyle: '', strokeStyle: '', lineWidth: 1,
+    lineCap: '', font: '', textAlign: '', textBaseline: ''
+  };
+}
+function makeEl(tag) {
+  const el = {
+    tagName: tag,
+    _id: '',
+    className: '',
+    type: '',
+    textContent: '',
+    disabled: false,
+    children: [],
+    _listeners: {},
+    style: {},
+    width: 320,
+    height: 240,
+    clientWidth: 320,
+    clientHeight: 240,
+    parentElement: null,
+    setAttribute() {},
+    appendChild(child) {
+      this.children.push(child);
+      child.parentElement = this;
+      if (child && child.id) elements.set(child.id, child);
+      return child;
+    },
+    removeChild(child) {
+      const i = this.children.indexOf(child);
+      if (i >= 0) this.children.splice(i, 1);
+      if (child && child.id && elements.get(child.id) === child) {
+        elements.delete(child.id);
+      }
+      return child;
+    },
+    addEventListener(type, fn) {
+      (this._listeners[type] = this._listeners[type] || []).push(fn);
+    },
+    removeEventListener(type, fn) {
+      const arr = this._listeners[type] || [];
+      const i = arr.indexOf(fn);
+      if (i >= 0) arr.splice(i, 1);
+    },
+    dispatch(type, ev) {
+      const arr = this._listeners[type] || [];
+      for (const fn of arr.slice()) fn(ev || {});
+    },
+    getContext() { return makeCtx(); },
+    getBoundingClientRect() { return { width: 320, height: 240 }; },
+    contains() { return true; }
+  };
+  Object.defineProperty(el, 'id', {
+    get() { return this._id; },
+    set(v) {
+      const next = String(v || '');
+      if (this._id && elements.get(this._id) === this) {
+        elements.delete(this._id);
+      }
+      this._id = next;
+      if (next) elements.set(next, this);
+    },
+    configurable: true
+  });
+  return el;
+}
+const body = makeEl('body');
+const document = {
+  body,
+  activeElement: null,
+  getElementById(id) {
+    if (elements.has(id)) return elements.get(id);
+    return null;
+  },
+  createElement(tag) {
+    return makeEl(tag);
+  },
+  addEventListener() {},
+  removeEventListener() {}
+};
+const mem = {};
+const localStorage = {
+  getItem: (k) => (k in mem ? mem[k] : null),
+  setItem: (k, v) => { mem[k] = String(v); },
+  removeItem: (k) => { delete mem[k]; }
+};
+globalThis.window = globalThis;
+globalThis.document = document;
+globalThis.localStorage = localStorage;
+globalThis.performance = globalThis.performance || { now: () => Date.now() };
+globalThis.requestAnimationFrame = () => 0;
+globalThis.cancelAnimationFrame = () => {};
+globalThis.devicePixelRatio = 1;
+globalThis.addEventListener = () => {};
+globalThis.removeEventListener = () => {};
+globalThis.__domShim = { elements, body, document, localStorage, mem, makeEl };
+
+// Load the animator module so globalThis.HomeHungerAnimator is defined for
+// HomeSanctuary's hunger integration wiring.
+await import('./src/ui/home_hunger_animator.js');
+"""
+
+
+@unittest.skipUnless(node_available(), "node is required for these tests")
+class TestHomeFeedingDogStateStore(unittest.TestCase):
+    def test_feed_click_resets_hunger_timer(self):
+        script = DOM_SHIM + r"""
+import { DogStateStore } from './src/state/dog_state_store.js';
+
+// Controllable fake clock shared by the store and the module.
+let now = 0;
+const clock = () => now;
+
+// Memory localStorage shim (self-contained).
+const mem = {};
+globalThis.localStorage = {
+  getItem: (k) => (k in mem ? mem[k] : null),
+  setItem: (k, v) => { mem[k] = String(v); },
+  removeItem: (k) => { delete mem[k]; }
+};
+
+// Seed a store that is already hungry (fed at t=0, duration 120000ms).
+const store = new DogStateStore({ storage: globalThis.localStorage, now: clock });
+store.feed(0);
+
+// Advance past the 2-minute hunger threshold.
+now = 130000;
+const before = store.getHunger(now);
+
+// Publish the shared store so HomeFeeding resolves it.
+globalThis.__vdwDogStateStore = store;
+
+// Provide a dog slot so the feed button is enabled.
+globalThis.__vdwActiveDogSlot = { id: 'dog-1', name: 'Ziggy' };
+
+// Register a canvas so getCanvas() succeeds.
+const canvas = globalThis.__domShim.makeEl('canvas');
+canvas.id = 'home-field-canvas';
+globalThis.__domShim.elements.set('home-field-canvas', canvas);
+
+// Import the IIFE module (attaches window.HomeFeeding).
+await import('./src/ui/home_feeding.js');
+
+const HomeFeeding = globalThis.HomeFeeding;
+HomeFeeding.mount({ dogStateStore: store });
+
+// Simulate a feed click via the test hook (deterministic, no timers).
+const result = HomeFeeding.__testHooks.simulateFeed({ dogId: 'dog-1', dogName: 'Ziggy' });
+
+// After feeding, the store should no longer report hungry at the same instant.
+const after = store.getHunger(now);
+
+console.log(JSON.stringify({
+  beforeHungry: before.isHungry,
+  ate: result.ate,
+  afterHungry: after.isHungry,
+  afterLastFedAt: after.lastFedAt,
+  persisted: globalThis.localStorage.getItem('virtual_dog_walker.dog_state.v1')
+}));
+"""
+        data = run_node(script)
+        self.assertTrue(data["beforeHungry"])
+        self.assertTrue(data["ate"])
+        self.assertFalse(data["afterHungry"])
+        self.assertEqual(data["afterLastFedAt"], 130000)
+        self.assertIsNotNone(data["persisted"])
+
+    def test_mount_is_idempotent_and_unmount_cleans_up(self):
+        script = DOM_SHIM + r"""
+import { DogStateStore } from './src/state/dog_state_store.js';
+
+const store = new DogStateStore({ storage: null, now: () => 0 });
+globalThis.__vdwDogStateStore = store;
+globalThis.__vdwActiveDogSlot = { id: 'dog-1', name: 'Ziggy' };
+
+const canvas = globalThis.__domShim.makeEl('canvas');
+canvas.id = 'home-field-canvas';
+globalThis.__domShim.elements.set('home-field-canvas', canvas);
+
+await import('./src/ui/home_feeding.js');
+const HomeFeeding = globalThis.HomeFeeding;
+
+HomeFeeding.mount({ dogStateStore: store });
+HomeFeeding.mount({ dogStateStore: store }); // idempotent
+
+const bar = globalThis.document.getElementById('home-action-bar');
+const btn = globalThis.document.getElementById('btn-action-feed');
+const clickListeners = (btn && btn._listeners && btn._listeners.click) || [];
+const clickListenerCount = clickListeners.length;
+
+HomeFeeding.unmount();
+
+const clickListenersAfterUnmount = (btn && btn._listeners && btn._listeners.click) || [];
+
+console.log(JSON.stringify({
+  hasBar: !!bar,
+  hasBtn: !!btn,
+  clickListenerCount,
+  clickListenerCountAfterUnmount: clickListenersAfterUnmount.length,
+  storeResolved: HomeFeeding.getDogStateStore() === store
+}));
+"""
+        data = run_node(script)
+        self.assertTrue(data["hasBar"])
+        self.assertTrue(data["hasBtn"])
+        # Exactly one click listener bound despite double mount.
+        self.assertEqual(data["clickListenerCount"], 1)
+        self.assertTrue(data["storeResolved"])
+        # Unmount must remove the click listener entirely.
+        self.assertEqual(data["clickListenerCountAfterUnmount"], 0)
+
+
+@unittest.skipUnless(node_available(), "node is required for these tests")
+class TestHomeSanctuaryHungerIntegration(unittest.TestCase):
+    def test_hunger_integration_starts_and_stops_cleanly(self):
+        script = DOM_SHIM + r"""
+import { DogStateStore } from './src/state/dog_state_store.js';
+
+const store = new DogStateStore({ storage: null, now: () => 0 });
+store.feed(0);
+globalThis.__vdwDogStateStore = store;
+
+// Register a canvas so HomeSanctuary.mount() can resolve it.
+const canvas = globalThis.__domShim.makeEl('canvas');
+canvas.id = 'home-field-canvas';
+globalThis.__domShim.elements.set('home-field-canvas', canvas);
+
+await import('./src/ui/home_sanctuary.js');
+const HomeSanctuary = globalThis.HomeSanctuary;
+
+// Mount with an explicit slot so the dog exists.
+HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
+
+const hooks = HomeSanctuary.__testHooks;
+const activeAfterMount = hooks.isHungerIntegrationActive();
+const subscribedAfterMount = hooks.hasHungerSubscription();
+
+// Double mount must not create duplicate intervals/subscriptions.
+HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
+const activeAfterRemount = hooks.isHungerIntegrationActive();
+
+HomeSanctuary.unmount();
+const activeAfterUnmount = hooks.isHungerIntegrationActive();
+const subscribedAfterUnmount = hooks.hasHungerSubscription();
+
+console.log(JSON.stringify({
+  activeAfterMount,
+  subscribedAfterMount,
+  activeAfterRemount,
+  activeAfterUnmount,
+  subscribedAfterUnmount
+}));
+"""
+        data = run_node(script)
+        self.assertTrue(data["activeAfterMount"])
+        self.assertTrue(data["subscribedAfterMount"])
+        self.assertTrue(data["activeAfterRemount"])
+        self.assertFalse(data["activeAfterUnmount"])
+        self.assertFalse(data["subscribedAfterUnmount"])
+
+    def test_subscription_syncs_hunger_to_dog(self):
+        script = DOM_SHIM + r"""
+import { DogStateStore } from './src/state/dog_state_store.js';
+
+// Controllable fake clock.
+let now = 0;
+const clock = () => now;
+
+const mem = {};
+globalThis.localStorage = {
+  getItem: (k) => (k in mem ? mem[k] : null),
+  setItem: (k, v) => { mem[k] = String(v); },
+  removeItem: (k) => { delete mem[k]; }
+};
+
+const store = new DogStateStore({ storage: globalThis.localStorage, now: clock });
+store.feed(0);
+globalThis.__vdwDogStateStore = store;
+
+const canvas = globalThis.__domShim.makeEl('canvas');
+canvas.id = 'home-field-canvas';
+globalThis.__domShim.elements.set('home-field-canvas', canvas);
+
+await import('./src/ui/home_sanctuary.js');
+const HomeSanctuary = globalThis.HomeSanctuary;
+HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
+
+// Advance past the hunger threshold and re-sync via the store subscription.
+now = 130000;
+store.feed(130000); // triggers subscribers; resets lastFedAt to 130000
+const hooks = HomeSanctuary.__testHooks;
+const dogAfter = hooks.getDog();
+const hungryAfter = dogAfter ? dogAfter.isHungry : null;
+
+// Now advance past the threshold again without feeding: the store should
+// report hungry.
+now = 260000;
+const hungerNow = store.getHunger(now);
+const hungryLater = hungerNow.isHungry;
+
+HomeSanctuary.unmount();
+
+console.log(JSON.stringify({ hungryAfter, hungryLater }));
+"""
+        data = run_node(script)
+        self.assertFalse(data["hungryAfter"])
+        self.assertTrue(data["hungryLater"])
+
+    def test_hunger_after_120s_triggers_animator_and_subscription(self):
+        script = DOM_SHIM + r"""
+import { DogStateStore } from './src/state/dog_state_store.js';
+
+// Controllable fake clock shared by the store and the animator.
+let now = 0;
+const clock = () => now;
+
+const mem = {};
+globalThis.localStorage = {
+  getItem: (k) => (k in mem ? mem[k] : null),
+  setItem: (k, v) => { mem[k] = String(v); },
+  removeItem: (k) => { delete mem[k]; }
+};
+
+const store = new DogStateStore({ storage: globalThis.localStorage, now: clock });
+store.feed(0);
+globalThis.__vdwDogStateStore = store;
+
+const canvas = globalThis.__domShim.makeEl('canvas');
+canvas.id = 'home-field-canvas';
+globalThis.__domShim.elements.set('home-field-canvas', canvas);
+
+await import('./src/ui/home_sanctuary.js');
+const HomeSanctuary = globalThis.HomeSanctuary;
+HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
+
+const hooks = HomeSanctuary.__testHooks;
+const animator = hooks.getHungerAnimator();
+
+// Count playHungryAnimation invocations by wrapping the animator's dog hook.
+let playCount = 0;
+if (animator && animator._dog && typeof animator._dog.playHungryAnimation === 'function') {
+  const originalPlay = animator._dog.playHungryAnimation;
+  animator._dog.playHungryAnimation = () => { playCount++; return originalPlay(); };
+}
+
+// Advance past the 120000ms hunger threshold.
+now = 120001;
+
+// Drive the store subscription (simulates a tick that re-reads hunger).
+if (typeof store.notify === 'function') store.notify();
+else if (typeof store._notify === 'function') store._notify();
+else store.feed(0); // fallback: re-trigger subscribers without resetting clock
+
+const dogAfter = hooks.getDog();
+const hungryAfter = dogAfter ? dogAfter.isHungry : null;
+
+// Manually tick the animator several times to prove periodic triggering.
+if (animator && typeof animator.tick === 'function') {
+  animator.tick(now);
+  animator.tick(now + 6000);
+  animator.tick(now + 12000);
+}
+
+HomeSanctuary.unmount();
+
+console.log(JSON.stringify({
+  hungryAfter,
+  playCount,
+  animatorPresent: !!animator
+}));
+"""
+        data = run_node(script)
+        self.assertTrue(data["animatorPresent"])
+        self.assertTrue(data["hungryAfter"])
+        self.assertGreaterEqual(data["playCount"], 1)
+
+    def test_feed_click_resets_timer_and_stops_animation(self):
+        script = DOM_SHIM + r"""
+import { DogStateStore } from './src/state/dog_state_store.js';
+
+let now = 0;
+const clock = () => now;
+
+const mem = {};
+globalThis.localStorage = {
+  getItem: (k) => (k in mem ? mem[k] : null),
+  setItem: (k, v) => { mem[k] = String(v); },
+  removeItem: (k) => { delete mem[k]; }
+};
+
+const store = new DogStateStore({ storage: globalThis.localStorage, now: clock });
+store.feed(0);
+globalThis.__vdwDogStateStore = store;
+globalThis.__vdwActiveDogSlot = { id: 'dog-1', name: 'Ziggy' };
+
+const canvas = globalThis.__domShim.makeEl('canvas');
+canvas.id = 'home-field-canvas';
+globalThis.__domShim.elements.set('home-field-canvas', canvas);
+
+await import('./src/ui/home_sanctuary.js');
+const HomeSanctuary = globalThis.HomeSanctuary;
+HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
+
+await import('./src/ui/home_feeding.js');
+const HomeFeeding = globalThis.HomeFeeding;
+
+// Stable spy dog adapter injected into HomeFeeding so playFeedReaction is
+// observed reliably regardless of how many times getCompanionDog() is called.
+let feedReactionCount = 0;
+const spyDog = {
+  id: 'dog-1',
+  name: 'Ziggy',
+  playFeedReaction() { feedReactionCount++; return true; }
+};
+HomeFeeding.mount({ dogStateStore: store, dog: spyDog });
+
+const hooks = HomeSanctuary.__testHooks;
+const animator = hooks.getHungerAnimator();
+
+// Spy on playHungryAnimation.
+let hungryPlayCount = 0;
+if (animator && animator._dog && typeof animator._dog.playHungryAnimation === 'function') {
+  const originalPlay = animator._dog.playHungryAnimation;
+  animator._dog.playHungryAnimation = () => { hungryPlayCount++; return originalPlay(); };
+}
+
+// Advance past the hunger threshold and tick the animator: hungry animation fires.
+now = 120001;
+if (animator && typeof animator.tick === 'function') {
+  animator.tick(now);
+}
+const hungryPlayCountBeforeFeed = hungryPlayCount;
+
+// Simulate a feed click via the test hook (deterministic, no timers).
+const result = HomeFeeding.__testHooks.simulateFeed({ dogId: 'dog-1', dogName: 'Ziggy' });
+
+// The store's lastFedAt must reflect the store clock (120001), not
+// performance.now().
+const after = store.getHunger(now);
+
+// Tick the animator again: no new hungry animation should fire.
+if (animator && typeof animator.tick === 'function') {
+  animator.tick(now + 6000);
+}
+const hungryPlayCountAfterFeed = hungryPlayCount;
+
+// Advance a bit but stay under the threshold: still not hungry.
+now = 120001 + 60000;
+const stillFed = store.getHunger(now);
+
+HomeFeeding.unmount();
+HomeSanctuary.unmount();
+
+console.log(JSON.stringify({
+  beforeHungry: true,
+  ate: result.ate,
+  afterHungry: after.isHungry,
+  afterLastFedAt: after.lastFedAt,
+  stillFedHungry: stillFed.isHungry,
+  hungryPlayCountBeforeFeed,
+  hungryPlayCountAfterFeed,
+  feedReactionCount
+}));
+"""
+        data = run_node(script)
+        self.assertTrue(data["beforeHungry"])
+        self.assertTrue(data["ate"])
+        self.assertFalse(data["afterHungry"])
+        self.assertEqual(data["afterLastFedAt"], 120001)
+        self.assertFalse(data["stillFedHungry"])
+        # Hungry animation fired before feeding.
+        self.assertGreaterEqual(data["hungryPlayCountBeforeFeed"], 1)
+        # No new hungry animation after feeding.
+        self.assertEqual(data["hungryPlayCountAfterFeed"], data["hungryPlayCountBeforeFeed"])
+        # playFeedReaction fired exactly once.
+        self.assertEqual(data["feedReactionCount"], 1)
+
+
+if __name__ == "__main__":
+    unittest.main()
 ```
 
 ## FILE: test/test_home_menu.py
@@ -53868,6 +55835,198 @@ class TestWarpToZoneAliasHandling(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+```
+
+## FILE: test/ui/home_hunger_animator.test.js
+```javascript
+import { describe, it, expect, vi } from 'vitest';
+import {
+  HomeHungerAnimator,
+  DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS
+} from '../../src/ui/home_hunger_animator.js';
+
+function makeStore(hungerInfo) {
+  return {
+    getHunger: vi.fn(() => hungerInfo)
+  };
+}
+
+function makeDog() {
+  return {
+    setHunger: vi.fn(),
+    playHungryAnimation: vi.fn()
+  };
+}
+
+function makeTimers() {
+  let nextId = 1;
+  const active = new Map();
+  const setIntervalFn = vi.fn((fn, ms) => {
+    const id = nextId++;
+    active.set(id, { fn, ms });
+    return id;
+  });
+  const clearIntervalFn = vi.fn((id) => {
+    active.delete(id);
+  });
+  return { setIntervalFn, clearIntervalFn, active };
+}
+
+describe('HomeHungerAnimator', () => {
+  it('does nothing while fed', () => {
+    const store = makeStore({ isHungry: false });
+    const dog = makeDog();
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      now: () => 1000
+    });
+
+    animator.tick(1000);
+
+    expect(store.getHunger).toHaveBeenCalledWith(1000);
+    expect(dog.setHunger).toHaveBeenCalledWith({ isHungry: false });
+    expect(dog.playHungryAnimation).not.toHaveBeenCalled();
+  });
+
+  it('calls playHungryAnimation when hungry', () => {
+    const store = makeStore({ isHungry: true });
+    const dog = makeDog();
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      now: () => 5000
+    });
+
+    animator.tick(5000);
+
+    expect(dog.playHungryAnimation).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call again before animationIntervalMs elapses', () => {
+    const store = makeStore({ isHungry: true });
+    const dog = makeDog();
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      animationIntervalMs: 1000,
+      now: () => 0
+    });
+
+    animator.tick(0);
+    animator.tick(500);
+    animator.tick(999);
+
+    expect(dog.playHungryAnimation).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls again at or after animationIntervalMs', () => {
+    const store = makeStore({ isHungry: true });
+    const dog = makeDog();
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      animationIntervalMs: 1000,
+      now: () => 0
+    });
+
+    animator.tick(0);
+    animator.tick(1000);
+    animator.tick(2000);
+
+    expect(dog.playHungryAnimation).toHaveBeenCalledTimes(3);
+  });
+
+  it('clears animation schedule when no longer hungry', () => {
+    let hungry = true;
+    const store = {
+      getHunger: vi.fn(() => ({ isHungry: hungry }))
+    };
+    const dog = makeDog();
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      animationIntervalMs: 1000,
+      now: () => 0
+    });
+
+    animator.tick(0);
+    expect(dog.playHungryAnimation).toHaveBeenCalledTimes(1);
+
+    // Still hungry but within interval: no new call.
+    animator.tick(500);
+    expect(dog.playHungryAnimation).toHaveBeenCalledTimes(1);
+
+    // No longer hungry: schedule cleared.
+    hungry = false;
+    animator.tick(600);
+    expect(dog.playHungryAnimation).toHaveBeenCalledTimes(1);
+
+    // Hungry again: treated as a fresh trigger.
+    hungry = true;
+    animator.tick(700);
+    expect(dog.playHungryAnimation).toHaveBeenCalledTimes(2);
+  });
+
+  it('start() twice does not create duplicate intervals', () => {
+    const store = makeStore({ isHungry: false });
+    const dog = makeDog();
+    const timers = makeTimers();
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      tickIntervalMs: 1000,
+      setIntervalFn: timers.setIntervalFn,
+      clearIntervalFn: timers.clearIntervalFn
+    });
+
+    animator.start();
+    animator.start();
+
+    expect(timers.setIntervalFn).toHaveBeenCalledTimes(1);
+    expect(timers.active.size).toBe(1);
+  });
+
+  it('stop() clears the interval', () => {
+    const store = makeStore({ isHungry: false });
+    const dog = makeDog();
+    const timers = makeTimers();
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      tickIntervalMs: 1000,
+      setIntervalFn: timers.setIntervalFn,
+      clearIntervalFn: timers.clearIntervalFn
+    });
+
+    animator.start();
+    const id = timers.setIntervalFn.mock.results[0].value;
+    animator.stop();
+
+    expect(timers.clearIntervalFn).toHaveBeenCalledWith(id);
+    expect(timers.active.size).toBe(0);
+
+    // Safe to call again.
+    expect(() => animator.stop()).not.toThrow();
+    expect(timers.clearIntervalFn).toHaveBeenCalledTimes(1);
+  });
+
+  it('missing dog.setHunger or dog.playHungryAnimation does not throw', () => {
+    const store = makeStore({ isHungry: true });
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog: {},
+      now: () => 0
+    });
+
+    expect(() => animator.tick(0)).not.toThrow();
+    expect(() => animator.tick(1000)).not.toThrow();
+  });
+
+  it('exposes a default animation interval constant', () => {
+    expect(DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS).toBe(5000);
+  });
+});
 ```
 
 ## FILE: wrangler.jsonc

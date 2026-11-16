@@ -9,6 +9,8 @@ import { Protocol, PacketType } from './net/protocol.js';
 import { SocialHUD } from './ui/social_hud.js';
 import './ui/home_sanctuary.js';
 import './ui/home_feeding.js';
+import { DogStateStore } from './state/dog_state_store.js';
+import { HomeHungerAnimator } from './ui/home_hunger_animator.js';
 import { sound } from './systems/audio.js';
 import { TouchControls } from './ui/touch_controls.js';
 import { ProximityChat } from './ui/proximity_chat.js';
@@ -95,6 +97,18 @@ export class CliftonDownGame {
     if (this.net.activeNpcs && this.net.activeNpcs.size > 0 && this.npcs.size === 0) {
       this.handleNpcSnapshot(Array.from(this.net.activeNpcs.values()), Date.now());
     }
+
+    // Shared dog state store (hunger timer) + periodic hungry animator.
+    // Published globally so the home view modules can resolve the same
+    // instance without a hard import cycle.
+    this.dogStateStore = new DogStateStore();
+    if (typeof window !== 'undefined') {
+      window.__vdwDogStateStore = this.dogStateStore;
+    }
+    this.homeHungerAnimator = new HomeHungerAnimator({
+      dogStateStore: this.dogStateStore,
+      dog: this.dog
+    });
 
     // UI HUD
     this.hud = new SocialHUD(this.net, this.owner, this.dog, CoatPreset);

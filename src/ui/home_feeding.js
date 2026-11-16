@@ -30,6 +30,7 @@
   var feedBtnEl = null;
   var lastFeedAt = null;
   var pendingResolve = null;
+  var dogStateStore = null;
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -39,6 +40,48 @@
     return typeof performance !== 'undefined' && performance.now
       ? performance.now()
       : Date.now();
+  }
+
+  // Resolve the shared DogStateStore. Prefer an explicitly injected store,
+  // then a globally published one, then lazily construct a fresh instance.
+  function resolveDogStateStore() {
+    if (dogStateStore) return dogStateStore;
+    if (root.__vdwDogStateStore) {
+      dogStateStore = root.__vdwDogStateStore;
+      return dogStateStore;
+    }
+    try {
+      if (typeof DogStateStore === 'function') {
+        dogStateStore = new DogStateStore();
+        return dogStateStore;
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function getDogStateStore() {
+    return resolveDogStateStore();
+  }
+
+  function setDogStateStore(store) {
+    dogStateStore = store || null;
+    if (dogStateStore) {
+      root.__vdwDogStateStore = dogStateStore;
+    }
+    return dogStateStore;
+  }
+
+  // Reset the hunger timer on the shared store (if available).
+  function resetHungerTimer() {
+    var store = resolveDogStateStore();
+    if (!store || typeof store.feed !== 'function') return;
+    try {
+      store.feed(now());
+    } catch (e) {
+      /* ignore */
+    }
   }
 
   function clearTimers() {
@@ -266,6 +309,7 @@
             emitToast(toast);
 
             persistFeed(dogId);
+            resetHungerTimer();
 
             // Expose duration for test hooks via closure variable.
             runFeed.__lastDuration = Math.round(now() - start);
@@ -308,7 +352,13 @@
   // Public API
   // ---------------------------------------------------------------------------
 
-  function mount() {
+  function mount(opts) {
+    opts = opts || {};
+    if (opts.dogStateStore) {
+      setDogStateStore(opts.dogStateStore);
+    } else {
+      resolveDogStateStore();
+    }
     if (mounted) {
       updateDisabledState();
       return;
@@ -375,6 +425,7 @@
 
       var toast = dogName + ' loved the meal! ❤️';
       var persistedValue = persistFeed(dogId);
+      resetHungerTimer();
       var durationMs = fullDuration;
 
       // Keep state consistent for observers.
@@ -412,6 +463,8 @@
     mount: mount,
     unmount: unmount,
     feed: feed,
+    getDogStateStore: getDogStateStore,
+    setDogStateStore: setDogStateStore,
     __testHooks: __testHooks
   };
 })();

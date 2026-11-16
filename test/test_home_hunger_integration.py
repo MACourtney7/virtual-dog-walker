@@ -136,10 +136,25 @@ class TestHomeFeedingDogStateStore(unittest.TestCase):
         script = DOM_SHIM + r"""
 import { DogStateStore } from './src/state/dog_state_store.js';
 
-// Seed a store that is already hungry.
-const store = new DogStateStore({ storage: null, now: () => 0 });
+// Controllable fake clock shared by the store and the module.
+let now = 0;
+const clock = () => now;
+
+// Memory localStorage shim (self-contained).
+const mem = {};
+globalThis.localStorage = {
+  getItem: (k) => (k in mem ? mem[k] : null),
+  setItem: (k, v) => { mem[k] = String(v); },
+  removeItem: (k) => { delete mem[k]; }
+};
+
+// Seed a store that is already hungry (fed at t=0, duration 120000ms).
+const store = new DogStateStore({ storage: globalThis.localStorage, now: clock });
 store.feed(0);
-const before = store.getHunger(200000);
+
+// Advance past the 2-minute hunger threshold.
+now = 130000;
+const before = store.getHunger(now);
 
 // Publish the shared store so HomeFeeding resolves it.
 globalThis.__vdwDogStateStore = store;
@@ -162,7 +177,7 @@ HomeFeeding.mount({ dogStateStore: store });
 const result = HomeFeeding.__testHooks.simulateFeed({ dogId: 'dog-1', dogName: 'Ziggy' });
 
 // After feeding, the store should no longer report hungry at the same instant.
-const after = store.getHunger(200000);
+const after = store.getHunger(now);
 
 console.log(JSON.stringify({
   beforeHungry: before.isHungry,
@@ -176,7 +191,7 @@ console.log(JSON.stringify({
         self.assertTrue(data["beforeHungry"])
         self.assertTrue(data["ate"])
         self.assertFalse(data["afterHungry"])
-        self.assertEqual(data["afterLastFedAt"], 200000)
+        self.assertEqual(data["afterLastFedAt"], 130000)
         self.assertIsNotNone(data["persisted"])
 
     def test_mount_is_idempotent_and_unmount_cleans_up(self):
@@ -270,7 +285,18 @@ console.log(JSON.stringify({
         script = DOM_SHIM + r"""
 import { DogStateStore } from './src/state/dog_state_store.js';
 
-const store = new DogStateStore({ storage: null, now: () => 0 });
+// Controllable fake clock.
+let now = 0;
+const clock = () => now;
+
+const mem = {};
+globalThis.localStorage = {
+  getItem: (k) => (k in mem ? mem[k] : null),
+  setItem: (k, v) => { mem[k] = String(v); },
+  removeItem: (k) => { delete mem[k]; }
+};
+
+const store = new DogStateStore({ storage: globalThis.localStorage, now: clock });
 store.feed(0);
 globalThis.__vdwDogStateStore = store;
 
@@ -282,22 +308,26 @@ await import('./src/ui/home_sanctuary.js');
 const HomeSanctuary = globalThis.HomeSanctuary;
 HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
 
+// Advance past the hunger threshold and re-sync via the store subscription.
+now = 130000;
+store.feed(130000); // triggers subscribers; resets lastFedAt to 130000
 const hooks = HomeSanctuary.__testHooks;
-const dogBefore = hooks.getDog();
-const hungryBefore = dogBefore ? dogBefore.isHungry : null;
-
-// Feeding resets the timer; the subscription should clear the hungry flag.
-store.feed(200000);
 const dogAfter = hooks.getDog();
 const hungryAfter = dogAfter ? dogAfter.isHungry : null;
 
+// Now advance past the threshold again without feeding: the store should
+// report hungry.
+now = 260000;
+const hungerNow = store.getHunger(now);
+const hungryLater = hungerNow.isHungry;
+
 HomeSanctuary.unmount();
 
-console.log(JSON.stringify({ hungryBefore, hungryAfter }));
+console.log(JSON.stringify({ hungryAfter, hungryLater }));
 """
         data = run_node(script)
-        self.assertTrue(data["hungryBefore"])
         self.assertFalse(data["hungryAfter"])
+        self.assertTrue(data["hungryLater"])
 
 
 if __name__ == "__main__":

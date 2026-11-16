@@ -165,8 +165,8 @@ import { DogStateStore } from './src/state/dog_state_store.js';
 let now = 0;
 const clock = () => now;
 
-// Memory localStorage shim (self-contained).
-const mem = {};
+// Reset the shared memory localStorage shim (declared in DOM_SHIM).
+for (const k of Object.keys(mem)) delete mem[k];
 globalThis.localStorage = {
   getItem: (k) => (k in mem ? mem[k] : null),
   setItem: (k, v) => { mem[k] = String(v); },
@@ -320,7 +320,7 @@ import { DogStateStore } from './src/state/dog_state_store.js';
 let now = 0;
 const clock = () => now;
 
-const mem = {};
+for (const k of Object.keys(mem)) delete mem[k];
 globalThis.localStorage = {
   getItem: (k) => (k in mem ? mem[k] : null),
   setItem: (k, v) => { mem[k] = String(v); },
@@ -368,7 +368,7 @@ import { DogStateStore } from './src/state/dog_state_store.js';
 let now = 0;
 const clock = () => now;
 
-const mem = {};
+for (const k of Object.keys(mem)) delete mem[k];
 globalThis.localStorage = {
   getItem: (k) => (k in mem ? mem[k] : null),
   setItem: (k, v) => { mem[k] = String(v); },
@@ -435,7 +435,7 @@ import { DogStateStore } from './src/state/dog_state_store.js';
 let now = 0;
 const clock = () => now;
 
-const mem = {};
+for (const k of Object.keys(mem)) delete mem[k];
 globalThis.localStorage = {
   getItem: (k) => (k in mem ? mem[k] : null),
   setItem: (k, v) => { mem[k] = String(v); },

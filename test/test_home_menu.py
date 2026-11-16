@@ -216,12 +216,14 @@ class TestHomeHUDAndStage(unittest.TestCase):
     def test_glassmorphic_css_rules_present(self):
         css = self.style_css
 
-        # .home-field-preview must be a fixed-height turf panel.
+        # .home-field-preview must be a compact turf panel.
         preview_idx = css.find('.home-field-preview')
         self.assertNotEqual(preview_idx, -1, "Missing .home-field-preview CSS rule")
-        preview_block = css[preview_idx:preview_idx + 400]
-        self.assertIn('aspect-ratio: 1 / 1;', preview_block,
-                      ".home-field-preview must set aspect-ratio: 1 / 1;")
+        preview_block = css[preview_idx:preview_idx + 600]
+        self.assertIn('aspect-ratio: 5 / 4;', preview_block,
+                      ".home-field-preview must set aspect-ratio: 5 / 4;")
+        self.assertIn('max-height: 52vh;', preview_block,
+                      ".home-field-preview must set max-height: 52vh;")
         self.assertIn('background: #3e6b2c;', preview_block,
                       ".home-field-preview must use the 'The Downs' turf background #3e6b2c")
 
@@ -255,13 +257,15 @@ class TestSquareLayoutContracts(unittest.TestCase):
         self.hud_js = read("src/ui/social_hud.js")
         self.style_css = read("src/style.css")
 
-    def test_home_field_preview_is_square(self):
+    def test_home_field_preview_is_compact(self):
         css = self.style_css
         idx = css.find('.home-field-preview')
         self.assertNotEqual(idx, -1, "Missing .home-field-preview CSS rule")
-        block = css[idx:idx + 500]
-        self.assertIn('aspect-ratio: 1 / 1;', block,
-                      ".home-field-preview must set aspect-ratio: 1 / 1;")
+        block = css[idx:idx + 600]
+        self.assertIn('aspect-ratio: 5 / 4;', block,
+                      ".home-field-preview must set aspect-ratio: 5 / 4;")
+        self.assertIn('max-height: 52vh;', block,
+                      ".home-field-preview must set max-height: 52vh;")
 
     def test_home_field_canvas_fills_container(self):
         css = self.style_css
@@ -286,6 +290,44 @@ class TestSquareLayoutContracts(unittest.TestCase):
                          "#home-field-canvas must not pin width=\"340\"")
         self.assertNotIn('height="220"', tag,
                          "#home-field-canvas must not pin height=\"220\"")
+
+    def test_home_view_sanctuary_overflow_hidden(self):
+        css = self.style_css
+        idx = css.find('#home-view-sanctuary')
+        self.assertNotEqual(idx, -1, "Missing #home-view-sanctuary CSS rule")
+        block = css[idx:idx + 400]
+        self.assertIn('overflow: hidden;', block,
+                      "#home-view-sanctuary must set overflow: hidden;")
+
+    def test_compact_modal_max_width_media_query(self):
+        css = self.style_css
+        # Locate the compact media query block.
+        m = re.search(
+            r"@media\s*\(\s*max-width:\s*768px\s*\)\s*,\s*\(\s*pointer:\s*coarse\s*\)\s*\{",
+            css,
+        )
+        self.assertIsNotNone(
+            m,
+            "Missing @media (max-width: 768px), (pointer: coarse) block",
+        )
+        # Extract the block body by brace matching.
+        start = m.end()
+        depth = 1
+        i = start
+        while i < len(css) and depth > 0:
+            if css[i] == '{':
+                depth += 1
+            elif css[i] == '}':
+                depth -= 1
+            i += 1
+        block = css[start:i]
+        self.assertIn('#customizer-modal', block,
+                      "Compact media query must target #customizer-modal")
+        self.assertRegex(
+            block,
+            r"#customizer-modal\s*\{[^}]*max-width:\s*min\(\s*360px\s*,\s*92vw\s*\)",
+            "#customizer-modal must cap width with max-width: min(360px, 92vw)",
+        )
 
 
 class TestDogSlotKennelAndLocking(unittest.TestCase):

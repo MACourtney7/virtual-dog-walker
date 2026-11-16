@@ -10,7 +10,7 @@ import { SocialHUD } from './ui/social_hud.js';
 import './ui/home_sanctuary.js';
 import './ui/home_feeding.js';
 import { DogStateStore } from './state/dog_state_store.js';
-import { HomeHungerAnimator } from './ui/home_hunger_animator.js';
+import './ui/home_hunger_animator.js';
 import { sound } from './systems/audio.js';
 import { TouchControls } from './ui/touch_controls.js';
 import { ProximityChat } from './ui/proximity_chat.js';
@@ -105,10 +105,11 @@ export class CliftonDownGame {
     if (typeof window !== 'undefined') {
       window.__vdwDogStateStore = this.dogStateStore;
     }
-    this.homeHungerAnimator = new HomeHungerAnimator({
-      dogStateStore: this.dogStateStore,
-      dog: this.dog
-    });
+    // Wire the shared store into the dog so it can reflect hunger state.
+    // The home-view hungry animator is owned by HomeSanctuary's lifecycle.
+    if (this.dog && typeof this.dog.setDogStateStore === 'function') {
+      this.dog.setDogStateStore(this.dogStateStore);
+    }
 
     // UI HUD
     this.hud = new SocialHUD(this.net, this.owner, this.dog, CoatPreset);

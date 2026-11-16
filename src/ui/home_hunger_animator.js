@@ -128,3 +128,10 @@ export class HomeHungerAnimator {
 }
 
 export default HomeHungerAnimator;
+
+// Expose on globalThis so non-module / IIFE consumers (e.g. home_sanctuary.js)
+// can resolve `global.HomeHungerAnimator` without a hard import cycle.
+if (typeof globalThis !== 'undefined') {
+  globalThis.HomeHungerAnimator = HomeHungerAnimator;
+  globalThis.DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS;
+}

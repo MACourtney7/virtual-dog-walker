@@ -40,6 +40,8 @@
   var GRASS_MOWN = '#447831';
   var BLADE_COLOR = '#5da347';
   var MOWN_STRIPE = 'rgba(76, 130, 55, 0.14)';
+  var TURF_VARIATION = 'rgba(52, 98, 42, 0.06)';
+  var SANCTUARY_ZOOM = 0.72;
 
   // ---------------------------------------------------------------------------
   // Module state
@@ -182,13 +184,79 @@
     return null;
   }
 
-  // Known breed coat keys mapped to a primary / dark / secondary color trio.
+  // Known breed coat keys mapped to the full CompanionDog palette so the
+  // authentic renderer can consume them without missing fields.
   var COAT_KEY_COLORS = {
-    CHOCOLATE_TAN: { primary: '#3e2723', dark: '#2b1712', secondary: '#d7ccc8' },
-    GOLDEN: { primary: '#eab308', dark: '#ca8a04', secondary: '#fef08a' },
-    BLACK_LAB: { primary: '#1e293b', dark: '#0f172a', secondary: '#475569' },
-    BEAGLE: { primary: '#b45309', dark: '#78350f', secondary: '#ffffff' },
-    DALMATIAN: { primary: '#f8fafc', dark: '#0f172a', secondary: '#0f172a' }
+    CHOCOLATE_TAN: {
+      primary: '#2e1a14',
+      dark: '#22130e',
+      secondary: '#d89b54',
+      bodyColor: '#2e1a14',
+      bodyShade: '#22130e',
+      tanColor: '#d89b54',
+      tanHighlight: '#e2aa68',
+      earRoot: '#2e1a14',
+      earHighlight: '#9e5528',
+      noseColor: '#5e372e',
+      bibColor: '#f4efe6',
+      hasEyePatch: false
+    },
+    GOLDEN: {
+      primary: '#d4a373',
+      dark: '#b8824f',
+      secondary: '#faedcd',
+      bodyColor: '#d4a373',
+      bodyShade: '#b8824f',
+      tanColor: '#faedcd',
+      tanHighlight: '#fefae0',
+      earRoot: '#c58b54',
+      earHighlight: '#e0a96d',
+      noseColor: '#3d261d',
+      bibColor: '#fffdfa',
+      hasEyePatch: false
+    },
+    BLACK_LAB: {
+      primary: '#1e2022',
+      dark: '#374151',
+      secondary: '#4b5563',
+      bodyColor: '#1e2022',
+      bodyShade: '#374151',
+      tanColor: '#4b5563',
+      tanHighlight: '#6b7280',
+      earRoot: '#1e2022',
+      earHighlight: '#374151',
+      noseColor: '#090a0f',
+      bibColor: '#f1f5f9',
+      hasEyePatch: false
+    },
+    JACK_RUSSELL: {
+      primary: '#f8fafc',
+      dark: '#e2e8f0',
+      secondary: '#b45309',
+      bodyColor: '#f8fafc',
+      bodyShade: '#e2e8f0',
+      tanColor: '#b45309',
+      tanHighlight: '#d97706',
+      earRoot: '#b45309',
+      earHighlight: '#92400e',
+      noseColor: '#1e293b',
+      bibColor: '#ffffff',
+      hasEyePatch: true
+    },
+    RED_SETTER: {
+      primary: '#7c2d12',
+      dark: '#991b1b',
+      secondary: '#b45309',
+      bodyColor: '#7c2d12',
+      bodyShade: '#991b1b',
+      tanColor: '#b45309',
+      tanHighlight: '#d97706',
+      earRoot: '#7c2d12',
+      earHighlight: '#991b1b',
+      noseColor: '#27100b',
+      bibColor: '#fef2f2',
+      hasEyePatch: false
+    }
   };
 
   function resolveAppearance(profile) {
@@ -213,6 +281,7 @@
       appearance.coat = mapped.primary;
       appearance.coatDark = mapped.dark;
       appearance.coatSecondary = mapped.secondary;
+      appearance.palette = mapped;
     }
 
     var coat =
@@ -251,6 +320,7 @@
       coatColorDark: appearance.coatDark,
       coatSecondary: appearance.coatSecondary,
       coatKey: appearance.coatKey,
+      palette: appearance.palette || null,
       collar: appearance.collar,
       x: fieldWidth / 2,
       y: fieldHeight / 2,
@@ -371,19 +441,24 @@
     }
   }
 
+  // Deterministic hash for stable turf placement (no per-frame randomness).
+  function turfHash(gx, gy) {
+    var v = Math.sin(gx * 12.9898 + gy * 78.233) * 43758.5453;
+    return v - Math.floor(v);
+  }
+
   function drawField() {
     if (!ctx) return;
 
-    // Base turf fill.
+    // 1. Base turf fill.
     ctx.fillStyle = GRASS_BASE;
     ctx.fillRect(0, 0, fieldWidth, fieldHeight);
 
-    // Diagonal mown meadow stripes (alternating GRASS_MOWN bands).
+    // 2. Subtle diagonal mown stripes.
     ctx.save();
     var stripeWidth = 46;
     var span = fieldWidth + fieldHeight;
     for (var s = -fieldHeight; s < span; s += stripeWidth * 2) {
-      // Solid mown-turf band.
       ctx.fillStyle = GRASS_MOWN;
       ctx.globalAlpha = 0.35;
       ctx.beginPath();
@@ -394,7 +469,6 @@
       ctx.closePath();
       ctx.fill();
 
-      // Soft overlay stripe for depth.
       ctx.fillStyle = MOWN_STRIPE;
       ctx.globalAlpha = 1;
       ctx.beginPath();
@@ -407,21 +481,55 @@
     }
     ctx.restore();
 
-    // Procedural grass variation patches (light + dark).
+    // 3. Deterministic grid-based turf ellipses (light / dark / variation).
+    var cell = 34;
+    var cols = Math.ceil(fieldWidth / cell) + 1;
+    var rows = Math.ceil(fieldHeight / cell) + 1;
     ctx.save();
-    ctx.globalAlpha = 0.16;
-    for (var i = 0; i < 90; i++) {
-      var px = seededRandom() * fieldWidth;
-      var py = seededRandom() * fieldHeight;
-      var r = 8 + seededRandom() * 22;
-      ctx.fillStyle = seededRandom() > 0.5 ? GRASS_LIGHT : GRASS_DARK;
-      ctx.beginPath();
-      ctx.arc(px, py, r, 0, Math.PI * 2);
-      ctx.fill();
+    for (var gy = 0; gy < rows; gy++) {
+      for (var gx = 0; gx < cols; gx++) {
+        var h = turfHash(gx, gy);
+        var px = gx * cell + (h - 0.5) * cell * 0.6;
+        var py = gy * cell + (turfHash(gy, gx) - 0.5) * cell * 0.6;
+        var rx = 6 + h * 10;
+        var ry = 4 + h * 7;
+
+        // Base patch tone.
+        ctx.globalAlpha = 0.18;
+        ctx.fillStyle = h > 0.5 ? GRASS_LIGHT : GRASS_DARK;
+        ctx.beginPath();
+        ctx.ellipse(px, py, rx, ry, h * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Subtle variation overlay.
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = TURF_VARIATION;
+        ctx.beginPath();
+        ctx.ellipse(px, py, rx * 1.4, ry * 1.4, h * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 5. Paired short blade ticks on a subset of patches.
+        if (h > 0.62) {
+          ctx.globalAlpha = 0.85;
+          ctx.strokeStyle = BLADE_COLOR;
+          ctx.lineWidth = 1.1;
+          ctx.lineCap = 'round';
+          var bx = px + (turfHash(gx + 7, gy + 3) - 0.5) * 8;
+          var by = py + (turfHash(gx + 3, gy + 7) - 0.5) * 8;
+          ctx.beginPath();
+          ctx.moveTo(bx, by);
+          ctx.lineTo(bx - 1.5, by - 4);
+          ctx.moveTo(bx + 2, by);
+          ctx.lineTo(bx + 3.5, by - 3.5);
+          ctx.stroke();
+        }
+      }
     }
     ctx.restore();
 
-    // Subtle blade flecks.
+    // 6. Existing grass blade flecks (deterministic, built once per resize).
+    ctx.save();
+    ctx.globalAlpha = 0.9;
     ctx.lineWidth = 1.2;
     ctx.lineCap = 'round';
     for (var b = 0; b < grassBlades.length; b++) {
@@ -432,6 +540,7 @@
       ctx.lineTo(blade.x + blade.lean, blade.y - blade.h);
       ctx.stroke();
     }
+    ctx.restore();
 
     // Soft inner vignette darkening the perimeter.
     var vignette = ctx.createRadialGradient(
@@ -456,148 +565,288 @@
   }
 
   // Build a lightweight entity shaped like a CompanionDog for articulated drawing.
-  // `coat` is populated as an object (bodyColor/tanColor/bibColor) so that
-  // CompanionDog.prototype.draw can consume it without throwing.
+  // `coat` is populated with the full palette so CompanionDog.prototype.draw
+  // can consume it without throwing for every supported breed.
   function buildDogEntity() {
+    var palette = dog.palette || null;
+    var bodyColor = (palette && palette.bodyColor) || dog.coatColor || dog.coat || DEFAULT_COAT;
+    var bodyShade = (palette && palette.bodyShade) || dog.coatColorDark || dog.coatDark || DEFAULT_COAT_DARK;
+    var tanColor = (palette && palette.tanColor) || dog.coatSecondary || dog.coatDark || DEFAULT_COAT_DARK;
+    var tanHighlight = (palette && palette.tanHighlight) || tanColor;
+    var earRoot = (palette && palette.earRoot) || bodyColor;
+    var earHighlight = (palette && palette.earHighlight) || tanHighlight;
+    var noseColor = (palette && palette.noseColor) || '#1e293b';
+    var bibColor = (palette && palette.bibColor) || '#f5f0e6';
+    var hasEyePatch = Boolean(palette && palette.hasEyePatch);
+
     var coatObj = {
-      bodyColor: dog.coatColor || dog.coat || DEFAULT_COAT,
-      tanColor: dog.coatSecondary || dog.coatDark || DEFAULT_COAT_DARK,
-      bibColor: dog.coatSecondary || '#f5f0e6',
-      darkColor: dog.coatColorDark || dog.coatDark || DEFAULT_COAT_DARK
+      bodyColor: bodyColor,
+      bodyShade: bodyShade,
+      tanColor: tanColor,
+      tanHighlight: tanHighlight,
+      earRoot: earRoot,
+      earHighlight: earHighlight,
+      noseColor: noseColor,
+      bibColor: bibColor,
+      hasEyePatch: hasEyePatch,
+      darkColor: bodyShade
     };
+
     var entity = {
+      // Identity / state
+      id: dog.id,
+      name: dog.name,
+      state: dog.state,
       x: dog.x,
       y: dog.y,
       angle: pose === 'camera' ? Math.PI / 2 : dog.facing,
-      tailAngle: 0,
-      legPhase: dog.bob,
-      gaitMode: dog.state === 'wander' ? 'walk' : 'idle',
+      facing: dog.facing,
+
+      // Coat palette (both flat fields and nested object)
+      coat: coatObj,
+      coatColor: bodyColor,
+      coatColorDark: bodyShade,
+      coatDark: bodyShade,
+      coatSecondary: tanColor,
+      coatKey: dog.coatKey,
+      collarColor: dog.collar,
+
+      // Renderer-required fields
+      leftEar: { angle: 0, vel: 0 },
+      rightEar: { angle: 0, vel: 0 },
+      hearts: [],
+      emoteBubble: null,
+      emoteTimer: 0,
+      hasStick: false,
+      isBarking: false,
+      barkWaveAlpha: 0,
+      barkWaveRadius: 0,
+      owner: null,
+      isLeashed: false,
+      leash: null,
+      leashTaut: false,
+      leashTension: 0,
+      leashSagPx: 0,
+      leashVibrationPx: 0,
+      isPullingLeash: false,
+      gaitMode: dog.state === 'wander' ? 'WALK' : 'IDLE',
       gaitPhase: dog.bob,
+      legPhase: dog.bob,
+      tailAngle: 0,
+      noseTwitch: 0,
       isSitting: dog.state === 'sit',
       isSniffing: dog.state === 'sniff',
-      coat: coatObj,
-      coatColor: dog.coatColor,
-      coatColorDark: dog.coatColorDark,
-      coatDark: dog.coatDark,
-      collarColor: dog.collar,
-      name: dog.name,
-      state: dog.state
+      radius: DOG_RADIUS
     };
     return entity;
   }
 
-  // Draw the articulated top-down canine body (CompanionDog-style).
+  // Draw the articulated top-down canine body mirroring CompanionDog geometry.
+  // Head is oriented along +X (matching CompanionDog.prototype.draw).
   function drawArticulatedDog(entity) {
     var coatObj = entity.coat && typeof entity.coat === 'object' ? entity.coat : null;
-    var coat = entity.coatColor || (coatObj && coatObj.bodyColor) ||
+    var bodyColor = entity.coatColor || (coatObj && coatObj.bodyColor) ||
       (typeof entity.coat === 'string' ? entity.coat : null) || DEFAULT_COAT;
-    var coatDark = entity.coatColorDark || entity.coatDark ||
-      (coatObj && (coatObj.darkColor || coatObj.tanColor)) || DEFAULT_COAT_DARK;
+    var bodyShade = entity.coatColorDark || entity.coatDark ||
+      (coatObj && (coatObj.bodyShade || coatObj.darkColor)) || DEFAULT_COAT_DARK;
+    var tanColor = (coatObj && coatObj.tanColor) || entity.coatSecondary || bodyShade;
+    var tanHighlight = (coatObj && coatObj.tanHighlight) || tanColor;
+    var earRoot = (coatObj && coatObj.earRoot) || bodyColor;
+    var earHighlight = (coatObj && coatObj.earHighlight) || tanHighlight;
+    var noseColor = (coatObj && coatObj.noseColor) || '#1e293b';
+    var bibColor = (coatObj && coatObj.bibColor) || '#f4efe6';
+    var hasEyePatch = Boolean(coatObj && coatObj.hasEyePatch);
     var collar = entity.collarColor || entity.collar || DEFAULT_COLLAR;
     var angle = entity.angle;
-    var R = DOG_RADIUS;
+    var tailAngle = entity.tailAngle || 0;
 
     ctx.save();
-    ctx.translate(entity.x, entity.y);
 
-    // Shadow.
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+    // 1. Soft ground shadow (unrotated).
+    ctx.fillStyle = 'rgba(20, 35, 15, 0.32)';
     ctx.beginPath();
-    ctx.ellipse(0, R * 0.85, R * 1.05, R * 0.45, 0, 0, Math.PI * 2);
+    ctx.ellipse(entity.x, entity.y + 7, 16, 8, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Local geometry has the head along +Y and the tail along -Y.
-    // Canvas angles are standard math orientation (0 = +X, PI/2 = +Y),
-    // so subtract PI/2 to align the head with the entity's heading.
-    ctx.rotate(angle - Math.PI / 2);
+    // 2. Oriented body — head along +X.
+    ctx.translate(entity.x, entity.y);
+    ctx.rotate(angle);
 
-    // Legs (articulated paws with leg cycling while walking).
-    var legSwing = Math.sin(entity.legPhase || 0) * (entity.isSitting ? 0 : 3);
-    ctx.fillStyle = coatDark;
-    var legPositions = entity.isSitting
-      ? [[-R * 0.5, R * 0.55], [R * 0.5, R * 0.55]]
-      : [[-R * 0.55, R * 0.5 + legSwing], [R * 0.55, R * 0.5 - legSwing],
-         [-R * 0.55, -R * 0.5 - legSwing], [R * 0.55, -R * 0.5 + legSwing]];
-    for (var l = 0; l < legPositions.length; l++) {
-      ctx.beginPath();
-      ctx.ellipse(legPositions[l][0], legPositions[l][1], R * 0.22, R * 0.32, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    // Paws.
+    ctx.fillStyle = hasEyePatch ? '#f1f5f9' : tanColor;
+    ctx.fillRect(-10, -9, 5, 4);
+    ctx.fillRect(-10, 5, 5, 4);
+    ctx.fillRect(8, -9, 5, 4);
+    ctx.fillRect(8, 5, 5, 4);
+
+    // Feathered wagging tail.
+    ctx.save();
+    ctx.translate(-14, 0);
+    ctx.rotate(tailAngle);
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath();
+    ctx.ellipse(-5, 0, 7.5, 3.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = tanHighlight;
+    ctx.beginPath();
+    ctx.ellipse(-9.5, 0, 4.5, 2.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(-13, 0, 2.0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
 
     // Torso.
-    ctx.fillStyle = coat;
+    ctx.fillStyle = bodyColor;
     ctx.beginPath();
-    ctx.ellipse(0, 0, R * 0.7, R * 1.05, 0, 0, Math.PI * 2);
+    ctx.ellipse(-2, 0, 13, 8.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Darker back patch.
-    ctx.fillStyle = coatDark;
+    // Dorsal sheen.
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
     ctx.beginPath();
-    ctx.ellipse(0, -R * 0.15, R * 0.5, R * 0.7, 0, 0, Math.PI * 2);
+    ctx.ellipse(-2, -2, 10, 4.5, -0.05, 0, Math.PI * 2);
     ctx.fill();
 
-    // Collar.
-    ctx.strokeStyle = collar;
-    ctx.lineWidth = 3;
+    // Chest bib.
+    ctx.fillStyle = bibColor;
     ctx.beginPath();
-    ctx.arc(0, R * 0.55, R * 0.5, 0.1 * Math.PI, 0.9 * Math.PI);
-    ctx.stroke();
+    ctx.ellipse(5, 0, 4.2, 3.6, 0, 0, Math.PI * 2);
+    ctx.fill();
 
-    // Tail — wags during wander/wag.
-    var tailWag = Math.sin((entity.legPhase || 0) * 1.6) * 0.6;
-    ctx.strokeStyle = coatDark;
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
+    // Collar band.
+    ctx.fillStyle = collar;
     ctx.beginPath();
-    ctx.moveTo(0, -R * 0.9);
-    ctx.lineTo(Math.sin(tailWag) * R * 0.6, -R * 1.5);
-    ctx.stroke();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(5.5, -6.5, 3.0, 13, 1.5);
+    } else {
+      ctx.rect(5.5, -6.5, 3.0, 13);
+    }
+    ctx.fill();
 
-    // Head — drops toward ground when sniffing.
-    var headY = entity.isSniffing ? R * 0.95 : R * 0.85;
-    var headR = R * 0.55;
-
-    // Floppy ears.
-    ctx.fillStyle = coatDark;
+    // Gold charm tag.
+    ctx.fillStyle = '#f59e0b';
     ctx.beginPath();
-    ctx.ellipse(-headR * 0.85, headY, headR * 0.35, headR * 0.6, 0.3, 0, Math.PI * 2);
-    ctx.ellipse(headR * 0.85, headY, headR * 0.35, headR * 0.6, -0.3, 0, Math.PI * 2);
+    ctx.arc(8.5, 0, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fef08a';
+    ctx.beginPath();
+    ctx.arc(8.0, -0.6, 0.8, 0, Math.PI * 2);
     ctx.fill();
 
     // Head.
-    ctx.fillStyle = coat;
+    ctx.fillStyle = bodyColor;
     ctx.beginPath();
-    ctx.arc(0, headY, headR, 0, Math.PI * 2);
+    ctx.ellipse(11, 0, 7.8, 6.2, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Snout.
-    ctx.fillStyle = coatDark;
+    // Eye patch (Jack Russell).
+    if (hasEyePatch) {
+      ctx.fillStyle = tanColor;
+      ctx.beginPath();
+      ctx.ellipse(12, -3.2, 3.8, 3.2, 0.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Muzzle.
+    ctx.fillStyle = tanColor;
     ctx.beginPath();
-    ctx.ellipse(0, headY + headR * 0.55, headR * 0.4, headR * 0.3, 0, 0, Math.PI * 2);
+    ctx.ellipse(16, 0, 4.8, 3.6, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Eyes.
-    ctx.fillStyle = '#1f1f1f';
+    // Snout highlight.
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
     ctx.beginPath();
-    ctx.arc(-headR * 0.35, headY - headR * 0.1, 1.8, 0, Math.PI * 2);
-    ctx.arc(headR * 0.35, headY - headR * 0.1, 1.8, 0, Math.PI * 2);
+    ctx.ellipse(15.5, -1.0, 2.8, 1.6, 0, 0, Math.PI * 2);
     ctx.fill();
 
     // Nose.
-    ctx.fillStyle = '#111';
+    ctx.fillStyle = noseColor;
     ctx.beginPath();
-    ctx.arc(0, headY + headR * 0.7, 2, 0, Math.PI * 2);
+    ctx.ellipse(19.2, 0, 1.8, 1.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.beginPath();
+    ctx.arc(18.8, -0.6, 0.6, 0, Math.PI * 2);
     ctx.fill();
 
+    // Eyes.
+    ctx.fillStyle = '#261b12';
+    ctx.beginPath();
+    ctx.arc(12, -3.2, 1.6, 0, Math.PI * 2);
+    ctx.arc(12, 3.2, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#c6933a';
+    ctx.beginPath();
+    ctx.arc(12.1, -3.2, 1.2, 0, Math.PI * 2);
+    ctx.arc(12.1, 3.2, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#0f172a';
+    ctx.beginPath();
+    ctx.arc(12.2, -3.2, 0.8, 0, Math.PI * 2);
+    ctx.arc(12.2, 3.2, 0.8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(11.7, -3.6, 0.55, 0, Math.PI * 2);
+    ctx.arc(11.7, 2.8, 0.55, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Floppy ears.
+    var leftEarAngle = (entity.leftEar && entity.leftEar.angle) || 0;
+    var rightEarAngle = (entity.rightEar && entity.rightEar.angle) || 0;
+
+    ctx.save();
+    ctx.translate(9, -6);
+    ctx.rotate(leftEarAngle);
+    ctx.fillStyle = earRoot;
+    ctx.beginPath();
+    ctx.ellipse(-1, -4, 4.6, 8.2, -Math.PI * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = earHighlight;
+    ctx.beginPath();
+    ctx.ellipse(-1, -5.5, 3.2, 5.5, -Math.PI * 0.15, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
 
-    // Name tag (drawn unrotated above the dog).
+    ctx.save();
+    ctx.translate(9, 6);
+    ctx.rotate(rightEarAngle);
+    ctx.fillStyle = earRoot;
+    ctx.beginPath();
+    ctx.ellipse(-1, 4, 4.6, 8.2, Math.PI * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = earHighlight;
+    ctx.beginPath();
+    ctx.ellipse(-1, 5.5, 3.2, 5.5, Math.PI * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.restore(); // Restore orientation transform
+
+    // 3. Dark rounded pill name badge below the dog.
     if (entity.name) {
       ctx.save();
-      ctx.font = '10px sans-serif';
+      ctx.font = '600 11px Outfit, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-      ctx.fillText(entity.name, entity.x, entity.y - R * 1.7);
+      ctx.textBaseline = 'middle';
+      var textWidth = ctx.measureText(entity.name).width;
+      var pillW = textWidth + 12;
+      var pillH = 16;
+      var pillX = entity.x - pillW / 2;
+      var pillY = entity.y + 18;
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+      ctx.beginPath();
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(pillX, pillY, pillW, pillH, 8);
+      } else {
+        ctx.rect(pillX, pillY, pillW, pillH);
+      }
+      ctx.fill();
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillText(entity.name, entity.x, pillY + pillH / 2);
       ctx.restore();
     }
   }
@@ -607,8 +856,11 @@
     var bx = dog.x;
     var by = dog.y + 18;
 
-    // Bowl body.
+    // Bowl body (zoomed around its own anchor).
     ctx.save();
+    ctx.translate(bx, by);
+    ctx.scale(SANCTUARY_ZOOM, SANCTUARY_ZOOM);
+    ctx.translate(-bx, -by);
     ctx.fillStyle = '#e8e2d6';
     ctx.beginPath();
     ctx.ellipse(bx, by, 16, 8, 0, 0, Math.PI * 2);
@@ -638,6 +890,8 @@
     ctx.restore();
   }
 
+  var drawErrorLogged = false;
+
   function drawDog() {
     if (!ctx || !dog) return;
 
@@ -646,19 +900,37 @@
     // so there is zero prototype or world-state leakage.
     var entity = buildDogEntity();
 
+    // Zoom around the dog's own anchor so the field stays full-size.
+    ctx.save();
+    ctx.translate(dog.x, dog.y);
+    ctx.scale(SANCTUARY_ZOOM, SANCTUARY_ZOOM);
+    ctx.translate(-dog.x, -dog.y);
+
     var CompanionDogClass = getCompanionDogClass();
-    var drawFn = (CompanionDogClass && typeof CompanionDogClass.prototype.draw === 'function')
+    var drawFn = (CompanionDogClass && CompanionDogClass.prototype &&
+      typeof CompanionDogClass.prototype.draw === 'function')
       ? CompanionDogClass.prototype.draw
       : null;
+
+    var drew = false;
     if (drawFn) {
       try {
         drawFn.call(entity, ctx);
+        drew = true;
       } catch (e) {
-        drawArticulatedDog(entity);
+        if (!drawErrorLogged) {
+          drawErrorLogged = true;
+          if (global.console && typeof global.console.warn === 'function') {
+            global.console.warn('[HomeSanctuary] CompanionDog.draw failed, using fallback:', e);
+          }
+        }
       }
-    } else {
+    }
+    if (!drew) {
       drawArticulatedDog(entity);
     }
+
+    ctx.restore();
 
     // Food bowl during bowl/eating phases.
     if (isBowlVisible()) {
@@ -748,6 +1020,16 @@
   function frame(timestamp) {
     if (!mounted) return;
 
+    // Self-heal hidden 0x0 initial mounts: if the parent is now visible and
+    // its dimensions differ from the currently measured field, resize.
+    if (canvas && canvas.parentElement) {
+      var pw = canvas.parentElement.clientWidth;
+      var ph = canvas.parentElement.clientHeight;
+      if (pw > 0 && ph > 0 && (pw !== fieldWidth || ph !== fieldHeight)) {
+        resizeCanvas();
+      }
+    }
+
     if (!lastTimestamp) lastTimestamp = timestamp;
     var dt = Math.min(timestamp - lastTimestamp, 100); // clamp to avoid huge jumps
     lastTimestamp = timestamp;
@@ -801,6 +1083,7 @@
     fieldWidth = Math.max(1, Math.round(cssWidth));
     fieldHeight = Math.max(1, Math.round(cssHeight));
 
+    // Backing store in device pixels; drawing coordinates stay in CSS pixels.
     canvas.width = Math.round(fieldWidth * dpr);
     canvas.height = Math.round(fieldHeight * dpr);
 
@@ -828,14 +1111,15 @@
   // ---------------------------------------------------------------------------
 
   function mount(canvasEl, explicitDogSlot) {
-    if (mounted) return;
-
     var el = canvasEl || (global.document && global.document.getElementById(CANVAS_ID));
     if (!el) {
       // Graceful no-op when the canvas is not present.
       return;
     }
 
+    // Idempotent + self-healing: re-mounting with a new canvas or slot
+    // refreshes the internal state instead of bailing out early.
+    var canvasChanged = (canvas !== el);
     canvas = el;
     ctx = canvas.getContext ? canvas.getContext('2d') : null;
     if (!ctx) {
@@ -843,14 +1127,19 @@
       return;
     }
 
-    resizeCanvas();
-
-    var slot = explicitDogSlot;
-    if (slot === undefined) {
+    // Resolve the slot: explicit override wins, otherwise re-read the profile
+    // only when we don't already have one (preserves prior mount state).
+    var slot;
+    if (explicitDogSlot !== undefined) {
+      slot = explicitDogSlot;
+    } else if (activeDogSlot === null || canvasChanged || !dog) {
       slot = readProfile();
+    } else {
+      slot = activeDogSlot;
     }
     activeDogSlot = slot || null;
 
+    // Refresh the dog from the active slot (appearance may have changed).
     var appearance = resolveAppearance(activeDogSlot);
     dog = createDog(appearance);
     if (activeDogSlot) {
@@ -861,16 +1150,21 @@
     forcedState = null;
     enterState('wander');
 
-    mounted = true;
+    // Resize after the visible container is available.
+    resizeCanvas();
 
-    resizeHandler = function () {
-      resizeCanvas();
-    };
-    if (global.addEventListener) {
-      global.addEventListener('resize', resizeHandler);
+    if (!mounted) {
+      mounted = true;
+
+      resizeHandler = function () {
+        resizeCanvas();
+      };
+      if (global.addEventListener) {
+        global.addEventListener('resize', resizeHandler);
+      }
+
+      startLoop();
     }
-
-    startLoop();
   }
 
   function unmount() {
@@ -896,6 +1190,7 @@
     grassBlades = [];
     particles = [];
     particleFrame = 0;
+    drawErrorLogged = false;
   }
 
   function getDogSlot() {

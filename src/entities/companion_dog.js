@@ -3460,3 +3460,10 @@ CompanionDog.ZOOMIE_PATH_TYPES = ZOOMIE_PATH_TYPES;
 CompanionDog.RoamSubMode = RoamSubMode;
 CompanionDog.resolveCoatPresetByName = resolveCoatPresetByName;
 CompanionDog.ACTIVE_REST_BLOCKED_STATES = Object.freeze(new Set([...ACTIVE_REST_BLOCKED_STATES]));
+
+// Browser global exposure so the Home Sanctuary can reuse the authentic model.
+if (typeof window !== 'undefined') {
+  window.CompanionDog = CompanionDog;
+  window.CoatPreset = CoatPreset;
+  window.DogState = DogState;
+}

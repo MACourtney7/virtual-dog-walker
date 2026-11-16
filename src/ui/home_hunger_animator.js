@@ -12,8 +12,8 @@
  */
 
 // Default cadence for re-triggering the hungry animation while the dog remains
-// hungry. Kept in sync with the state store module's constant when available.
-export const DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = 2 * 60 * 1000; // 2 minutes
+// hungry. Matches spec.md R8 (DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = 5000).
+export const DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = 5000; // 5 seconds
 
 export class HomeHungerAnimator {
   /**
@@ -75,7 +75,14 @@ export class HomeHungerAnimator {
     const store = this._dogStateStore;
     if (!store || typeof store.getHunger !== 'function') return;
 
-    const hungerInfo = store.getHunger(nowMs);
+    // Defensive: a malformed or throwing injected store must never crash the
+    // animation loop.
+    let hungerInfo;
+    try {
+      hungerInfo = store.getHunger(nowMs);
+    } catch (_err) {
+      return;
+    }
 
     const dog = this._dog;
     if (dog && typeof dog.setHunger === 'function') {

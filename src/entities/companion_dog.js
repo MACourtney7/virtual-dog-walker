@@ -662,16 +662,51 @@ export class CompanionDog {
   }
 
   // Internal: normalise a store snapshot into a hunger info object.
-  _applyHungerSnapshot(snapshot) {
+  // Accepts all persisted shapes:
+  //   - Full state: { version, needs: { hunger: { lastFedAt, durationMs } } }
+  //   - Wrapper:    { hunger: { ... } }
+  //   - Bare:       { lastFedAt, durationMs, isHungry? }
+  // When `isHungry` is not an explicit boolean it is derived from
+  // `nowMs - lastFedAt >= durationMs`.
+  _applyHungerSnapshot(snapshot, nowMs = Date.now()) {
     if (snapshot === undefined || snapshot === null) {
       this.setHunger(undefined);
       return;
     }
-    // Accept either a full state snapshot ({ hunger: {...} }) or a bare
-    // hunger info object ({ isHungry: true }).
-    const hungerInfo = (typeof snapshot === 'object' && snapshot.hunger !== undefined)
-      ? snapshot.hunger
-      : snapshot;
+    if (typeof snapshot !== 'object') {
+      this.setHunger(undefined);
+      return;
+    }
+
+    let hungerInfo = null;
+    if (snapshot.needs && typeof snapshot.needs === 'object' && snapshot.needs.hunger !== undefined) {
+      hungerInfo = snapshot.needs.hunger;
+    } else if (snapshot.hunger !== undefined) {
+      hungerInfo = snapshot.hunger;
+    } else {
+      hungerInfo = snapshot;
+    }
+
+    if (hungerInfo === undefined || hungerInfo === null || typeof hungerInfo !== 'object') {
+      this.setHunger(undefined);
+      return;
+    }
+
+    // Derive isHungry when not explicitly provided as a boolean.
+    if (typeof hungerInfo.isHungry !== 'boolean') {
+      const lastFedAt = Number(hungerInfo.lastFedAt);
+      const durationMs = Number(hungerInfo.durationMs);
+      if (isFinite(lastFedAt) && isFinite(durationMs)) {
+        const elapsedMs = Math.max(0, nowMs - lastFedAt);
+        hungerInfo = {
+          ...hungerInfo,
+          elapsedMs,
+          remainingMs: Math.max(0, durationMs - elapsedMs),
+          isHungry: elapsedMs >= durationMs
+        };
+      }
+    }
+
     this.setHunger(hungerInfo);
   }
 

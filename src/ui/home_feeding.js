@@ -159,6 +159,17 @@
     }
   }
 
+  // Invoke the companion dog's feed reaction exactly once, if available.
+  function triggerFeedReaction() {
+    var dog = null;
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.getCompanionDog === 'function') {
+      try { dog = root.HomeSanctuary.getCompanionDog(); } catch (e) { dog = null; }
+    }
+    if (dog && typeof dog.playFeedReaction === 'function') {
+      try { dog.playFeedReaction(); } catch (e) { /* ignore */ }
+    }
+  }
+
   function emitToast(message) {
     if (root.HomeSanctuary && typeof root.HomeSanctuary.toast === 'function') {
       try {
@@ -314,6 +325,7 @@
 
             persistFeed(dogId);
             resetHungerTimer();
+            triggerFeedReaction();
 
             // Expose duration for test hooks via closure variable.
             runFeed.__lastDuration = Math.round(now() - start);
@@ -396,6 +408,7 @@
       actionBarEl.innerHTML = '';
     }
     feedBtnEl = null;
+    actionBarEl = null;
   }
 
   function feed(opts) {
@@ -430,6 +443,7 @@
       var toast = dogName + ' loved the meal! ❤️';
       var persistedValue = persistFeed(dogId);
       resetHungerTimer();
+      triggerFeedReaction();
       var durationMs = fullDuration;
 
       // Keep state consistent for observers.

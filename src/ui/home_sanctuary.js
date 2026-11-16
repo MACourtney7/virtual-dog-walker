@@ -1299,7 +1299,8 @@
       isHungry: Boolean(dog.isHungry),
       hunger: dog.hunger || null,
       setHunger: dogSetHunger,
-      playHungryAnimation: dogPlayHungryAnimation
+      playHungryAnimation: dogPlayHungryAnimation,
+      playFeedReaction: dogPlayFeedReaction
     };
   }
 
@@ -1381,6 +1382,18 @@
   function dogPlayHungryAnimation() {
     if (!dog) return false;
     // Brief wag/whine flourish; does not permanently override roaming.
+    if (!forcedState) {
+      dog.state = 'wag';
+      stateTimer = Math.max(stateTimer, STATE_MIN_MS);
+    }
+    dog.bob += 0.5;
+    return true;
+  }
+
+  // Dog-facing hook invoked once when a feed completes.
+  function dogPlayFeedReaction() {
+    if (!dog) return false;
+    // Happy wag flourish; does not permanently override roaming.
     if (!forcedState) {
       dog.state = 'wag';
       stateTimer = Math.max(stateTimer, STATE_MIN_MS);

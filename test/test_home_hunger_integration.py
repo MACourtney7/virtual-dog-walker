@@ -127,6 +127,10 @@ globalThis.devicePixelRatio = 1;
 globalThis.addEventListener = () => {};
 globalThis.removeEventListener = () => {};
 globalThis.__domShim = { elements, body, document, localStorage, mem, makeEl };
+
+// Load the animator module so globalThis.HomeHungerAnimator is defined for
+// HomeSanctuary's hunger integration wiring.
+await import('./src/ui/home_hunger_animator.js');
 """
 
 
@@ -215,13 +219,17 @@ HomeFeeding.mount({ dogStateStore: store }); // idempotent
 const bar = globalThis.document.getElementById('home-action-bar');
 const btn = globalThis.document.getElementById('btn-action-feed');
 const clickListeners = (btn && btn._listeners && btn._listeners.click) || [];
+const clickListenerCount = clickListeners.length;
 
 HomeFeeding.unmount();
+
+const clickListenersAfterUnmount = (btn && btn._listeners && btn._listeners.click) || [];
 
 console.log(JSON.stringify({
   hasBar: !!bar,
   hasBtn: !!btn,
-  clickListenerCount: clickListeners.length,
+  clickListenerCount,
+  clickListenerCountAfterUnmount: clickListenersAfterUnmount.length,
   storeResolved: HomeFeeding.getDogStateStore() === store
 }));
 """
@@ -231,6 +239,8 @@ console.log(JSON.stringify({
         # Exactly one click listener bound despite double mount.
         self.assertEqual(data["clickListenerCount"], 1)
         self.assertTrue(data["storeResolved"])
+        # Unmount must remove the click listener entirely.
+        self.assertEqual(data["clickListenerCountAfterUnmount"], 0)
 
 
 @unittest.skipUnless(node_available(), "node is required for these tests")
@@ -359,15 +369,12 @@ HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
 const hooks = HomeSanctuary.__testHooks;
 const animator = hooks.getHungerAnimator();
 
-// Count playHungryAnimation invocations by wrapping the dog hook.
+// Count playHungryAnimation invocations by wrapping the animator's dog hook.
 let playCount = 0;
-const originalPlay = hooks.playHungryAnimation;
-const wrappedDog = {
-  setHunger: hooks.setHunger,
-  playHungryAnimation: () => { playCount++; return originalPlay(); }
-};
-// Re-point the animator at the wrapped dog.
-if (animator) animator.dog = wrappedDog;
+if (animator && animator._dog && typeof animator._dog.playHungryAnimation === 'function') {
+  const originalPlay = animator._dog.playHungryAnimation;
+  animator._dog.playHungryAnimation = () => { playCount++; return originalPlay(); };
+}
 
 // Advance past the 120000ms hunger threshold.
 now = 120001;
@@ -423,39 +430,79 @@ const canvas = globalThis.__domShim.makeEl('canvas');
 canvas.id = 'home-field-canvas';
 globalThis.__domShim.elements.set('home-field-canvas', canvas);
 
+await import('./src/ui/home_sanctuary.js');
+const HomeSanctuary = globalThis.HomeSanctuary;
+HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
+
 await import('./src/ui/home_feeding.js');
 const HomeFeeding = globalThis.HomeFeeding;
 HomeFeeding.mount({ dogStateStore: store });
 
-// Advance past the hunger threshold.
-now = 130000;
-const before = store.getHunger(now);
+const hooks = HomeSanctuary.__testHooks;
+const animator = hooks.getHungerAnimator();
+
+// Spy on playHungryAnimation and playFeedReaction.
+let hungryPlayCount = 0;
+let feedReactionCount = 0;
+if (animator && animator._dog && typeof animator._dog.playHungryAnimation === 'function') {
+  const originalPlay = animator._dog.playHungryAnimation;
+  animator._dog.playHungryAnimation = () => { hungryPlayCount++; return originalPlay(); };
+}
+const companion = HomeSanctuary.getCompanionDog();
+if (companion && typeof companion.playFeedReaction === 'function') {
+  const originalFeed = companion.playFeedReaction;
+  companion.playFeedReaction = () => { feedReactionCount++; return originalFeed(); };
+}
+
+// Advance past the hunger threshold and tick the animator: hungry animation fires.
+now = 120001;
+if (animator && typeof animator.tick === 'function') {
+  animator.tick(now);
+}
+const hungryPlayCountBeforeFeed = hungryPlayCount;
 
 // Simulate a feed click via the test hook (deterministic, no timers).
 const result = HomeFeeding.__testHooks.simulateFeed({ dogId: 'dog-1', dogName: 'Ziggy' });
 
-// The store's lastFedAt must reflect the store clock (130000), not
+// The store's lastFedAt must reflect the store clock (120001), not
 // performance.now().
 const after = store.getHunger(now);
 
+// Tick the animator again: no new hungry animation should fire.
+if (animator && typeof animator.tick === 'function') {
+  animator.tick(now + 6000);
+}
+const hungryPlayCountAfterFeed = hungryPlayCount;
+
 // Advance a bit but stay under the threshold: still not hungry.
-now = 130000 + 60000;
+now = 120001 + 60000;
 const stillFed = store.getHunger(now);
 
+HomeSanctuary.unmount();
+
 console.log(JSON.stringify({
-  beforeHungry: before.isHungry,
+  beforeHungry: true,
   ate: result.ate,
   afterHungry: after.isHungry,
   afterLastFedAt: after.lastFedAt,
-  stillFedHungry: stillFed.isHungry
+  stillFedHungry: stillFed.isHungry,
+  hungryPlayCountBeforeFeed,
+  hungryPlayCountAfterFeed,
+  feedReactionCount
 }));
 """
         data = run_node(script)
         self.assertTrue(data["beforeHungry"])
         self.assertTrue(data["ate"])
         self.assertFalse(data["afterHungry"])
-        self.assertEqual(data["afterLastFedAt"], 130000)
+        self.assertEqual(data["afterLastFedAt"], 120001)
         self.assertFalse(data["stillFedHungry"])
+        # Hungry animation fired before feeding.
+        self.assertGreaterEqual(data["hungryPlayCountBeforeFeed"], 1)
+        # No new hungry animation after feeding.
+        self.assertEqual(data["hungryPlayCountAfterFeed"], data["hungryPlayCountBeforeFeed"])
+        # playFeedReaction fired exactly once.
+        self.assertEqual(data["feedReactionCount"], 1)
 
 
 if __name__ == "__main__":

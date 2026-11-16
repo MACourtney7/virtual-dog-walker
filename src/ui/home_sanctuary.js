@@ -68,6 +68,13 @@
   var particles = [];
   var particleFrame = 0;
 
+  // Hunger integration state.
+  var hungerStore = null;
+  var hungerAnimator = null;
+  var hungerUnsubscribe = null;
+  var hungerIntervalId = null;
+  var hungerIntegrationActive = false;
+
   // ---------------------------------------------------------------------------
   // Utilities
   // ---------------------------------------------------------------------------
@@ -1229,6 +1236,9 @@
 
       startLoop();
     }
+
+    // Wire hunger integration (idempotent).
+    startHungerIntegration();
   }
 
   function unmount() {
@@ -1236,6 +1246,7 @@
 
     mounted = false;
     stopLoop();
+    stopHungerIntegration();
 
     if (resizeHandler && global.removeEventListener) {
       global.removeEventListener('resize', resizeHandler);
@@ -1284,7 +1295,12 @@
       coatKey: dog.coatKey,
       collar: dog.collar,
       isLeashed: dog.isLeashed,
-      leash: dog.leash
+      leash: dog.leash,
+      isHungry: Boolean(dog.isHungry),
+      hunger: dog.hunger || null,
+      setHunger: dogSetHunger,
+      playHungryAnimation: dogPlayHungryAnimation,
+      playFeedReaction: dogPlayFeedReaction
     };
   }
 
@@ -1327,6 +1343,138 @@
     return { width: fieldWidth, height: fieldHeight };
   }
 
+  // ---------------------------------------------------------------------------
+  // Hunger integration
+  // ---------------------------------------------------------------------------
+
+  function resolveHungerStore() {
+    if (hungerStore) return hungerStore;
+    if (global.__vdwDogStateStore) {
+      hungerStore = global.__vdwDogStateStore;
+      return hungerStore;
+    }
+    try {
+      if (typeof DogStateStore === 'function') {
+        hungerStore = new DogStateStore();
+        // Publish so HomeFeeding shares the exact same instance.
+        global.__vdwDogStateStore = hungerStore;
+        return hungerStore;
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return null;
+  }
+
+  // Apply a hunger snapshot to the sanctuary dog so renderers can react.
+  function applyHungerToDog(hungerInfo) {
+    if (!dog) return;
+    dog.hunger = hungerInfo || null;
+    dog.isHungry = Boolean(hungerInfo && hungerInfo.isHungry);
+  }
+
+  // Dog-facing hooks consumed by HomeHungerAnimator.
+  function dogSetHunger(hungerInfo) {
+    applyHungerToDog(hungerInfo);
+    return Boolean(dog && dog.isHungry);
+  }
+
+  function dogPlayHungryAnimation() {
+    if (!dog) return false;
+    // Brief wag/whine flourish; does not permanently override roaming.
+    if (!forcedState) {
+      dog.state = 'wag';
+      stateTimer = Math.max(stateTimer, STATE_MIN_MS);
+    }
+    dog.bob += 0.5;
+    return true;
+  }
+
+  // Dog-facing hook invoked once when a feed completes.
+  function dogPlayFeedReaction() {
+    if (!dog) return false;
+    // Happy wag flourish; does not permanently override roaming.
+    if (!forcedState) {
+      dog.state = 'wag';
+      stateTimer = Math.max(stateTimer, STATE_MIN_MS);
+    }
+    dog.bob += 0.5;
+    return true;
+  }
+
+  function startHungerIntegration() {
+    if (hungerIntegrationActive) return;
+    var store = resolveHungerStore();
+    if (!store) return;
+
+    hungerIntegrationActive = true;
+
+    // Initial sync.
+    try {
+      if (typeof store.getHunger === 'function') {
+        applyHungerToDog(store.getHunger());
+      }
+    } catch (e) {
+      /* ignore */
+    }
+
+    // Subscribe to store updates so the dog reflects feed events.
+    if (typeof store.subscribe === 'function') {
+      try {
+        hungerUnsubscribe = store.subscribe(function () {
+          try {
+            applyHungerToDog(store.getHunger());
+          } catch (e) {
+            /* ignore */
+          }
+        });
+      } catch (e) {
+        hungerUnsubscribe = null;
+      }
+    }
+
+    // Periodic hungry animation via HomeHungerAnimator (5000ms default).
+    var AnimatorClass = (typeof HomeHungerAnimator === 'function')
+      ? HomeHungerAnimator
+      : (global.HomeHungerAnimator || null);
+    if (AnimatorClass) {
+      try {
+        hungerAnimator = new AnimatorClass({
+          dogStateStore: store,
+          dog: {
+            setHunger: dogSetHunger,
+            playHungryAnimation: dogPlayHungryAnimation
+          }
+        });
+        if (typeof hungerAnimator.start === 'function') {
+          hungerAnimator.start();
+        } else if (typeof hungerAnimator.tick === 'function') {
+          hungerIntervalId = global.setInterval(function () {
+            try { hungerAnimator.tick(); } catch (e) { /* ignore */ }
+          }, 1000);
+        }
+      } catch (e) {
+        hungerAnimator = null;
+      }
+    }
+  }
+
+  function stopHungerIntegration() {
+    if (hungerIntervalId != null) {
+      try { global.clearInterval(hungerIntervalId); } catch (e) { /* ignore */ }
+      hungerIntervalId = null;
+    }
+    if (hungerAnimator && typeof hungerAnimator.stop === 'function') {
+      try { hungerAnimator.stop(); } catch (e) { /* ignore */ }
+    }
+    hungerAnimator = null;
+    if (typeof hungerUnsubscribe === 'function') {
+      try { hungerUnsubscribe(); } catch (e) { /* ignore */ }
+    }
+    hungerUnsubscribe = null;
+    hungerIntegrationActive = false;
+  }
+
   // Clear any state-driven bowl rendering (called by HomeFeeding on completion).
   function clearBowl() {
     if (dog && (dog.state === 'eating' || dog.state === 'bowl')) {
@@ -1353,6 +1501,12 @@
       getPose: function () { return pose; },
       updateDog: function (dt) { updateDog(dt); },
       render: function () { render(); },
+      getDog: function () { return dog; },
+      isHungerIntegrationActive: function () { return hungerIntegrationActive; },
+      hasHungerSubscription: function () { return typeof hungerUnsubscribe === 'function'; },
+      getHungerAnimator: function () { return hungerAnimator; },
+      setHunger: dogSetHunger,
+      playHungryAnimation: dogPlayHungryAnimation,
       setWanderTarget: function (x, y) {
         if (!dog) return;
         dog.targetX = x;

@@ -30,6 +30,13 @@
   var feedBtnEl = null;
   var lastFeedAt = null;
   var pendingResolve = null;
+  var dogStateStore = null;
+  // Per-feed token: guarantees store.feed() and playFeedReaction() run at
+  // most once per feed action, even if multiple completion paths fire.
+  var feedToken = 0;
+  var committedFeedToken = -1;
+  // Optional injected dog adapter (used by tests / alternate hosts).
+  var injectedDog = null;
 
   // ---------------------------------------------------------------------------
   // Helpers
@@ -39,6 +46,52 @@
     return typeof performance !== 'undefined' && performance.now
       ? performance.now()
       : Date.now();
+  }
+
+  // Resolve the shared DogStateStore. Prefer an explicitly injected store,
+  // then a globally published one, then lazily construct a fresh instance.
+  function resolveDogStateStore() {
+    if (dogStateStore) return dogStateStore;
+    if (root.__vdwDogStateStore) {
+      dogStateStore = root.__vdwDogStateStore;
+      return dogStateStore;
+    }
+    try {
+      if (typeof DogStateStore === 'function') {
+        dogStateStore = new DogStateStore();
+        // Publish so HomeSanctuary shares the exact same instance.
+        root.__vdwDogStateStore = dogStateStore;
+        return dogStateStore;
+      }
+    } catch (e) {
+      /* ignore */
+    }
+    return null;
+  }
+
+  function getDogStateStore() {
+    return resolveDogStateStore();
+  }
+
+  function setDogStateStore(store) {
+    dogStateStore = store || null;
+    if (dogStateStore) {
+      root.__vdwDogStateStore = dogStateStore;
+    }
+    return dogStateStore;
+  }
+
+  // Reset the hunger timer on the shared store (if available).
+  function resetHungerTimer() {
+    var store = resolveDogStateStore();
+    if (!store || typeof store.feed !== 'function') return;
+    try {
+      // Call with no args so DogStateStore uses its own epoch clock
+      // (Date.now() or an injected test clock), not performance.now().
+      store.feed();
+    } catch (e) {
+      /* ignore */
+    }
   }
 
   function clearTimers() {
@@ -110,6 +163,34 @@
         /* ignore */
       }
     }
+  }
+
+  // Resolve the companion dog, preferring an explicitly injected adapter so
+  // callers (and tests) can supply a stable object.
+  function resolveCompanionDog() {
+    if (injectedDog) return injectedDog;
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.getCompanionDog === 'function') {
+      try { return root.HomeSanctuary.getCompanionDog(); } catch (e) { return null; }
+    }
+    return null;
+  }
+
+  // Invoke the companion dog's feed reaction exactly once, if available.
+  function triggerFeedReaction() {
+    var dog = resolveCompanionDog();
+    if (dog && typeof dog.playFeedReaction === 'function') {
+      try { dog.playFeedReaction(); } catch (e) { /* ignore */ }
+    }
+  }
+
+  // Commit the side effects of a feed exactly once per feed token.
+  function commitFeed(token, dogId) {
+    if (token === committedFeedToken) return false;
+    committedFeedToken = token;
+    persistFeed(dogId);
+    resetHungerTimer();
+    triggerFeedReaction();
+    return true;
   }
 
   function emitToast(message) {
@@ -240,6 +321,8 @@
       feeding = true;
       clearTimers();
       pendingResolve = resolve;
+      feedToken += 1;
+      var token = feedToken;
 
       var start = now();
 
@@ -265,7 +348,7 @@
             var toast = dogName + ' loved the meal! ❤️';
             emitToast(toast);
 
-            persistFeed(dogId);
+            commitFeed(token, dogId);
 
             // Expose duration for test hooks via closure variable.
             runFeed.__lastDuration = Math.round(now() - start);
@@ -295,10 +378,7 @@
     if (root.HomeSanctuary && typeof root.HomeSanctuary.getDogSlot === 'function') {
       try { dogSlot = root.HomeSanctuary.getDogSlot(); } catch (e) {}
     }
-    var dog = null;
-    if (root.HomeSanctuary && typeof root.HomeSanctuary.getCompanionDog === 'function') {
-      try { dog = root.HomeSanctuary.getCompanionDog(); } catch (e) {}
-    }
+    var dog = resolveCompanionDog();
     var name = (dogSlot && dogSlot.name) || (dog && dog.name) || 'Ziggy';
     var id = (dogSlot && (dogSlot.id || dogSlot.dogId)) || (dog && dog.id) || 'dog-1';
     runFeed({ dogName: name, dogId: id });
@@ -308,7 +388,16 @@
   // Public API
   // ---------------------------------------------------------------------------
 
-  function mount() {
+  function mount(opts) {
+    opts = opts || {};
+    if (opts.dogStateStore) {
+      setDogStateStore(opts.dogStateStore);
+    } else {
+      resolveDogStateStore();
+    }
+    if (opts.dog) {
+      injectedDog = opts.dog;
+    }
     if (mounted) {
       updateDisabledState();
       return;
@@ -342,6 +431,8 @@
       actionBarEl.innerHTML = '';
     }
     feedBtnEl = null;
+    actionBarEl = null;
+    injectedDog = null;
   }
 
   function feed(opts) {
@@ -374,7 +465,10 @@
       lastSimulatedFeedAt = t;
 
       var toast = dogName + ' loved the meal! ❤️';
-      var persistedValue = persistFeed(dogId);
+      feedToken += 1;
+      var token = feedToken;
+      commitFeed(token, dogId);
+      var persistedValue = lastFeedAt;
       var durationMs = fullDuration;
 
       // Keep state consistent for observers.
@@ -412,6 +506,8 @@
     mount: mount,
     unmount: unmount,
     feed: feed,
+    getDogStateStore: getDogStateStore,
+    setDogStateStore: setDogStateStore,
     __testHooks: __testHooks
   };
 })();

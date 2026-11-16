@@ -453,6 +453,12 @@ export class CompanionDog {
     this.leashTugTarget = null;
     this.socialGazeTimer = 0;
     this.socialGazeAngle = 0;
+
+    // Hunger state (driven by an external DogStateStore via setDogStateStore).
+    this.hunger = null;
+    this.isHungry = false;
+    this.dogStateStore = null;
+    this._dogStateUnsubscribe = null;
   }
 
   // packPlayTimer is an alias of packPlayRoleTimer (kept in sync via accessor).
@@ -596,6 +602,142 @@ export class CompanionDog {
   setChat(text, duration = 3.5) {
     this.emoteBubble = text;
     this.emoteTimer = duration;
+  }
+
+  // Store the hunger snapshot and derive the boolean hungry flag.
+  // Idempotent and safe when passed undefined/null.
+  setHunger(hungerInfo) {
+    this.hunger = hungerInfo === undefined ? null : hungerInfo;
+    this.isHungry = Boolean(hungerInfo && hungerInfo.isHungry);
+    return this.isHungry;
+  }
+
+  // Attach an external DogStateStore. Subscribes (if supported), syncs
+  // immediately from the current snapshot, and stores an unsubscribe handle.
+  // Never throws when the store is null or lacks expected methods.
+  setDogStateStore(store) {
+    // Tear down any previous subscription before replacing the store.
+    if (typeof this._dogStateUnsubscribe === 'function') {
+      try {
+        this._dogStateUnsubscribe();
+      } catch (_err) {
+        // Ignore cleanup errors from a stale store.
+      }
+    }
+    this._dogStateUnsubscribe = null;
+    this.dogStateStore = store || null;
+
+    if (!store || typeof store !== 'object') {
+      return null;
+    }
+
+    // Subscribe first so we don't miss notifications between sync and listen.
+    if (typeof store.subscribe === 'function') {
+      try {
+        const unsub = store.subscribe((snapshot) => {
+          this._applyHungerSnapshot(snapshot);
+        });
+        if (typeof unsub === 'function') {
+          this._dogStateUnsubscribe = unsub;
+        }
+      } catch (_err) {
+        // A misbehaving store must never break the dog entity.
+      }
+    }
+
+    // Immediate sync from the current snapshot.
+    let snapshot = null;
+    try {
+      if (typeof store.getSnapshot === 'function') {
+        snapshot = store.getSnapshot();
+      } else if (typeof store.getHunger === 'function') {
+        snapshot = store.getHunger();
+      }
+    } catch (_err) {
+      snapshot = null;
+    }
+    this._applyHungerSnapshot(snapshot);
+
+    return this._dogStateUnsubscribe;
+  }
+
+  // Internal: normalise a store snapshot into a hunger info object.
+  // Accepts all persisted shapes:
+  //   - Full state: { version, needs: { hunger: { lastFedAt, durationMs } } }
+  //   - Wrapper:    { hunger: { ... } }
+  //   - Bare:       { lastFedAt, durationMs, isHungry? }
+  // When `isHungry` is not an explicit boolean it is derived from
+  // `nowMs - lastFedAt >= durationMs`.
+  _applyHungerSnapshot(snapshot, nowMs = Date.now()) {
+    if (snapshot === undefined || snapshot === null) {
+      this.setHunger(undefined);
+      return;
+    }
+    if (typeof snapshot !== 'object') {
+      this.setHunger(undefined);
+      return;
+    }
+
+    let hungerInfo = null;
+    if (snapshot.needs && typeof snapshot.needs === 'object' && snapshot.needs.hunger !== undefined) {
+      hungerInfo = snapshot.needs.hunger;
+    } else if (snapshot.hunger !== undefined) {
+      hungerInfo = snapshot.hunger;
+    } else {
+      hungerInfo = snapshot;
+    }
+
+    if (hungerInfo === undefined || hungerInfo === null || typeof hungerInfo !== 'object') {
+      this.setHunger(undefined);
+      return;
+    }
+
+    // Derive isHungry when not explicitly provided as a boolean.
+    if (typeof hungerInfo.isHungry !== 'boolean') {
+      const lastFedAt = Number(hungerInfo.lastFedAt);
+      const durationMs = Number(hungerInfo.durationMs);
+      if (isFinite(lastFedAt) && isFinite(durationMs)) {
+        const elapsedMs = Math.max(0, nowMs - lastFedAt);
+        hungerInfo = {
+          ...hungerInfo,
+          elapsedMs,
+          remainingMs: Math.max(0, durationMs - elapsedMs),
+          isHungry: elapsedMs >= durationMs
+        };
+      }
+    }
+
+    this.setHunger(hungerInfo);
+  }
+
+  // Delegate to the existing emote/cue system for the hungry reaction.
+  // Guarded so it is a no-op when animation dependencies are unavailable.
+  playHungryAnimation() {
+    try {
+      this.setEmote('🍖', 2.0);
+      this.wagSpeed = Math.max(this.wagSpeed || 0, 8);
+      if (this.audio && typeof this.audio.playWhine === 'function') {
+        this.audio.playWhine();
+      }
+      return true;
+    } catch (_err) {
+      return false;
+    }
+  }
+
+  // Delegate to the existing emote/cue system for the feed reaction.
+  // Guarded so it is a no-op when animation dependencies are unavailable.
+  playFeedReaction() {
+    try {
+      this.setEmote('❤️', 2.2);
+      this.wagSpeed = Math.max(this.wagSpeed || 0, 18);
+      if (this.audio && typeof this.audio.playPant === 'function') {
+        this.audio.playPant();
+      }
+      return true;
+    } catch (_err) {
+      return false;
+    }
   }
 
   setEmote(emote, duration = 2.5) {

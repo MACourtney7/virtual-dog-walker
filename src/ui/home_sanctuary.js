@@ -948,8 +948,9 @@
       } catch (e) {
         if (!drawErrorLogged) {
           drawErrorLogged = true;
-          if (global.console && typeof global.console.warn === 'function') {
-            global.console.warn('[HomeSanctuary] CompanionDog.draw failed, using fallback:', e);
+          var consoleRef = (global && global.console) || (typeof console !== 'undefined' ? console : null);
+          if (consoleRef && typeof consoleRef.warn === 'function') {
+            consoleRef.warn('[HomeSanctuary] CompanionDog.draw failed, using fallback:', e);
           }
         }
       }

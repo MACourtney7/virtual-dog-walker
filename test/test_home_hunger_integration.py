@@ -58,9 +58,9 @@ function makeCtx() {
   };
 }
 function makeEl(tag) {
-  return {
+  const el = {
     tagName: tag,
-    id: '',
+    _id: '',
     className: '',
     type: '',
     textContent: '',
@@ -74,10 +74,18 @@ function makeEl(tag) {
     clientHeight: 240,
     parentElement: null,
     setAttribute() {},
-    appendChild(child) { this.children.push(child); return child; },
+    appendChild(child) {
+      this.children.push(child);
+      child.parentElement = this;
+      if (child && child.id) elements.set(child.id, child);
+      return child;
+    },
     removeChild(child) {
       const i = this.children.indexOf(child);
       if (i >= 0) this.children.splice(i, 1);
+      if (child && child.id && elements.get(child.id) === child) {
+        elements.delete(child.id);
+      }
       return child;
     },
     addEventListener(type, fn) {
@@ -96,6 +104,19 @@ function makeEl(tag) {
     getBoundingClientRect() { return { width: 320, height: 240 }; },
     contains() { return true; }
   };
+  Object.defineProperty(el, 'id', {
+    get() { return this._id; },
+    set(v) {
+      const next = String(v || '');
+      if (this._id && elements.get(this._id) === this) {
+        elements.delete(this._id);
+      }
+      this._id = next;
+      if (next) elements.set(next, this);
+    },
+    configurable: true
+  });
+  return el;
 }
 const body = makeEl('body');
 const document = {
@@ -436,22 +457,25 @@ HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
 
 await import('./src/ui/home_feeding.js');
 const HomeFeeding = globalThis.HomeFeeding;
-HomeFeeding.mount({ dogStateStore: store });
+
+// Stable spy dog adapter injected into HomeFeeding so playFeedReaction is
+// observed reliably regardless of how many times getCompanionDog() is called.
+let feedReactionCount = 0;
+const spyDog = {
+  id: 'dog-1',
+  name: 'Ziggy',
+  playFeedReaction() { feedReactionCount++; return true; }
+};
+HomeFeeding.mount({ dogStateStore: store, dog: spyDog });
 
 const hooks = HomeSanctuary.__testHooks;
 const animator = hooks.getHungerAnimator();
 
-// Spy on playHungryAnimation and playFeedReaction.
+// Spy on playHungryAnimation.
 let hungryPlayCount = 0;
-let feedReactionCount = 0;
 if (animator && animator._dog && typeof animator._dog.playHungryAnimation === 'function') {
   const originalPlay = animator._dog.playHungryAnimation;
   animator._dog.playHungryAnimation = () => { hungryPlayCount++; return originalPlay(); };
-}
-const companion = HomeSanctuary.getCompanionDog();
-if (companion && typeof companion.playFeedReaction === 'function') {
-  const originalFeed = companion.playFeedReaction;
-  companion.playFeedReaction = () => { feedReactionCount++; return originalFeed(); };
 }
 
 // Advance past the hunger threshold and tick the animator: hungry animation fires.
@@ -478,6 +502,7 @@ const hungryPlayCountAfterFeed = hungryPlayCount;
 now = 120001 + 60000;
 const stillFed = store.getHunger(now);
 
+HomeFeeding.unmount();
 HomeSanctuary.unmount();
 
 console.log(JSON.stringify({

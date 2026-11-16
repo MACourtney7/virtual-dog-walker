@@ -80,6 +80,12 @@ export class DogStateStore {
             this._persist(initial);
             return initial;
           }
+          // Strip any stale persisted `isHungry` field: it must always be
+          // derived from lastFedAt/durationMs, never trusted from storage.
+          if (parsed.needs.hunger &&
+              Object.prototype.hasOwnProperty.call(parsed.needs.hunger, 'isHungry')) {
+            delete parsed.needs.hunger.isHungry;
+          }
           return parsed;
         }
       } catch (_e) {
@@ -128,7 +134,10 @@ export class DogStateStore {
       version: 1,
       needs: {
         ...this._state.needs,
-        hunger: this.getHunger(nowMs)
+        hunger: {
+          ...this._state.needs.hunger,
+          ...this.getHunger(nowMs)
+        }
       }
     };
   }

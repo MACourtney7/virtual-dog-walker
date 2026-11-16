@@ -10339,6 +10339,13 @@ CompanionDog.ZOOMIE_PATH_TYPES = ZOOMIE_PATH_TYPES;
 CompanionDog.RoamSubMode = RoamSubMode;
 CompanionDog.resolveCoatPresetByName = resolveCoatPresetByName;
 CompanionDog.ACTIVE_REST_BLOCKED_STATES = Object.freeze(new Set([...ACTIVE_REST_BLOCKED_STATES]));
+
+// Browser global exposure so the Home Sanctuary can reuse the authentic model.
+if (typeof window !== 'undefined') {
+  window.CompanionDog = CompanionDog;
+  window.CoatPreset = CoatPreset;
+  window.DogState = DogState;
+}
 ```
 
 ## FILE: src/entities/npc.js
@@ -18650,7 +18657,8 @@ body {
 
 .home-field-preview {
   width: 100%;
-  aspect-ratio: 1 / 1;
+  aspect-ratio: 5 / 4;
+  max-height: 52vh;
   border-radius: 12px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.12);
@@ -19521,7 +19529,7 @@ body {
   }
 
   #customizer-modal {
-    max-width: 92vw;
+    max-width: min(360px, 92vw);
     padding: 18px 16px;
   }
 
@@ -21646,6 +21654,8 @@ export default weatherClient;
   var GRASS_MOWN = '#447831';
   var BLADE_COLOR = '#5da347';
   var MOWN_STRIPE = 'rgba(76, 130, 55, 0.14)';
+  var TURF_VARIATION = 'rgba(52, 98, 42, 0.06)';
+  var SANCTUARY_ZOOM = 0.72;
 
   // ---------------------------------------------------------------------------
   // Module state
@@ -21788,13 +21798,107 @@ export default weatherClient;
     return null;
   }
 
-  // Known breed coat keys mapped to a primary / dark / secondary color trio.
+  // Known breed coat keys mapped to the full CompanionDog palette so the
+  // authentic renderer can consume them without missing fields.
   var COAT_KEY_COLORS = {
-    CHOCOLATE_TAN: { primary: '#3e2723', dark: '#2b1712', secondary: '#d7ccc8' },
-    GOLDEN: { primary: '#eab308', dark: '#ca8a04', secondary: '#fef08a' },
-    BLACK_LAB: { primary: '#1e293b', dark: '#0f172a', secondary: '#475569' },
-    BEAGLE: { primary: '#b45309', dark: '#78350f', secondary: '#ffffff' },
-    DALMATIAN: { primary: '#f8fafc', dark: '#0f172a', secondary: '#0f172a' }
+    CHOCOLATE_TAN: {
+      primary: '#2e1a14',
+      dark: '#22130e',
+      secondary: '#d89b54',
+      bodyColor: '#2e1a14',
+      bodyShade: '#22130e',
+      tanColor: '#d89b54',
+      tanHighlight: '#e2aa68',
+      earRoot: '#2e1a14',
+      earHighlight: '#9e5528',
+      noseColor: '#5e372e',
+      bibColor: '#f4efe6',
+      hasEyePatch: false
+    },
+    GOLDEN: {
+      primary: '#eab308',
+      dark: '#ca8a04',
+      secondary: '#fef08a',
+      bodyColor: '#d4a373',
+      bodyShade: '#b8824f',
+      tanColor: '#faedcd',
+      tanHighlight: '#fefae0',
+      earRoot: '#c58b54',
+      earHighlight: '#e0a96d',
+      noseColor: '#3d261d',
+      bibColor: '#fffdfa',
+      hasEyePatch: false
+    },
+    BEAGLE: {
+      primary: '#8b5a2b',
+      dark: '#5c3a1a',
+      secondary: '#f5f0e6',
+      bodyColor: '#8b5a2b',
+      bodyShade: '#5c3a1a',
+      tanColor: '#f5f0e6',
+      tanHighlight: '#fffdfa',
+      earRoot: '#5c3a1a',
+      earHighlight: '#8b5a2b',
+      noseColor: '#1e293b',
+      bibColor: '#ffffff',
+      hasEyePatch: false
+    },
+    DALMATIAN: {
+      primary: '#f8fafc',
+      dark: '#e2e8f0',
+      secondary: '#1e293b',
+      bodyColor: '#f8fafc',
+      bodyShade: '#e2e8f0',
+      tanColor: '#1e293b',
+      tanHighlight: '#334155',
+      earRoot: '#1e293b',
+      earHighlight: '#334155',
+      noseColor: '#0f172a',
+      bibColor: '#ffffff',
+      hasEyePatch: true
+    },
+    BLACK_LAB: {
+      primary: '#1e2022',
+      dark: '#374151',
+      secondary: '#4b5563',
+      bodyColor: '#1e2022',
+      bodyShade: '#374151',
+      tanColor: '#4b5563',
+      tanHighlight: '#6b7280',
+      earRoot: '#1e2022',
+      earHighlight: '#374151',
+      noseColor: '#090a0f',
+      bibColor: '#f1f5f9',
+      hasEyePatch: false
+    },
+    JACK_RUSSELL: {
+      primary: '#f8fafc',
+      dark: '#e2e8f0',
+      secondary: '#b45309',
+      bodyColor: '#f8fafc',
+      bodyShade: '#e2e8f0',
+      tanColor: '#b45309',
+      tanHighlight: '#d97706',
+      earRoot: '#b45309',
+      earHighlight: '#92400e',
+      noseColor: '#1e293b',
+      bibColor: '#ffffff',
+      hasEyePatch: true
+    },
+    RED_SETTER: {
+      primary: '#7c2d12',
+      dark: '#991b1b',
+      secondary: '#b45309',
+      bodyColor: '#7c2d12',
+      bodyShade: '#991b1b',
+      tanColor: '#b45309',
+      tanHighlight: '#d97706',
+      earRoot: '#7c2d12',
+      earHighlight: '#991b1b',
+      noseColor: '#27100b',
+      bibColor: '#fef2f2',
+      hasEyePatch: false
+    }
   };
 
   function resolveAppearance(profile) {
@@ -21819,6 +21923,7 @@ export default weatherClient;
       appearance.coat = mapped.primary;
       appearance.coatDark = mapped.dark;
       appearance.coatSecondary = mapped.secondary;
+      appearance.palette = mapped;
     }
 
     var coat =
@@ -21857,6 +21962,7 @@ export default weatherClient;
       coatColorDark: appearance.coatDark,
       coatSecondary: appearance.coatSecondary,
       coatKey: appearance.coatKey,
+      palette: appearance.palette || null,
       collar: appearance.collar,
       x: fieldWidth / 2,
       y: fieldHeight / 2,
@@ -21977,19 +22083,24 @@ export default weatherClient;
     }
   }
 
+  // Deterministic hash for stable turf placement (no per-frame randomness).
+  function turfHash(gx, gy) {
+    var v = Math.sin(gx * 12.9898 + gy * 78.233) * 43758.5453;
+    return v - Math.floor(v);
+  }
+
   function drawField() {
     if (!ctx) return;
 
-    // Base turf fill.
+    // 1. Base turf fill.
     ctx.fillStyle = GRASS_BASE;
     ctx.fillRect(0, 0, fieldWidth, fieldHeight);
 
-    // Diagonal mown meadow stripes (alternating GRASS_MOWN bands).
+    // 2. Subtle diagonal mown stripes.
     ctx.save();
     var stripeWidth = 46;
     var span = fieldWidth + fieldHeight;
     for (var s = -fieldHeight; s < span; s += stripeWidth * 2) {
-      // Solid mown-turf band.
       ctx.fillStyle = GRASS_MOWN;
       ctx.globalAlpha = 0.35;
       ctx.beginPath();
@@ -22000,7 +22111,6 @@ export default weatherClient;
       ctx.closePath();
       ctx.fill();
 
-      // Soft overlay stripe for depth.
       ctx.fillStyle = MOWN_STRIPE;
       ctx.globalAlpha = 1;
       ctx.beginPath();
@@ -22013,21 +22123,55 @@ export default weatherClient;
     }
     ctx.restore();
 
-    // Procedural grass variation patches (light + dark).
+    // 3. Deterministic grid-based turf ellipses (light / dark / variation).
+    var cell = 34;
+    var cols = Math.ceil(fieldWidth / cell) + 1;
+    var rows = Math.ceil(fieldHeight / cell) + 1;
     ctx.save();
-    ctx.globalAlpha = 0.16;
-    for (var i = 0; i < 90; i++) {
-      var px = seededRandom() * fieldWidth;
-      var py = seededRandom() * fieldHeight;
-      var r = 8 + seededRandom() * 22;
-      ctx.fillStyle = seededRandom() > 0.5 ? GRASS_LIGHT : GRASS_DARK;
-      ctx.beginPath();
-      ctx.arc(px, py, r, 0, Math.PI * 2);
-      ctx.fill();
+    for (var gy = 0; gy < rows; gy++) {
+      for (var gx = 0; gx < cols; gx++) {
+        var h = turfHash(gx, gy);
+        var px = gx * cell + (h - 0.5) * cell * 0.6;
+        var py = gy * cell + (turfHash(gy, gx) - 0.5) * cell * 0.6;
+        var rx = 6 + h * 10;
+        var ry = 4 + h * 7;
+
+        // Base patch tone.
+        ctx.globalAlpha = 0.18;
+        ctx.fillStyle = h > 0.5 ? GRASS_LIGHT : GRASS_DARK;
+        ctx.beginPath();
+        ctx.ellipse(px, py, rx, ry, h * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Subtle variation overlay.
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = TURF_VARIATION;
+        ctx.beginPath();
+        ctx.ellipse(px, py, rx * 1.4, ry * 1.4, h * Math.PI, 0, Math.PI * 2);
+        ctx.fill();
+
+        // 5. Paired short blade ticks on a subset of patches.
+        if (h > 0.62) {
+          ctx.globalAlpha = 0.85;
+          ctx.strokeStyle = BLADE_COLOR;
+          ctx.lineWidth = 1.1;
+          ctx.lineCap = 'round';
+          var bx = px + (turfHash(gx + 7, gy + 3) - 0.5) * 8;
+          var by = py + (turfHash(gx + 3, gy + 7) - 0.5) * 8;
+          ctx.beginPath();
+          ctx.moveTo(bx, by);
+          ctx.lineTo(bx - 1.5, by - 4);
+          ctx.moveTo(bx + 2, by);
+          ctx.lineTo(bx + 3.5, by - 3.5);
+          ctx.stroke();
+        }
+      }
     }
     ctx.restore();
 
-    // Subtle blade flecks.
+    // 6. Existing grass blade flecks (deterministic, built once per resize).
+    ctx.save();
+    ctx.globalAlpha = 0.9;
     ctx.lineWidth = 1.2;
     ctx.lineCap = 'round';
     for (var b = 0; b < grassBlades.length; b++) {
@@ -22038,6 +22182,7 @@ export default weatherClient;
       ctx.lineTo(blade.x + blade.lean, blade.y - blade.h);
       ctx.stroke();
     }
+    ctx.restore();
 
     // Soft inner vignette darkening the perimeter.
     var vignette = ctx.createRadialGradient(
@@ -22052,158 +22197,298 @@ export default weatherClient;
 
   // Resolve a CompanionDog constructor from the global/module scope, if present.
   function getCompanionDogClass() {
-    if (global.CompanionDog && typeof global.CompanionDog === 'function') {
+    if (global.CompanionDog && (typeof global.CompanionDog === 'function' || (global.CompanionDog.prototype && typeof global.CompanionDog.prototype.draw === 'function'))) {
       return global.CompanionDog;
     }
-    if (typeof CompanionDog !== 'undefined' && typeof CompanionDog === 'function') {
+    if (typeof CompanionDog !== 'undefined' && (typeof CompanionDog === 'function' || (CompanionDog.prototype && typeof CompanionDog.prototype.draw === 'function'))) {
       return CompanionDog;
     }
     return null;
   }
 
   // Build a lightweight entity shaped like a CompanionDog for articulated drawing.
-  // `coat` is populated as an object (bodyColor/tanColor/bibColor) so that
-  // CompanionDog.prototype.draw can consume it without throwing.
+  // `coat` is populated with the full palette so CompanionDog.prototype.draw
+  // can consume it without throwing for every supported breed.
   function buildDogEntity() {
+    var palette = dog.palette || null;
+    var bodyColor = (palette && palette.bodyColor) || dog.coatColor || dog.coat || DEFAULT_COAT;
+    var bodyShade = (palette && palette.bodyShade) || dog.coatColorDark || dog.coatDark || DEFAULT_COAT_DARK;
+    var tanColor = (palette && palette.tanColor) || dog.coatSecondary || dog.coatDark || DEFAULT_COAT_DARK;
+    var tanHighlight = (palette && palette.tanHighlight) || tanColor;
+    var earRoot = (palette && palette.earRoot) || bodyColor;
+    var earHighlight = (palette && palette.earHighlight) || tanHighlight;
+    var noseColor = (palette && palette.noseColor) || '#1e293b';
+    var bibColor = (palette && palette.bibColor) || '#f5f0e6';
+    var hasEyePatch = Boolean(palette && palette.hasEyePatch);
+
     var coatObj = {
-      bodyColor: dog.coatColor || dog.coat || DEFAULT_COAT,
-      tanColor: dog.coatSecondary || dog.coatDark || DEFAULT_COAT_DARK,
-      bibColor: dog.coatSecondary || '#f5f0e6',
-      darkColor: dog.coatColorDark || dog.coatDark || DEFAULT_COAT_DARK
+      bodyColor: bodyColor,
+      bodyShade: bodyShade,
+      tanColor: tanColor,
+      tanHighlight: tanHighlight,
+      earRoot: earRoot,
+      earHighlight: earHighlight,
+      noseColor: noseColor,
+      bibColor: bibColor,
+      hasEyePatch: hasEyePatch,
+      darkColor: bodyShade
     };
+
     var entity = {
+      // Identity / state
+      id: dog.id,
+      name: dog.name,
+      state: dog.state,
       x: dog.x,
       y: dog.y,
       angle: pose === 'camera' ? Math.PI / 2 : dog.facing,
-      tailAngle: 0,
-      legPhase: dog.bob,
-      gaitMode: dog.state === 'wander' ? 'walk' : 'idle',
+      facing: dog.facing,
+
+      // Coat palette (both flat fields and nested object)
+      coat: coatObj,
+      coatColor: bodyColor,
+      coatColorDark: bodyShade,
+      coatDark: bodyShade,
+      coatSecondary: tanColor,
+      coatKey: dog.coatKey,
+      collarColor: dog.collar,
+
+      // Renderer-required fields
+      leftEar: { angle: 0, vel: 0 },
+      rightEar: { angle: 0, vel: 0 },
+      hearts: [],
+      emoteBubble: null,
+      emoteTimer: 0,
+      hasStick: false,
+      isBarking: false,
+      barkWaveAlpha: 0,
+      barkWaveRadius: 0,
+      owner: null,
+      isLeashed: false,
+      leash: null,
+      leashTaut: false,
+      leashTension: 0,
+      leashSagPx: 0,
+      leashVibrationPx: 0,
+      isPullingLeash: false,
+      gaitMode: dog.state === 'wander' ? 'WALK' : 'IDLE',
       gaitPhase: dog.bob,
+      legPhase: dog.bob,
+      tailAngle: 0,
+      noseTwitch: 0,
       isSitting: dog.state === 'sit',
       isSniffing: dog.state === 'sniff',
-      coat: coatObj,
-      coatColor: dog.coatColor,
-      coatColorDark: dog.coatColorDark,
-      coatDark: dog.coatDark,
-      collarColor: dog.collar,
-      name: dog.name,
-      state: dog.state
+      radius: DOG_RADIUS
     };
     return entity;
   }
 
-  // Draw the articulated top-down canine body (CompanionDog-style).
+  // Draw the articulated top-down canine body mirroring CompanionDog geometry.
+  // Head is oriented along +X (matching CompanionDog.prototype.draw).
   function drawArticulatedDog(entity) {
     var coatObj = entity.coat && typeof entity.coat === 'object' ? entity.coat : null;
-    var coat = entity.coatColor || (coatObj && coatObj.bodyColor) ||
+    var bodyColor = entity.coatColor || (coatObj && coatObj.bodyColor) ||
       (typeof entity.coat === 'string' ? entity.coat : null) || DEFAULT_COAT;
-    var coatDark = entity.coatColorDark || entity.coatDark ||
-      (coatObj && (coatObj.darkColor || coatObj.tanColor)) || DEFAULT_COAT_DARK;
+    var bodyShade = entity.coatColorDark || entity.coatDark ||
+      (coatObj && (coatObj.bodyShade || coatObj.darkColor)) || DEFAULT_COAT_DARK;
+    var tanColor = (coatObj && coatObj.tanColor) || entity.coatSecondary || bodyShade;
+    var tanHighlight = (coatObj && coatObj.tanHighlight) || tanColor;
+    var earRoot = (coatObj && coatObj.earRoot) || bodyColor;
+    var earHighlight = (coatObj && coatObj.earHighlight) || tanHighlight;
+    var noseColor = (coatObj && coatObj.noseColor) || '#1e293b';
+    var bibColor = (coatObj && coatObj.bibColor) || '#f4efe6';
+    var hasEyePatch = Boolean(coatObj && coatObj.hasEyePatch);
     var collar = entity.collarColor || entity.collar || DEFAULT_COLLAR;
     var angle = entity.angle;
-    var R = DOG_RADIUS;
+    var tailAngle = entity.tailAngle || 0;
 
     ctx.save();
-    ctx.translate(entity.x, entity.y);
 
-    // Shadow.
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.22)';
+    // 1. Soft ground shadow (unrotated).
+    ctx.fillStyle = 'rgba(20, 35, 15, 0.32)';
     ctx.beginPath();
-    ctx.ellipse(0, R * 0.85, R * 1.05, R * 0.45, 0, 0, Math.PI * 2);
+    ctx.ellipse(entity.x, entity.y + 7, 16, 8, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Local geometry has the head along +Y and the tail along -Y.
-    // Canvas angles are standard math orientation (0 = +X, PI/2 = +Y),
-    // so subtract PI/2 to align the head with the entity's heading.
-    ctx.rotate(angle - Math.PI / 2);
+    // 2. Oriented body — head along +X.
+    ctx.translate(entity.x, entity.y);
+    ctx.rotate(angle);
 
-    // Legs (articulated paws with leg cycling while walking).
-    var legSwing = Math.sin(entity.legPhase || 0) * (entity.isSitting ? 0 : 3);
-    ctx.fillStyle = coatDark;
-    var legPositions = entity.isSitting
-      ? [[-R * 0.5, R * 0.55], [R * 0.5, R * 0.55]]
-      : [[-R * 0.55, R * 0.5 + legSwing], [R * 0.55, R * 0.5 - legSwing],
-         [-R * 0.55, -R * 0.5 - legSwing], [R * 0.55, -R * 0.5 + legSwing]];
-    for (var l = 0; l < legPositions.length; l++) {
-      ctx.beginPath();
-      ctx.ellipse(legPositions[l][0], legPositions[l][1], R * 0.22, R * 0.32, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
+    // Paws.
+    ctx.fillStyle = hasEyePatch ? '#f1f5f9' : tanColor;
+    ctx.fillRect(-10, -9, 5, 4);
+    ctx.fillRect(-10, 5, 5, 4);
+    ctx.fillRect(8, -9, 5, 4);
+    ctx.fillRect(8, 5, 5, 4);
+
+    // Feathered wagging tail.
+    ctx.save();
+    ctx.translate(-14, 0);
+    ctx.rotate(tailAngle);
+    ctx.fillStyle = bodyColor;
+    ctx.beginPath();
+    ctx.ellipse(-5, 0, 7.5, 3.2, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = tanHighlight;
+    ctx.beginPath();
+    ctx.ellipse(-9.5, 0, 4.5, 2.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(-13, 0, 2.0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
 
     // Torso.
-    ctx.fillStyle = coat;
+    ctx.fillStyle = bodyColor;
     ctx.beginPath();
-    ctx.ellipse(0, 0, R * 0.7, R * 1.05, 0, 0, Math.PI * 2);
+    ctx.ellipse(-2, 0, 13, 8.5, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Darker back patch.
-    ctx.fillStyle = coatDark;
+    // Dorsal sheen.
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.08)';
     ctx.beginPath();
-    ctx.ellipse(0, -R * 0.15, R * 0.5, R * 0.7, 0, 0, Math.PI * 2);
+    ctx.ellipse(-2, -2, 10, 4.5, -0.05, 0, Math.PI * 2);
     ctx.fill();
 
-    // Collar.
-    ctx.strokeStyle = collar;
-    ctx.lineWidth = 3;
+    // Chest bib.
+    ctx.fillStyle = bibColor;
     ctx.beginPath();
-    ctx.arc(0, R * 0.55, R * 0.5, 0.1 * Math.PI, 0.9 * Math.PI);
-    ctx.stroke();
+    ctx.ellipse(5, 0, 4.2, 3.6, 0, 0, Math.PI * 2);
+    ctx.fill();
 
-    // Tail — wags during wander/wag.
-    var tailWag = Math.sin((entity.legPhase || 0) * 1.6) * 0.6;
-    ctx.strokeStyle = coatDark;
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
+    // Collar band.
+    ctx.fillStyle = collar;
     ctx.beginPath();
-    ctx.moveTo(0, -R * 0.9);
-    ctx.lineTo(Math.sin(tailWag) * R * 0.6, -R * 1.5);
-    ctx.stroke();
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(5.5, -6.5, 3.0, 13, 1.5);
+    } else {
+      ctx.rect(5.5, -6.5, 3.0, 13);
+    }
+    ctx.fill();
 
-    // Head — drops toward ground when sniffing.
-    var headY = entity.isSniffing ? R * 0.95 : R * 0.85;
-    var headR = R * 0.55;
-
-    // Floppy ears.
-    ctx.fillStyle = coatDark;
+    // Gold charm tag.
+    ctx.fillStyle = '#f59e0b';
     ctx.beginPath();
-    ctx.ellipse(-headR * 0.85, headY, headR * 0.35, headR * 0.6, 0.3, 0, Math.PI * 2);
-    ctx.ellipse(headR * 0.85, headY, headR * 0.35, headR * 0.6, -0.3, 0, Math.PI * 2);
+    ctx.arc(8.5, 0, 2.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#fef08a';
+    ctx.beginPath();
+    ctx.arc(8.0, -0.6, 0.8, 0, Math.PI * 2);
     ctx.fill();
 
     // Head.
-    ctx.fillStyle = coat;
+    ctx.fillStyle = bodyColor;
     ctx.beginPath();
-    ctx.arc(0, headY, headR, 0, Math.PI * 2);
+    ctx.ellipse(11, 0, 7.8, 6.2, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Snout.
-    ctx.fillStyle = coatDark;
+    // Eye patch (Jack Russell).
+    if (hasEyePatch) {
+      ctx.fillStyle = tanColor;
+      ctx.beginPath();
+      ctx.ellipse(12, -3.2, 3.8, 3.2, 0.1, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Muzzle.
+    ctx.fillStyle = tanColor;
     ctx.beginPath();
-    ctx.ellipse(0, headY + headR * 0.55, headR * 0.4, headR * 0.3, 0, 0, Math.PI * 2);
+    ctx.ellipse(16, 0, 4.8, 3.6, 0, 0, Math.PI * 2);
     ctx.fill();
 
-    // Eyes.
-    ctx.fillStyle = '#1f1f1f';
+    // Snout highlight.
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.18)';
     ctx.beginPath();
-    ctx.arc(-headR * 0.35, headY - headR * 0.1, 1.8, 0, Math.PI * 2);
-    ctx.arc(headR * 0.35, headY - headR * 0.1, 1.8, 0, Math.PI * 2);
+    ctx.ellipse(15.5, -1.0, 2.8, 1.6, 0, 0, Math.PI * 2);
     ctx.fill();
 
     // Nose.
-    ctx.fillStyle = '#111';
+    ctx.fillStyle = noseColor;
     ctx.beginPath();
-    ctx.arc(0, headY + headR * 0.7, 2, 0, Math.PI * 2);
+    ctx.ellipse(19.2, 0, 1.8, 1.6, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+    ctx.beginPath();
+    ctx.arc(18.8, -0.6, 0.6, 0, Math.PI * 2);
     ctx.fill();
 
+    // Eyes.
+    ctx.fillStyle = '#261b12';
+    ctx.beginPath();
+    ctx.arc(12, -3.2, 1.6, 0, Math.PI * 2);
+    ctx.arc(12, 3.2, 1.6, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#c6933a';
+    ctx.beginPath();
+    ctx.arc(12.1, -3.2, 1.2, 0, Math.PI * 2);
+    ctx.arc(12.1, 3.2, 1.2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#0f172a';
+    ctx.beginPath();
+    ctx.arc(12.2, -3.2, 0.8, 0, Math.PI * 2);
+    ctx.arc(12.2, 3.2, 0.8, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#ffffff';
+    ctx.beginPath();
+    ctx.arc(11.7, -3.6, 0.55, 0, Math.PI * 2);
+    ctx.arc(11.7, 2.8, 0.55, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Floppy ears.
+    var leftEarAngle = (entity.leftEar && entity.leftEar.angle) || 0;
+    var rightEarAngle = (entity.rightEar && entity.rightEar.angle) || 0;
+
+    ctx.save();
+    ctx.translate(9, -6);
+    ctx.rotate(leftEarAngle);
+    ctx.fillStyle = earRoot;
+    ctx.beginPath();
+    ctx.ellipse(-1, -4, 4.6, 8.2, -Math.PI * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = earHighlight;
+    ctx.beginPath();
+    ctx.ellipse(-1, -5.5, 3.2, 5.5, -Math.PI * 0.15, 0, Math.PI * 2);
+    ctx.fill();
     ctx.restore();
 
-    // Name tag (drawn unrotated above the dog).
+    ctx.save();
+    ctx.translate(9, 6);
+    ctx.rotate(rightEarAngle);
+    ctx.fillStyle = earRoot;
+    ctx.beginPath();
+    ctx.ellipse(-1, 4, 4.6, 8.2, Math.PI * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = earHighlight;
+    ctx.beginPath();
+    ctx.ellipse(-1, 5.5, 3.2, 5.5, Math.PI * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    ctx.restore(); // Restore orientation transform
+
+    // 3. Dark rounded pill name badge below the dog.
     if (entity.name) {
       ctx.save();
-      ctx.font = '10px sans-serif';
+      ctx.font = '600 11px Outfit, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-      ctx.fillText(entity.name, entity.x, entity.y - R * 1.7);
+      ctx.textBaseline = 'middle';
+      var textWidth = ctx.measureText(entity.name).width;
+      var pillW = textWidth + 12;
+      var pillH = 16;
+      var pillX = entity.x - pillW / 2;
+      var pillY = entity.y + 18;
+
+      ctx.fillStyle = 'rgba(15, 23, 42, 0.75)';
+      ctx.beginPath();
+      if (typeof ctx.roundRect === 'function') {
+        ctx.roundRect(pillX, pillY, pillW, pillH, 8);
+      } else {
+        ctx.rect(pillX, pillY, pillW, pillH);
+      }
+      ctx.fill();
+
+      ctx.fillStyle = '#f8fafc';
+      ctx.fillText(entity.name, entity.x, pillY + pillH / 2);
       ctx.restore();
     }
   }
@@ -22213,8 +22498,11 @@ export default weatherClient;
     var bx = dog.x;
     var by = dog.y + 18;
 
-    // Bowl body.
+    // Bowl body (zoomed around its own anchor).
     ctx.save();
+    ctx.translate(bx, by);
+    ctx.scale(SANCTUARY_ZOOM, SANCTUARY_ZOOM);
+    ctx.translate(-bx, -by);
     ctx.fillStyle = '#e8e2d6';
     ctx.beginPath();
     ctx.ellipse(bx, by, 16, 8, 0, 0, Math.PI * 2);
@@ -22244,6 +22532,8 @@ export default weatherClient;
     ctx.restore();
   }
 
+  var drawErrorLogged = false;
+
   function drawDog() {
     if (!ctx || !dog) return;
 
@@ -22252,19 +22542,38 @@ export default weatherClient;
     // so there is zero prototype or world-state leakage.
     var entity = buildDogEntity();
 
+    // Zoom around the dog's own anchor so the field stays full-size.
+    ctx.save();
+    ctx.translate(dog.x, dog.y);
+    ctx.scale(SANCTUARY_ZOOM, SANCTUARY_ZOOM);
+    ctx.translate(-dog.x, -dog.y);
+
     var CompanionDogClass = getCompanionDogClass();
-    var drawFn = (CompanionDogClass && typeof CompanionDogClass.prototype.draw === 'function')
+    var drawFn = (CompanionDogClass && CompanionDogClass.prototype &&
+      typeof CompanionDogClass.prototype.draw === 'function')
       ? CompanionDogClass.prototype.draw
       : null;
+
+    var drew = false;
     if (drawFn) {
       try {
         drawFn.call(entity, ctx);
+        drew = true;
       } catch (e) {
-        drawArticulatedDog(entity);
+        if (!drawErrorLogged) {
+          drawErrorLogged = true;
+          var consoleRef = (global && global.console) || (typeof console !== 'undefined' ? console : null);
+          if (consoleRef && typeof consoleRef.warn === 'function') {
+            consoleRef.warn('[HomeSanctuary] CompanionDog.draw failed, using fallback:', e);
+          }
+        }
       }
-    } else {
+    }
+    if (!drew) {
       drawArticulatedDog(entity);
     }
+
+    ctx.restore();
 
     // Food bowl during bowl/eating phases.
     if (isBowlVisible()) {
@@ -22354,6 +22663,16 @@ export default weatherClient;
   function frame(timestamp) {
     if (!mounted) return;
 
+    // Self-heal hidden 0x0 initial mounts: if the parent is now visible and
+    // its dimensions differ from the currently measured field, resize.
+    if (canvas && canvas.parentElement) {
+      var pw = canvas.parentElement.clientWidth;
+      var ph = canvas.parentElement.clientHeight;
+      if (pw > 0 && ph > 0 && (pw !== fieldWidth || ph !== fieldHeight)) {
+        resizeCanvas();
+      }
+    }
+
     if (!lastTimestamp) lastTimestamp = timestamp;
     var dt = Math.min(timestamp - lastTimestamp, 100); // clamp to avoid huge jumps
     lastTimestamp = timestamp;
@@ -22407,6 +22726,7 @@ export default weatherClient;
     fieldWidth = Math.max(1, Math.round(cssWidth));
     fieldHeight = Math.max(1, Math.round(cssHeight));
 
+    // Backing store in device pixels; drawing coordinates stay in CSS pixels.
     canvas.width = Math.round(fieldWidth * dpr);
     canvas.height = Math.round(fieldHeight * dpr);
 
@@ -22434,14 +22754,15 @@ export default weatherClient;
   // ---------------------------------------------------------------------------
 
   function mount(canvasEl, explicitDogSlot) {
-    if (mounted) return;
-
     var el = canvasEl || (global.document && global.document.getElementById(CANVAS_ID));
     if (!el) {
       // Graceful no-op when the canvas is not present.
       return;
     }
 
+    // Idempotent + self-healing: re-mounting with a new canvas or slot
+    // refreshes the internal state instead of bailing out early.
+    var canvasChanged = (canvas !== el);
     canvas = el;
     ctx = canvas.getContext ? canvas.getContext('2d') : null;
     if (!ctx) {
@@ -22449,34 +22770,79 @@ export default weatherClient;
       return;
     }
 
-    resizeCanvas();
+    // Reset the one-shot draw-error log on every mount.
+    drawErrorLogged = false;
 
-    var slot = explicitDogSlot;
-    if (slot === undefined) {
+    // Resolve the slot: explicit override wins, otherwise re-read the profile
+    // only when we don't already have one (preserves prior mount state).
+    var slot;
+    if (explicitDogSlot !== undefined) {
+      slot = explicitDogSlot;
+    } else if (activeDogSlot === null || canvasChanged || !dog) {
       slot = readProfile();
+    } else {
+      slot = activeDogSlot;
     }
     activeDogSlot = slot || null;
 
+    // Refresh the dog from the active slot (appearance may have changed).
     var appearance = resolveAppearance(activeDogSlot);
-    dog = createDog(appearance);
-    if (activeDogSlot) {
-      dog.name = activeDogSlot.name || 'Ziggy';
-      dog.id = activeDogSlot.id || 'dog-1';
+
+    var wasMounted = mounted;
+    var prevW = fieldWidth;
+    var prevH = fieldHeight;
+
+    if (wasMounted && dog) {
+      // Re-mount: update appearance in place, preserving live state.
+      dog.id = (activeDogSlot && activeDogSlot.id) || appearance.id;
+      dog.name = (activeDogSlot && activeDogSlot.name) || appearance.name;
+      dog.coat = appearance.coat;
+      dog.coatDark = appearance.coatDark;
+      dog.coatColor = appearance.coat;
+      dog.coatColorDark = appearance.coatDark;
+      dog.coatSecondary = appearance.coatSecondary;
+      dog.coatKey = appearance.coatKey;
+      dog.collar = appearance.collar;
+      dog.palette = appearance.palette || null;
+      dog.isLeashed = false;
+      dog.leash = null;
+      dog.leashActive = false;
+    } else {
+      dog = createDog(appearance);
+      if (activeDogSlot) {
+        dog.name = activeDogSlot.name || 'Ziggy';
+        dog.id = activeDogSlot.id || 'dog-1';
+      }
+      pose = 'auto';
+      forcedState = null;
+      enterState('wander');
     }
-    pose = 'auto';
-    forcedState = null;
-    enterState('wander');
 
-    mounted = true;
+    // Resize after the visible container is available.
+    resizeCanvas();
 
-    resizeHandler = function () {
-      resizeCanvas();
-    };
-    if (global.addEventListener) {
-      global.addEventListener('resize', resizeHandler);
+    // If we were previously mounted at a degenerate (0x0) size and the field
+    // is now usable, recenter the dog so it isn't stuck in a corner.
+    if (wasMounted && dog &&
+        (prevW <= FIELD_PADDING * 2 || prevH <= FIELD_PADDING * 2) &&
+        fieldWidth > FIELD_PADDING * 2 && fieldHeight > FIELD_PADDING * 2) {
+      dog.x = fieldWidth / 2;
+      dog.y = fieldHeight / 2;
+      pickWanderTarget();
     }
 
-    startLoop();
+    if (!mounted) {
+      mounted = true;
+
+      resizeHandler = function () {
+        resizeCanvas();
+      };
+      if (global.addEventListener) {
+        global.addEventListener('resize', resizeHandler);
+      }
+
+      startLoop();
+    }
   }
 
   function unmount() {
@@ -22502,6 +22868,7 @@ export default weatherClient;
     grassBlades = [];
     particles = [];
     particleFrame = 0;
+    drawErrorLogged = false;
   }
 
   function getDogSlot() {
@@ -22593,6 +22960,7 @@ export default weatherClient;
     getFieldSize: getFieldSize,
     clearBowl: clearBowl,
     __testHooks: {
+      frame: function (ts) { frame(ts || 0); },
       getParticles: function () { return particles; },
       spawnParticles: spawnParticles,
       getForcedState: function () { return forcedState; },
@@ -23957,6 +24325,16 @@ export class SocialHUD {
     return this.dogSlot !== null && !this.isHomeLocked;
   }
 
+  // Determine whether the Home modal is currently visible, accounting for
+  // both inline `display: block` and class-based visibility toggles.
+  _isModalVisible(modalEl) {
+    const el = modalEl || (typeof document !== 'undefined' ? document.getElementById('customizer-modal') : null);
+    if (!el) return false;
+    if (el.style && el.style.display === 'block') return true;
+    if (el.classList && typeof el.classList.contains === 'function' && (el.classList.contains('open') || el.classList.contains('active'))) return true;
+    return false;
+  }
+
   // Alias: open the Home modal (used by tests and external callers).
   openHome() {
     return this.openModal();
@@ -24159,8 +24537,17 @@ export class SocialHUD {
 
     this.bindEvents();
 
-    // Apply initial view state (honors empty-kennel lock).
-    this.setHomeView(this.resolveHomeView(), { force: true });
+    // Apply initial view state (honors empty-kennel lock). When the modal is
+    // still hidden, only sync the DOM — never mount the sanctuary/feeding
+    // canvases while they are invisible (they would measure 0x0).
+    const modalEl = document.getElementById('customizer-modal');
+    const modalHidden = !this._isModalVisible(modalEl);
+    if (modalHidden && !this.isHomeLocked) {
+      this.currentHomeView = this.resolveHomeView();
+      this._applyHomeViewDom();
+    } else {
+      this.setHomeView(this.resolveHomeView(), { force: true });
+    }
   }
 
   // Transition the Home modal between 'sanctuary' and 'settings'.
@@ -25066,8 +25453,20 @@ export class SocialHUD {
     modal.style.display = modal.style.display === 'block' ? 'none' : 'block';
     if (modal.style.display === 'block') {
       // With a dog present, reopening Home always lands on the sanctuary view
-      // (never a stale 'settings' view from a previous session).
+      // (never a stale 'settings' view from a previous session). The modal is
+      // already visible here, so setHomeView may safely mount the canvases.
       this.setHomeView('sanctuary');
+
+      // Re-sync the sanctuary canvas after browser layout computes the
+      // visible aspect-ratio box, so it matches the exact laid-out size.
+      if (typeof requestAnimationFrame === 'function') {
+        requestAnimationFrame(() => {
+          if (this.currentHomeView === 'sanctuary' && modal.style.display === 'block') {
+            const c = document.getElementById('home-field-canvas');
+            window.HomeSanctuary?.mount?.(c, this.dogSlot);
+          }
+        });
+      }
     } else {
       this.stopStageAnimation();
       if (typeof window !== 'undefined') {
@@ -37776,12 +38175,14 @@ class TestHomeHUDAndStage(unittest.TestCase):
     def test_glassmorphic_css_rules_present(self):
         css = self.style_css
 
-        # .home-field-preview must be a fixed-height turf panel.
+        # .home-field-preview must be a compact turf panel.
         preview_idx = css.find('.home-field-preview')
         self.assertNotEqual(preview_idx, -1, "Missing .home-field-preview CSS rule")
-        preview_block = css[preview_idx:preview_idx + 400]
-        self.assertIn('aspect-ratio: 1 / 1;', preview_block,
-                      ".home-field-preview must set aspect-ratio: 1 / 1;")
+        preview_block = css[preview_idx:preview_idx + 600]
+        self.assertIn('aspect-ratio: 5 / 4;', preview_block,
+                      ".home-field-preview must set aspect-ratio: 5 / 4;")
+        self.assertIn('max-height: 52vh;', preview_block,
+                      ".home-field-preview must set max-height: 52vh;")
         self.assertIn('background: #3e6b2c;', preview_block,
                       ".home-field-preview must use the 'The Downs' turf background #3e6b2c")
 
@@ -37815,13 +38216,15 @@ class TestSquareLayoutContracts(unittest.TestCase):
         self.hud_js = read("src/ui/social_hud.js")
         self.style_css = read("src/style.css")
 
-    def test_home_field_preview_is_square(self):
+    def test_home_field_preview_is_compact(self):
         css = self.style_css
         idx = css.find('.home-field-preview')
         self.assertNotEqual(idx, -1, "Missing .home-field-preview CSS rule")
-        block = css[idx:idx + 500]
-        self.assertIn('aspect-ratio: 1 / 1;', block,
-                      ".home-field-preview must set aspect-ratio: 1 / 1;")
+        block = css[idx:idx + 600]
+        self.assertIn('aspect-ratio: 5 / 4;', block,
+                      ".home-field-preview must set aspect-ratio: 5 / 4;")
+        self.assertIn('max-height: 52vh;', block,
+                      ".home-field-preview must set max-height: 52vh;")
 
     def test_home_field_canvas_fills_container(self):
         css = self.style_css
@@ -37846,6 +38249,44 @@ class TestSquareLayoutContracts(unittest.TestCase):
                          "#home-field-canvas must not pin width=\"340\"")
         self.assertNotIn('height="220"', tag,
                          "#home-field-canvas must not pin height=\"220\"")
+
+    def test_home_view_sanctuary_overflow_hidden(self):
+        css = self.style_css
+        idx = css.find('#home-view-sanctuary')
+        self.assertNotEqual(idx, -1, "Missing #home-view-sanctuary CSS rule")
+        block = css[idx:idx + 400]
+        self.assertIn('overflow: hidden;', block,
+                      "#home-view-sanctuary must set overflow: hidden;")
+
+    def test_compact_modal_max_width_media_query(self):
+        css = self.style_css
+        # Locate the compact media query block.
+        m = re.search(
+            r"@media\s*\(\s*max-width:\s*768px\s*\)\s*,\s*\(\s*pointer:\s*coarse\s*\)\s*\{",
+            css,
+        )
+        self.assertIsNotNone(
+            m,
+            "Missing @media (max-width: 768px), (pointer: coarse) block",
+        )
+        # Extract the block body by brace matching.
+        start = m.end()
+        depth = 1
+        i = start
+        while i < len(css) and depth > 0:
+            if css[i] == '{':
+                depth += 1
+            elif css[i] == '}':
+                depth -= 1
+            i += 1
+        block = css[start:i]
+        self.assertIn('#customizer-modal', block,
+                      "Compact media query must target #customizer-modal")
+        self.assertRegex(
+            block,
+            r"#customizer-modal\s*\{[^}]*max-width:\s*min\(\s*360px\s*,\s*92vw\s*\)",
+            "#customizer-modal must cap width with max-width: min(360px, 92vw)",
+        )
 
 
 class TestDogSlotKennelAndLocking(unittest.TestCase):
@@ -38517,6 +38958,37 @@ class TestHomeViewSplitBehavioral(unittest.TestCase):
                            "Walker tab must draw the owner on the stage preview")
         self.assertGreater(res["dogCalls"], 0,
                            "Dog tab must draw the dog on the stage preview")
+
+    def test_exec_init_while_hidden_defers_sanctuary_mount_until_open(self):
+        snippet = """
+        localStorage.setItem('clifton_walker_profile', JSON.stringify({
+          name: 'Walker',
+          dogSlot: { name: 'Ziggy', coatKey: 'CHOCOLATE_TAN', collarColor: '#0d9488',
+                     personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 } }
+        }));
+
+        let mountCalls = 0;
+        window.HomeSanctuary = {
+          mount: function () { mountCalls++; },
+          unmount: function () {}
+        };
+
+        const owner = { name: 'Walker', jacketColor: '#1e3a8a', x: 0, y: 0, angle: 0 };
+        const dog = { name: 'Ziggy', coat: null, collarColor: '#0d9488', personality: null };
+        const net = { setLocalMeta() {}, broadcast() {}, peerId: 'p1' };
+        const hud = new SocialHUD(net, owner, dog, {});
+
+        const afterInit = mountCalls;
+        hud.openModal();
+        const afterOpen = mountCalls;
+
+        return { afterInit: afterInit, afterOpen: afterOpen };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["afterInit"], 0,
+                         "Sanctuary must not mount while the Home modal is hidden")
+        self.assertGreaterEqual(res["afterOpen"], 1,
+                                "Opening the Home modal must mount the sanctuary")
 
 
 if __name__ == '__main__':
@@ -39318,8 +39790,8 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
                         "render() must rotate the dog body via ctx.rotate")
         # drawArticulatedDog rotates by (angle - PI/2); with angle = PI/2 the
         # effective rotation must be 0 so the head points down at +Y.
-        self.assertAlmostEqual(res["rotations"][0], 0.0, places=6,
-                               msg="Camera pose must rotate by 0 (head faces +Y)")
+        self.assertAlmostEqual(res["rotations"][0], res["expected"], places=6,
+                               msg="Camera pose must rotate by Math.PI / 2 (head faces +Y)")
 
     def test_exec_live_dog_entity_not_mutated(self):
         snippet = """
@@ -39887,6 +40359,502 @@ class TestHomeSanctuaryBehavioral(unittest.TestCase):
         self.assertTrue(res["firstAte"], "First feed must be accepted")
         self.assertTrue(res["secondIgnored"],
                         "Second feed while feeding must be ignored")
+
+
+@unittest.skipUnless(
+    shutil.which("node") or shutil.which("osascript"),
+    "No JS runtime (node or osascript) available"
+)
+class TestCompactLayoutAndZoomBehavioral(unittest.TestCase):
+    """unification-032: canvas resize, entity contract, and zoom scale."""
+
+    def test_exec_hidden_mount_then_visible_remount_resizes_canvas(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 0;
+        sanctuary.clientHeight = 0;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 2;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        const hiddenWidth = canvas.width;
+        const hiddenHeight = canvas.height;
+
+        // Simulate the modal becoming visible.
+        sanctuary.clientWidth = 500;
+        sanctuary.clientHeight = 400;
+        window.HomeSanctuary.mount(canvas, slot);
+
+        return {
+          hiddenWidth: hiddenWidth,
+          hiddenHeight: hiddenHeight,
+          width: canvas.width,
+          height: canvas.height,
+          styleWidth: canvas.style.width,
+          styleHeight: canvas.style.height
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["width"], 1000,
+                         "Visible remount at DPR=2 with 500px parent must set canvas.width = 1000")
+        self.assertEqual(res["height"], 800,
+                         "Visible remount at DPR=2 with 400px parent must set canvas.height = 800")
+        self.assertEqual(res["styleWidth"], "100%",
+                         "Canvas CSS width must remain 100%")
+        self.assertEqual(res["styleHeight"], "100%",
+                         "Canvas CSS height must remain 100%")
+
+    def test_exec_frame_auto_resizes_on_visible_dimension_change(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 2;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        const initialWidth = canvas.width;
+        const initialHeight = canvas.height;
+
+        // Resize the parent and drive one frame tick.
+        sanctuary.clientWidth = 300;
+        sanctuary.clientHeight = 250;
+        window.HomeSanctuary.__testHooks.frame();
+
+        return {
+          initialWidth: initialWidth,
+          initialHeight: initialHeight,
+          width: canvas.width,
+          height: canvas.height
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["initialWidth"], 800,
+                         "Initial mount at DPR=2 with 400px parent must set canvas.width = 800")
+        self.assertEqual(res["initialHeight"], 800,
+                         "Initial mount at DPR=2 with 400px parent must set canvas.height = 800")
+        self.assertEqual(res["width"], 600,
+                         "frame() must resize canvas.width to 300 * 2 = 600")
+        self.assertEqual(res["height"], 500,
+                         "frame() must resize canvas.height to 250 * 2 = 500")
+
+    def test_exec_build_dog_entity_contract(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        let captured = null;
+        window.CompanionDog = {
+          prototype: {
+            draw: function (ctx) { captured = this; }
+          }
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.__testHooks.render();
+
+        if (!captured) {
+          return { captured: false };
+        }
+
+        const coat = captured.coat || {};
+        return {
+          captured: true,
+          hasLeftEar: Boolean(captured.leftEar && typeof captured.leftEar.angle === 'number'),
+          hasRightEar: Boolean(captured.rightEar && typeof captured.rightEar.angle === 'number'),
+          heartsIsArray: Array.isArray(captured.hearts),
+          emoteBubble: captured.emoteBubble === null ? 'null' : typeof captured.emoteBubble,
+          hasStick: captured.hasStick,
+          isBarking: captured.isBarking,
+          owner: captured.owner === null ? 'null' : typeof captured.owner,
+          isLeashed: captured.isLeashed,
+          leash: captured.leash === null ? 'null' : typeof captured.leash,
+          gaitMode: captured.gaitMode,
+          coatKeys: {
+            bodyColor: typeof coat.bodyColor,
+            bodyShade: typeof coat.bodyShade,
+            tanColor: typeof coat.tanColor,
+            tanHighlight: typeof coat.tanHighlight,
+            earRoot: typeof coat.earRoot,
+            earHighlight: typeof coat.earHighlight,
+            noseColor: typeof coat.noseColor,
+            bibColor: typeof coat.bibColor,
+            hasEyePatch: typeof coat.hasEyePatch
+          }
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res["captured"],
+                        "Home Sanctuary must render via CompanionDog.prototype.draw")
+        self.assertTrue(res["hasLeftEar"], "Entity must expose leftEar.angle")
+        self.assertTrue(res["hasRightEar"], "Entity must expose rightEar.angle")
+        self.assertTrue(res["heartsIsArray"], "Entity must expose a hearts array")
+        self.assertEqual(res["emoteBubble"], "null",
+                         "Entity must set emoteBubble === null")
+        self.assertFalse(res["hasStick"], "Entity must set hasStick === false")
+        self.assertFalse(res["isBarking"], "Entity must set isBarking === false")
+        self.assertEqual(res["owner"], "null", "Entity must set owner === null")
+        self.assertFalse(res["isLeashed"], "Entity must set isLeashed === false")
+        self.assertEqual(res["leash"], "null", "Entity must set leash === null")
+        self.assertIn(res["gaitMode"], ("WALK", "IDLE"),
+                      "Entity gaitMode must be 'WALK' or 'IDLE'")
+        for key, kind in res["coatKeys"].items():
+            if key == "hasEyePatch":
+                self.assertEqual(kind, "boolean",
+                                 f"coat.{key} must be a boolean")
+            else:
+                self.assertEqual(kind, "string",
+                                 f"coat.{key} must be a string")
+
+    def test_exec_build_dog_entity_all_breeds_complete_palette(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const captured = [];
+        window.CompanionDog = {
+          prototype: {
+            draw: function (ctx) { captured.push(this); }
+          }
+        };
+
+        const breeds = ['CHOCOLATE_TAN', 'GOLDEN', 'BLACK_LAB', 'JACK_RUSSELL', 'RED_SETTER', 'BEAGLE', 'DALMATIAN'];
+        const results = [];
+        for (let i = 0; i < breeds.length; i++) {
+          const slot = { id: 'dog-' + i, name: 'Dog' + i, coatKey: breeds[i] };
+          window.HomeSanctuary.mount(canvas, slot);
+          window.HomeSanctuary.__testHooks.render();
+        }
+
+        for (let i = 0; i < captured.length; i++) {
+          const c = captured[i];
+          const coat = c.coat || {};
+          results.push({
+            bodyColorValue: coat.bodyColor,
+            bodyColor: typeof coat.bodyColor === 'string' && coat.bodyColor.length > 0,
+            bodyShade: typeof coat.bodyShade === 'string' && coat.bodyShade.length > 0,
+            tanColor: typeof coat.tanColor === 'string' && coat.tanColor.length > 0,
+            tanHighlight: typeof coat.tanHighlight === 'string' && coat.tanHighlight.length > 0,
+            earRoot: typeof coat.earRoot === 'string' && coat.earRoot.length > 0,
+            earHighlight: typeof coat.earHighlight === 'string' && coat.earHighlight.length > 0,
+            noseColor: typeof coat.noseColor === 'string' && coat.noseColor.length > 0,
+            bibColor: typeof coat.bibColor === 'string' && coat.bibColor.length > 0,
+            hasEyePatch: typeof coat.hasEyePatch === 'boolean'
+          });
+        }
+        return { count: captured.length, results: results };
+        """
+        res = _run_js(snippet)
+        self.assertGreater(res["count"], 0,
+                           "At least one breed must render through CompanionDog.draw")
+        for i, r in enumerate(res["results"]):
+            for key, ok in r.items():
+                if key == "bodyColorValue":
+                    continue
+                self.assertTrue(ok, f"Breed #{i} coat.{key} must be populated")
+        self.assertEqual(
+            len(set(r["bodyColorValue"] for r in res["results"][:5])), 5,
+            "All 5 core breeds must have distinct body colors"
+        )
+
+    def test_exec_sanctuary_zoom_scale_applied(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const scales = [];
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          const originalScale = ctx.scale.bind(ctx);
+          ctx.scale = function (sx, sy) {
+            scales.push([sx, sy]);
+            return originalScale(sx, sy);
+          };
+          return ctx;
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.__testHooks.render();
+
+        return { scales: scales };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(
+            any(abs(s[0] - 0.72) < 1e-6 and abs(s[1] - 0.72) < 1e-6
+                for s in res["scales"]),
+            "render() must apply ctx.scale(0.72, 0.72) around dog rendering",
+        )
+
+    def test_exec_fallback_without_companion_dog(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        // Ensure the CompanionDog global is absent so the fallback path runs.
+        window.CompanionDog = undefined;
+
+        const calls = { fillText: 0, ellipse: 0, arc: 0 };
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          const origFillText = ctx.fillText ? ctx.fillText.bind(ctx) : null;
+          const origEllipse = ctx.ellipse ? ctx.ellipse.bind(ctx) : null;
+          const origArc = ctx.arc ? ctx.arc.bind(ctx) : null;
+          if (origFillText) {
+            ctx.fillText = function () { calls.fillText++; return origFillText.apply(null, arguments); };
+          }
+          if (origEllipse) {
+            ctx.ellipse = function () { calls.ellipse++; return origEllipse.apply(null, arguments); };
+          }
+          if (origArc) {
+            ctx.arc = function () { calls.arc++; return origArc.apply(null, arguments); };
+          }
+          return ctx;
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        let threw = false;
+        try {
+          window.HomeSanctuary.__testHooks.render();
+        } catch (e) {
+          threw = true;
+        }
+        return {
+          threw: threw,
+          fillText: calls.fillText,
+          ellipse: calls.ellipse,
+          arc: calls.arc
+        };
+        """
+        res = _run_js(snippet)
+        self.assertFalse(res["threw"],
+                         "Fallback render must not throw without CompanionDog")
+        self.assertGreater(res["fillText"], 0,
+                           "Fallback must draw the dog name tag via fillText")
+        self.assertTrue(res["ellipse"] > 0 or res["arc"] > 0,
+                        "Fallback must draw rounded body shapes via ellipse/arc")
+
+    def test_exec_remount_preserves_dog_position_and_state(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 320;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.setDogState('sit');
+        const before = window.HomeSanctuary.getCompanionDog();
+        const beforeX = before.x;
+        const beforeY = before.y;
+
+        window.HomeSanctuary.mount(canvas, {
+          id: 'dog-1', name: 'Renamed', coatKey: 'GOLDEN', collar: '#123456'
+        });
+        const after = window.HomeSanctuary.getCompanionDog();
+
+        return {
+          state: after.state,
+          name: after.name,
+          collar: after.collar,
+          x: after.x,
+          y: after.y,
+          beforeX: beforeX,
+          beforeY: beforeY
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["state"], "sit",
+                         "Remount must preserve the dog's forced state")
+        self.assertEqual(res["name"], "Renamed",
+                         "Remount must apply the new slot name")
+        self.assertEqual(res["collar"], "#123456",
+                         "Remount must apply the new slot collar")
+        self.assertEqual(res["x"], res["beforeX"],
+                         "Remount must preserve the dog's x position")
+        self.assertEqual(res["y"], res["beforeY"],
+                         "Remount must preserve the dog's y position")
+
+    def test_exec_draw_error_logged_once_per_mount_and_fallback_used(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        let warnCount = 0;
+        const originalWarn = console.warn;
+        console.warn = function () { warnCount++; };
+
+        window.CompanionDog = {
+          prototype: {
+            draw: function () { throw new Error('draw failure'); }
+          }
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.__testHooks.render();
+        window.HomeSanctuary.__testHooks.render();
+        const warnCountAfterTwo = warnCount;
+
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.__testHooks.render();
+        const warnCountAfterRemount = warnCount;
+
+        console.warn = originalWarn;
+
+        return {
+          warnCountAfterTwo: warnCountAfterTwo,
+          warnCountAfterRemount: warnCountAfterRemount
+        };
+        """
+        res = _run_js(snippet)
+        self.assertEqual(res["warnCountAfterTwo"], 1,
+                         "Draw errors must be logged only once per mount")
+        self.assertEqual(res["warnCountAfterRemount"], 2,
+                         "A remount must reset the draw-error log guard")
+
+    def test_exec_food_bowl_zoom_scale_applied(self):
+        snippet = """
+        const sanctuary = document.createElement('div');
+        sanctuary.id = 'home-view-sanctuary';
+        sanctuary.clientWidth = 400;
+        sanctuary.clientHeight = 400;
+        document.body.appendChild(sanctuary);
+        const canvas = document.createElement('canvas');
+        canvas.id = 'home-field-canvas';
+        canvas.parentElement = sanctuary;
+        sanctuary.appendChild(canvas);
+
+        window.requestAnimationFrame = function () { return 0; };
+        window.cancelAnimationFrame = function () {};
+        window.devicePixelRatio = 1;
+
+        const scales = [];
+        const originalGetContext = canvas.getContext;
+        canvas.getContext = function () {
+          const ctx = originalGetContext.call(canvas, '2d');
+          if (!ctx) return ctx;
+          const originalScale = ctx.scale.bind(ctx);
+          ctx.scale = function (sx, sy) {
+            scales.push([sx, sy]);
+            return originalScale(sx, sy);
+          };
+          return ctx;
+        };
+
+        const slot = { id: 'dog-1', name: 'Ziggy', coatKey: 'CHOCOLATE_TAN' };
+        window.HomeSanctuary.mount(canvas, slot);
+        window.HomeSanctuary.setDogState('eating');
+        window.HomeSanctuary.__testHooks.render();
+
+        return { scales: scales };
+        """
+        res = _run_js(snippet)
+        zoomCount = sum(
+            1 for s in res["scales"]
+            if abs(s[0] - 0.72) < 1e-6 and abs(s[1] - 0.72) < 1e-6
+        )
+        self.assertGreaterEqual(
+            zoomCount, 2,
+            "render() must apply ctx.scale(0.72, 0.72) for both the dog and the food bowl",
+        )
+
+    def test_companion_dog_exposes_window_globals(self):
+        dog_js = read("src/entities/companion_dog.js")
+        self.assertIn("window.CompanionDog = CompanionDog", dog_js,
+                      "companion_dog.js must expose window.CompanionDog")
+        self.assertIn("window.CoatPreset = CoatPreset", dog_js,
+                      "companion_dog.js must expose window.CoatPreset")
+        self.assertIn("window.DogState = DogState", dog_js,
+                      "companion_dog.js must expose window.DogState")
 
 
 if __name__ == '__main__':

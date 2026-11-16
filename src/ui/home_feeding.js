@@ -53,6 +53,8 @@
     try {
       if (typeof DogStateStore === 'function') {
         dogStateStore = new DogStateStore();
+        // Publish so HomeSanctuary shares the exact same instance.
+        root.__vdwDogStateStore = dogStateStore;
         return dogStateStore;
       }
     } catch (e) {
@@ -78,7 +80,9 @@
     var store = resolveDogStateStore();
     if (!store || typeof store.feed !== 'function') return;
     try {
-      store.feed(now());
+      // Call with no args so DogStateStore uses its own epoch clock
+      // (Date.now() or an injected test clock), not performance.now().
+      store.feed();
     } catch (e) {
       /* ignore */
     }

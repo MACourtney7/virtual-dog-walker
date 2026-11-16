@@ -329,6 +329,134 @@ console.log(JSON.stringify({ hungryAfter, hungryLater }));
         self.assertFalse(data["hungryAfter"])
         self.assertTrue(data["hungryLater"])
 
+    def test_hunger_after_120s_triggers_animator_and_subscription(self):
+        script = DOM_SHIM + r"""
+import { DogStateStore } from './src/state/dog_state_store.js';
+
+// Controllable fake clock shared by the store and the animator.
+let now = 0;
+const clock = () => now;
+
+const mem = {};
+globalThis.localStorage = {
+  getItem: (k) => (k in mem ? mem[k] : null),
+  setItem: (k, v) => { mem[k] = String(v); },
+  removeItem: (k) => { delete mem[k]; }
+};
+
+const store = new DogStateStore({ storage: globalThis.localStorage, now: clock });
+store.feed(0);
+globalThis.__vdwDogStateStore = store;
+
+const canvas = globalThis.__domShim.makeEl('canvas');
+canvas.id = 'home-field-canvas';
+globalThis.__domShim.elements.set('home-field-canvas', canvas);
+
+await import('./src/ui/home_sanctuary.js');
+const HomeSanctuary = globalThis.HomeSanctuary;
+HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
+
+const hooks = HomeSanctuary.__testHooks;
+const animator = hooks.getHungerAnimator();
+
+// Count playHungryAnimation invocations by wrapping the dog hook.
+let playCount = 0;
+const originalPlay = hooks.playHungryAnimation;
+const wrappedDog = {
+  setHunger: hooks.setHunger,
+  playHungryAnimation: () => { playCount++; return originalPlay(); }
+};
+// Re-point the animator at the wrapped dog.
+if (animator) animator.dog = wrappedDog;
+
+// Advance past the 120000ms hunger threshold.
+now = 120001;
+
+// Drive the store subscription (simulates a tick that re-reads hunger).
+if (typeof store.notify === 'function') store.notify();
+else if (typeof store._notify === 'function') store._notify();
+else store.feed(0); // fallback: re-trigger subscribers without resetting clock
+
+const dogAfter = hooks.getDog();
+const hungryAfter = dogAfter ? dogAfter.isHungry : null;
+
+// Manually tick the animator several times to prove periodic triggering.
+if (animator && typeof animator.tick === 'function') {
+  animator.tick(now);
+  animator.tick(now + 6000);
+  animator.tick(now + 12000);
+}
+
+HomeSanctuary.unmount();
+
+console.log(JSON.stringify({
+  hungryAfter,
+  playCount,
+  animatorPresent: !!animator
+}));
+"""
+        data = run_node(script)
+        self.assertTrue(data["animatorPresent"])
+        self.assertTrue(data["hungryAfter"])
+        self.assertGreaterEqual(data["playCount"], 1)
+
+    def test_feed_click_resets_timer_and_stops_animation(self):
+        script = DOM_SHIM + r"""
+import { DogStateStore } from './src/state/dog_state_store.js';
+
+let now = 0;
+const clock = () => now;
+
+const mem = {};
+globalThis.localStorage = {
+  getItem: (k) => (k in mem ? mem[k] : null),
+  setItem: (k, v) => { mem[k] = String(v); },
+  removeItem: (k) => { delete mem[k]; }
+};
+
+const store = new DogStateStore({ storage: globalThis.localStorage, now: clock });
+store.feed(0);
+globalThis.__vdwDogStateStore = store;
+globalThis.__vdwActiveDogSlot = { id: 'dog-1', name: 'Ziggy' };
+
+const canvas = globalThis.__domShim.makeEl('canvas');
+canvas.id = 'home-field-canvas';
+globalThis.__domShim.elements.set('home-field-canvas', canvas);
+
+await import('./src/ui/home_feeding.js');
+const HomeFeeding = globalThis.HomeFeeding;
+HomeFeeding.mount({ dogStateStore: store });
+
+// Advance past the hunger threshold.
+now = 130000;
+const before = store.getHunger(now);
+
+// Simulate a feed click via the test hook (deterministic, no timers).
+const result = HomeFeeding.__testHooks.simulateFeed({ dogId: 'dog-1', dogName: 'Ziggy' });
+
+// The store's lastFedAt must reflect the store clock (130000), not
+// performance.now().
+const after = store.getHunger(now);
+
+// Advance a bit but stay under the threshold: still not hungry.
+now = 130000 + 60000;
+const stillFed = store.getHunger(now);
+
+console.log(JSON.stringify({
+  beforeHungry: before.isHungry,
+  ate: result.ate,
+  afterHungry: after.isHungry,
+  afterLastFedAt: after.lastFedAt,
+  stillFedHungry: stillFed.isHungry
+}));
+"""
+        data = run_node(script)
+        self.assertTrue(data["beforeHungry"])
+        self.assertTrue(data["ate"])
+        self.assertFalse(data["afterHungry"])
+        self.assertEqual(data["afterLastFedAt"], 130000)
+        self.assertFalse(data["stillFedHungry"])
+
 
 if __name__ == "__main__":
     unittest.main()

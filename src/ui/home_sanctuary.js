@@ -1295,7 +1295,11 @@
       coatKey: dog.coatKey,
       collar: dog.collar,
       isLeashed: dog.isLeashed,
-      leash: dog.leash
+      leash: dog.leash,
+      isHungry: Boolean(dog.isHungry),
+      hunger: dog.hunger || null,
+      setHunger: dogSetHunger,
+      playHungryAnimation: dogPlayHungryAnimation
     };
   }
 
@@ -1351,6 +1355,8 @@
     try {
       if (typeof DogStateStore === 'function') {
         hungerStore = new DogStateStore();
+        // Publish so HomeFeeding shares the exact same instance.
+        global.__vdwDogStateStore = hungerStore;
         return hungerStore;
       }
     } catch (e) {
@@ -1364,6 +1370,23 @@
     if (!dog) return;
     dog.hunger = hungerInfo || null;
     dog.isHungry = Boolean(hungerInfo && hungerInfo.isHungry);
+  }
+
+  // Dog-facing hooks consumed by HomeHungerAnimator.
+  function dogSetHunger(hungerInfo) {
+    applyHungerToDog(hungerInfo);
+    return Boolean(dog && dog.isHungry);
+  }
+
+  function dogPlayHungryAnimation() {
+    if (!dog) return false;
+    // Brief wag/whine flourish; does not permanently override roaming.
+    if (!forcedState) {
+      dog.state = 'wag';
+      stateTimer = Math.max(stateTimer, STATE_MIN_MS);
+    }
+    dog.bob += 0.5;
+    return true;
   }
 
   function startHungerIntegration() {
@@ -1406,13 +1429,8 @@
         hungerAnimator = new AnimatorClass({
           dogStateStore: store,
           dog: {
-            setHunger: function (info) { applyHungerToDog(info); },
-            playHungryAnimation: function () {
-              if (dog) {
-                dog.state = 'wag';
-                dog.bob += 0.5;
-              }
-            }
+            setHunger: dogSetHunger,
+            playHungryAnimation: dogPlayHungryAnimation
           }
         });
         if (typeof hungerAnimator.start === 'function') {
@@ -1473,6 +1491,9 @@
       getDog: function () { return dog; },
       isHungerIntegrationActive: function () { return hungerIntegrationActive; },
       hasHungerSubscription: function () { return typeof hungerUnsubscribe === 'function'; },
+      getHungerAnimator: function () { return hungerAnimator; },
+      setHunger: dogSetHunger,
+      playHungryAnimation: dogPlayHungryAnimation,
       setWanderTarget: function (x, y) {
         if (!dog) return;
         dog.targetX = x;

@@ -202,9 +202,9 @@
       hasEyePatch: false
     },
     GOLDEN: {
-      primary: '#d4a373',
-      dark: '#b8824f',
-      secondary: '#faedcd',
+      primary: '#eab308',
+      dark: '#ca8a04',
+      secondary: '#fef08a',
       bodyColor: '#d4a373',
       bodyShade: '#b8824f',
       tanColor: '#faedcd',
@@ -214,6 +214,34 @@
       noseColor: '#3d261d',
       bibColor: '#fffdfa',
       hasEyePatch: false
+    },
+    BEAGLE: {
+      primary: '#8b5a2b',
+      dark: '#5c3a1a',
+      secondary: '#f5f0e6',
+      bodyColor: '#8b5a2b',
+      bodyShade: '#5c3a1a',
+      tanColor: '#f5f0e6',
+      tanHighlight: '#fffdfa',
+      earRoot: '#5c3a1a',
+      earHighlight: '#8b5a2b',
+      noseColor: '#1e293b',
+      bibColor: '#ffffff',
+      hasEyePatch: false
+    },
+    DALMATIAN: {
+      primary: '#f8fafc',
+      dark: '#e2e8f0',
+      secondary: '#1e293b',
+      bodyColor: '#f8fafc',
+      bodyShade: '#e2e8f0',
+      tanColor: '#1e293b',
+      tanHighlight: '#334155',
+      earRoot: '#1e293b',
+      earHighlight: '#334155',
+      noseColor: '#0f172a',
+      bibColor: '#ffffff',
+      hasEyePatch: true
     },
     BLACK_LAB: {
       primary: '#1e2022',
@@ -555,10 +583,10 @@
 
   // Resolve a CompanionDog constructor from the global/module scope, if present.
   function getCompanionDogClass() {
-    if (global.CompanionDog && typeof global.CompanionDog === 'function') {
+    if (global.CompanionDog && (typeof global.CompanionDog === 'function' || (global.CompanionDog.prototype && typeof global.CompanionDog.prototype.draw === 'function'))) {
       return global.CompanionDog;
     }
-    if (typeof CompanionDog !== 'undefined' && typeof CompanionDog === 'function') {
+    if (typeof CompanionDog !== 'undefined' && (typeof CompanionDog === 'function' || (CompanionDog.prototype && typeof CompanionDog.prototype.draw === 'function'))) {
       return CompanionDog;
     }
     return null;
@@ -1127,6 +1155,9 @@
       return;
     }
 
+    // Reset the one-shot draw-error log on every mount.
+    drawErrorLogged = false;
+
     // Resolve the slot: explicit override wins, otherwise re-read the profile
     // only when we don't already have one (preserves prior mount state).
     var slot;
@@ -1141,17 +1172,49 @@
 
     // Refresh the dog from the active slot (appearance may have changed).
     var appearance = resolveAppearance(activeDogSlot);
-    dog = createDog(appearance);
-    if (activeDogSlot) {
-      dog.name = activeDogSlot.name || 'Ziggy';
-      dog.id = activeDogSlot.id || 'dog-1';
+
+    var wasMounted = mounted;
+    var prevW = fieldWidth;
+    var prevH = fieldHeight;
+
+    if (wasMounted && dog) {
+      // Re-mount: update appearance in place, preserving live state.
+      dog.id = (activeDogSlot && activeDogSlot.id) || appearance.id;
+      dog.name = (activeDogSlot && activeDogSlot.name) || appearance.name;
+      dog.coat = appearance.coat;
+      dog.coatDark = appearance.coatDark;
+      dog.coatColor = appearance.coat;
+      dog.coatColorDark = appearance.coatDark;
+      dog.coatSecondary = appearance.coatSecondary;
+      dog.coatKey = appearance.coatKey;
+      dog.collar = appearance.collar;
+      dog.palette = appearance.palette || null;
+      dog.isLeashed = false;
+      dog.leash = null;
+      dog.leashActive = false;
+    } else {
+      dog = createDog(appearance);
+      if (activeDogSlot) {
+        dog.name = activeDogSlot.name || 'Ziggy';
+        dog.id = activeDogSlot.id || 'dog-1';
+      }
+      pose = 'auto';
+      forcedState = null;
+      enterState('wander');
     }
-    pose = 'auto';
-    forcedState = null;
-    enterState('wander');
 
     // Resize after the visible container is available.
     resizeCanvas();
+
+    // If we were previously mounted at a degenerate (0x0) size and the field
+    // is now usable, recenter the dog so it isn't stuck in a corner.
+    if (wasMounted && dog &&
+        (prevW <= FIELD_PADDING * 2 || prevH <= FIELD_PADDING * 2) &&
+        fieldWidth > FIELD_PADDING * 2 && fieldHeight > FIELD_PADDING * 2) {
+      dog.x = fieldWidth / 2;
+      dog.y = fieldHeight / 2;
+      pickWanderTarget();
+    }
 
     if (!mounted) {
       mounted = true;
@@ -1282,6 +1345,7 @@
     getFieldSize: getFieldSize,
     clearBowl: clearBowl,
     __testHooks: {
+      frame: function (ts) { frame(ts || 0); },
       getParticles: function () { return particles; },
       spawnParticles: spawnParticles,
       getForcedState: function () { return forcedState; },

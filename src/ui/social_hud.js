@@ -57,6 +57,16 @@ export class SocialHUD {
     return this.dogSlot !== null && !this.isHomeLocked;
   }
 
+  // Determine whether the Home modal is currently visible, accounting for
+  // both inline `display: block` and class-based visibility toggles.
+  _isModalVisible(modalEl) {
+    const el = modalEl || (typeof document !== 'undefined' ? document.getElementById('customizer-modal') : null);
+    if (!el) return false;
+    if (el.style && el.style.display === 'block') return true;
+    if (el.classList && typeof el.classList.contains === 'function' && (el.classList.contains('open') || el.classList.contains('active'))) return true;
+    return false;
+  }
+
   // Alias: open the Home modal (used by tests and external callers).
   openHome() {
     return this.openModal();
@@ -263,7 +273,7 @@ export class SocialHUD {
     // still hidden, only sync the DOM — never mount the sanctuary/feeding
     // canvases while they are invisible (they would measure 0x0).
     const modalEl = document.getElementById('customizer-modal');
-    const modalHidden = !modalEl || modalEl.style.display !== 'block';
+    const modalHidden = !this._isModalVisible(modalEl);
     if (modalHidden && !this.isHomeLocked) {
       this.currentHomeView = this.resolveHomeView();
       this._applyHomeViewDom();

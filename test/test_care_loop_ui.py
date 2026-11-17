@@ -117,17 +117,19 @@ const careLoopShim = (() => {
     addEventListener() {},
     removeEventListener() {}
   };
-  const window = {
-    document,
-    location: { search: '' },
-    addEventListener() {},
-    removeEventListener() {},
-    requestAnimationFrame(fn) { return setTimeout(() => fn(Date.now()), 0); },
-    cancelAnimationFrame(id) { clearTimeout(id); },
-    setTimeout,
-    clearTimeout,
-    performance: { now: () => Date.now() }
-  };
+  // Make `window` an alias of `globalThis` so modules that attach their
+  // public API to `window` (e.g. HomeFeeding, HomeSanctuary) are visible via
+  // `globalThis.HomeFeeding` / `globalThis.HomeSanctuary` in the tests.
+  const window = globalThis;
+  window.document = document;
+  window.location = { search: '' };
+  window.addEventListener = function () {};
+  window.removeEventListener = function () {};
+  window.requestAnimationFrame = function (fn) { return setTimeout(() => fn(Date.now()), 0); };
+  window.cancelAnimationFrame = function (id) { clearTimeout(id); };
+  window.setTimeout = setTimeout;
+  window.clearTimeout = clearTimeout;
+  window.performance = { now: () => Date.now() };
   globalThis.window = window;
   globalThis.document = document;
   globalThis.requestAnimationFrame = window.requestAnimationFrame;
@@ -161,6 +163,9 @@ const careLoopFakeCtx = new Proxy({}, {
     }
     if (prop === 'getImageData') return () => ({ data: [] });
     if (typeof prop === 'string' && prop in target) return target[prop];
+    // Every other 2D-context method (save, restore, translate, scale, rotate,
+    // beginPath, closePath, moveTo, lineTo, arc, ellipse, roundRect, fill,
+    // stroke, fillText, quadraticCurveTo, bezierCurveTo, ...) is a no-op.
     return () => {};
   },
   set(target, prop, value) { target[prop] = value; return true; }
@@ -216,12 +221,34 @@ class TestCareLoopUI(unittest.TestCase):
         # about missing fields and does not require a full CompanionDog.
         script = DOM_SHIM + fake_ctx_shim() + """
         const careLoopDrawModule = await import(%s);
+        // Minimal plain-object fixture: supplies the fields draw() reads
+        // (coat palette, ears, hearts) but deliberately omits drawEmote so
+        // the missing-drawEmote guard is genuinely exercised.
         const careLoopMinimalEntity = {
           x: 10,
           y: 10,
           scale: 1,
+          angle: 0,
           emoteBubble: '🍖',
-          emoteTimer: 2
+          emoteTimer: 2,
+          coat: {
+            body: '#d97706',
+            shade: '#b45309',
+            ear: '#92400e',
+            belly: '#fde68a',
+            bodyColor: '#d97706',
+            bodyShade: '#b45309',
+            tanColor: '#fde68a',
+            tanHighlight: '#fef3c7',
+            earRoot: '#92400e',
+            earHighlight: '#b45309',
+            noseColor: '#1e293b',
+            bibColor: '#f5f0e6',
+            hasEyePatch: false
+          },
+          leftEar: { angle: 0 },
+          rightEar: { angle: 0 },
+          hearts: []
         };
         let careLoopDrawThrew = null;
         try {

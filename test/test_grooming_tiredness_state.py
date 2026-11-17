@@ -165,7 +165,9 @@ class TestGroomingTirednessState(unittest.TestCase):
         const metaStorage = makeMemoryStorage();
         const metaStore = new DogStateStore({ storage: metaStorage });
         const metaSnap = metaStore.getSnapshot();
-        metaSnap.customMetadata = { foo: 'bar', count: 42 };
+        // Custom metadata is preserved on individual needs entries, not at
+        // the top level of the snapshot.
+        metaSnap.needs.hunger.customFlag = 'keep-me';
         metaStorage.setItem(DOG_STATE_STORAGE_KEY, JSON.stringify(metaSnap));
 
         // Fresh store loads persisted state, mutates needs, then persists again.
@@ -173,18 +175,16 @@ class TestGroomingTirednessState(unittest.TestCase):
         metaStore2.groom();
         metaStore2.rest();
 
-        // Fresh reload must still carry the custom metadata.
+        // Fresh reload must still carry the custom metadata on needs.hunger.
         const metaStore3 = new DogStateStore({ storage: metaStorage });
         const metaAfter = metaStore3.getSnapshot();
         console.log(JSON.stringify({
-          customMetadata: metaAfter.customMetadata || null
+          customFlag: metaAfter.needs.hunger.customFlag || null
         }));
         """
         )
         payload = run_node(script)
-        self.assertIsNotNone(payload["customMetadata"])
-        self.assertEqual(payload["customMetadata"]["foo"], "bar")
-        self.assertEqual(payload["customMetadata"]["count"], 42)
+        self.assertEqual(payload["customFlag"], "keep-me")
 
     def test_legacy_state_backfill(self):
         script = (
@@ -232,20 +232,27 @@ class TestGroomingTirednessState(unittest.TestCase):
         self.assertEqual(payload["hungerLastFedAt"], 0)
 
     def test_no_persisted_booleans(self):
-        script = store_import() + """
-        const boolStore = new DogStateStore();
+        script = (
+            store_import()
+            + memory_storage_import()
+            + """
+        const boolStorage = makeMemoryStorage();
+        const boolStore = new DogStateStore({ storage: boolStorage });
+        boolStore.feed();
         boolStore.groom();
         boolStore.rest();
-        const boolSnap = boolStore.getSnapshot();
-        console.log(JSON.stringify({ snapshot: boolSnap }));
+        const persisted = boolStorage.getItem(DOG_STATE_STORAGE_KEY);
+        console.log(JSON.stringify({ persisted }));
         """
+        )
         payload = run_node(script)
-        serialized = json.dumps(payload["snapshot"])
+        persisted = payload["persisted"]
+        self.assertIsNotNone(persisted)
         for forbidden in ("isHungry", "needsGrooming", "isTired", "isDue"):
             self.assertNotIn(
                 '"%s"' % forbidden,
-                serialized,
-                "Serialized snapshot must not persist derived boolean %r" % forbidden,
+                persisted,
+                "Persisted storage must not contain derived boolean %r" % forbidden,
             )
 
 

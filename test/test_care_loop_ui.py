@@ -85,7 +85,13 @@ const careLoopShim = (() => {
   };
   const document = {
     body,
+    // NOTE: getElementById does NOT auto-create elements. Callers that need
+    // an element must create it via createElement + appendChild, or the test
+    // must pre-register it. This mirrors real DOM semantics.
     getElementById(id) {
+      return elements.has(id) ? elements.get(id) : null;
+    },
+    registerElement(id) {
       if (!elements.has(id)) elements.set(id, makeButton(id));
       return elements.get(id);
     },
@@ -123,6 +129,13 @@ const careLoopShim = (() => {
 """
 
 
+def register_canvas_shim() -> str:
+    """Pre-register the home-field-canvas so HomeFeeding sees a canvas."""
+    return """
+careLoopShim.document.registerElement('home-field-canvas');
+"""
+
+
 def fake_ctx_shim() -> str:
     return """
 const careLoopFakeCtx = new Proxy({}, {
@@ -157,19 +170,28 @@ class TestCareLoopUI(unittest.TestCase):
         self.assertTrue(payload["hasDrawEmote"])
 
     def test_draw_does_not_throw(self):
+        # Exercise CompanionDog.prototype.draw directly against a minimal
+        # entity literal (per brief item 2). This proves draw() is defensive
+        # about missing fields and does not require a full CompanionDog.
         script = DOM_SHIM + fake_ctx_shim() + """
         const careLoopDrawModule = await import(%s);
-        const careLoopDrawEntity = careLoopDrawModule.buildDogEntity
-          ? careLoopDrawModule.buildDogEntity()
-          : new careLoopDrawModule.CompanionDog();
-        careLoopDrawEntity.emoteBubble = '🍖';
-        let threw = null;
+        const careLoopMinimalEntity = {
+          x: 10,
+          y: 10,
+          scale: 1,
+          emoteBubble: '🍖',
+          emoteTimer: 2
+        };
+        let careLoopDrawThrew = null;
         try {
-          careLoopDrawModule.CompanionDog.prototype.draw.call(careLoopDrawEntity, careLoopFakeCtx);
+          careLoopDrawModule.CompanionDog.prototype.draw.call(
+            careLoopMinimalEntity,
+            careLoopFakeCtx
+          );
         } catch (e) {
-          threw = String(e && e.message ? e.message : e);
+          careLoopDrawThrew = String(e && e.message ? e.message : e);
         }
-        console.log(JSON.stringify({ threw }));
+        console.log(JSON.stringify({ threw: careLoopDrawThrew }));
         """ % file_url("src/entities/companion_dog.js")
         payload = run_node(script)
         self.assertIsNone(payload["threw"], "draw() threw: %s" % payload["threw"])
@@ -257,7 +279,9 @@ class TestCareLoopUI(unittest.TestCase):
         self.assertEqual(payload["emoteTimer"], 300)
 
     def test_action_bar_buttons_wired(self):
-        script = DOM_SHIM + """
+        # HomeFeeding must CREATE #btn-action-groom and #btn-action-rest
+        # itself (the shim no longer auto-creates elements on getElementById).
+        script = DOM_SHIM + register_canvas_shim() + """
         const careLoopStoreCalls = { groom: 0, rest: 0 };
         const careLoopSanctuaryCalls = {
           playGroomingAnimation: 0,
@@ -291,8 +315,6 @@ class TestCareLoopUI(unittest.TestCase):
           playNeedMetReaction: () => { careLoopSanctuaryCalls.playNeedMetReaction += 1; },
           toast: () => {}
         };
-        // Provide a canvas so buttons are not disabled.
-        careLoopShim.document.getElementById('home-field-canvas');
         await import(%s);
         globalThis.HomeFeeding.mount({ dogStateStore: careLoopMockStore });
         const careLoopGroomBtn = careLoopShim.document.getElementById('btn-action-groom');
@@ -317,48 +339,212 @@ class TestCareLoopUI(unittest.TestCase):
         self.assertEqual(payload["sanctuaryCalls"]["playSleepingAnimation"], 1)
         self.assertGreaterEqual(payload["sanctuaryCalls"]["playNeedMetReaction"], 2)
 
-    def test_animator_tick_triggers_need_emotes(self):
-        # Hungry case.
-        script = DOM_SHIM + """
-        const careLoopAnimModule = await import(%s);
-        const careLoopAnimDog = careLoopAnimModule.buildDogEntity
-          ? careLoopAnimModule.buildDogEntity()
-          : new careLoopAnimModule.CompanionDog();
-        const careLoopAnimCalls = { hungry: 0, grooming: 0, tired: 0 };
-        careLoopAnimDog.playNeedHungryAnimation = () => { careLoopAnimCalls.hungry += 1; };
-        careLoopAnimDog.playGroomingAnimation = () => { careLoopAnimCalls.grooming += 1; };
-        careLoopAnimDog.playSleepingAnimation = () => { careLoopAnimCalls.tired += 1; };
-        const careLoopAnimStore = {
+    def test_action_bar_buttons_reenable_when_timers_expire(self):
+        # Groom/rest buttons must start disabled when the store reports the
+        # need is not yet due, then re-enable once the store flips to true.
+        script = DOM_SHIM + register_canvas_shim() + """
+        const careLoopReenableState = { needsGrooming: false, isTired: false };
+        const careLoopReenableStore = {
           getSnapshot: () => ({
             version: 1,
             needs: {
-              hunger: { lastFedAt: 0, durationMs: 1 },
+              hunger: { lastFedAt: Date.now(), durationMs: 60000 },
               grooming: { lastGroomedAt: Date.now(), durationMs: 60000 },
               tiredness: { lastRestedAt: Date.now(), durationMs: 60000 }
             }
           }),
           subscribe: () => () => {},
-          isHungry: () => true,
-          needsGrooming: () => false,
-          isTired: () => false
+          feed: () => {},
+          groom: () => {},
+          rest: () => {},
+          needsGrooming: () => careLoopReenableState.needsGrooming,
+          isTired: () => careLoopReenableState.isTired
         };
-        if (typeof careLoopAnimDog.setDogStateStore === 'function') {
-          careLoopAnimDog.setDogStateStore(careLoopAnimStore);
-        }
-        if (typeof careLoopAnimDog.tickNeedEmotes === 'function') {
-          careLoopAnimDog.tickNeedEmotes(5000);
-        } else if (typeof careLoopAnimDog.updateNeedEmotes === 'function') {
-          careLoopAnimDog.updateNeedEmotes(5000);
-        } else if (typeof careLoopAnimDog.update === 'function') {
-          careLoopAnimDog.update(5000);
-        }
+        globalThis.__vdwDogStateStore = careLoopReenableStore;
+        globalThis.HomeSanctuary = {
+          getDogSlot: () => ({ id: 'dog-1', name: 'Ziggy' }),
+          getCompanionDog: () => null,
+          setDogPose: () => {},
+          setDogState: () => {},
+          playGroomingAnimation: () => {},
+          playSleepingAnimation: () => {},
+          playNeedMetReaction: () => {},
+          toast: () => {}
+        };
+        await import(%s);
+        globalThis.HomeFeeding.mount({ dogStateStore: careLoopReenableStore });
+        const careLoopReGroomBtn = careLoopShim.document.getElementById('btn-action-groom');
+        const careLoopReRestBtn = careLoopShim.document.getElementById('btn-action-rest');
+        const careLoopInitiallyDisabled = {
+          groom: !!(careLoopReGroomBtn && careLoopReGroomBtn.disabled),
+          rest: !!(careLoopReRestBtn && careLoopReRestBtn.disabled)
+        };
+        // Flip the store to "due" and force a refresh.
+        careLoopReenableState.needsGrooming = true;
+        careLoopReenableState.isTired = true;
+        globalThis.HomeFeeding.__testHooks.refreshButtonStates();
+        const careLoopAfterEnabled = {
+          groom: !!(careLoopReGroomBtn && careLoopReGroomBtn.disabled),
+          rest: !!(careLoopReRestBtn && careLoopReRestBtn.disabled)
+        };
+        console.log(JSON.stringify({
+          initiallyDisabled: careLoopInitiallyDisabled,
+          afterEnabled: careLoopAfterEnabled
+        }));
+        """ % file_url("src/ui/home_feeding.js")
+        payload = run_node(script)
+        self.assertTrue(payload["initiallyDisabled"]["groom"], "groom should start disabled")
+        self.assertTrue(payload["initiallyDisabled"]["rest"], "rest should start disabled")
+        self.assertFalse(payload["afterEnabled"]["groom"], "groom should re-enable")
+        self.assertFalse(payload["afterEnabled"]["rest"], "rest should re-enable")
+
+    def test_animator_tick_triggers_need_emotes(self):
+        # Drive the REAL HomeHungerAnimator.tick() (not CompanionDog.update).
+        script = DOM_SHIM + """
+        const careLoopAnimModule = await import(%s);
+        const careLoopAnimCalls = { hungry: 0, grooming: 0, tired: 0 };
+        const careLoopAnimDog = {
+          setHunger: () => {},
+          setGrooming: () => {},
+          setTiredness: () => {},
+          playHungryAnimation: () => { careLoopAnimCalls.hungry += 1; },
+          playNeedGroomingAnimation: () => { careLoopAnimCalls.grooming += 1; },
+          playNeedRestAnimation: () => { careLoopAnimCalls.tired += 1; },
+          getEmoteTimer: () => 0
+        };
+        const careLoopAnimStore = {
+          getHunger: () => ({ isHungry: true }),
+          getGrooming: () => ({ needsGrooming: false }),
+          getTiredness: () => ({ isTired: false })
+        };
+        const careLoopAnimator = new careLoopAnimModule.HomeHungerAnimator({
+          dogStateStore: careLoopAnimStore,
+          dog: careLoopAnimDog,
+          animationIntervalMs: 1000,
+          now: () => 5000
+        });
+        careLoopAnimator.tick(5000);
         console.log(JSON.stringify({ calls: careLoopAnimCalls }));
-        """ % file_url("src/entities/companion_dog.js")
+        """ % file_url("src/ui/home_hunger_animator.js")
         payload = run_node(script)
         self.assertGreaterEqual(
             payload["calls"]["hungry"], 1,
-            "Animator tick should trigger hungry emote when isHungry is true",
+            "HomeHungerAnimator.tick should trigger hungry emote when isHungry is true",
         )
+
+    def test_animator_tick_triggers_grooming_and_tired(self):
+        # Grooming takes priority over tiredness when both are due.
+        script = DOM_SHIM + """
+        const careLoopGroomAnimModule = await import(%s);
+        const careLoopGroomCalls = { hungry: 0, grooming: 0, tired: 0 };
+        const careLoopGroomDog = {
+          setHunger: () => {},
+          setGrooming: () => {},
+          setTiredness: () => {},
+          playHungryAnimation: () => { careLoopGroomCalls.hungry += 1; },
+          playNeedGroomingAnimation: () => { careLoopGroomCalls.grooming += 1; },
+          playNeedRestAnimation: () => { careLoopGroomCalls.tired += 1; },
+          getEmoteTimer: () => 0
+        };
+        const careLoopGroomStore = {
+          getHunger: () => ({ isHungry: false }),
+          getGrooming: () => ({ needsGrooming: true }),
+          getTiredness: () => ({ isTired: true })
+        };
+        const careLoopGroomAnimator = new careLoopGroomAnimModule.HomeHungerAnimator({
+          dogStateStore: careLoopGroomStore,
+          dog: careLoopGroomDog,
+          animationIntervalMs: 1000,
+          now: () => 5000
+        });
+        careLoopGroomAnimator.tick(5000);
+        console.log(JSON.stringify({ calls: careLoopGroomCalls }));
+        """ % file_url("src/ui/home_hunger_animator.js")
+        payload = run_node(script)
+        self.assertEqual(payload["calls"]["grooming"], 1)
+        self.assertEqual(payload["calls"]["tired"], 0)
+        self.assertEqual(payload["calls"]["hungry"], 0)
+
+    def test_animator_respects_active_emote(self):
+        # A dog with an active emote must not be interrupted.
+        script = DOM_SHIM + """
+        const careLoopEmoteAnimModule = await import(%s);
+        const careLoopEmoteCalls = { hungry: 0 };
+        const careLoopEmoteDog = {
+          setHunger: () => {},
+          playHungryAnimation: () => { careLoopEmoteCalls.hungry += 1; },
+          getEmoteTimer: () => 1.5
+        };
+        const careLoopEmoteStore = {
+          getHunger: () => ({ isHungry: true })
+        };
+        const careLoopEmoteAnimator = new careLoopEmoteAnimModule.HomeHungerAnimator({
+          dogStateStore: careLoopEmoteStore,
+          dog: careLoopEmoteDog,
+          animationIntervalMs: 1000,
+          now: () => 5000
+        });
+        careLoopEmoteAnimator.tick(5000);
+        console.log(JSON.stringify({ calls: careLoopEmoteCalls }));
+        """ % file_url("src/ui/home_hunger_animator.js")
+        payload = run_node(script)
+        self.assertEqual(payload["calls"]["hungry"], 0)
+
+    def test_sanctuary_update_dog_camera_emote_and_care_timers(self):
+        # Exercise the REAL HomeSanctuary.updateDog(dt) via __testHooks.
+        script = DOM_SHIM + """
+        const careLoopSanctuaryModule = await import(%s);
+        const careLoopSanctuary = careLoopSanctuaryModule.default
+          || careLoopSanctuaryModule.HomeSanctuary
+          || globalThis.HomeSanctuary;
+        // Mount against a registered canvas so the dog is created.
+        careLoopShim.document.registerElement('home-field-canvas');
+        careLoopSanctuary.mount(careLoopShim.document.getElementById('home-field-canvas'), {
+          id: 'dog-1',
+          name: 'Ziggy'
+        });
+        const careLoopHooks = careLoopSanctuary.__testHooks;
+        const careLoopDog = careLoopHooks.getDog();
+        const careLoopHasGetDog = typeof careLoopSanctuary.getDog === 'function';
+
+        // Camera pose: emoteTimer must decrement.
+        careLoopSanctuary.setDogPose('camera');
+        careLoopDog.emoteTimer = 2.0;
+        careLoopHooks.updateDog(500); // 500ms -> 0.5s
+        const careLoopEmoteAfter = careLoopDog.emoteTimer;
+
+        // Grooming + sleeping must survive a playNeedMetReaction() call.
+        careLoopSanctuary.playGroomingAnimation();
+        careLoopSanctuary.playSleepingAnimation();
+        const careLoopGroomBefore = careLoopDog.groomTimer;
+        const careLoopSleepBefore = careLoopDog.sleepTimer;
+        careLoopSanctuary.playNeedMetReaction();
+        const careLoopGroomAfter = careLoopDog.groomTimer;
+        const careLoopSleepAfter = careLoopDog.sleepTimer;
+        const careLoopStillGroomed = careLoopDog.beingGroomed;
+        const careLoopStillSleeping = careLoopDog.sleeping;
+
+        console.log(JSON.stringify({
+          hasGetDog: careLoopHasGetDog,
+          emoteAfter: careLoopEmoteAfter,
+          groomBefore: careLoopGroomBefore,
+          groomAfter: careLoopGroomAfter,
+          sleepBefore: careLoopSleepBefore,
+          sleepAfter: careLoopSleepAfter,
+          stillGroomed: careLoopStillGroomed,
+          stillSleeping: careLoopStillSleeping
+        }));
+        """ % file_url("src/ui/home_sanctuary.js")
+        payload = run_node(script)
+        self.assertTrue(payload["hasGetDog"], "HomeSanctuary.getDog() missing")
+        self.assertAlmostEqual(payload["emoteAfter"], 1.5, places=3)
+        self.assertGreater(payload["groomBefore"], 0)
+        self.assertGreater(payload["sleepBefore"], 0)
+        # playNeedMetReaction must not shorten grooming/sleeping timers.
+        self.assertGreaterEqual(payload["groomAfter"], payload["groomBefore"])
+        self.assertGreaterEqual(payload["sleepAfter"], payload["sleepBefore"])
+        self.assertTrue(payload["stillGroomed"])
+        self.assertTrue(payload["stillSleeping"])
 
 
 if __name__ == "__main__":

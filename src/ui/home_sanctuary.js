@@ -364,6 +364,11 @@
       targetX: fieldWidth / 2,
       targetY: fieldHeight / 2,
       bob: 0,
+      // Emote / care animation state.
+      emoteBubble: null,
+      emoteTimer: 0,
+      beingGroomed: false,
+      sleeping: false,
       // The sanctuary dog is always off-leash and fully self-contained.
       isLeashed: false,
       leash: null,
@@ -408,6 +413,16 @@
 
   function updateDog(dt) {
     if (!dog) return;
+
+    // Emote countdown (dt is in ms; emoteTimer is in seconds).
+    if (dog.emoteTimer > 0) {
+      dog.emoteTimer = Math.max(0, dog.emoteTimer - dt / 1000);
+      if (dog.emoteTimer <= 0) {
+        dog.emoteBubble = null;
+        dog.beingGroomed = false;
+        dog.sleeping = false;
+      }
+    }
 
     // Camera pose: dog faces the viewer and stays put.
     if (pose === 'camera') {
@@ -627,6 +642,12 @@
       darkColor: bodyShade
     };
 
+    var CompanionDogClass = getCompanionDogClass();
+    var drawEmote = (CompanionDogClass && CompanionDogClass.prototype &&
+      typeof CompanionDogClass.prototype.drawEmote === 'function')
+      ? CompanionDogClass.prototype.drawEmote
+      : null;
+
     var entity = {
       // Identity / state
       id: dog.id,
@@ -636,6 +657,13 @@
       y: dog.y,
       angle: pose === 'camera' ? Math.PI / 2 : dog.facing,
       facing: dog.facing,
+
+      // Emote / care animation state
+      emoteBubble: dog.emoteBubble || null,
+      emoteTimer: dog.emoteTimer || 0,
+      beingGroomed: Boolean(dog.beingGroomed),
+      sleeping: Boolean(dog.sleeping),
+      drawEmote: drawEmote,
 
       // Coat palette (both flat fields and nested object)
       coat: coatObj,
@@ -1300,7 +1328,13 @@
       hunger: dog.hunger || null,
       setHunger: dogSetHunger,
       playHungryAnimation: dogPlayHungryAnimation,
-      playFeedReaction: dogPlayFeedReaction
+      playFeedReaction: dogPlayFeedReaction,
+      playNeedHungryAnimation: playNeedHungryAnimation,
+      playNeedGroomingAnimation: playNeedGroomingAnimation,
+      playGroomingAnimation: playGroomingAnimation,
+      playNeedRestAnimation: playNeedRestAnimation,
+      playSleepingAnimation: playSleepingAnimation,
+      playNeedMetReaction: playNeedMetReaction
     };
   }
 
@@ -1386,6 +1420,8 @@
       dog.state = 'wag';
       stateTimer = Math.max(stateTimer, STATE_MIN_MS);
     }
+    dog.emoteBubble = '🍖';
+    dog.emoteTimer = 2.0;
     dog.bob += 0.5;
     return true;
   }
@@ -1398,7 +1434,57 @@
       dog.state = 'wag';
       stateTimer = Math.max(stateTimer, STATE_MIN_MS);
     }
+    dog.emoteBubble = '❤️';
+    dog.emoteTimer = 2.2;
     dog.bob += 0.5;
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sanctuary care animation hooks
+  // ---------------------------------------------------------------------------
+
+  function playNeedHungryAnimation() {
+    return dogPlayHungryAnimation();
+  }
+
+  function playNeedGroomingAnimation() {
+    if (!dog) return false;
+    dog.emoteBubble = '🫧';
+    dog.emoteTimer = 2.0;
+    return true;
+  }
+
+  function playGroomingAnimation() {
+    if (!dog) return false;
+    dog.beingGroomed = true;
+    dog.state = 'sit';
+    dog.emoteBubble = '🧼';
+    dog.emoteTimer = 3.0;
+    dog.bob += 0.5;
+    return true;
+  }
+
+  function playNeedRestAnimation() {
+    if (!dog) return false;
+    dog.emoteBubble = '💤';
+    dog.emoteTimer = 2.0;
+    return true;
+  }
+
+  function playSleepingAnimation() {
+    if (!dog) return false;
+    dog.sleeping = true;
+    dog.state = 'sit';
+    dog.emoteBubble = '💤';
+    dog.emoteTimer = 4.0;
+    return true;
+  }
+
+  function playNeedMetReaction() {
+    if (!dog) return false;
+    dog.emoteBubble = '❤️';
+    dog.emoteTimer = 2.2;
     return true;
   }
 
@@ -1443,7 +1529,9 @@
           dogStateStore: store,
           dog: {
             setHunger: dogSetHunger,
-            playHungryAnimation: dogPlayHungryAnimation
+            playHungryAnimation: dogPlayHungryAnimation,
+            playNeedGroomingAnimation: playNeedGroomingAnimation,
+            playNeedRestAnimation: playNeedRestAnimation
           }
         });
         if (typeof hungerAnimator.start === 'function') {
@@ -1493,6 +1581,12 @@
     resumeRoaming: resumeRoaming,
     getFieldSize: getFieldSize,
     clearBowl: clearBowl,
+    playNeedHungryAnimation: playNeedHungryAnimation,
+    playNeedGroomingAnimation: playNeedGroomingAnimation,
+    playGroomingAnimation: playGroomingAnimation,
+    playNeedRestAnimation: playNeedRestAnimation,
+    playSleepingAnimation: playSleepingAnimation,
+    playNeedMetReaction: playNeedMetReaction,
     __testHooks: {
       frame: function (ts) { frame(ts || 0); },
       getParticles: function () { return particles; },

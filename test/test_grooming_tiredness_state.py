@@ -43,7 +43,9 @@ def run_node(script_body: str) -> dict:
 
 def store_import() -> str:
     # Use a file:// URL so ESM import works regardless of cwd.
-    return "import { DogStateStore } from %s;" % json.dumps("file://" + STORE_MODULE)
+    return "import { DogStateStore, DOG_STATE_STORAGE_KEY } from %s;" % json.dumps(
+        "file://" + STORE_MODULE
+    )
 
 
 def memory_storage_import() -> str:
@@ -164,7 +166,7 @@ class TestGroomingTirednessState(unittest.TestCase):
         const metaStore = new DogStateStore({ storage: metaStorage });
         const metaSnap = metaStore.getSnapshot();
         metaSnap.customMetadata = { foo: 'bar', count: 42 };
-        metaStorage.setItem('virtual_dog_walker.dog_state.v1', JSON.stringify(metaSnap));
+        metaStorage.setItem(DOG_STATE_STORAGE_KEY, JSON.stringify(metaSnap));
 
         // Fresh store loads persisted state, mutates needs, then persists again.
         const metaStore2 = new DogStateStore({ storage: metaStorage });
@@ -196,7 +198,7 @@ class TestGroomingTirednessState(unittest.TestCase):
             hunger: { lastCompletedAt: 0, durationMs: 120000 }
           }
         };
-        legacyStorage.setItem('virtual_dog_walker.dog_state.v1', JSON.stringify(legacyInput));
+        legacyStorage.setItem(DOG_STATE_STORAGE_KEY, JSON.stringify(legacyInput));
 
         const legacyStore = new DogStateStore({ storage: legacyStorage });
         const legacySnap = legacyStore.getSnapshot();

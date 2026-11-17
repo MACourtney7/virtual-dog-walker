@@ -1638,22 +1638,16 @@
             playNeedGroomingAnimation: playNeedGroomingAnimation,
             playNeedRestAnimation: playNeedRestAnimation,
             getEmoteTimer: function () { return dog ? dog.emoteTimer : 0; },
-            setGroomingState: function (active) {
+            setGroomingState: function (info) {
               if (!dog) return false;
-              if (active) {
-                return playGroomingAnimation();
-              }
-              dog.beingGroomed = false;
-              dog.groomTimer = 0;
+              dog.grooming = info || null;
+              dog.needsGrooming = Boolean(info && info.needsGrooming);
               return true;
             },
-            setTirednessState: function (active) {
+            setTirednessState: function (info) {
               if (!dog) return false;
-              if (active) {
-                return playSleepingAnimation();
-              }
-              dog.sleeping = false;
-              dog.sleepTimer = 0;
+              dog.tiredness = info || null;
+              dog.isTired = Boolean(info && info.isTired);
               return true;
             }
           }

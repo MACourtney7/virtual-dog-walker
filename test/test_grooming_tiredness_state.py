@@ -46,6 +46,28 @@ def store_import() -> str:
     return "import { DogStateStore } from %s;" % json.dumps("file://" + STORE_MODULE)
 
 
+def memory_storage_import() -> str:
+    """Return a JS snippet defining an in-memory storage shim.
+
+    The shim exposes the subset of the Web Storage API that DogStateStore
+    relies on (getItem/setItem/removeItem) so tests can persist state across
+    fresh store instances without touching the real localStorage.
+    """
+    return textwrap.dedent(
+        """
+        function makeMemoryStorage() {
+          const backing = new Map();
+          return {
+            getItem(key) { return backing.has(key) ? backing.get(key) : null; },
+            setItem(key, value) { backing.set(key, String(value)); },
+            removeItem(key) { backing.delete(key); },
+            clear() { backing.clear(); }
+          };
+        }
+        """
+    )
+
+
 @unittest.skipUnless(node_available(), "node is required for these tests")
 class TestGroomingTirednessState(unittest.TestCase):
     def test_initial_durations(self):
@@ -66,10 +88,11 @@ class TestGroomingTirednessState(unittest.TestCase):
     def test_needs_grooming_true_initially(self):
         script = store_import() + """
         const groomingInitStore = new DogStateStore();
-        const groomingInitSnap = groomingInitStore.getSnapshot();
+        const groomingInitGrooming = groomingInitStore.getGrooming();
+        const groomingInitTiredness = groomingInitStore.getTiredness();
         console.log(JSON.stringify({
-          needsGrooming: groomingInitSnap.needs.grooming.needsGrooming,
-          isTired: groomingInitSnap.needs.tiredness.isTired
+          needsGrooming: groomingInitGrooming.needsGrooming,
+          isTired: groomingInitTiredness.isTired
         }));
         """
         payload = run_node(script)
@@ -80,11 +103,13 @@ class TestGroomingTirednessState(unittest.TestCase):
         script = store_import() + """
         const groomResetStore = new DogStateStore();
         const groomResetBefore = groomResetStore.getSnapshot();
+        const groomResetBeforeGrooming = groomResetStore.getGrooming();
         groomResetStore.groom();
         const groomResetAfter = groomResetStore.getSnapshot();
+        const groomResetAfterGrooming = groomResetStore.getGrooming();
         console.log(JSON.stringify({
-          beforeNeedsGrooming: groomResetBefore.needs.grooming.needsGrooming,
-          afterNeedsGrooming: groomResetAfter.needs.grooming.needsGrooming,
+          beforeNeedsGrooming: groomResetBeforeGrooming.needsGrooming,
+          afterNeedsGrooming: groomResetAfterGrooming.needsGrooming,
           hungerBefore: groomResetBefore.needs.hunger,
           hungerAfter: groomResetAfter.needs.hunger
         }));
@@ -106,11 +131,13 @@ class TestGroomingTirednessState(unittest.TestCase):
         script = store_import() + """
         const restResetStore = new DogStateStore();
         const restResetBefore = restResetStore.getSnapshot();
+        const restResetBeforeTiredness = restResetStore.getTiredness();
         restResetStore.rest();
         const restResetAfter = restResetStore.getSnapshot();
+        const restResetAfterTiredness = restResetStore.getTiredness();
         console.log(JSON.stringify({
-          beforeIsTired: restResetBefore.needs.tiredness.isTired,
-          afterIsTired: restResetAfter.needs.tiredness.isTired,
+          beforeIsTired: restResetBeforeTiredness.isTired,
+          afterIsTired: restResetAfterTiredness.isTired,
           groomingBefore: restResetBefore.needs.grooming,
           groomingAfter: restResetAfter.needs.grooming
         }));
@@ -129,48 +156,61 @@ class TestGroomingTirednessState(unittest.TestCase):
         )
 
     def test_custom_metadata_preserved(self):
-        script = store_import() + """
-        const metaStore = new DogStateStore();
+        script = (
+            store_import()
+            + memory_storage_import()
+            + """
+        const metaStorage = makeMemoryStorage();
+        const metaStore = new DogStateStore({ storage: metaStorage });
         const metaSnap = metaStore.getSnapshot();
         metaSnap.customMetadata = { foo: 'bar', count: 42 };
-        // Re-hydrate from the mutated snapshot to simulate persistence.
-        const metaStore2 = new DogStateStore();
-        if (typeof metaStore2.hydrate === 'function') {
-          metaStore2.hydrate(metaSnap);
-        }
+        metaStorage.setItem('dog_state', JSON.stringify(metaSnap));
+
+        // Fresh store loads persisted state, mutates needs, then persists again.
+        const metaStore2 = new DogStateStore({ storage: metaStorage });
         metaStore2.groom();
         metaStore2.rest();
-        const metaAfter = metaStore2.getSnapshot();
+
+        // Fresh reload must still carry the custom metadata.
+        const metaStore3 = new DogStateStore({ storage: metaStorage });
+        const metaAfter = metaStore3.getSnapshot();
         console.log(JSON.stringify({
           customMetadata: metaAfter.customMetadata || null
         }));
         """
+        )
         payload = run_node(script)
-        # If hydrate is unsupported, the store may not carry arbitrary keys;
-        # only assert when the store round-trips them.
-        if payload["customMetadata"] is not None:
-            self.assertEqual(payload["customMetadata"]["foo"], "bar")
-            self.assertEqual(payload["customMetadata"]["count"], 42)
+        self.assertIsNotNone(payload["customMetadata"])
+        self.assertEqual(payload["customMetadata"]["foo"], "bar")
+        self.assertEqual(payload["customMetadata"]["count"], 42)
 
     def test_legacy_state_backfill(self):
-        script = store_import() + """
-        const legacyStore = new DogStateStore();
+        script = (
+            store_import()
+            + memory_storage_import()
+            + """
+        const legacyStorage = makeMemoryStorage();
         const legacyInput = {
           version: 1,
           needs: {
             hunger: { lastCompletedAt: 0, durationMs: 120000 }
           }
         };
-        if (typeof legacyStore.hydrate === 'function') {
-          legacyStore.hydrate(legacyInput);
-        }
+        legacyStorage.setItem('dog_state', JSON.stringify(legacyInput));
+
+        const legacyStore = new DogStateStore({ storage: legacyStorage });
         const legacySnap = legacyStore.getSnapshot();
+        const legacyGrooming = legacyStore.getGrooming();
+        const legacyTiredness = legacyStore.getTiredness();
         console.log(JSON.stringify({
           grooming: legacySnap.needs.grooming,
           tiredness: legacySnap.needs.tiredness,
-          hunger: legacySnap.needs.hunger
+          hunger: legacySnap.needs.hunger,
+          needsGrooming: legacyGrooming.needsGrooming,
+          isTired: legacyTiredness.isTired
         }));
         """
+        )
         payload = run_node(script)
         # New needs backfilled with null timestamps + default durations.
         self.assertIn("grooming", payload)
@@ -179,6 +219,9 @@ class TestGroomingTirednessState(unittest.TestCase):
         self.assertIsNone(payload["tiredness"].get("lastRestedAt"))
         self.assertGreater(payload["grooming"]["durationMs"], 0)
         self.assertGreater(payload["tiredness"]["durationMs"], 0)
+        # Derived booleans are backfilled cleanly (never-groomed/rested => due).
+        self.assertTrue(payload["needsGrooming"])
+        self.assertTrue(payload["isTired"])
         # Hunger preserved verbatim.
         self.assertEqual(payload["hunger"]["durationMs"], 120000)
 

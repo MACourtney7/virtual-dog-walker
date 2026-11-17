@@ -26,6 +26,7 @@ def run_node(script_body: str) -> dict:
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
+        timeout=15,
     )
     if result.returncode != 0:
         raise AssertionError(
@@ -157,16 +158,43 @@ const careLoopFakeCtx = new Proxy({}, {
 @unittest.skipUnless(node_available(), "node is required for these tests")
 class TestCareLoopUI(unittest.TestCase):
     def test_build_dog_entity_has_draw_emote(self):
-        script = DOM_SHIM + """
-        const careLoopDogModule = await import(%s);
-        const careLoopEntity = careLoopDogModule.buildDogEntity
-          ? careLoopDogModule.buildDogEntity()
-          : new careLoopDogModule.CompanionDog();
+        # Import + mount the REAL home_sanctuary.js (which pulls in
+        # companion_dog.js), trigger the hungry animation, and verify the
+        # sanctuary dog carries the hungry emote and that rendering does not
+        # throw a TypeError.
+        script = DOM_SHIM + fake_ctx_shim() + """
+        await import(%s);
+        await import(%s);
+        const careLoopSanctuary = globalThis.HomeSanctuary;
+        careLoopShim.document.registerElement('home-field-canvas');
+        let careLoopThrew = null;
+        let careLoopEmote = null;
+        let careLoopHasDrawEmote = false;
+        try {
+          careLoopSanctuary.mount(
+            careLoopShim.document.getElementById('home-field-canvas'),
+            { id: 'dog-1', name: 'Ziggy' }
+          );
+          careLoopSanctuary.playNeedHungryAnimation();
+          const careLoopDog = careLoopSanctuary.getDog();
+          careLoopEmote = careLoopDog ? careLoopDog.emoteBubble : null;
+          careLoopHasDrawEmote = typeof careLoopDog.drawEmote === 'function';
+          // Exercise the real render path against a fake 2D context.
+          careLoopSanctuary.__testHooks.render();
+        } catch (e) {
+          careLoopThrew = String(e && e.message ? e.message : e);
+        } finally {
+          try { careLoopSanctuary.unmount(); } catch (_e) { /* ignore */ }
+        }
         console.log(JSON.stringify({
-          hasDrawEmote: typeof careLoopEntity.drawEmote === 'function'
+          threw: careLoopThrew,
+          emoteBubble: careLoopEmote,
+          hasDrawEmote: careLoopHasDrawEmote
         }));
-        """ % file_url("src/entities/companion_dog.js")
+        """ % (file_url("src/entities/companion_dog.js"), file_url("src/ui/home_sanctuary.js"))
         payload = run_node(script)
+        self.assertIsNone(payload["threw"], "render threw: %s" % payload["threw"])
+        self.assertEqual(payload["emoteBubble"], "🍖")
         self.assertTrue(payload["hasDrawEmote"])
 
     def test_draw_does_not_throw(self):
@@ -316,13 +344,19 @@ class TestCareLoopUI(unittest.TestCase):
           toast: () => {}
         };
         await import(%s);
-        globalThis.HomeFeeding.mount({ dogStateStore: careLoopMockStore });
-        const careLoopGroomBtn = careLoopShim.document.getElementById('btn-action-groom');
-        const careLoopRestBtn = careLoopShim.document.getElementById('btn-action-rest');
-        const careLoopGroomExists = !!careLoopGroomBtn;
-        const careLoopRestExists = !!careLoopRestBtn;
-        if (careLoopGroomBtn) careLoopGroomBtn.click();
-        if (careLoopRestBtn) careLoopRestBtn.click();
+        let careLoopGroomExists = false;
+        let careLoopRestExists = false;
+        try {
+          globalThis.HomeFeeding.mount({ dogStateStore: careLoopMockStore });
+          const careLoopGroomBtn = careLoopShim.document.getElementById('btn-action-groom');
+          const careLoopRestBtn = careLoopShim.document.getElementById('btn-action-rest');
+          careLoopGroomExists = !!careLoopGroomBtn;
+          careLoopRestExists = !!careLoopRestBtn;
+          if (careLoopGroomBtn) careLoopGroomBtn.click();
+          if (careLoopRestBtn) careLoopRestBtn.click();
+        } finally {
+          try { globalThis.HomeFeeding.unmount(); } catch (_e) { /* ignore */ }
+        }
         console.log(JSON.stringify({
           groomExists: careLoopGroomExists,
           restExists: careLoopRestExists,
@@ -372,21 +406,27 @@ class TestCareLoopUI(unittest.TestCase):
           toast: () => {}
         };
         await import(%s);
-        globalThis.HomeFeeding.mount({ dogStateStore: careLoopReenableStore });
-        const careLoopReGroomBtn = careLoopShim.document.getElementById('btn-action-groom');
-        const careLoopReRestBtn = careLoopShim.document.getElementById('btn-action-rest');
-        const careLoopInitiallyDisabled = {
-          groom: !!(careLoopReGroomBtn && careLoopReGroomBtn.disabled),
-          rest: !!(careLoopReRestBtn && careLoopReRestBtn.disabled)
-        };
-        // Flip the store to "due" and force a refresh.
-        careLoopReenableState.needsGrooming = true;
-        careLoopReenableState.isTired = true;
-        globalThis.HomeFeeding.__testHooks.refreshButtonStates();
-        const careLoopAfterEnabled = {
-          groom: !!(careLoopReGroomBtn && careLoopReGroomBtn.disabled),
-          rest: !!(careLoopReRestBtn && careLoopReRestBtn.disabled)
-        };
+        let careLoopInitiallyDisabled = { groom: false, rest: false };
+        let careLoopAfterEnabled = { groom: true, rest: true };
+        try {
+          globalThis.HomeFeeding.mount({ dogStateStore: careLoopReenableStore });
+          const careLoopReGroomBtn = careLoopShim.document.getElementById('btn-action-groom');
+          const careLoopReRestBtn = careLoopShim.document.getElementById('btn-action-rest');
+          careLoopInitiallyDisabled = {
+            groom: !!(careLoopReGroomBtn && careLoopReGroomBtn.disabled),
+            rest: !!(careLoopReRestBtn && careLoopReRestBtn.disabled)
+          };
+          // Flip the store to "due" and force a refresh.
+          careLoopReenableState.needsGrooming = true;
+          careLoopReenableState.isTired = true;
+          globalThis.HomeFeeding.__testHooks.refreshButtonStates();
+          careLoopAfterEnabled = {
+            groom: !!(careLoopReGroomBtn && careLoopReGroomBtn.disabled),
+            rest: !!(careLoopReRestBtn && careLoopReRestBtn.disabled)
+          };
+        } finally {
+          try { globalThis.HomeFeeding.unmount(); } catch (_e) { /* ignore */ }
+        }
         console.log(JSON.stringify({
           initiallyDisabled: careLoopInitiallyDisabled,
           afterEnabled: careLoopAfterEnabled
@@ -407,15 +447,19 @@ class TestCareLoopUI(unittest.TestCase):
           || careLoopHungrySanctuaryModule.HomeSanctuary
           || globalThis.HomeSanctuary;
         careLoopShim.document.registerElement('home-field-canvas');
-        careLoopHungrySanctuary.mount(careLoopShim.document.getElementById('home-field-canvas'), {
-          id: 'dog-1',
-          name: 'Ziggy'
-        });
-        careLoopHungrySanctuary.playNeedHungryAnimation();
-        const careLoopHungryDog = careLoopHungrySanctuary.getDog();
-        console.log(JSON.stringify({
-          emoteBubble: careLoopHungryDog ? careLoopHungryDog.emoteBubble : null
-        }));
+        let careLoopHungryEmote = null;
+        try {
+          careLoopHungrySanctuary.mount(careLoopShim.document.getElementById('home-field-canvas'), {
+            id: 'dog-1',
+            name: 'Ziggy'
+          });
+          careLoopHungrySanctuary.playNeedHungryAnimation();
+          const careLoopHungryDog = careLoopHungrySanctuary.getDog();
+          careLoopHungryEmote = careLoopHungryDog ? careLoopHungryDog.emoteBubble : null;
+        } finally {
+          try { careLoopHungrySanctuary.unmount(); } catch (_e) { /* ignore */ }
+        }
+        console.log(JSON.stringify({ emoteBubble: careLoopHungryEmote }));
         """ % file_url("src/ui/home_sanctuary.js")
         payload = run_node(script)
         self.assertEqual(payload["emoteBubble"], "🍖")
@@ -521,30 +565,42 @@ class TestCareLoopUI(unittest.TestCase):
           || globalThis.HomeSanctuary;
         // Mount against a registered canvas so the dog is created.
         careLoopShim.document.registerElement('home-field-canvas');
-        careLoopSanctuary.mount(careLoopShim.document.getElementById('home-field-canvas'), {
-          id: 'dog-1',
-          name: 'Ziggy'
-        });
-        const careLoopHooks = careLoopSanctuary.__testHooks;
-        const careLoopDog = careLoopHooks.getDog();
-        const careLoopHasGetDog = typeof careLoopSanctuary.getDog === 'function';
+        let careLoopHasGetDog = false;
+        let careLoopEmoteAfter = null;
+        let careLoopGroomBefore = 0;
+        let careLoopGroomAfter = 0;
+        let careLoopSleepBefore = 0;
+        let careLoopSleepAfter = 0;
+        let careLoopStillGroomed = false;
+        let careLoopStillSleeping = false;
+        try {
+          careLoopSanctuary.mount(careLoopShim.document.getElementById('home-field-canvas'), {
+            id: 'dog-1',
+            name: 'Ziggy'
+          });
+          const careLoopHooks = careLoopSanctuary.__testHooks;
+          const careLoopDog = careLoopHooks.getDog();
+          careLoopHasGetDog = typeof careLoopSanctuary.getDog === 'function';
 
-        // Camera pose: emoteTimer must decrement.
-        careLoopSanctuary.setDogPose('camera');
-        careLoopDog.emoteTimer = 2.0;
-        careLoopHooks.updateDog(500); // 500ms -> 0.5s
-        const careLoopEmoteAfter = careLoopDog.emoteTimer;
+          // Camera pose: emoteTimer must decrement.
+          careLoopSanctuary.setDogPose('camera');
+          careLoopDog.emoteTimer = 2.0;
+          careLoopHooks.updateDog(500); // 500ms -> 0.5s
+          careLoopEmoteAfter = careLoopDog.emoteTimer;
 
-        // Grooming + sleeping must survive a playNeedMetReaction() call.
-        careLoopSanctuary.playGroomingAnimation();
-        careLoopSanctuary.playSleepingAnimation();
-        const careLoopGroomBefore = careLoopDog.groomTimer;
-        const careLoopSleepBefore = careLoopDog.sleepTimer;
-        careLoopSanctuary.playNeedMetReaction();
-        const careLoopGroomAfter = careLoopDog.groomTimer;
-        const careLoopSleepAfter = careLoopDog.sleepTimer;
-        const careLoopStillGroomed = careLoopDog.beingGroomed;
-        const careLoopStillSleeping = careLoopDog.sleeping;
+          // Grooming + sleeping must survive a playNeedMetReaction() call.
+          careLoopSanctuary.playGroomingAnimation();
+          careLoopSanctuary.playSleepingAnimation();
+          careLoopGroomBefore = careLoopDog.groomTimer;
+          careLoopSleepBefore = careLoopDog.sleepTimer;
+          careLoopSanctuary.playNeedMetReaction();
+          careLoopGroomAfter = careLoopDog.groomTimer;
+          careLoopSleepAfter = careLoopDog.sleepTimer;
+          careLoopStillGroomed = careLoopDog.beingGroomed;
+          careLoopStillSleeping = careLoopDog.sleeping;
+        } finally {
+          try { careLoopSanctuary.unmount(); } catch (_e) { /* ignore */ }
+        }
 
         console.log(JSON.stringify({
           hasGetDog: careLoopHasGetDog,
@@ -567,6 +623,91 @@ class TestCareLoopUI(unittest.TestCase):
         self.assertGreaterEqual(payload["sleepAfter"], payload["sleepBefore"])
         self.assertTrue(payload["stillGroomed"])
         self.assertTrue(payload["stillSleeping"])
+
+    def test_feed_button_triggers_need_met_reaction(self):
+        # Feeding via #btn-action-feed must trigger the ❤️ need-met reaction.
+        script = DOM_SHIM + register_canvas_shim() + """
+        const careLoopFeedCalls = { feed: 0, needMet: 0 };
+        const careLoopFeedStore = {
+          getSnapshot: () => ({
+            version: 1,
+            needs: {
+              hunger: { lastFedAt: Date.now(), durationMs: 60000 },
+              grooming: { lastGroomedAt: null, durationMs: 60000 },
+              tiredness: { lastRestedAt: null, durationMs: 60000 }
+            }
+          }),
+          subscribe: () => () => {},
+          feed: () => { careLoopFeedCalls.feed += 1; },
+          groom: () => {},
+          rest: () => {},
+          needsGrooming: () => false,
+          isTired: () => false
+        };
+        globalThis.__vdwDogStateStore = careLoopFeedStore;
+        globalThis.HomeSanctuary = {
+          getDogSlot: () => ({ id: 'dog-1', name: 'Ziggy' }),
+          getCompanionDog: () => null,
+          setDogPose: () => {},
+          setDogState: () => {},
+          playGroomingAnimation: () => {},
+          playSleepingAnimation: () => {},
+          playNeedMetReaction: () => { careLoopFeedCalls.needMet += 1; },
+          toast: () => {}
+        };
+        await import(%s);
+        let careLoopFeedExists = false;
+        try {
+          globalThis.HomeFeeding.mount({ dogStateStore: careLoopFeedStore });
+          const careLoopFeedBtn = careLoopShim.document.getElementById('btn-action-feed');
+          careLoopFeedExists = !!careLoopFeedBtn;
+          if (careLoopFeedBtn) careLoopFeedBtn.click();
+        } finally {
+          try { globalThis.HomeFeeding.unmount(); } catch (_e) { /* ignore */ }
+        }
+        console.log(JSON.stringify({
+          feedExists: careLoopFeedExists,
+          calls: careLoopFeedCalls
+        }));
+        """ % file_url("src/ui/home_feeding.js")
+        payload = run_node(script)
+        self.assertTrue(payload["feedExists"], "#btn-action-feed missing")
+        self.assertEqual(payload["calls"]["feed"], 1)
+        self.assertGreaterEqual(payload["calls"]["needMet"], 1)
+
+    def test_animator_tick_triggers_tiredness_only(self):
+        # When not hungry and not needing grooming, a tired dog must trigger
+        # playNeedRestAnimation().
+        script = DOM_SHIM + """
+        const careLoopTiredModule = await import(%s);
+        const careLoopTiredCalls = { hungry: 0, grooming: 0, tired: 0 };
+        const careLoopTiredDog = {
+          setHunger: () => {},
+          setGrooming: () => {},
+          setTiredness: () => {},
+          playHungryAnimation: () => { careLoopTiredCalls.hungry += 1; },
+          playNeedGroomingAnimation: () => { careLoopTiredCalls.grooming += 1; },
+          playNeedRestAnimation: () => { careLoopTiredCalls.tired += 1; },
+          getEmoteTimer: () => 0
+        };
+        const careLoopTiredStore = {
+          getHunger: () => ({ isHungry: false }),
+          getGrooming: () => ({ needsGrooming: false }),
+          getTiredness: () => ({ isTired: true })
+        };
+        const careLoopTiredAnimator = new careLoopTiredModule.HomeHungerAnimator({
+          dogStateStore: careLoopTiredStore,
+          dog: careLoopTiredDog,
+          animationIntervalMs: 1000,
+          now: () => 5000
+        });
+        careLoopTiredAnimator.tick(5000);
+        console.log(JSON.stringify({ calls: careLoopTiredCalls }));
+        """ % file_url("src/ui/home_hunger_animator.js")
+        payload = run_node(script)
+        self.assertEqual(payload["calls"]["tired"], 1)
+        self.assertEqual(payload["calls"]["hungry"], 0)
+        self.assertEqual(payload["calls"]["grooming"], 0)
 
 
 if __name__ == "__main__":

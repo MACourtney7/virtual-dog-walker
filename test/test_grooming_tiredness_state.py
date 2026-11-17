@@ -6,12 +6,17 @@ that top-level identifiers never collide across scenarios.
 """
 import json
 import os
+import shutil
 import subprocess
 import textwrap
 import unittest
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 STORE_MODULE = os.path.join(REPO_ROOT, "src", "state", "dog_state_store.js")
+
+
+def node_available():
+    return shutil.which("node") is not None
 
 
 def run_node(script_body: str) -> dict:
@@ -41,6 +46,7 @@ def store_import() -> str:
     return "import { DogStateStore } from %s;" % json.dumps("file://" + STORE_MODULE)
 
 
+@unittest.skipUnless(node_available(), "node is required for these tests")
 class TestGroomingTirednessState(unittest.TestCase):
     def test_initial_durations(self):
         script = store_import() + """

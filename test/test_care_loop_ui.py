@@ -6,11 +6,16 @@ that top-level identifiers never collide across scenarios.
 """
 import json
 import os
+import shutil
 import subprocess
 import textwrap
 import unittest
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def node_available():
+    return shutil.which("node") is not None
 
 
 def run_node(script_body: str) -> dict:
@@ -136,6 +141,7 @@ const careLoopFakeCtx = new Proxy({}, {
 """
 
 
+@unittest.skipUnless(node_available(), "node is required for these tests")
 class TestCareLoopUI(unittest.TestCase):
     def test_build_dog_entity_has_draw_emote(self):
         script = DOM_SHIM + """

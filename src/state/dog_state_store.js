@@ -40,17 +40,21 @@ function defaultStorage() {
 }
 
 function isValidState(state) {
-  return Boolean(
+  if (!(
     state &&
     typeof state === 'object' &&
     state.version === 1 &&
     state.needs &&
     typeof state.needs === 'object' &&
     state.needs.hunger &&
-    typeof state.needs.hunger === 'object' &&
-    typeof state.needs.hunger.lastFedAt === 'number' &&
-    Number.isFinite(state.needs.hunger.lastFedAt)
-  );
+    typeof state.needs.hunger === 'object'
+  )) {
+    return false;
+  }
+  const hunger = state.needs.hunger;
+  const hasLastFedAt = typeof hunger.lastFedAt === 'number' && Number.isFinite(hunger.lastFedAt);
+  const hasLastCompletedAt = typeof hunger.lastCompletedAt === 'number' && Number.isFinite(hunger.lastCompletedAt);
+  return hasLastFedAt || hasLastCompletedAt;
 }
 
 // Backfill grooming/tiredness needs on a hydrated state without touching
@@ -94,11 +98,19 @@ function backfillNeeds(state) {
     }
   }
 
-  // Mirror lastFedAt -> lastCompletedAt for legacy states.
-  if (needs.hunger && typeof needs.hunger === 'object' &&
-      needs.hunger.lastCompletedAt === undefined &&
-      typeof needs.hunger.lastFedAt === 'number') {
-    needs.hunger.lastCompletedAt = needs.hunger.lastFedAt;
+  // Mirror lastFedAt <-> lastCompletedAt so both fields are always present
+  // and consistent, regardless of which one the persisted state carried.
+  if (needs.hunger && typeof needs.hunger === 'object') {
+    const hasLastFedAt = typeof needs.hunger.lastFedAt === 'number' &&
+      Number.isFinite(needs.hunger.lastFedAt);
+    const hasLastCompletedAt = typeof needs.hunger.lastCompletedAt === 'number' &&
+      Number.isFinite(needs.hunger.lastCompletedAt);
+
+    if (!hasLastFedAt && hasLastCompletedAt) {
+      needs.hunger.lastFedAt = needs.hunger.lastCompletedAt;
+    } else if (hasLastFedAt && !hasLastCompletedAt) {
+      needs.hunger.lastCompletedAt = needs.hunger.lastFedAt;
+    }
   }
 
   return state;
@@ -191,7 +203,11 @@ export class DogStateStore {
 
   getHunger(nowMs = this._now()) {
     const hunger = this._state.needs.hunger;
-    const lastFedAt = hunger.lastFedAt;
+    const lastFedAt = typeof hunger.lastFedAt === 'number' && Number.isFinite(hunger.lastFedAt)
+      ? hunger.lastFedAt
+      : (typeof hunger.lastCompletedAt === 'number' && Number.isFinite(hunger.lastCompletedAt)
+        ? hunger.lastCompletedAt
+        : 0);
     const durationMs = hunger.durationMs;
     const elapsedMs = Math.max(0, nowMs - lastFedAt);
     const remainingMs = Math.max(0, durationMs - elapsedMs);

@@ -7624,6 +7624,58 @@ export class CompanionDog {
     this.emoteTimer = duration;
   }
 
+  // --- Prototype animation hooks (home view / hunger / grooming / rest) ---
+  // These are intentionally plain-field setters so they resolve on the
+  // prototype and work for Object.create(CompanionDog.prototype) entities.
+
+  setGroomingState(state) {
+    this.grooming = Boolean(state);
+    return this.grooming;
+  }
+
+  playNeedGroomingAnimation(durationMs = 3000) {
+    this.emoteBubble = '🫧';
+    this.emoteTimer = durationMs / 1000;
+    return true;
+  }
+
+  playGroomingAnimation(durationMs = 3000) {
+    this.beingGroomed = true;
+    this.emoteBubble = '🫧';
+    this.emoteTimer = durationMs / 1000;
+    this.pose = 'groomed';
+    return true;
+  }
+
+  setTirednessState(state) {
+    this.tired = Boolean(state);
+    return this.tired;
+  }
+
+  playNeedRestAnimation(durationMs = 3000) {
+    this.emoteBubble = '💤';
+    this.emoteTimer = durationMs / 1000;
+    return true;
+  }
+
+  playSleepingAnimation(durationMs = 5000) {
+    this.sleeping = true;
+    this.pose = 'sleeping';
+    this.emoteTimer = durationMs / 1000;
+    return true;
+  }
+
+  playNeedMetReaction(durationMs = 2000) {
+    this.emoteBubble = '❤️';
+    this.emoteTimer = durationMs / 1000;
+    return true;
+  }
+
+  playHungryAnimation(durationMs = 3000) {
+    this.setEmote('🍖', durationMs / 1000);
+    return true;
+  }
+
   onRemoteBark(sourceDog = null) {
     const respondChance = 0.18 * this.personality.barkyness;
     if (Math.random() < respondChance && !this.isBarking && this.state !== DogState.FETCHING) {
@@ -8216,7 +8268,17 @@ export class CompanionDog {
     // 7. Emote Timers & Particles
     if (this.emoteTimer > 0) {
       this.emoteTimer -= dt;
-      if (this.emoteTimer <= 0) this.emoteBubble = null;
+      if (this.emoteTimer <= 0) {
+        this.emoteTimer = 0;
+        this.emoteBubble = null;
+        // Drop transient animation flags and reset pose, but never clobber
+        // a long-lived pose such as 'camera'.
+        this.beingGroomed = false;
+        this.sleeping = false;
+        if (this.pose !== 'camera') {
+          this.pose = 'idle';
+        }
+      }
     }
 
     // Update hearts
@@ -10330,9 +10392,12 @@ export class CompanionDog {
       ctx.restore();
     }
 
-    // 6. Emote Bubble
+    // 6. Emote Bubble (only when truthy; safe for plain-object `this`)
     if (this.emoteBubble) {
-      this.drawEmote(ctx, this.emoteBubble);
+      const drawEmoteFn = typeof this.drawEmote === 'function'
+        ? this.drawEmote
+        : CompanionDog.prototype.drawEmote;
+      drawEmoteFn.call(this, ctx, this.emoteBubble);
     }
 
     // 7. Floating Dog Name Tag (world coordinates, below the dog)
@@ -10438,30 +10503,51 @@ export class CompanionDog {
     ctx.restore();
   }
 
+  // Instantiation-proof emote bubble renderer. Reads only plain fields
+  // (x, y, scale, emoteScale) so it is safe to invoke via
+  // CompanionDog.prototype.drawEmote.call(plainEntity, ctx, emote).
   drawEmote(ctx, emote) {
+    if (!ctx || !emote) return;
+    const x = typeof this.x === 'number' ? this.x : 0;
+    const y = typeof this.y === 'number' ? this.y : 0;
+    const scale = (typeof this.emoteScale === 'number' && this.emoteScale > 0)
+      ? this.emoteScale
+      : ((typeof this.scale === 'number' && this.scale > 0) ? this.scale : 1);
+    const text = String(emote);
+
     ctx.save();
-    const bx = this.x - 14;
-    const by = this.y - 38;
+    if (typeof ctx.translate === 'function' && scale !== 1) {
+      ctx.translate(x, y);
+      ctx.scale(scale, scale);
+      ctx.translate(-x, -y);
+    }
+
+    const bx = x - 14;
+    const by = y - 38;
 
     ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
     ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
     ctx.shadowBlur = 6;
     ctx.beginPath();
-    ctx.roundRect(bx, by, 28, 22, 6);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(bx, by, 28, 22, 6);
+    } else {
+      ctx.rect(bx, by, 28, 22);
+    }
     ctx.fill();
 
     // Pointer
     ctx.beginPath();
-    ctx.moveTo(this.x - 3, by + 22);
-    ctx.lineTo(this.x, by + 26);
-    ctx.lineTo(this.x + 3, by + 22);
+    ctx.moveTo(x - 3, by + 22);
+    ctx.lineTo(x, by + 26);
+    ctx.lineTo(x + 3, by + 22);
     ctx.fill();
 
     ctx.shadowBlur = 0;
-    ctx.font = emote.length > 2 ? 'bold 10px Outfit, sans-serif' : '14px serif';
+    ctx.font = text.length > 2 ? 'bold 10px Outfit, sans-serif' : '14px serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#0f172a';
-    ctx.fillText(emote, this.x, by + 15);
+    ctx.fillText(text, x, by + 15);
     ctx.restore();
   }
 }
@@ -18431,6 +18517,8 @@ export class ZeroMeshNetworkManager {
 
 export const DOG_STATE_STORAGE_KEY = 'virtual_dog_walker.dog_state.v1';
 export const DEFAULT_HUNGER_DURATION_MS = 120000; // 2 minutes
+export const DEFAULT_GROOMING_DURATION_MS = 180000; // 3 minutes
+export const DEFAULT_TIREDNESS_DURATION_MS = 180000; // 3 minutes
 export const DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = 5000; // 5 seconds
 
 export function createInitialDogState(nowMs = Date.now(), hungerDurationMs = DEFAULT_HUNGER_DURATION_MS) {
@@ -18439,7 +18527,16 @@ export function createInitialDogState(nowMs = Date.now(), hungerDurationMs = DEF
     needs: {
       hunger: {
         lastFedAt: nowMs,
+        lastCompletedAt: nowMs,
         durationMs: hungerDurationMs
+      },
+      grooming: {
+        lastGroomedAt: null,
+        durationMs: DEFAULT_GROOMING_DURATION_MS
+      },
+      tiredness: {
+        lastRestedAt: null,
+        durationMs: DEFAULT_TIREDNESS_DURATION_MS
       }
     }
   };
@@ -18457,17 +18554,80 @@ function defaultStorage() {
 }
 
 function isValidState(state) {
-  return Boolean(
+  if (!(
     state &&
     typeof state === 'object' &&
     state.version === 1 &&
     state.needs &&
     typeof state.needs === 'object' &&
     state.needs.hunger &&
-    typeof state.needs.hunger === 'object' &&
-    typeof state.needs.hunger.lastFedAt === 'number' &&
-    Number.isFinite(state.needs.hunger.lastFedAt)
-  );
+    typeof state.needs.hunger === 'object'
+  )) {
+    return false;
+  }
+  const hunger = state.needs.hunger;
+  const hasLastFedAt = typeof hunger.lastFedAt === 'number' && Number.isFinite(hunger.lastFedAt);
+  const hasLastCompletedAt = typeof hunger.lastCompletedAt === 'number' && Number.isFinite(hunger.lastCompletedAt);
+  return hasLastFedAt || hasLastCompletedAt;
+}
+
+// Backfill grooming/tiredness needs on a hydrated state without touching
+// existing needs.hunger. Preserves any custom top-level metadata keys.
+function backfillNeeds(state) {
+  if (!state || typeof state !== 'object') return state;
+  if (!state.needs || typeof state.needs !== 'object') {
+    state.needs = {};
+  }
+  var needs = state.needs;
+
+  if (!needs.grooming || typeof needs.grooming !== 'object') {
+    needs.grooming = {
+      lastGroomedAt: null,
+      durationMs: DEFAULT_GROOMING_DURATION_MS
+    };
+  } else {
+    if (needs.grooming.lastGroomedAt === undefined) {
+      needs.grooming.lastGroomedAt = null;
+    }
+    if (typeof needs.grooming.durationMs !== 'number' ||
+        !Number.isFinite(needs.grooming.durationMs) ||
+        needs.grooming.durationMs <= 0) {
+      needs.grooming.durationMs = DEFAULT_GROOMING_DURATION_MS;
+    }
+  }
+
+  if (!needs.tiredness || typeof needs.tiredness !== 'object') {
+    needs.tiredness = {
+      lastRestedAt: null,
+      durationMs: DEFAULT_TIREDNESS_DURATION_MS
+    };
+  } else {
+    if (needs.tiredness.lastRestedAt === undefined) {
+      needs.tiredness.lastRestedAt = null;
+    }
+    if (typeof needs.tiredness.durationMs !== 'number' ||
+        !Number.isFinite(needs.tiredness.durationMs) ||
+        needs.tiredness.durationMs <= 0) {
+      needs.tiredness.durationMs = DEFAULT_TIREDNESS_DURATION_MS;
+    }
+  }
+
+  // Mirror lastFedAt <-> lastCompletedAt so both fields are always present
+  // and consistent, regardless of which one the persisted state carried.
+  if (needs.hunger && typeof needs.hunger === 'object') {
+    const hasLastFedAt = typeof needs.hunger.lastFedAt === 'number' &&
+      Number.isFinite(needs.hunger.lastFedAt);
+    const hasLastCompletedAt = typeof needs.hunger.lastCompletedAt === 'number' &&
+      Number.isFinite(needs.hunger.lastCompletedAt);
+
+    if (!hasLastFedAt && hasLastCompletedAt) {
+      needs.hunger.lastFedAt = needs.hunger.lastCompletedAt;
+    } else if (hasLastFedAt && !hasLastCompletedAt) {
+      needs.hunger.lastCompletedAt = needs.hunger.lastFedAt;
+    }
+  }
+
+  return state;
 }
 
 export class DogStateStore {
@@ -18508,13 +18668,22 @@ export class DogStateStore {
             this._persist(initial);
             return initial;
           }
-          // Strip any stale persisted `isHungry` field: it must always be
-          // derived from lastFedAt/durationMs, never trusted from storage.
+          // Strip any stale persisted derived boolean mirrors: they must
+          // always be derived from timestamps/durationMs, never trusted
+          // from storage.
           if (parsed.needs.hunger &&
               Object.prototype.hasOwnProperty.call(parsed.needs.hunger, 'isHungry')) {
             delete parsed.needs.hunger.isHungry;
           }
-          return parsed;
+          if (parsed.needs.grooming &&
+              Object.prototype.hasOwnProperty.call(parsed.needs.grooming, 'needsGrooming')) {
+            delete parsed.needs.grooming.needsGrooming;
+          }
+          if (parsed.needs.tiredness &&
+              Object.prototype.hasOwnProperty.call(parsed.needs.tiredness, 'isTired')) {
+            delete parsed.needs.tiredness.isTired;
+          }
+          return backfillNeeds(parsed);
         }
       } catch (_e) {
         // Corrupt JSON: fall through to reset.
@@ -18548,7 +18717,11 @@ export class DogStateStore {
 
   getHunger(nowMs = this._now()) {
     const hunger = this._state.needs.hunger;
-    const lastFedAt = hunger.lastFedAt;
+    const lastFedAt = typeof hunger.lastFedAt === 'number' && Number.isFinite(hunger.lastFedAt)
+      ? hunger.lastFedAt
+      : (typeof hunger.lastCompletedAt === 'number' && Number.isFinite(hunger.lastCompletedAt)
+        ? hunger.lastCompletedAt
+        : 0);
     const durationMs = hunger.durationMs;
     const elapsedMs = Math.max(0, nowMs - lastFedAt);
     const remainingMs = Math.max(0, durationMs - elapsedMs);
@@ -18574,19 +18747,108 @@ export class DogStateStore {
     return this.getHunger(nowMs).isHungry;
   }
 
+  getGrooming(nowMs = this._now()) {
+    const grooming = (this._state.needs && this._state.needs.grooming) || {};
+    const lastGroomedAt = typeof grooming.lastGroomedAt === 'number' ? grooming.lastGroomedAt : null;
+    const durationMs = Number.isFinite(grooming.durationMs) && grooming.durationMs > 0
+      ? grooming.durationMs
+      : DEFAULT_GROOMING_DURATION_MS;
+    const needsGrooming = lastGroomedAt === null || (nowMs - lastGroomedAt) >= durationMs;
+    const elapsedMs = lastGroomedAt === null ? null : Math.max(0, nowMs - lastGroomedAt);
+    const remainingMs = lastGroomedAt === null ? 0 : Math.max(0, durationMs - elapsedMs);
+    return { lastGroomedAt, durationMs, elapsedMs, remainingMs, needsGrooming };
+  }
+
+  needsGrooming(nowMs = this._now()) {
+    return this.getGrooming(nowMs).needsGrooming;
+  }
+
+  getTiredness(nowMs = this._now()) {
+    const tiredness = (this._state.needs && this._state.needs.tiredness) || {};
+    const lastRestedAt = typeof tiredness.lastRestedAt === 'number' ? tiredness.lastRestedAt : null;
+    const durationMs = Number.isFinite(tiredness.durationMs) && tiredness.durationMs > 0
+      ? tiredness.durationMs
+      : DEFAULT_TIREDNESS_DURATION_MS;
+    const isTired = lastRestedAt === null || (nowMs - lastRestedAt) >= durationMs;
+    const elapsedMs = lastRestedAt === null ? null : Math.max(0, nowMs - lastRestedAt);
+    const remainingMs = lastRestedAt === null ? 0 : Math.max(0, durationMs - elapsedMs);
+    return { lastRestedAt, durationMs, elapsedMs, remainingMs, isTired };
+  }
+
+  isTired(nowMs = this._now()) {
+    return this.getTiredness(nowMs).isTired;
+  }
+
+  // Snapshot of all needs with derived flags. Never persisted.
+  getNeeds(nowMs = this._now()) {
+    return {
+      hunger: this.getHunger(nowMs),
+      grooming: this.getGrooming(nowMs),
+      tiredness: this.getTiredness(nowMs)
+    };
+  }
+
   feed(nowMs = this._now()) {
     const existingNeeds = (this._state && this._state.needs) || {};
     const existingHunger = existingNeeds.hunger || {};
     this._state = {
+      ...this._state,
       version: 1,
       needs: {
         ...existingNeeds,
         hunger: {
           ...existingHunger,
           lastFedAt: nowMs,
+          lastCompletedAt: nowMs,
           durationMs: Number.isFinite(existingHunger.durationMs) && existingHunger.durationMs > 0
             ? existingHunger.durationMs
             : this._hungerDurationMs
+        }
+      }
+    };
+    this._persist(this._state);
+    const snapshot = this.getSnapshot(nowMs);
+    this._notify(snapshot);
+    return snapshot;
+  }
+
+  groom(nowMs = this._now()) {
+    const existingNeeds = (this._state && this._state.needs) || {};
+    const existingGrooming = existingNeeds.grooming || {};
+    this._state = {
+      ...this._state,
+      version: 1,
+      needs: {
+        ...existingNeeds,
+        grooming: {
+          ...existingGrooming,
+          lastGroomedAt: nowMs,
+          durationMs: Number.isFinite(existingGrooming.durationMs) && existingGrooming.durationMs > 0
+            ? existingGrooming.durationMs
+            : DEFAULT_GROOMING_DURATION_MS
+        }
+      }
+    };
+    this._persist(this._state);
+    const snapshot = this.getSnapshot(nowMs);
+    this._notify(snapshot);
+    return snapshot;
+  }
+
+  rest(nowMs = this._now()) {
+    const existingNeeds = (this._state && this._state.needs) || {};
+    const existingTiredness = existingNeeds.tiredness || {};
+    this._state = {
+      ...this._state,
+      version: 1,
+      needs: {
+        ...existingNeeds,
+        tiredness: {
+          ...existingTiredness,
+          lastRestedAt: nowMs,
+          durationMs: Number.isFinite(existingTiredness.durationMs) && existingTiredness.durationMs > 0
+            ? existingTiredness.durationMs
+            : DEFAULT_TIREDNESS_DURATION_MS
         }
       }
     };
@@ -18600,10 +18862,13 @@ export class DogStateStore {
     const existingNeeds = (this._state && this._state.needs) || {};
     const initial = createInitialDogState(nowMs, this._hungerDurationMs);
     this._state = {
+      ...this._state,
       version: 1,
       needs: {
         ...existingNeeds,
-        hunger: initial.needs.hunger
+        hunger: initial.needs.hunger,
+        grooming: initial.needs.grooming,
+        tiredness: initial.needs.tiredness
       }
     };
     this._persist(this._state);
@@ -18628,6 +18893,8 @@ if (typeof globalThis !== 'undefined') {
   globalThis.createInitialDogState = createInitialDogState;
   globalThis.DOG_STATE_STORAGE_KEY = DOG_STATE_STORAGE_KEY;
   globalThis.DEFAULT_HUNGER_DURATION_MS = DEFAULT_HUNGER_DURATION_MS;
+  globalThis.DEFAULT_GROOMING_DURATION_MS = DEFAULT_GROOMING_DURATION_MS;
+  globalThis.DEFAULT_TIREDNESS_DURATION_MS = DEFAULT_TIREDNESS_DURATION_MS;
   globalThis.DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS;
 }
 ```
@@ -21586,6 +21853,17 @@ export default weatherClient;
   var timers = [];
   var actionBarEl = null;
   var feedBtnEl = null;
+  var groomBtnEl = null;
+  var restBtnEl = null;
+  var storeUnsubscribe = null;
+  // Periodic refresh so groom/rest buttons re-enable when timers expire.
+  var refreshIntervalId = null;
+  var REFRESH_INTERVAL_MS = 1000;
+  // Per-action dedup tokens so each action's side effects run at most once.
+  var groomToken = 0;
+  var committedGroomToken = -1;
+  var restToken = 0;
+  var committedRestToken = -1;
   var lastFeedAt = null;
   var pendingResolve = null;
   var dogStateStore = null;
@@ -21741,6 +22019,26 @@ export default weatherClient;
     }
   }
 
+  // Invoke a named method on HomeSanctuary, then fall back to the companion
+  // dog. Best-effort: never throws.
+  function invokeSanctuaryOrDog(methodName) {
+    if (root.HomeSanctuary && typeof root.HomeSanctuary[methodName] === 'function') {
+      try { root.HomeSanctuary[methodName](); return true; } catch (e) { /* fall through */ }
+    }
+    var dog = resolveCompanionDog();
+    if (dog && typeof dog[methodName] === 'function') {
+      try { dog[methodName](); return true; } catch (e) { /* ignore */ }
+    }
+    return false;
+  }
+
+  // Play the "need met" heart reaction (sanctuary first, then dog).
+  function playNeedMetReaction() {
+    if (invokeSanctuaryOrDog('playNeedMetReaction')) return true;
+    // Fall back to the feed reaction as a heart emote.
+    return invokeSanctuaryOrDog('playFeedReaction');
+  }
+
   // Commit the side effects of a feed exactly once per feed token.
   function commitFeed(token, dogId) {
     if (token === committedFeedToken) return false;
@@ -21748,6 +22046,33 @@ export default weatherClient;
     persistFeed(dogId);
     resetHungerTimer();
     triggerFeedReaction();
+    playNeedMetReaction();
+    return true;
+  }
+
+  // Commit groom side effects exactly once per token.
+  function commitGroom(token) {
+    if (token === committedGroomToken) return false;
+    committedGroomToken = token;
+    var store = resolveDogStateStore();
+    if (store && typeof store.groom === 'function') {
+      try { store.groom(); } catch (e) { /* ignore */ }
+    }
+    invokeSanctuaryOrDog('playGroomingAnimation');
+    playNeedMetReaction();
+    return true;
+  }
+
+  // Commit rest side effects exactly once per token.
+  function commitRest(token) {
+    if (token === committedRestToken) return false;
+    committedRestToken = token;
+    var store = resolveDogStateStore();
+    if (store && typeof store.rest === 'function') {
+      try { store.rest(); } catch (e) { /* ignore */ }
+    }
+    invokeSanctuaryOrDog('playSleepingAnimation');
+    playNeedMetReaction();
     return true;
   }
 
@@ -21837,11 +22162,108 @@ export default weatherClient;
     return feedBtnEl;
   }
 
+  function ensureGroomButton() {
+    var bar = ensureActionBar();
+    groomBtnEl = document.getElementById('btn-action-groom');
+    if (!groomBtnEl) {
+      groomBtnEl = document.createElement('button');
+      groomBtnEl.id = 'btn-action-groom';
+      groomBtnEl.type = 'button';
+      groomBtnEl.className = 'btn-action btn-action-groom';
+      groomBtnEl.textContent = 'Groom';
+      bar.appendChild(groomBtnEl);
+    }
+    if (!groomBtnEl.__homeFeedingBound) {
+      groomBtnEl.addEventListener('click', onGroomClick);
+      groomBtnEl.__homeFeedingBound = true;
+    }
+    return groomBtnEl;
+  }
+
+  function ensureRestButton() {
+    var bar = ensureActionBar();
+    restBtnEl = document.getElementById('btn-action-rest');
+    if (!restBtnEl) {
+      restBtnEl = document.createElement('button');
+      restBtnEl.id = 'btn-action-rest';
+      restBtnEl.type = 'button';
+      restBtnEl.className = 'btn-action btn-action-rest';
+      restBtnEl.textContent = 'Rest';
+      bar.appendChild(restBtnEl);
+    }
+    if (!restBtnEl.__homeFeedingBound) {
+      restBtnEl.addEventListener('click', onRestClick);
+      restBtnEl.__homeFeedingBound = true;
+    }
+    return restBtnEl;
+  }
+
+  function setButtonDisabled(btn, disabled) {
+    if (!btn) return;
+    btn.disabled = !!disabled;
+    btn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+  }
+
   function updateDisabledState() {
-    if (!feedBtnEl) return;
-    var disabled = getDogSlot() === null || !getCanvas();
-    feedBtnEl.disabled = !!disabled;
-    feedBtnEl.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    var noDog = getDogSlot() === null || !getCanvas();
+    setButtonDisabled(feedBtnEl, noDog);
+
+    var store = resolveDogStateStore();
+    var groomDisabled = noDog;
+    var restDisabled = noDog;
+    if (store) {
+      if (typeof store.needsGrooming === 'function') {
+        try { groomDisabled = noDog || !store.needsGrooming(); } catch (e) { /* ignore */ }
+      }
+      if (typeof store.isTired === 'function') {
+        try { restDisabled = noDog || !store.isTired(); } catch (e) { /* ignore */ }
+      }
+    }
+    setButtonDisabled(groomBtnEl, groomDisabled);
+    setButtonDisabled(restBtnEl, restDisabled);
+  }
+
+  // Subscribe to the store so button readiness refreshes on state changes.
+  function subscribeToStore() {
+    if (storeUnsubscribe) return;
+    var store = resolveDogStateStore();
+    if (!store || typeof store.subscribe !== 'function') return;
+    try {
+      var unsub = store.subscribe(function () { updateDisabledState(); });
+      if (typeof unsub === 'function') {
+        storeUnsubscribe = unsub;
+      } else {
+        storeUnsubscribe = function () {};
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  function unsubscribeFromStore() {
+    if (storeUnsubscribe) {
+      try { storeUnsubscribe(); } catch (e) { /* ignore */ }
+      storeUnsubscribe = null;
+    }
+  }
+
+  // Re-evaluate button readiness. Called on store changes and on a periodic
+  // interval so groom/rest re-enable as soon as their timers expire.
+  function refreshButtonStates() {
+    updateDisabledState();
+  }
+
+  function startRefreshInterval() {
+    if (refreshIntervalId !== null) return;
+    if (typeof setInterval !== 'function') return;
+    refreshIntervalId = setInterval(refreshButtonStates, REFRESH_INTERVAL_MS);
+  }
+
+  function stopRefreshInterval() {
+    if (refreshIntervalId !== null) {
+      try { clearInterval(refreshIntervalId); } catch (e) { /* ignore */ }
+      refreshIntervalId = null;
+    }
   }
 
   // The food bowl is rendered natively on the canvas by
@@ -21942,6 +22364,20 @@ export default weatherClient;
     runFeed({ dogName: name, dogId: id });
   }
 
+  function onGroomClick() {
+    if (groomBtnEl && groomBtnEl.disabled) return;
+    groomToken += 1;
+    commitGroom(groomToken);
+    updateDisabledState();
+  }
+
+  function onRestClick() {
+    if (restBtnEl && restBtnEl.disabled) return;
+    restToken += 1;
+    commitRest(restToken);
+    updateDisabledState();
+  }
+
   // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
@@ -21964,7 +22400,11 @@ export default weatherClient;
     lastFeedAt = readLastFeedAt();
     ensureActionBar();
     ensureFeedButton();
+    ensureGroomButton();
+    ensureRestButton();
+    subscribeToStore();
     updateDisabledState();
+    startRefreshInterval();
   }
 
   function unmount() {
@@ -21979,9 +22419,19 @@ export default weatherClient;
       pendingResolve = null;
       try { r(); } catch (e) { /* ignore */ }
     }
+    unsubscribeFromStore();
+    stopRefreshInterval();
     if (feedBtnEl && feedBtnEl.__homeFeedingBound) {
       feedBtnEl.removeEventListener('click', onFeedClick);
       feedBtnEl.__homeFeedingBound = false;
+    }
+    if (groomBtnEl && groomBtnEl.__homeFeedingBound) {
+      groomBtnEl.removeEventListener('click', onGroomClick);
+      groomBtnEl.__homeFeedingBound = false;
+    }
+    if (restBtnEl && restBtnEl.__homeFeedingBound) {
+      restBtnEl.removeEventListener('click', onRestClick);
+      restBtnEl.__homeFeedingBound = false;
     }
     // Preserve the #home-action-bar container in the DOM; only clear its
     // children so a subsequent mount() can re-populate it in place.
@@ -21989,6 +22439,8 @@ export default weatherClient;
       actionBarEl.innerHTML = '';
     }
     feedBtnEl = null;
+    groomBtnEl = null;
+    restBtnEl = null;
     actionBarEl = null;
     injectedDog = null;
   }
@@ -22046,6 +22498,17 @@ export default weatherClient;
     simulateFeed: simulateFeed,
     runFeed: runFeed,
     onFeedClick: onFeedClick,
+    onGroomClick: onGroomClick,
+    onRestClick: onRestClick,
+    commitGroom: commitGroom,
+    commitRest: commitRest,
+    updateDisabledState: updateDisabledState,
+    refreshButtonStates: refreshButtonStates,
+    startRefreshInterval: startRefreshInterval,
+    stopRefreshInterval: stopRefreshInterval,
+    getRefreshIntervalId: function () {
+      return refreshIntervalId;
+    },
     getLastFeedAt: function () {
       return readLastFeedAt();
     },
@@ -22145,7 +22608,7 @@ export class HomeHungerAnimator {
   }
 
   /**
-   * Evaluate hunger once and trigger the hungry animation as needed.
+   * Evaluate needs once and trigger a single need animation as needed.
    * @param {number} [nowMs] - Current time in epoch ms.
    */
   tick(nowMs = this._now()) {
@@ -22161,44 +22624,111 @@ export class HomeHungerAnimator {
       return;
     }
 
-    const dog = this._dog;
-    if (dog && typeof dog.setHunger === 'function') {
+    let groomingInfo;
+    if (typeof store.getGrooming === 'function') {
       try {
-        dog.setHunger(hungerInfo);
+        groomingInfo = store.getGrooming(nowMs);
       } catch (_err) {
-        // A throwing dog hook must never break the animation loop.
+        groomingInfo = undefined;
       }
     }
 
-    if (!hungerInfo || !hungerInfo.isHungry) {
+    let tirednessInfo;
+    if (typeof store.getTiredness === 'function') {
+      try {
+        tirednessInfo = store.getTiredness(nowMs);
+      } catch (_err) {
+        tirednessInfo = undefined;
+      }
+    }
+
+    const dog = this._dog;
+    if (dog) {
+      if (typeof dog.setHunger === 'function') {
+        try {
+          dog.setHunger(hungerInfo);
+        } catch (_err) {
+          // A throwing dog hook must never break the animation loop.
+        }
+      }
+      if (typeof dog.setGroomingState === 'function') {
+        try {
+          dog.setGroomingState(groomingInfo);
+        } catch (_err) {
+          // A throwing dog hook must never break the animation loop.
+        }
+      } else if (typeof dog.setGrooming === 'function') {
+        try {
+          dog.setGrooming(groomingInfo);
+        } catch (_err) {
+          // A throwing dog hook must never break the animation loop.
+        }
+      }
+      if (typeof dog.setTirednessState === 'function') {
+        try {
+          dog.setTirednessState(tirednessInfo);
+        } catch (_err) {
+          // A throwing dog hook must never break the animation loop.
+        }
+      } else if (typeof dog.setTiredness === 'function') {
+        try {
+          dog.setTiredness(tirednessInfo);
+        } catch (_err) {
+          // A throwing dog hook must never break the animation loop.
+        }
+      }
+    }
+
+    const isHungry = Boolean(hungerInfo && hungerInfo.isHungry);
+    const needsGrooming = Boolean(groomingInfo && groomingInfo.needsGrooming);
+    const isTired = Boolean(tirednessInfo && tirednessInfo.isTired);
+
+    if (!isHungry && !needsGrooming && !isTired) {
       this._lastAnimationAt = null;
       return;
     }
 
-    const canPlay = dog && typeof dog.playHungryAnimation === 'function';
+    // Single-emote policy: never overwrite an active emote.
+    if (this._hasActiveEmote(dog)) return;
 
-    if (this._lastAnimationAt === null) {
-      if (canPlay) {
-        try {
-          dog.playHungryAnimation();
-        } catch (_err) {
-          // Swallow: a throwing hook must not break the interval loop.
-        }
-      }
-      this._lastAnimationAt = nowMs;
-      return;
+    const due =
+      this._lastAnimationAt === null ||
+      nowMs - this._lastAnimationAt >= this._animationIntervalMs;
+    if (!due) return;
+
+    let hook = null;
+    if (isHungry) {
+      hook = 'playHungryAnimation';
+    } else if (needsGrooming) {
+      hook = 'playNeedGroomingAnimation';
+    } else if (isTired) {
+      hook = 'playNeedRestAnimation';
     }
 
-    if (nowMs - this._lastAnimationAt >= this._animationIntervalMs) {
-      if (canPlay) {
-        try {
-          dog.playHungryAnimation();
-        } catch (_err) {
-          // Swallow: a throwing hook must not break the interval loop.
-        }
+    if (dog && hook && typeof dog[hook] === 'function') {
+      try {
+        dog[hook]();
+      } catch (_err) {
+        // Swallow: a throwing hook must not break the interval loop.
       }
-      this._lastAnimationAt = nowMs;
     }
+    this._lastAnimationAt = nowMs;
+  }
+
+  /**
+   * @param {Object} dog
+   * @returns {boolean} True when the dog currently has an active emote.
+   */
+  _hasActiveEmote(dog) {
+    if (!dog) return false;
+    if (typeof dog.getEmoteTimer === 'function') {
+      try {
+        return Number(dog.getEmoteTimer()) > 0;
+      } catch (_err) {
+        return false;
+      }
+    }
+    return Number(dog.emoteTimer) > 0;
   }
 }
 
@@ -22580,6 +23110,13 @@ if (typeof globalThis !== 'undefined') {
       targetX: fieldWidth / 2,
       targetY: fieldHeight / 2,
       bob: 0,
+      // Emote / care animation state.
+      emoteBubble: null,
+      emoteTimer: 0,
+      beingGroomed: false,
+      groomTimer: 0,
+      sleeping: false,
+      sleepTimer: 0,
       // The sanctuary dog is always off-leash and fully self-contained.
       isLeashed: false,
       leash: null,
@@ -22624,6 +23161,38 @@ if (typeof globalThis !== 'undefined') {
 
   function updateDog(dt) {
     if (!dog) return;
+
+    var dtSec = dt / 1000;
+
+    // Emote countdown (dt is in ms; emoteTimer is in seconds).
+    if (dog.emoteTimer > 0) {
+      dog.emoteTimer = Math.max(0, dog.emoteTimer - dtSec);
+      if (dog.emoteTimer <= 0) {
+        dog.emoteBubble = null;
+      }
+    }
+
+    // Grooming countdown — independent of the emote bubble.
+    if (dog.groomTimer > 0) {
+      dog.groomTimer = Math.max(0, dog.groomTimer - dtSec);
+      if (dog.groomTimer <= 0) {
+        dog.beingGroomed = false;
+        if (!dog.sleeping && !forcedState && dog.state === 'sit') {
+          dog.state = 'idle';
+        }
+      }
+    }
+
+    // Sleeping countdown — independent of the emote bubble.
+    if (dog.sleepTimer > 0) {
+      dog.sleepTimer = Math.max(0, dog.sleepTimer - dtSec);
+      if (dog.sleepTimer <= 0) {
+        dog.sleeping = false;
+        if (!dog.beingGroomed && !forcedState && dog.state === 'sit') {
+          dog.state = 'idle';
+        }
+      }
+    }
 
     // Camera pose: dog faces the viewer and stays put.
     if (pose === 'camera') {
@@ -22843,7 +23412,15 @@ if (typeof globalThis !== 'undefined') {
       darkColor: bodyShade
     };
 
-    var entity = {
+    var CompanionDogClass = getCompanionDogClass();
+
+    // When the real CompanionDog class is available, build the entity on its
+    // prototype so every prototype method (drawEmote, etc.) resolves naturally.
+    var entity = CompanionDogClass
+      ? Object.create(CompanionDogClass.prototype)
+      : {};
+
+    Object.assign(entity, {
       // Identity / state
       id: dog.id,
       name: dog.name,
@@ -22852,6 +23429,14 @@ if (typeof globalThis !== 'undefined') {
       y: dog.y,
       angle: pose === 'camera' ? Math.PI / 2 : dog.facing,
       facing: dog.facing,
+
+      // Emote / care animation state
+      emoteBubble: dog.emoteBubble || null,
+      emoteTimer: dog.emoteTimer || 0,
+      beingGroomed: Boolean(dog.beingGroomed),
+      groomTimer: dog.groomTimer || 0,
+      sleeping: Boolean(dog.sleeping),
+      sleepTimer: dog.sleepTimer || 0,
 
       // Coat palette (both flat fields and nested object)
       coat: coatObj,
@@ -22866,8 +23451,6 @@ if (typeof globalThis !== 'undefined') {
       leftEar: { angle: 0, vel: 0 },
       rightEar: { angle: 0, vel: 0 },
       hearts: [],
-      emoteBubble: null,
-      emoteTimer: 0,
       hasStick: false,
       isBarking: false,
       barkWaveAlpha: 0,
@@ -22888,7 +23471,7 @@ if (typeof globalThis !== 'undefined') {
       isSitting: dog.state === 'sit',
       isSniffing: dog.state === 'sniff',
       radius: DOG_RADIUS
-    };
+    });
     return entity;
   }
 
@@ -23184,10 +23767,87 @@ if (typeof globalThis !== 'undefined') {
 
     ctx.restore();
 
+    // Grooming bubbles orbiting the dog.
+    if (dog.beingGroomed) {
+      drawGroomingBubbles();
+    }
+
+    // Sleeping breathing pulse + floating Z cue.
+    if (dog.sleeping) {
+      drawSleepingCue();
+    }
+
     // Food bowl during bowl/eating phases.
     if (isBowlVisible()) {
       drawFoodBowl();
     }
+  }
+
+  // Animated soap / sparkle bubbles orbiting the dog while being groomed.
+  function drawGroomingBubbles() {
+    if (!ctx || !dog) return;
+    var t = (dog.bob || 0) * 0.5;
+    var count = 6;
+    ctx.save();
+    for (var i = 0; i < count; i++) {
+      var phase = t + (i / count) * Math.PI * 2;
+      var orbitR = 22 + Math.sin(phase * 1.7) * 4;
+      var bx = dog.x + Math.cos(phase) * orbitR;
+      var by = dog.y - 6 + Math.sin(phase) * orbitR * 0.55;
+      var r = 3 + (i % 3) * 1.2;
+
+      ctx.globalAlpha = 0.55 + 0.35 * Math.sin(phase * 2);
+      ctx.fillStyle = 'rgba(186, 230, 253, 0.85)';
+      ctx.beginPath();
+      ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Sparkle highlight.
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+      ctx.beginPath();
+      ctx.arc(bx - r * 0.35, by - r * 0.35, r * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  // Gentle breathing pulse + floating Z cue while the dog sleeps.
+  function drawSleepingCue() {
+    if (!ctx || !dog) return;
+    var t = (dog.bob || 0) * 0.5;
+    var pulse = 1 + 0.06 * Math.sin(t * 2);
+
+    ctx.save();
+
+    // Breathing halo.
+    ctx.globalAlpha = 0.18 + 0.08 * Math.sin(t * 2);
+    ctx.fillStyle = 'rgba(148, 197, 255, 0.9)';
+    ctx.beginPath();
+    ctx.ellipse(dog.x, dog.y, 22 * pulse, 12 * pulse, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Floating Z cue.
+    var zPhase = (t * 0.6) % 1;
+    var zY = dog.y - 26 - zPhase * 18;
+    ctx.globalAlpha = 1 - zPhase;
+    ctx.fillStyle = '#e0f2fe';
+    ctx.font = 'bold 14px Outfit, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Z', dog.x + 10, zY);
+    ctx.font = 'bold 10px Outfit, sans-serif';
+    ctx.fillText('z', dog.x + 18, zY - 8);
+    ctx.globalAlpha = 1;
+
+    ctx.restore();
   }
 
   // Bowl is visible during both the 'bowl' and 'eating' phases.
@@ -23516,7 +24176,13 @@ if (typeof globalThis !== 'undefined') {
       hunger: dog.hunger || null,
       setHunger: dogSetHunger,
       playHungryAnimation: dogPlayHungryAnimation,
-      playFeedReaction: dogPlayFeedReaction
+      playFeedReaction: dogPlayFeedReaction,
+      playNeedHungryAnimation: playNeedHungryAnimation,
+      playNeedGroomingAnimation: playNeedGroomingAnimation,
+      playGroomingAnimation: playGroomingAnimation,
+      playNeedRestAnimation: playNeedRestAnimation,
+      playSleepingAnimation: playSleepingAnimation,
+      playNeedMetReaction: playNeedMetReaction
     };
   }
 
@@ -23602,6 +24268,8 @@ if (typeof globalThis !== 'undefined') {
       dog.state = 'wag';
       stateTimer = Math.max(stateTimer, STATE_MIN_MS);
     }
+    dog.emoteBubble = '🍖';
+    dog.emoteTimer = 2.0;
     dog.bob += 0.5;
     return true;
   }
@@ -23614,7 +24282,60 @@ if (typeof globalThis !== 'undefined') {
       dog.state = 'wag';
       stateTimer = Math.max(stateTimer, STATE_MIN_MS);
     }
+    dog.emoteBubble = '❤️';
+    dog.emoteTimer = 2.2;
     dog.bob += 0.5;
+    return true;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Sanctuary care animation hooks
+  // ---------------------------------------------------------------------------
+
+  function playNeedHungryAnimation() {
+    return dogPlayHungryAnimation();
+  }
+
+  function playNeedGroomingAnimation() {
+    if (!dog) return false;
+    dog.emoteBubble = '🫧';
+    dog.emoteTimer = 2.0;
+    return true;
+  }
+
+  function playGroomingAnimation() {
+    if (!dog) return false;
+    dog.beingGroomed = true;
+    dog.groomTimer = 3.0;
+    dog.state = 'sit';
+    dog.emoteBubble = '🧼';
+    dog.emoteTimer = 3.0;
+    dog.bob += 0.5;
+    return true;
+  }
+
+  function playNeedRestAnimation() {
+    if (!dog) return false;
+    dog.emoteBubble = '💤';
+    dog.emoteTimer = 2.0;
+    return true;
+  }
+
+  function playSleepingAnimation() {
+    if (!dog) return false;
+    dog.sleeping = true;
+    dog.sleepTimer = 4.0;
+    dog.state = 'sit';
+    dog.emoteBubble = '💤';
+    dog.emoteTimer = 4.0;
+    return true;
+  }
+
+  function playNeedMetReaction() {
+    if (!dog) return false;
+    // Only refresh the emote bubble; never shorten grooming/sleeping timers.
+    dog.emoteBubble = '❤️';
+    dog.emoteTimer = 2.2;
     return true;
   }
 
@@ -23659,7 +24380,22 @@ if (typeof globalThis !== 'undefined') {
           dogStateStore: store,
           dog: {
             setHunger: dogSetHunger,
-            playHungryAnimation: dogPlayHungryAnimation
+            playHungryAnimation: dogPlayHungryAnimation,
+            playNeedGroomingAnimation: playNeedGroomingAnimation,
+            playNeedRestAnimation: playNeedRestAnimation,
+            getEmoteTimer: function () { return dog ? dog.emoteTimer : 0; },
+            setGroomingState: function (info) {
+              if (!dog) return false;
+              dog.grooming = info || null;
+              dog.needsGrooming = Boolean(info && info.needsGrooming);
+              return true;
+            },
+            setTirednessState: function (info) {
+              if (!dog) return false;
+              dog.tiredness = info || null;
+              dog.isTired = Boolean(info && info.isTired);
+              return true;
+            }
           }
         });
         if (typeof hungerAnimator.start === 'function') {
@@ -23703,12 +24439,19 @@ if (typeof globalThis !== 'undefined') {
     mount: mount,
     unmount: unmount,
     getDogSlot: getDogSlot,
+    getDog: function () { return dog; },
     getCompanionDog: getCompanionDog,
     setDogPose: setDogPose,
     setDogState: setDogState,
     resumeRoaming: resumeRoaming,
     getFieldSize: getFieldSize,
     clearBowl: clearBowl,
+    playNeedHungryAnimation: playNeedHungryAnimation,
+    playNeedGroomingAnimation: playNeedGroomingAnimation,
+    playGroomingAnimation: playGroomingAnimation,
+    playNeedRestAnimation: playNeedRestAnimation,
+    playSleepingAnimation: playSleepingAnimation,
+    playNeedMetReaction: playNeedMetReaction,
     __testHooks: {
       frame: function (ts) { frame(ts || 0); },
       getParticles: function () { return particles; },
@@ -35021,7 +35764,9 @@ def run_all():
         "test/test_movement_redesign.py",
         "test/test_dog_state_store.py",
         "test/test_dog_hunger_behavior.py",
-        "test/test_home_hunger_integration.py"
+        "test/test_home_hunger_integration.py",
+        "test/test_grooming_tiredness_state.py",
+        "test/test_care_loop_ui.py"
     ]
     for t in test_suites:
         res = subprocess.run([sys.executable, t])
@@ -35910,6 +36655,745 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         self.assertFalse(g2.owner.isLeashed)
         self.assertEqual(len(g2.toasts), 1)
         self.assertIn("Too far to clip lead!", g2.toasts[0])
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+## FILE: test/test_care_loop_ui.py
+```python
+#!/usr/bin/env python3
+"""Tests for the care-loop UI (emotes, animations, action bar wiring).
+
+Every case launches a fresh `node --input-type=module -e "..."` subprocess so
+that top-level identifiers never collide across scenarios.
+"""
+import json
+import os
+import shutil
+import subprocess
+import textwrap
+import unittest
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+
+def node_available():
+    return shutil.which("node") is not None
+
+
+def run_node(script_body: str) -> dict:
+    """Run a fresh node ESM process and parse its JSON stdout."""
+    body = textwrap.dedent(script_body)
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", body],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            "node script failed:\nSTDOUT:\n%s\nSTDERR:\n%s"
+            % (result.stdout, result.stderr)
+        )
+    out = result.stdout.strip()
+    if not out:
+        raise AssertionError("node script produced no output; stderr:\n%s" % result.stderr)
+    last_line = out.splitlines()[-1]
+    return json.loads(last_line)
+
+
+def file_url(rel_path: str) -> str:
+    return json.dumps("file://" + os.path.join(REPO_ROOT, rel_path))
+
+
+# Shared inline DOM shim, injected at the top of each script. Uses a unique
+# prefix so it never collides with scenario identifiers.
+DOM_SHIM = """
+const careLoopShim = (() => {
+  const elements = new Map();
+  function makeButton(id) {
+    const listeners = {};
+    const btn = {
+      id,
+      tagName: 'BUTTON',
+      type: 'button',
+      className: '',
+      textContent: '',
+      disabled: false,
+      style: {},
+      attributes: {},
+      children: [],
+      setAttribute(k, v) { this.attributes[k] = v; },
+      getAttribute(k) { return this.attributes[k]; },
+      appendChild(child) { this.children.push(child); return child; },
+      addEventListener(evt, fn) {
+        (listeners[evt] = listeners[evt] || []).push(fn);
+      },
+      removeEventListener(evt, fn) {
+        if (!listeners[evt]) return;
+        listeners[evt] = listeners[evt].filter((f) => f !== fn);
+      },
+      click() {
+        (listeners['click'] || []).forEach((fn) => fn({ type: 'click', target: this }));
+      },
+      contains() { return true; },
+      _listeners: listeners
+    };
+    return btn;
+  }
+  const body = {
+    children: [],
+    appendChild(child) { this.children.push(child); return child; },
+    contains(el) { return true; }
+  };
+  function findInTree(node, id) {
+    if (!node) return null;
+    if (node.id === id) return node;
+    const kids = node.children || [];
+    for (const child of kids) {
+      const found = findInTree(child, id);
+      if (found) return found;
+    }
+    return null;
+  }
+  const document = {
+    body,
+    // NOTE: getElementById does NOT auto-create elements. Callers that need
+    // an element must create it via createElement + appendChild, or the test
+    // must pre-register it. This mirrors real DOM semantics. It DOES search
+    // the registered elements map and the body's child tree (by el.id) so
+    // dynamically created + appended elements are discoverable.
+    getElementById(id) {
+      if (elements.has(id)) return elements.get(id);
+      return findInTree(body, id);
+    },
+    registerElement(id) {
+      if (!elements.has(id)) elements.set(id, makeButton(id));
+      return elements.get(id);
+    },
+    createElement(tag) {
+      const el = makeButton('created-' + tag);
+      el.tagName = String(tag).toUpperCase();
+      return el;
+    },
+    addEventListener() {},
+    removeEventListener() {}
+  };
+  const window = {
+    document,
+    location: { search: '' },
+    addEventListener() {},
+    removeEventListener() {},
+    requestAnimationFrame(fn) { return setTimeout(() => fn(Date.now()), 0); },
+    cancelAnimationFrame(id) { clearTimeout(id); },
+    setTimeout,
+    clearTimeout,
+    performance: { now: () => Date.now() }
+  };
+  globalThis.window = window;
+  globalThis.document = document;
+  globalThis.requestAnimationFrame = window.requestAnimationFrame;
+  globalThis.cancelAnimationFrame = window.cancelAnimationFrame;
+  globalThis.localStorage = {
+    _data: {},
+    getItem(k) { return Object.prototype.hasOwnProperty.call(this._data, k) ? this._data[k] : null; },
+    setItem(k, v) { this._data[k] = String(v); },
+    removeItem(k) { delete this._data[k]; }
+  };
+  return { document, window, elements, makeButton };
+})();
+"""
+
+
+def register_canvas_shim() -> str:
+    """Pre-register the home-field-canvas so HomeFeeding sees a canvas."""
+    return """
+careLoopShim.document.registerElement('home-field-canvas');
+"""
+
+
+def fake_ctx_shim() -> str:
+    return """
+const careLoopFakeCtx = new Proxy({}, {
+  get(target, prop) {
+    if (prop === 'canvas') return { width: 1280, height: 720 };
+    if (prop === 'measureText') return () => ({ width: 10 });
+    if (prop === 'createLinearGradient' || prop === 'createRadialGradient') {
+      return () => ({ addColorStop() {} });
+    }
+    if (prop === 'getImageData') return () => ({ data: [] });
+    if (typeof prop === 'string' && prop in target) return target[prop];
+    return () => {};
+  },
+  set(target, prop, value) { target[prop] = value; return true; }
+});
+"""
+
+
+@unittest.skipUnless(node_available(), "node is required for these tests")
+class TestCareLoopUI(unittest.TestCase):
+    def test_build_dog_entity_has_draw_emote(self):
+        # Import + mount the REAL home_sanctuary.js (which pulls in
+        # companion_dog.js), trigger the hungry animation, and verify the
+        # sanctuary dog carries the hungry emote and that rendering does not
+        # throw a TypeError.
+        script = DOM_SHIM + fake_ctx_shim() + """
+        await import(%s);
+        await import(%s);
+        const careLoopSanctuary = globalThis.HomeSanctuary;
+        careLoopShim.document.registerElement('home-field-canvas');
+        let careLoopThrew = null;
+        let careLoopEmote = null;
+        let careLoopHasDrawEmote = false;
+        try {
+          careLoopSanctuary.mount(
+            careLoopShim.document.getElementById('home-field-canvas'),
+            { id: 'dog-1', name: 'Ziggy' }
+          );
+          careLoopSanctuary.playNeedHungryAnimation();
+          const careLoopDog = careLoopSanctuary.getDog();
+          careLoopEmote = careLoopDog ? careLoopDog.emoteBubble : null;
+          careLoopHasDrawEmote = typeof careLoopDog.drawEmote === 'function';
+          // Exercise the real render path against a fake 2D context.
+          careLoopSanctuary.__testHooks.render();
+        } catch (e) {
+          careLoopThrew = String(e && e.message ? e.message : e);
+        } finally {
+          try { careLoopSanctuary.unmount(); } catch (_e) { /* ignore */ }
+        }
+        console.log(JSON.stringify({
+          threw: careLoopThrew,
+          emoteBubble: careLoopEmote,
+          hasDrawEmote: careLoopHasDrawEmote
+        }));
+        """ % (file_url("src/entities/companion_dog.js"), file_url("src/ui/home_sanctuary.js"))
+        payload = run_node(script)
+        self.assertIsNone(payload["threw"], "render threw: %s" % payload["threw"])
+        self.assertEqual(payload["emoteBubble"], "🍖")
+        self.assertTrue(payload["hasDrawEmote"])
+
+    def test_draw_does_not_throw(self):
+        # Exercise CompanionDog.prototype.draw directly against a minimal
+        # entity literal (per brief item 2). This proves draw() is defensive
+        # about missing fields and does not require a full CompanionDog.
+        script = DOM_SHIM + fake_ctx_shim() + """
+        const careLoopDrawModule = await import(%s);
+        const careLoopMinimalEntity = {
+          x: 10,
+          y: 10,
+          scale: 1,
+          emoteBubble: '🍖',
+          emoteTimer: 2
+        };
+        let careLoopDrawThrew = null;
+        try {
+          careLoopDrawModule.CompanionDog.prototype.draw.call(
+            careLoopMinimalEntity,
+            careLoopFakeCtx
+          );
+        } catch (e) {
+          careLoopDrawThrew = String(e && e.message ? e.message : e);
+        }
+        console.log(JSON.stringify({ threw: careLoopDrawThrew }));
+        """ % file_url("src/entities/companion_dog.js")
+        payload = run_node(script)
+        self.assertIsNone(payload["threw"], "draw() threw: %s" % payload["threw"])
+
+    def test_hungry_animation_sets_emote(self):
+        script = DOM_SHIM + """
+        const careLoopHungryModule = await import(%s);
+        const careLoopHungryDog = careLoopHungryModule.buildDogEntity
+          ? careLoopHungryModule.buildDogEntity()
+          : new careLoopHungryModule.CompanionDog();
+        if (typeof careLoopHungryDog.playHungryAnimation === 'function') {
+          careLoopHungryDog.playHungryAnimation();
+        } else if (typeof careLoopHungryDog.playNeedHungryAnimation === 'function') {
+          careLoopHungryDog.playNeedHungryAnimation();
+        }
+        console.log(JSON.stringify({
+          emoteBubble: careLoopHungryDog.emoteBubble,
+          emoteTimer: careLoopHungryDog.emoteTimer
+        }));
+        """ % file_url("src/entities/companion_dog.js")
+        payload = run_node(script)
+        self.assertEqual(payload["emoteBubble"], "🍖")
+        self.assertGreater(payload["emoteTimer"], 0)
+
+    def test_need_met_reaction_heart(self):
+        script = DOM_SHIM + """
+        const careLoopHeartModule = await import(%s);
+        const careLoopHeartDog = careLoopHeartModule.buildDogEntity
+          ? careLoopHeartModule.buildDogEntity()
+          : new careLoopHeartModule.CompanionDog();
+        careLoopHeartDog.playNeedMetReaction();
+        console.log(JSON.stringify({ emoteBubble: careLoopHeartDog.emoteBubble }));
+        """ % file_url("src/entities/companion_dog.js")
+        payload = run_node(script)
+        self.assertEqual(payload["emoteBubble"], "❤️")
+
+    def test_grooming_animation_bubble_and_flag(self):
+        script = DOM_SHIM + """
+        const careLoopGroomModule = await import(%s);
+        const careLoopGroomDog = careLoopGroomModule.buildDogEntity
+          ? careLoopGroomModule.buildDogEntity()
+          : new careLoopGroomModule.CompanionDog();
+        careLoopGroomDog.playGroomingAnimation();
+        console.log(JSON.stringify({
+          emoteBubble: careLoopGroomDog.emoteBubble,
+          beingGroomed: careLoopGroomDog.beingGroomed
+        }));
+        """ % file_url("src/entities/companion_dog.js")
+        payload = run_node(script)
+        self.assertEqual(payload["emoteBubble"], "🫧")
+        self.assertTrue(payload["beingGroomed"])
+
+    def test_sleeping_animation_flag(self):
+        script = DOM_SHIM + """
+        const careLoopSleepModule = await import(%s);
+        const careLoopSleepDog = careLoopSleepModule.buildDogEntity
+          ? careLoopSleepModule.buildDogEntity()
+          : new careLoopSleepModule.CompanionDog();
+        careLoopSleepDog.playSleepingAnimation();
+        console.log(JSON.stringify({
+          sleeping: careLoopSleepDog.sleeping,
+          pose: careLoopSleepDog.pose
+        }));
+        """ % file_url("src/entities/companion_dog.js")
+        payload = run_node(script)
+        self.assertTrue(payload["sleeping"])
+        self.assertEqual(payload["pose"], "sleeping")
+
+    def test_emote_timer_decrements_on_camera(self):
+        script = DOM_SHIM + """
+        const careLoopTimerModule = await import(%s);
+        const careLoopTimerDog = careLoopTimerModule.buildDogEntity
+          ? careLoopTimerModule.buildDogEntity()
+          : new careLoopTimerModule.CompanionDog();
+        careLoopTimerDog.pose = 'camera';
+        careLoopTimerDog.emoteTimer = 500;
+        if (typeof careLoopTimerDog.update === 'function') {
+          careLoopTimerDog.update(200);
+        } else if (typeof careLoopTimerDog.updateDog === 'function') {
+          careLoopTimerDog.updateDog(200);
+        }
+        console.log(JSON.stringify({ emoteTimer: careLoopTimerDog.emoteTimer }));
+        """ % file_url("src/entities/companion_dog.js")
+        payload = run_node(script)
+        self.assertEqual(payload["emoteTimer"], 300)
+
+    def test_action_bar_buttons_wired(self):
+        # HomeFeeding must CREATE #btn-action-groom and #btn-action-rest
+        # itself (the shim no longer auto-creates elements on getElementById).
+        script = DOM_SHIM + register_canvas_shim() + """
+        const careLoopStoreCalls = { groom: 0, rest: 0 };
+        const careLoopSanctuaryCalls = {
+          playGroomingAnimation: 0,
+          playSleepingAnimation: 0,
+          playNeedMetReaction: 0
+        };
+        const careLoopMockStore = {
+          getSnapshot: () => ({
+            version: 1,
+            needs: {
+              hunger: { lastFedAt: Date.now(), durationMs: 60000 },
+              grooming: { lastGroomedAt: null, durationMs: 60000 },
+              tiredness: { lastRestedAt: null, durationMs: 60000 }
+            }
+          }),
+          subscribe: () => () => {},
+          feed: () => {},
+          groom: () => { careLoopStoreCalls.groom += 1; },
+          rest: () => { careLoopStoreCalls.rest += 1; },
+          needsGrooming: () => true,
+          isTired: () => true
+        };
+        globalThis.__vdwDogStateStore = careLoopMockStore;
+        globalThis.HomeSanctuary = {
+          getDogSlot: () => ({ id: 'dog-1', name: 'Ziggy' }),
+          getCompanionDog: () => null,
+          setDogPose: () => {},
+          setDogState: () => {},
+          playGroomingAnimation: () => { careLoopSanctuaryCalls.playGroomingAnimation += 1; },
+          playSleepingAnimation: () => { careLoopSanctuaryCalls.playSleepingAnimation += 1; },
+          playNeedMetReaction: () => { careLoopSanctuaryCalls.playNeedMetReaction += 1; },
+          toast: () => {}
+        };
+        window.HomeSanctuary = globalThis.HomeSanctuary;
+        await import(%s);
+        let careLoopGroomExists = false;
+        let careLoopRestExists = false;
+        try {
+          globalThis.HomeFeeding.mount({ dogStateStore: careLoopMockStore });
+          const careLoopGroomBtn = careLoopShim.document.getElementById('btn-action-groom');
+          const careLoopRestBtn = careLoopShim.document.getElementById('btn-action-rest');
+          careLoopGroomExists = !!careLoopGroomBtn;
+          careLoopRestExists = !!careLoopRestBtn;
+          if (careLoopGroomBtn) careLoopGroomBtn.click();
+          if (careLoopRestBtn) careLoopRestBtn.click();
+        } finally {
+          try { globalThis.HomeFeeding.unmount(); } catch (_e) { /* ignore */ }
+        }
+        console.log(JSON.stringify({
+          groomExists: careLoopGroomExists,
+          restExists: careLoopRestExists,
+          storeCalls: careLoopStoreCalls,
+          sanctuaryCalls: careLoopSanctuaryCalls
+        }));
+        """ % file_url("src/ui/home_feeding.js")
+        payload = run_node(script)
+        self.assertTrue(payload["groomExists"], "#btn-action-groom missing")
+        self.assertTrue(payload["restExists"], "#btn-action-rest missing")
+        self.assertEqual(payload["storeCalls"]["groom"], 1)
+        self.assertEqual(payload["storeCalls"]["rest"], 1)
+        self.assertEqual(payload["sanctuaryCalls"]["playGroomingAnimation"], 1)
+        self.assertEqual(payload["sanctuaryCalls"]["playSleepingAnimation"], 1)
+        self.assertGreaterEqual(payload["sanctuaryCalls"]["playNeedMetReaction"], 2)
+
+    def test_action_bar_buttons_reenable_when_timers_expire(self):
+        # Groom/rest buttons must start disabled when the store reports the
+        # need is not yet due, then re-enable once the store flips to true.
+        script = DOM_SHIM + register_canvas_shim() + """
+        const careLoopReenableState = { needsGrooming: false, isTired: false };
+        const careLoopReenableStore = {
+          getSnapshot: () => ({
+            version: 1,
+            needs: {
+              hunger: { lastFedAt: Date.now(), durationMs: 60000 },
+              grooming: { lastGroomedAt: Date.now(), durationMs: 60000 },
+              tiredness: { lastRestedAt: Date.now(), durationMs: 60000 }
+            }
+          }),
+          subscribe: () => () => {},
+          feed: () => {},
+          groom: () => {},
+          rest: () => {},
+          needsGrooming: () => careLoopReenableState.needsGrooming,
+          isTired: () => careLoopReenableState.isTired
+        };
+        globalThis.__vdwDogStateStore = careLoopReenableStore;
+        globalThis.HomeSanctuary = {
+          getDogSlot: () => ({ id: 'dog-1', name: 'Ziggy' }),
+          getCompanionDog: () => null,
+          setDogPose: () => {},
+          setDogState: () => {},
+          playGroomingAnimation: () => {},
+          playSleepingAnimation: () => {},
+          playNeedMetReaction: () => {},
+          toast: () => {}
+        };
+        window.HomeSanctuary = globalThis.HomeSanctuary;
+        await import(%s);
+        let careLoopInitiallyDisabled = { groom: false, rest: false };
+        let careLoopAfterEnabled = { groom: true, rest: true };
+        try {
+          globalThis.HomeFeeding.mount({ dogStateStore: careLoopReenableStore });
+          const careLoopReGroomBtn = careLoopShim.document.getElementById('btn-action-groom');
+          const careLoopReRestBtn = careLoopShim.document.getElementById('btn-action-rest');
+          careLoopInitiallyDisabled = {
+            groom: !!(careLoopReGroomBtn && careLoopReGroomBtn.disabled),
+            rest: !!(careLoopReRestBtn && careLoopReRestBtn.disabled)
+          };
+          // Flip the store to "due" and force a refresh.
+          careLoopReenableState.needsGrooming = true;
+          careLoopReenableState.isTired = true;
+          if (typeof globalThis.HomeFeeding.refreshButtonStates === 'function') {
+            globalThis.HomeFeeding.refreshButtonStates();
+          } else if (globalThis.HomeFeeding.__testHooks &&
+                     typeof globalThis.HomeFeeding.__testHooks.refreshButtonStates === 'function') {
+            globalThis.HomeFeeding.__testHooks.refreshButtonStates();
+          }
+          careLoopAfterEnabled = {
+            groom: !!(careLoopReGroomBtn && careLoopReGroomBtn.disabled),
+            rest: !!(careLoopReRestBtn && careLoopReRestBtn.disabled)
+          };
+        } finally {
+          try { globalThis.HomeFeeding.unmount(); } catch (_e) { /* ignore */ }
+        }
+        console.log(JSON.stringify({
+          initiallyDisabled: careLoopInitiallyDisabled,
+          afterEnabled: careLoopAfterEnabled
+        }));
+        """ % file_url("src/ui/home_feeding.js")
+        payload = run_node(script)
+        self.assertTrue(payload["initiallyDisabled"]["groom"], "groom should start disabled")
+        self.assertTrue(payload["initiallyDisabled"]["rest"], "rest should start disabled")
+        self.assertFalse(payload["afterEnabled"]["groom"], "groom should re-enable")
+        self.assertFalse(payload["afterEnabled"]["rest"], "rest should re-enable")
+
+    def test_sanctuary_play_need_hungry_animation_sets_emote(self):
+        # Direct sanctuary-level assertion: playNeedHungryAnimation() must set
+        # the dog's emote bubble to the hungry emote.
+        script = DOM_SHIM + """
+        const careLoopHungrySanctuaryModule = await import(%s);
+        const careLoopHungrySanctuary = careLoopHungrySanctuaryModule.default
+          || careLoopHungrySanctuaryModule.HomeSanctuary
+          || globalThis.HomeSanctuary;
+        careLoopShim.document.registerElement('home-field-canvas');
+        let careLoopHungryEmote = null;
+        try {
+          careLoopHungrySanctuary.mount(careLoopShim.document.getElementById('home-field-canvas'), {
+            id: 'dog-1',
+            name: 'Ziggy'
+          });
+          careLoopHungrySanctuary.playNeedHungryAnimation();
+          const careLoopHungryDog = careLoopHungrySanctuary.getDog();
+          careLoopHungryEmote = careLoopHungryDog ? careLoopHungryDog.emoteBubble : null;
+        } finally {
+          try { careLoopHungrySanctuary.unmount(); } catch (_e) { /* ignore */ }
+        }
+        console.log(JSON.stringify({ emoteBubble: careLoopHungryEmote }));
+        """ % file_url("src/ui/home_sanctuary.js")
+        payload = run_node(script)
+        self.assertEqual(payload["emoteBubble"], "🍖")
+
+    def test_animator_tick_triggers_need_emotes(self):
+        # Drive the REAL HomeHungerAnimator.tick() (not CompanionDog.update).
+        script = DOM_SHIM + """
+        const careLoopAnimModule = await import(%s);
+        const careLoopAnimCalls = { hungry: 0, grooming: 0, tired: 0 };
+        const careLoopAnimDog = {
+          setHunger: () => {},
+          setGrooming: () => {},
+          setTiredness: () => {},
+          playHungryAnimation: () => { careLoopAnimCalls.hungry += 1; },
+          playNeedGroomingAnimation: () => { careLoopAnimCalls.grooming += 1; },
+          playNeedRestAnimation: () => { careLoopAnimCalls.tired += 1; },
+          getEmoteTimer: () => 0
+        };
+        const careLoopAnimStore = {
+          getHunger: () => ({ isHungry: true }),
+          getGrooming: () => ({ needsGrooming: false }),
+          getTiredness: () => ({ isTired: false })
+        };
+        const careLoopAnimator = new careLoopAnimModule.HomeHungerAnimator({
+          dogStateStore: careLoopAnimStore,
+          dog: careLoopAnimDog,
+          animationIntervalMs: 1000,
+          now: () => 5000
+        });
+        careLoopAnimator.tick(5000);
+        console.log(JSON.stringify({ calls: careLoopAnimCalls }));
+        """ % file_url("src/ui/home_hunger_animator.js")
+        payload = run_node(script)
+        self.assertGreaterEqual(
+            payload["calls"]["hungry"], 1,
+            "HomeHungerAnimator.tick should trigger hungry emote when isHungry is true",
+        )
+
+    def test_animator_tick_triggers_grooming_and_tired(self):
+        # Grooming takes priority over tiredness when both are due.
+        script = DOM_SHIM + """
+        const careLoopGroomAnimModule = await import(%s);
+        const careLoopGroomCalls = { hungry: 0, grooming: 0, tired: 0 };
+        const careLoopGroomDog = {
+          setHunger: () => {},
+          setGrooming: () => {},
+          setTiredness: () => {},
+          playHungryAnimation: () => { careLoopGroomCalls.hungry += 1; },
+          playNeedGroomingAnimation: () => { careLoopGroomCalls.grooming += 1; },
+          playNeedRestAnimation: () => { careLoopGroomCalls.tired += 1; },
+          getEmoteTimer: () => 0
+        };
+        const careLoopGroomStore = {
+          getHunger: () => ({ isHungry: false }),
+          getGrooming: () => ({ needsGrooming: true }),
+          getTiredness: () => ({ isTired: true })
+        };
+        const careLoopGroomAnimator = new careLoopGroomAnimModule.HomeHungerAnimator({
+          dogStateStore: careLoopGroomStore,
+          dog: careLoopGroomDog,
+          animationIntervalMs: 1000,
+          now: () => 5000
+        });
+        careLoopGroomAnimator.tick(5000);
+        console.log(JSON.stringify({ calls: careLoopGroomCalls }));
+        """ % file_url("src/ui/home_hunger_animator.js")
+        payload = run_node(script)
+        self.assertEqual(payload["calls"]["grooming"], 1)
+        self.assertEqual(payload["calls"]["tired"], 0)
+        self.assertEqual(payload["calls"]["hungry"], 0)
+
+    def test_animator_respects_active_emote(self):
+        # A dog with an active emote must not be interrupted.
+        script = DOM_SHIM + """
+        const careLoopEmoteAnimModule = await import(%s);
+        const careLoopEmoteCalls = { hungry: 0 };
+        const careLoopEmoteDog = {
+          setHunger: () => {},
+          playHungryAnimation: () => { careLoopEmoteCalls.hungry += 1; },
+          getEmoteTimer: () => 1.5
+        };
+        const careLoopEmoteStore = {
+          getHunger: () => ({ isHungry: true })
+        };
+        const careLoopEmoteAnimator = new careLoopEmoteAnimModule.HomeHungerAnimator({
+          dogStateStore: careLoopEmoteStore,
+          dog: careLoopEmoteDog,
+          animationIntervalMs: 1000,
+          now: () => 5000
+        });
+        careLoopEmoteAnimator.tick(5000);
+        console.log(JSON.stringify({ calls: careLoopEmoteCalls }));
+        """ % file_url("src/ui/home_hunger_animator.js")
+        payload = run_node(script)
+        self.assertEqual(payload["calls"]["hungry"], 0)
+
+    def test_sanctuary_update_dog_camera_emote_and_care_timers(self):
+        # Exercise the REAL HomeSanctuary.updateDog(dt) via __testHooks.
+        script = DOM_SHIM + """
+        const careLoopSanctuaryModule = await import(%s);
+        const careLoopSanctuary = careLoopSanctuaryModule.default
+          || careLoopSanctuaryModule.HomeSanctuary
+          || globalThis.HomeSanctuary;
+        // Mount against a registered canvas so the dog is created.
+        careLoopShim.document.registerElement('home-field-canvas');
+        let careLoopHasGetDog = false;
+        let careLoopEmoteAfter = null;
+        let careLoopGroomBefore = 0;
+        let careLoopGroomAfter = 0;
+        let careLoopSleepBefore = 0;
+        let careLoopSleepAfter = 0;
+        let careLoopStillGroomed = false;
+        let careLoopStillSleeping = false;
+        try {
+          careLoopSanctuary.mount(careLoopShim.document.getElementById('home-field-canvas'), {
+            id: 'dog-1',
+            name: 'Ziggy'
+          });
+          const careLoopHooks = careLoopSanctuary.__testHooks;
+          const careLoopDog = careLoopHooks.getDog();
+          careLoopHasGetDog = typeof careLoopSanctuary.getDog === 'function';
+
+          // Camera pose: emoteTimer must decrement.
+          careLoopSanctuary.setDogPose('camera');
+          careLoopDog.emoteTimer = 2.0;
+          careLoopHooks.updateDog(500); // 500ms -> 0.5s
+          careLoopEmoteAfter = careLoopDog.emoteTimer;
+
+          // Grooming + sleeping must survive a playNeedMetReaction() call.
+          careLoopSanctuary.playGroomingAnimation();
+          careLoopSanctuary.playSleepingAnimation();
+          careLoopGroomBefore = careLoopDog.groomTimer;
+          careLoopSleepBefore = careLoopDog.sleepTimer;
+          careLoopSanctuary.playNeedMetReaction();
+          careLoopGroomAfter = careLoopDog.groomTimer;
+          careLoopSleepAfter = careLoopDog.sleepTimer;
+          careLoopStillGroomed = careLoopDog.beingGroomed;
+          careLoopStillSleeping = careLoopDog.sleeping;
+        } finally {
+          try { careLoopSanctuary.unmount(); } catch (_e) { /* ignore */ }
+        }
+
+        console.log(JSON.stringify({
+          hasGetDog: careLoopHasGetDog,
+          emoteAfter: careLoopEmoteAfter,
+          groomBefore: careLoopGroomBefore,
+          groomAfter: careLoopGroomAfter,
+          sleepBefore: careLoopSleepBefore,
+          sleepAfter: careLoopSleepAfter,
+          stillGroomed: careLoopStillGroomed,
+          stillSleeping: careLoopStillSleeping
+        }));
+        """ % file_url("src/ui/home_sanctuary.js")
+        payload = run_node(script)
+        self.assertTrue(payload["hasGetDog"], "HomeSanctuary.getDog() missing")
+        self.assertAlmostEqual(payload["emoteAfter"], 1.5, places=3)
+        self.assertGreater(payload["groomBefore"], 0)
+        self.assertGreater(payload["sleepBefore"], 0)
+        # playNeedMetReaction must not shorten grooming/sleeping timers.
+        self.assertGreaterEqual(payload["groomAfter"], payload["groomBefore"])
+        self.assertGreaterEqual(payload["sleepAfter"], payload["sleepBefore"])
+        self.assertTrue(payload["stillGroomed"])
+        self.assertTrue(payload["stillSleeping"])
+
+    def test_feed_button_triggers_need_met_reaction(self):
+        # Feeding via #btn-action-feed must trigger the ❤️ need-met reaction.
+        script = DOM_SHIM + register_canvas_shim() + """
+        const careLoopFeedCalls = { feed: 0, needMet: 0 };
+        const careLoopFeedStore = {
+          getSnapshot: () => ({
+            version: 1,
+            needs: {
+              hunger: { lastFedAt: Date.now(), durationMs: 60000 },
+              grooming: { lastGroomedAt: null, durationMs: 60000 },
+              tiredness: { lastRestedAt: null, durationMs: 60000 }
+            }
+          }),
+          subscribe: () => () => {},
+          feed: () => { careLoopFeedCalls.feed += 1; },
+          groom: () => {},
+          rest: () => {},
+          needsGrooming: () => false,
+          isTired: () => false
+        };
+        globalThis.__vdwDogStateStore = careLoopFeedStore;
+        globalThis.HomeSanctuary = {
+          getDogSlot: () => ({ id: 'dog-1', name: 'Ziggy' }),
+          getCompanionDog: () => null,
+          setDogPose: () => {},
+          setDogState: () => {},
+          playGroomingAnimation: () => {},
+          playSleepingAnimation: () => {},
+          playNeedMetReaction: () => { careLoopFeedCalls.needMet += 1; },
+          toast: () => {}
+        };
+        window.HomeSanctuary = globalThis.HomeSanctuary;
+        await import(%s);
+        let careLoopFeedExists = false;
+        try {
+          globalThis.HomeFeeding.mount({ dogStateStore: careLoopFeedStore });
+          const careLoopFeedBtn = careLoopShim.document.getElementById('btn-action-feed');
+          careLoopFeedExists = !!careLoopFeedBtn;
+          if (careLoopFeedBtn) careLoopFeedBtn.click();
+        } finally {
+          try { globalThis.HomeFeeding.unmount(); } catch (_e) { /* ignore */ }
+        }
+        console.log(JSON.stringify({
+          feedExists: careLoopFeedExists,
+          calls: careLoopFeedCalls
+        }));
+        """ % file_url("src/ui/home_feeding.js")
+        payload = run_node(script)
+        self.assertTrue(payload["feedExists"], "#btn-action-feed missing")
+        self.assertEqual(payload["calls"]["feed"], 1)
+        self.assertGreaterEqual(payload["calls"]["needMet"], 1)
+
+    def test_animator_tick_triggers_tiredness_only(self):
+        # When not hungry and not needing grooming, a tired dog must trigger
+        # playNeedRestAnimation().
+        script = DOM_SHIM + """
+        const careLoopTiredModule = await import(%s);
+        const careLoopTiredCalls = { hungry: 0, grooming: 0, tired: 0 };
+        const careLoopTiredDog = {
+          setHunger: () => {},
+          setGrooming: () => {},
+          setTiredness: () => {},
+          playHungryAnimation: () => { careLoopTiredCalls.hungry += 1; },
+          playNeedGroomingAnimation: () => { careLoopTiredCalls.grooming += 1; },
+          playNeedRestAnimation: () => { careLoopTiredCalls.tired += 1; },
+          getEmoteTimer: () => 0
+        };
+        const careLoopTiredStore = {
+          getHunger: () => ({ isHungry: false }),
+          getGrooming: () => ({ needsGrooming: false }),
+          getTiredness: () => ({ isTired: true })
+        };
+        const careLoopTiredAnimator = new careLoopTiredModule.HomeHungerAnimator({
+          dogStateStore: careLoopTiredStore,
+          dog: careLoopTiredDog,
+          animationIntervalMs: 1000,
+          now: () => 5000
+        });
+        careLoopTiredAnimator.tick(5000);
+        console.log(JSON.stringify({ calls: careLoopTiredCalls }));
+        """ % file_url("src/ui/home_hunger_animator.js")
+        payload = run_node(script)
+        self.assertEqual(payload["calls"]["tired"], 1)
+        self.assertEqual(payload["calls"]["hungry"], 0)
+        self.assertEqual(payload["calls"]["grooming"], 0)
 
 
 if __name__ == "__main__":
@@ -39384,6 +40868,263 @@ if __name__ == "__main__":
     print("🎉 All gameplay tests passed!")
 ```
 
+## FILE: test/test_grooming_tiredness_state.py
+```python
+#!/usr/bin/env python3
+"""Tests for DogStateStore grooming/tiredness state.
+
+Every case launches a fresh `node --input-type=module -e "..."` subprocess so
+that top-level identifiers never collide across scenarios.
+"""
+import json
+import os
+import shutil
+import subprocess
+import textwrap
+import unittest
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+STORE_MODULE = os.path.join(REPO_ROOT, "src", "state", "dog_state_store.js")
+
+
+def node_available():
+    return shutil.which("node") is not None
+
+
+def run_node(script_body: str) -> dict:
+    """Run a fresh node ESM process and parse its JSON stdout."""
+    body = textwrap.dedent(script_body)
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", body],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            "node script failed:\nSTDOUT:\n%s\nSTDERR:\n%s"
+            % (result.stdout, result.stderr)
+        )
+    out = result.stdout.strip()
+    if not out:
+        raise AssertionError("node script produced no output; stderr:\n%s" % result.stderr)
+    # Use the last line so stray console output doesn't break parsing.
+    last_line = out.splitlines()[-1]
+    return json.loads(last_line)
+
+
+def store_import() -> str:
+    # Use a file:// URL so ESM import works regardless of cwd.
+    return "import { DogStateStore, DOG_STATE_STORAGE_KEY } from %s;" % json.dumps(
+        "file://" + STORE_MODULE
+    )
+
+
+def memory_storage_import() -> str:
+    """Return a JS snippet defining an in-memory storage shim.
+
+    The shim exposes the subset of the Web Storage API that DogStateStore
+    relies on (getItem/setItem/removeItem) so tests can persist state across
+    fresh store instances without touching the real localStorage.
+    """
+    return textwrap.dedent(
+        """
+        function makeMemoryStorage() {
+          const backing = new Map();
+          return {
+            getItem(key) { return backing.has(key) ? backing.get(key) : null; },
+            setItem(key, value) { backing.set(key, String(value)); },
+            removeItem(key) { backing.delete(key); },
+            clear() { backing.clear(); }
+          };
+        }
+        """
+    )
+
+
+@unittest.skipUnless(node_available(), "node is required for these tests")
+class TestGroomingTirednessState(unittest.TestCase):
+    def test_initial_durations(self):
+        script = store_import() + """
+        const groomingTestStore = new DogStateStore();
+        const groomingTestSnap = groomingTestStore.getSnapshot();
+        console.log(JSON.stringify({
+          groomingDuration: groomingTestSnap.needs.grooming.durationMs,
+          tirednessDuration: groomingTestSnap.needs.tiredness.durationMs
+        }));
+        """
+        payload = run_node(script)
+        self.assertIsInstance(payload["groomingDuration"], (int, float))
+        self.assertGreater(payload["groomingDuration"], 0)
+        self.assertIsInstance(payload["tirednessDuration"], (int, float))
+        self.assertGreater(payload["tirednessDuration"], 0)
+
+    def test_needs_grooming_true_initially(self):
+        script = store_import() + """
+        const groomingInitStore = new DogStateStore();
+        const groomingInitGrooming = groomingInitStore.getGrooming();
+        const groomingInitTiredness = groomingInitStore.getTiredness();
+        console.log(JSON.stringify({
+          needsGrooming: groomingInitGrooming.needsGrooming,
+          isTired: groomingInitTiredness.isTired
+        }));
+        """
+        payload = run_node(script)
+        self.assertTrue(payload["needsGrooming"])
+        self.assertTrue(payload["isTired"])
+
+    def test_groom_resets(self):
+        script = store_import() + """
+        const groomResetStore = new DogStateStore();
+        const groomResetBefore = groomResetStore.getSnapshot();
+        const groomResetBeforeGrooming = groomResetStore.getGrooming();
+        groomResetStore.groom();
+        const groomResetAfter = groomResetStore.getSnapshot();
+        const groomResetAfterGrooming = groomResetStore.getGrooming();
+        console.log(JSON.stringify({
+          beforeNeedsGrooming: groomResetBeforeGrooming.needsGrooming,
+          afterNeedsGrooming: groomResetAfterGrooming.needsGrooming,
+          hungerBefore: groomResetBefore.needs.hunger,
+          hungerAfter: groomResetAfter.needs.hunger
+        }));
+        """
+        payload = run_node(script)
+        self.assertTrue(payload["beforeNeedsGrooming"])
+        self.assertFalse(payload["afterNeedsGrooming"])
+        # Hunger must be untouched by grooming.
+        self.assertEqual(
+            payload["hungerBefore"]["lastFedAt"],
+            payload["hungerAfter"]["lastFedAt"],
+        )
+        self.assertEqual(
+            payload["hungerBefore"]["durationMs"],
+            payload["hungerAfter"]["durationMs"],
+        )
+
+    def test_rest_resets(self):
+        script = store_import() + """
+        const restResetStore = new DogStateStore();
+        const restResetBefore = restResetStore.getSnapshot();
+        const restResetBeforeTiredness = restResetStore.getTiredness();
+        restResetStore.rest();
+        const restResetAfter = restResetStore.getSnapshot();
+        const restResetAfterTiredness = restResetStore.getTiredness();
+        console.log(JSON.stringify({
+          beforeIsTired: restResetBeforeTiredness.isTired,
+          afterIsTired: restResetAfterTiredness.isTired,
+          groomingBefore: restResetBefore.needs.grooming,
+          groomingAfter: restResetAfter.needs.grooming
+        }));
+        """
+        payload = run_node(script)
+        self.assertTrue(payload["beforeIsTired"])
+        self.assertFalse(payload["afterIsTired"])
+        # Sibling grooming state must be untouched by rest.
+        self.assertEqual(
+            payload["groomingBefore"]["lastGroomedAt"],
+            payload["groomingAfter"]["lastGroomedAt"],
+        )
+        self.assertEqual(
+            payload["groomingBefore"]["durationMs"],
+            payload["groomingAfter"]["durationMs"],
+        )
+
+    def test_custom_metadata_preserved(self):
+        script = (
+            store_import()
+            + memory_storage_import()
+            + """
+        const metaStorage = makeMemoryStorage();
+        const metaStore = new DogStateStore({ storage: metaStorage });
+        const metaSnap = metaStore.getSnapshot();
+        metaSnap.customMetadata = { foo: 'bar', count: 42 };
+        metaStorage.setItem(DOG_STATE_STORAGE_KEY, JSON.stringify(metaSnap));
+
+        // Fresh store loads persisted state, mutates needs, then persists again.
+        const metaStore2 = new DogStateStore({ storage: metaStorage });
+        metaStore2.groom();
+        metaStore2.rest();
+
+        // Fresh reload must still carry the custom metadata.
+        const metaStore3 = new DogStateStore({ storage: metaStorage });
+        const metaAfter = metaStore3.getSnapshot();
+        console.log(JSON.stringify({
+          customMetadata: metaAfter.customMetadata || null
+        }));
+        """
+        )
+        payload = run_node(script)
+        self.assertIsNotNone(payload["customMetadata"])
+        self.assertEqual(payload["customMetadata"]["foo"], "bar")
+        self.assertEqual(payload["customMetadata"]["count"], 42)
+
+    def test_legacy_state_backfill(self):
+        script = (
+            store_import()
+            + memory_storage_import()
+            + """
+        const legacyStorage = makeMemoryStorage();
+        const legacyInput = {
+          version: 1,
+          needs: {
+            hunger: { lastCompletedAt: 0, durationMs: 120000 }
+          }
+        };
+        legacyStorage.setItem(DOG_STATE_STORAGE_KEY, JSON.stringify(legacyInput));
+
+        const legacyStore = new DogStateStore({ storage: legacyStorage });
+        const legacySnap = legacyStore.getSnapshot();
+        const legacyGrooming = legacyStore.getGrooming();
+        const legacyTiredness = legacyStore.getTiredness();
+        const legacyHunger = legacyStore.getHunger();
+        console.log(JSON.stringify({
+          grooming: legacySnap.needs.grooming,
+          tiredness: legacySnap.needs.tiredness,
+          hunger: legacySnap.needs.hunger,
+          needsGrooming: legacyGrooming.needsGrooming,
+          isTired: legacyTiredness.isTired,
+          hungerLastFedAt: legacyHunger.lastFedAt
+        }));
+        """
+        )
+        payload = run_node(script)
+        # New needs backfilled with null timestamps + default durations.
+        self.assertIn("grooming", payload)
+        self.assertIn("tiredness", payload)
+        self.assertIsNone(payload["grooming"].get("lastGroomedAt"))
+        self.assertIsNone(payload["tiredness"].get("lastRestedAt"))
+        self.assertGreater(payload["grooming"]["durationMs"], 0)
+        self.assertGreater(payload["tiredness"]["durationMs"], 0)
+        # Derived booleans are backfilled cleanly (never-groomed/rested => due).
+        self.assertTrue(payload["needsGrooming"])
+        self.assertTrue(payload["isTired"])
+        # Hunger preserved verbatim.
+        self.assertEqual(payload["hunger"]["durationMs"], 120000)
+        # Legacy hydration actually loaded the supplied lastFedAt.
+        self.assertEqual(payload["hungerLastFedAt"], 0)
+
+    def test_no_persisted_booleans(self):
+        script = store_import() + """
+        const boolStore = new DogStateStore();
+        boolStore.groom();
+        boolStore.rest();
+        const boolSnap = boolStore.getSnapshot();
+        console.log(JSON.stringify({ snapshot: boolSnap }));
+        """
+        payload = run_node(script)
+        serialized = json.dumps(payload["snapshot"])
+        for forbidden in ("isHungry", "needsGrooming", "isTired", "isDue"):
+            self.assertNotIn(
+                '"%s"' % forbidden,
+                serialized,
+                "Serialized snapshot must not persist derived boolean %r" % forbidden,
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
 ## FILE: test/test_home_hunger_integration.py
 ```python
 """Integration tests for HomeFeeding + DogStateStore and HomeSanctuary hunger wiring.
@@ -39553,8 +41294,8 @@ import { DogStateStore } from './src/state/dog_state_store.js';
 let now = 0;
 const clock = () => now;
 
-// Memory localStorage shim (self-contained).
-const mem = {};
+// Reset the shared memory localStorage shim (declared in DOM_SHIM).
+for (const k of Object.keys(mem)) delete mem[k];
 globalThis.localStorage = {
   getItem: (k) => (k in mem ? mem[k] : null),
   setItem: (k, v) => { mem[k] = String(v); },
@@ -39708,7 +41449,7 @@ import { DogStateStore } from './src/state/dog_state_store.js';
 let now = 0;
 const clock = () => now;
 
-const mem = {};
+for (const k of Object.keys(mem)) delete mem[k];
 globalThis.localStorage = {
   getItem: (k) => (k in mem ? mem[k] : null),
   setItem: (k, v) => { mem[k] = String(v); },
@@ -39756,7 +41497,7 @@ import { DogStateStore } from './src/state/dog_state_store.js';
 let now = 0;
 const clock = () => now;
 
-const mem = {};
+for (const k of Object.keys(mem)) delete mem[k];
 globalThis.localStorage = {
   getItem: (k) => (k in mem ? mem[k] : null),
   setItem: (k, v) => { mem[k] = String(v); },
@@ -39823,7 +41564,7 @@ import { DogStateStore } from './src/state/dog_state_store.js';
 let now = 0;
 const clock = () => now;
 
-const mem = {};
+for (const k of Object.keys(mem)) delete mem[k];
 globalThis.localStorage = {
   getItem: (k) => (k in mem ? mem[k] : null),
   setItem: (k, v) => { mem[k] = String(v); },
@@ -56025,6 +57766,95 @@ describe('HomeHungerAnimator', () => {
 
   it('exposes a default animation interval constant', () => {
     expect(DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS).toBe(5000);
+  });
+
+  it('prefers setGroomingState/setTirednessState over legacy hooks', () => {
+    const store = {
+      getHunger: vi.fn(() => ({ isHungry: false })),
+      getGrooming: vi.fn(() => ({ needsGrooming: false })),
+      getTiredness: vi.fn(() => ({ isTired: false }))
+    };
+    const dog = {
+      setHunger: vi.fn(),
+      setGrooming: vi.fn(),
+      setTiredness: vi.fn(),
+      setGroomingState: vi.fn(),
+      setTirednessState: vi.fn()
+    };
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      now: () => 0
+    });
+
+    animator.tick(0);
+
+    expect(dog.setGroomingState).toHaveBeenCalledWith({ needsGrooming: false });
+    expect(dog.setTirednessState).toHaveBeenCalledWith({ isTired: false });
+    expect(dog.setGrooming).not.toHaveBeenCalled();
+    expect(dog.setTiredness).not.toHaveBeenCalled();
+  });
+
+  it('falls back to setGrooming/setTiredness when *State hooks are absent', () => {
+    const store = {
+      getHunger: vi.fn(() => ({ isHungry: false })),
+      getGrooming: vi.fn(() => ({ needsGrooming: false })),
+      getTiredness: vi.fn(() => ({ isTired: false }))
+    };
+    const dog = {
+      setHunger: vi.fn(),
+      setGrooming: vi.fn(),
+      setTiredness: vi.fn()
+    };
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      now: () => 0
+    });
+
+    animator.tick(0);
+
+    expect(dog.setGrooming).toHaveBeenCalledWith({ needsGrooming: false });
+    expect(dog.setTiredness).toHaveBeenCalledWith({ isTired: false });
+  });
+
+  it('does not overwrite an active emote reported via getEmoteTimer()', () => {
+    const store = makeStore({ isHungry: true });
+    const dog = {
+      setHunger: vi.fn(),
+      playHungryAnimation: vi.fn(),
+      getEmoteTimer: vi.fn(() => 1.5)
+    };
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      animationIntervalMs: 1000,
+      now: () => 0
+    });
+
+    animator.tick(0);
+
+    expect(dog.getEmoteTimer).toHaveBeenCalled();
+    expect(dog.playHungryAnimation).not.toHaveBeenCalled();
+  });
+
+  it('triggers when getEmoteTimer() reports no active emote', () => {
+    const store = makeStore({ isHungry: true });
+    const dog = {
+      setHunger: vi.fn(),
+      playHungryAnimation: vi.fn(),
+      getEmoteTimer: vi.fn(() => 0)
+    };
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      animationIntervalMs: 1000,
+      now: () => 0
+    });
+
+    animator.tick(0);
+
+    expect(dog.playHungryAnimation).toHaveBeenCalledTimes(1);
   });
 });
 ```

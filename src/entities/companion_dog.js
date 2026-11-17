@@ -793,8 +793,7 @@ export class CompanionDog {
   }
 
   playHungryAnimation(durationMs = 3000) {
-    this.emoteBubble = '🍖';
-    this.emoteTimer = durationMs;
+    this.setEmote('🍖', durationMs / 1000);
     return true;
   }
 

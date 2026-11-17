@@ -756,14 +756,14 @@ export class CompanionDog {
 
   playNeedGroomingAnimation(durationMs = 3000) {
     this.emoteBubble = '🫧';
-    this.emoteTimer = durationMs;
+    this.emoteTimer = durationMs / 1000;
     return true;
   }
 
   playGroomingAnimation(durationMs = 3000) {
     this.beingGroomed = true;
     this.emoteBubble = '🫧';
-    this.emoteTimer = durationMs;
+    this.emoteTimer = durationMs / 1000;
     this.pose = 'groomed';
     return true;
   }
@@ -775,20 +775,20 @@ export class CompanionDog {
 
   playNeedRestAnimation(durationMs = 3000) {
     this.emoteBubble = '💤';
-    this.emoteTimer = durationMs;
+    this.emoteTimer = durationMs / 1000;
     return true;
   }
 
   playSleepingAnimation(durationMs = 5000) {
     this.sleeping = true;
     this.pose = 'sleeping';
-    this.emoteTimer = durationMs;
+    this.emoteTimer = durationMs / 1000;
     return true;
   }
 
   playNeedMetReaction(durationMs = 2000) {
     this.emoteBubble = '❤️';
-    this.emoteTimer = durationMs;
+    this.emoteTimer = durationMs / 1000;
     return true;
   }
 
@@ -3516,7 +3516,10 @@ export class CompanionDog {
 
     // 6. Emote Bubble (only when truthy; safe for plain-object `this`)
     if (this.emoteBubble) {
-      this.drawEmote(ctx, this.emoteBubble);
+      const drawEmoteFn = typeof this.drawEmote === 'function'
+        ? this.drawEmote
+        : CompanionDog.prototype.drawEmote;
+      drawEmoteFn.call(this, ctx, this.emoteBubble);
     }
 
     // 7. Floating Dog Name Tag (world coordinates, below the dog)

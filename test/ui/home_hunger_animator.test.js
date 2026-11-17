@@ -185,4 +185,93 @@ describe('HomeHungerAnimator', () => {
   it('exposes a default animation interval constant', () => {
     expect(DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS).toBe(5000);
   });
+
+  it('prefers setGroomingState/setTirednessState over legacy hooks', () => {
+    const store = {
+      getHunger: vi.fn(() => ({ isHungry: false })),
+      getGrooming: vi.fn(() => ({ needsGrooming: false })),
+      getTiredness: vi.fn(() => ({ isTired: false }))
+    };
+    const dog = {
+      setHunger: vi.fn(),
+      setGrooming: vi.fn(),
+      setTiredness: vi.fn(),
+      setGroomingState: vi.fn(),
+      setTirednessState: vi.fn()
+    };
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      now: () => 0
+    });
+
+    animator.tick(0);
+
+    expect(dog.setGroomingState).toHaveBeenCalledWith({ needsGrooming: false });
+    expect(dog.setTirednessState).toHaveBeenCalledWith({ isTired: false });
+    expect(dog.setGrooming).not.toHaveBeenCalled();
+    expect(dog.setTiredness).not.toHaveBeenCalled();
+  });
+
+  it('falls back to setGrooming/setTiredness when *State hooks are absent', () => {
+    const store = {
+      getHunger: vi.fn(() => ({ isHungry: false })),
+      getGrooming: vi.fn(() => ({ needsGrooming: false })),
+      getTiredness: vi.fn(() => ({ isTired: false }))
+    };
+    const dog = {
+      setHunger: vi.fn(),
+      setGrooming: vi.fn(),
+      setTiredness: vi.fn()
+    };
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      now: () => 0
+    });
+
+    animator.tick(0);
+
+    expect(dog.setGrooming).toHaveBeenCalledWith({ needsGrooming: false });
+    expect(dog.setTiredness).toHaveBeenCalledWith({ isTired: false });
+  });
+
+  it('does not overwrite an active emote reported via getEmoteTimer()', () => {
+    const store = makeStore({ isHungry: true });
+    const dog = {
+      setHunger: vi.fn(),
+      playHungryAnimation: vi.fn(),
+      getEmoteTimer: vi.fn(() => 1.5)
+    };
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      animationIntervalMs: 1000,
+      now: () => 0
+    });
+
+    animator.tick(0);
+
+    expect(dog.getEmoteTimer).toHaveBeenCalled();
+    expect(dog.playHungryAnimation).not.toHaveBeenCalled();
+  });
+
+  it('triggers when getEmoteTimer() reports no active emote', () => {
+    const store = makeStore({ isHungry: true });
+    const dog = {
+      setHunger: vi.fn(),
+      playHungryAnimation: vi.fn(),
+      getEmoteTimer: vi.fn(() => 0)
+    };
+    const animator = new HomeHungerAnimator({
+      dogStateStore: store,
+      dog,
+      animationIntervalMs: 1000,
+      now: () => 0
+    });
+
+    animator.tick(0);
+
+    expect(dog.playHungryAnimation).toHaveBeenCalledTimes(1);
+  });
 });

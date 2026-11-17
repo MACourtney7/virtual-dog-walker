@@ -70,7 +70,7 @@ export class HomeHungerAnimator {
   }
 
   /**
-   * Evaluate hunger once and trigger the hungry animation as needed.
+   * Evaluate needs once and trigger a single need animation as needed.
    * @param {number} [nowMs] - Current time in epoch ms.
    */
   tick(nowMs = this._now()) {
@@ -86,44 +86,111 @@ export class HomeHungerAnimator {
       return;
     }
 
-    const dog = this._dog;
-    if (dog && typeof dog.setHunger === 'function') {
+    let groomingInfo;
+    if (typeof store.getGrooming === 'function') {
       try {
-        dog.setHunger(hungerInfo);
+        groomingInfo = store.getGrooming(nowMs);
       } catch (_err) {
-        // A throwing dog hook must never break the animation loop.
+        groomingInfo = undefined;
       }
     }
 
-    if (!hungerInfo || !hungerInfo.isHungry) {
+    let tirednessInfo;
+    if (typeof store.getTiredness === 'function') {
+      try {
+        tirednessInfo = store.getTiredness(nowMs);
+      } catch (_err) {
+        tirednessInfo = undefined;
+      }
+    }
+
+    const dog = this._dog;
+    if (dog) {
+      if (typeof dog.setHunger === 'function') {
+        try {
+          dog.setHunger(hungerInfo);
+        } catch (_err) {
+          // A throwing dog hook must never break the animation loop.
+        }
+      }
+      if (typeof dog.setGroomingState === 'function') {
+        try {
+          dog.setGroomingState(groomingInfo);
+        } catch (_err) {
+          // A throwing dog hook must never break the animation loop.
+        }
+      } else if (typeof dog.setGrooming === 'function') {
+        try {
+          dog.setGrooming(groomingInfo);
+        } catch (_err) {
+          // A throwing dog hook must never break the animation loop.
+        }
+      }
+      if (typeof dog.setTirednessState === 'function') {
+        try {
+          dog.setTirednessState(tirednessInfo);
+        } catch (_err) {
+          // A throwing dog hook must never break the animation loop.
+        }
+      } else if (typeof dog.setTiredness === 'function') {
+        try {
+          dog.setTiredness(tirednessInfo);
+        } catch (_err) {
+          // A throwing dog hook must never break the animation loop.
+        }
+      }
+    }
+
+    const isHungry = Boolean(hungerInfo && hungerInfo.isHungry);
+    const needsGrooming = Boolean(groomingInfo && groomingInfo.needsGrooming);
+    const isTired = Boolean(tirednessInfo && tirednessInfo.isTired);
+
+    if (!isHungry && !needsGrooming && !isTired) {
       this._lastAnimationAt = null;
       return;
     }
 
-    const canPlay = dog && typeof dog.playHungryAnimation === 'function';
+    // Single-emote policy: never overwrite an active emote.
+    if (this._hasActiveEmote(dog)) return;
 
-    if (this._lastAnimationAt === null) {
-      if (canPlay) {
-        try {
-          dog.playHungryAnimation();
-        } catch (_err) {
-          // Swallow: a throwing hook must not break the interval loop.
-        }
-      }
-      this._lastAnimationAt = nowMs;
-      return;
+    const due =
+      this._lastAnimationAt === null ||
+      nowMs - this._lastAnimationAt >= this._animationIntervalMs;
+    if (!due) return;
+
+    let hook = null;
+    if (isHungry) {
+      hook = 'playHungryAnimation';
+    } else if (needsGrooming) {
+      hook = 'playNeedGroomingAnimation';
+    } else if (isTired) {
+      hook = 'playNeedRestAnimation';
     }
 
-    if (nowMs - this._lastAnimationAt >= this._animationIntervalMs) {
-      if (canPlay) {
-        try {
-          dog.playHungryAnimation();
-        } catch (_err) {
-          // Swallow: a throwing hook must not break the interval loop.
-        }
+    if (dog && hook && typeof dog[hook] === 'function') {
+      try {
+        dog[hook]();
+      } catch (_err) {
+        // Swallow: a throwing hook must not break the interval loop.
       }
-      this._lastAnimationAt = nowMs;
     }
+    this._lastAnimationAt = nowMs;
+  }
+
+  /**
+   * @param {Object} dog
+   * @returns {boolean} True when the dog currently has an active emote.
+   */
+  _hasActiveEmote(dog) {
+    if (!dog) return false;
+    if (typeof dog.getEmoteTimer === 'function') {
+      try {
+        return Number(dog.getEmoteTimer()) > 0;
+      } catch (_err) {
+        return false;
+      }
+    }
+    return Number(dog.emoteTimer) > 0;
   }
 }
 

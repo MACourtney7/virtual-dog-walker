@@ -3,6 +3,8 @@
 
 export const DOG_STATE_STORAGE_KEY = 'virtual_dog_walker.dog_state.v1';
 export const DEFAULT_HUNGER_DURATION_MS = 120000; // 2 minutes
+export const DEFAULT_GROOMING_DURATION_MS = 180000; // 3 minutes
+export const DEFAULT_TIREDNESS_DURATION_MS = 180000; // 3 minutes
 export const DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = 5000; // 5 seconds
 
 export function createInitialDogState(nowMs = Date.now(), hungerDurationMs = DEFAULT_HUNGER_DURATION_MS) {
@@ -11,7 +13,16 @@ export function createInitialDogState(nowMs = Date.now(), hungerDurationMs = DEF
     needs: {
       hunger: {
         lastFedAt: nowMs,
+        lastCompletedAt: nowMs,
         durationMs: hungerDurationMs
+      },
+      grooming: {
+        lastGroomedAt: null,
+        durationMs: DEFAULT_GROOMING_DURATION_MS
+      },
+      tiredness: {
+        lastRestedAt: null,
+        durationMs: DEFAULT_TIREDNESS_DURATION_MS
       }
     }
   };
@@ -29,17 +40,80 @@ function defaultStorage() {
 }
 
 function isValidState(state) {
-  return Boolean(
+  if (!(
     state &&
     typeof state === 'object' &&
     state.version === 1 &&
     state.needs &&
     typeof state.needs === 'object' &&
     state.needs.hunger &&
-    typeof state.needs.hunger === 'object' &&
-    typeof state.needs.hunger.lastFedAt === 'number' &&
-    Number.isFinite(state.needs.hunger.lastFedAt)
-  );
+    typeof state.needs.hunger === 'object'
+  )) {
+    return false;
+  }
+  const hunger = state.needs.hunger;
+  const hasLastFedAt = typeof hunger.lastFedAt === 'number' && Number.isFinite(hunger.lastFedAt);
+  const hasLastCompletedAt = typeof hunger.lastCompletedAt === 'number' && Number.isFinite(hunger.lastCompletedAt);
+  return hasLastFedAt || hasLastCompletedAt;
+}
+
+// Backfill grooming/tiredness needs on a hydrated state without touching
+// existing needs.hunger. Preserves any custom top-level metadata keys.
+function backfillNeeds(state) {
+  if (!state || typeof state !== 'object') return state;
+  if (!state.needs || typeof state.needs !== 'object') {
+    state.needs = {};
+  }
+  var needs = state.needs;
+
+  if (!needs.grooming || typeof needs.grooming !== 'object') {
+    needs.grooming = {
+      lastGroomedAt: null,
+      durationMs: DEFAULT_GROOMING_DURATION_MS
+    };
+  } else {
+    if (needs.grooming.lastGroomedAt === undefined) {
+      needs.grooming.lastGroomedAt = null;
+    }
+    if (typeof needs.grooming.durationMs !== 'number' ||
+        !Number.isFinite(needs.grooming.durationMs) ||
+        needs.grooming.durationMs <= 0) {
+      needs.grooming.durationMs = DEFAULT_GROOMING_DURATION_MS;
+    }
+  }
+
+  if (!needs.tiredness || typeof needs.tiredness !== 'object') {
+    needs.tiredness = {
+      lastRestedAt: null,
+      durationMs: DEFAULT_TIREDNESS_DURATION_MS
+    };
+  } else {
+    if (needs.tiredness.lastRestedAt === undefined) {
+      needs.tiredness.lastRestedAt = null;
+    }
+    if (typeof needs.tiredness.durationMs !== 'number' ||
+        !Number.isFinite(needs.tiredness.durationMs) ||
+        needs.tiredness.durationMs <= 0) {
+      needs.tiredness.durationMs = DEFAULT_TIREDNESS_DURATION_MS;
+    }
+  }
+
+  // Mirror lastFedAt <-> lastCompletedAt so both fields are always present
+  // and consistent, regardless of which one the persisted state carried.
+  if (needs.hunger && typeof needs.hunger === 'object') {
+    const hasLastFedAt = typeof needs.hunger.lastFedAt === 'number' &&
+      Number.isFinite(needs.hunger.lastFedAt);
+    const hasLastCompletedAt = typeof needs.hunger.lastCompletedAt === 'number' &&
+      Number.isFinite(needs.hunger.lastCompletedAt);
+
+    if (!hasLastFedAt && hasLastCompletedAt) {
+      needs.hunger.lastFedAt = needs.hunger.lastCompletedAt;
+    } else if (hasLastFedAt && !hasLastCompletedAt) {
+      needs.hunger.lastCompletedAt = needs.hunger.lastFedAt;
+    }
+  }
+
+  return state;
 }
 
 export class DogStateStore {
@@ -80,13 +154,22 @@ export class DogStateStore {
             this._persist(initial);
             return initial;
           }
-          // Strip any stale persisted `isHungry` field: it must always be
-          // derived from lastFedAt/durationMs, never trusted from storage.
+          // Strip any stale persisted derived boolean mirrors: they must
+          // always be derived from timestamps/durationMs, never trusted
+          // from storage.
           if (parsed.needs.hunger &&
               Object.prototype.hasOwnProperty.call(parsed.needs.hunger, 'isHungry')) {
             delete parsed.needs.hunger.isHungry;
           }
-          return parsed;
+          if (parsed.needs.grooming &&
+              Object.prototype.hasOwnProperty.call(parsed.needs.grooming, 'needsGrooming')) {
+            delete parsed.needs.grooming.needsGrooming;
+          }
+          if (parsed.needs.tiredness &&
+              Object.prototype.hasOwnProperty.call(parsed.needs.tiredness, 'isTired')) {
+            delete parsed.needs.tiredness.isTired;
+          }
+          return backfillNeeds(parsed);
         }
       } catch (_e) {
         // Corrupt JSON: fall through to reset.
@@ -120,7 +203,11 @@ export class DogStateStore {
 
   getHunger(nowMs = this._now()) {
     const hunger = this._state.needs.hunger;
-    const lastFedAt = hunger.lastFedAt;
+    const lastFedAt = typeof hunger.lastFedAt === 'number' && Number.isFinite(hunger.lastFedAt)
+      ? hunger.lastFedAt
+      : (typeof hunger.lastCompletedAt === 'number' && Number.isFinite(hunger.lastCompletedAt)
+        ? hunger.lastCompletedAt
+        : 0);
     const durationMs = hunger.durationMs;
     const elapsedMs = Math.max(0, nowMs - lastFedAt);
     const remainingMs = Math.max(0, durationMs - elapsedMs);
@@ -146,19 +233,108 @@ export class DogStateStore {
     return this.getHunger(nowMs).isHungry;
   }
 
+  getGrooming(nowMs = this._now()) {
+    const grooming = (this._state.needs && this._state.needs.grooming) || {};
+    const lastGroomedAt = typeof grooming.lastGroomedAt === 'number' ? grooming.lastGroomedAt : null;
+    const durationMs = Number.isFinite(grooming.durationMs) && grooming.durationMs > 0
+      ? grooming.durationMs
+      : DEFAULT_GROOMING_DURATION_MS;
+    const needsGrooming = lastGroomedAt === null || (nowMs - lastGroomedAt) >= durationMs;
+    const elapsedMs = lastGroomedAt === null ? null : Math.max(0, nowMs - lastGroomedAt);
+    const remainingMs = lastGroomedAt === null ? 0 : Math.max(0, durationMs - elapsedMs);
+    return { lastGroomedAt, durationMs, elapsedMs, remainingMs, needsGrooming };
+  }
+
+  needsGrooming(nowMs = this._now()) {
+    return this.getGrooming(nowMs).needsGrooming;
+  }
+
+  getTiredness(nowMs = this._now()) {
+    const tiredness = (this._state.needs && this._state.needs.tiredness) || {};
+    const lastRestedAt = typeof tiredness.lastRestedAt === 'number' ? tiredness.lastRestedAt : null;
+    const durationMs = Number.isFinite(tiredness.durationMs) && tiredness.durationMs > 0
+      ? tiredness.durationMs
+      : DEFAULT_TIREDNESS_DURATION_MS;
+    const isTired = lastRestedAt === null || (nowMs - lastRestedAt) >= durationMs;
+    const elapsedMs = lastRestedAt === null ? null : Math.max(0, nowMs - lastRestedAt);
+    const remainingMs = lastRestedAt === null ? 0 : Math.max(0, durationMs - elapsedMs);
+    return { lastRestedAt, durationMs, elapsedMs, remainingMs, isTired };
+  }
+
+  isTired(nowMs = this._now()) {
+    return this.getTiredness(nowMs).isTired;
+  }
+
+  // Snapshot of all needs with derived flags. Never persisted.
+  getNeeds(nowMs = this._now()) {
+    return {
+      hunger: this.getHunger(nowMs),
+      grooming: this.getGrooming(nowMs),
+      tiredness: this.getTiredness(nowMs)
+    };
+  }
+
   feed(nowMs = this._now()) {
     const existingNeeds = (this._state && this._state.needs) || {};
     const existingHunger = existingNeeds.hunger || {};
     this._state = {
+      ...this._state,
       version: 1,
       needs: {
         ...existingNeeds,
         hunger: {
           ...existingHunger,
           lastFedAt: nowMs,
+          lastCompletedAt: nowMs,
           durationMs: Number.isFinite(existingHunger.durationMs) && existingHunger.durationMs > 0
             ? existingHunger.durationMs
             : this._hungerDurationMs
+        }
+      }
+    };
+    this._persist(this._state);
+    const snapshot = this.getSnapshot(nowMs);
+    this._notify(snapshot);
+    return snapshot;
+  }
+
+  groom(nowMs = this._now()) {
+    const existingNeeds = (this._state && this._state.needs) || {};
+    const existingGrooming = existingNeeds.grooming || {};
+    this._state = {
+      ...this._state,
+      version: 1,
+      needs: {
+        ...existingNeeds,
+        grooming: {
+          ...existingGrooming,
+          lastGroomedAt: nowMs,
+          durationMs: Number.isFinite(existingGrooming.durationMs) && existingGrooming.durationMs > 0
+            ? existingGrooming.durationMs
+            : DEFAULT_GROOMING_DURATION_MS
+        }
+      }
+    };
+    this._persist(this._state);
+    const snapshot = this.getSnapshot(nowMs);
+    this._notify(snapshot);
+    return snapshot;
+  }
+
+  rest(nowMs = this._now()) {
+    const existingNeeds = (this._state && this._state.needs) || {};
+    const existingTiredness = existingNeeds.tiredness || {};
+    this._state = {
+      ...this._state,
+      version: 1,
+      needs: {
+        ...existingNeeds,
+        tiredness: {
+          ...existingTiredness,
+          lastRestedAt: nowMs,
+          durationMs: Number.isFinite(existingTiredness.durationMs) && existingTiredness.durationMs > 0
+            ? existingTiredness.durationMs
+            : DEFAULT_TIREDNESS_DURATION_MS
         }
       }
     };
@@ -172,10 +348,13 @@ export class DogStateStore {
     const existingNeeds = (this._state && this._state.needs) || {};
     const initial = createInitialDogState(nowMs, this._hungerDurationMs);
     this._state = {
+      ...this._state,
       version: 1,
       needs: {
         ...existingNeeds,
-        hunger: initial.needs.hunger
+        hunger: initial.needs.hunger,
+        grooming: initial.needs.grooming,
+        tiredness: initial.needs.tiredness
       }
     };
     this._persist(this._state);
@@ -200,5 +379,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.createInitialDogState = createInitialDogState;
   globalThis.DOG_STATE_STORAGE_KEY = DOG_STATE_STORAGE_KEY;
   globalThis.DEFAULT_HUNGER_DURATION_MS = DEFAULT_HUNGER_DURATION_MS;
+  globalThis.DEFAULT_GROOMING_DURATION_MS = DEFAULT_GROOMING_DURATION_MS;
+  globalThis.DEFAULT_TIREDNESS_DURATION_MS = DEFAULT_TIREDNESS_DURATION_MS;
   globalThis.DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS;
 }

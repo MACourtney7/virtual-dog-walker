@@ -28,6 +28,17 @@
   var timers = [];
   var actionBarEl = null;
   var feedBtnEl = null;
+  var groomBtnEl = null;
+  var restBtnEl = null;
+  var storeUnsubscribe = null;
+  // Periodic refresh so groom/rest buttons re-enable when timers expire.
+  var refreshIntervalId = null;
+  var REFRESH_INTERVAL_MS = 1000;
+  // Per-action dedup tokens so each action's side effects run at most once.
+  var groomToken = 0;
+  var committedGroomToken = -1;
+  var restToken = 0;
+  var committedRestToken = -1;
   var lastFeedAt = null;
   var pendingResolve = null;
   var dogStateStore = null;
@@ -183,6 +194,26 @@
     }
   }
 
+  // Invoke a named method on HomeSanctuary, then fall back to the companion
+  // dog. Best-effort: never throws.
+  function invokeSanctuaryOrDog(methodName) {
+    if (root.HomeSanctuary && typeof root.HomeSanctuary[methodName] === 'function') {
+      try { root.HomeSanctuary[methodName](); return true; } catch (e) { /* fall through */ }
+    }
+    var dog = resolveCompanionDog();
+    if (dog && typeof dog[methodName] === 'function') {
+      try { dog[methodName](); return true; } catch (e) { /* ignore */ }
+    }
+    return false;
+  }
+
+  // Play the "need met" heart reaction (sanctuary first, then dog).
+  function playNeedMetReaction() {
+    if (invokeSanctuaryOrDog('playNeedMetReaction')) return true;
+    // Fall back to the feed reaction as a heart emote.
+    return invokeSanctuaryOrDog('playFeedReaction');
+  }
+
   // Commit the side effects of a feed exactly once per feed token.
   function commitFeed(token, dogId) {
     if (token === committedFeedToken) return false;
@@ -190,6 +221,33 @@
     persistFeed(dogId);
     resetHungerTimer();
     triggerFeedReaction();
+    playNeedMetReaction();
+    return true;
+  }
+
+  // Commit groom side effects exactly once per token.
+  function commitGroom(token) {
+    if (token === committedGroomToken) return false;
+    committedGroomToken = token;
+    var store = resolveDogStateStore();
+    if (store && typeof store.groom === 'function') {
+      try { store.groom(); } catch (e) { /* ignore */ }
+    }
+    invokeSanctuaryOrDog('playGroomingAnimation');
+    playNeedMetReaction();
+    return true;
+  }
+
+  // Commit rest side effects exactly once per token.
+  function commitRest(token) {
+    if (token === committedRestToken) return false;
+    committedRestToken = token;
+    var store = resolveDogStateStore();
+    if (store && typeof store.rest === 'function') {
+      try { store.rest(); } catch (e) { /* ignore */ }
+    }
+    invokeSanctuaryOrDog('playSleepingAnimation');
+    playNeedMetReaction();
     return true;
   }
 
@@ -279,11 +337,108 @@
     return feedBtnEl;
   }
 
+  function ensureGroomButton() {
+    var bar = ensureActionBar();
+    groomBtnEl = document.getElementById('btn-action-groom');
+    if (!groomBtnEl) {
+      groomBtnEl = document.createElement('button');
+      groomBtnEl.id = 'btn-action-groom';
+      groomBtnEl.type = 'button';
+      groomBtnEl.className = 'btn-action btn-action-groom';
+      groomBtnEl.textContent = 'Groom';
+      bar.appendChild(groomBtnEl);
+    }
+    if (!groomBtnEl.__homeFeedingBound) {
+      groomBtnEl.addEventListener('click', onGroomClick);
+      groomBtnEl.__homeFeedingBound = true;
+    }
+    return groomBtnEl;
+  }
+
+  function ensureRestButton() {
+    var bar = ensureActionBar();
+    restBtnEl = document.getElementById('btn-action-rest');
+    if (!restBtnEl) {
+      restBtnEl = document.createElement('button');
+      restBtnEl.id = 'btn-action-rest';
+      restBtnEl.type = 'button';
+      restBtnEl.className = 'btn-action btn-action-rest';
+      restBtnEl.textContent = 'Rest';
+      bar.appendChild(restBtnEl);
+    }
+    if (!restBtnEl.__homeFeedingBound) {
+      restBtnEl.addEventListener('click', onRestClick);
+      restBtnEl.__homeFeedingBound = true;
+    }
+    return restBtnEl;
+  }
+
+  function setButtonDisabled(btn, disabled) {
+    if (!btn) return;
+    btn.disabled = !!disabled;
+    btn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+  }
+
   function updateDisabledState() {
-    if (!feedBtnEl) return;
-    var disabled = getDogSlot() === null || !getCanvas();
-    feedBtnEl.disabled = !!disabled;
-    feedBtnEl.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+    var noDog = getDogSlot() === null || !getCanvas();
+    setButtonDisabled(feedBtnEl, noDog);
+
+    var store = resolveDogStateStore();
+    var groomDisabled = noDog;
+    var restDisabled = noDog;
+    if (store) {
+      if (typeof store.needsGrooming === 'function') {
+        try { groomDisabled = noDog || !store.needsGrooming(); } catch (e) { /* ignore */ }
+      }
+      if (typeof store.isTired === 'function') {
+        try { restDisabled = noDog || !store.isTired(); } catch (e) { /* ignore */ }
+      }
+    }
+    setButtonDisabled(groomBtnEl, groomDisabled);
+    setButtonDisabled(restBtnEl, restDisabled);
+  }
+
+  // Subscribe to the store so button readiness refreshes on state changes.
+  function subscribeToStore() {
+    if (storeUnsubscribe) return;
+    var store = resolveDogStateStore();
+    if (!store || typeof store.subscribe !== 'function') return;
+    try {
+      var unsub = store.subscribe(function () { updateDisabledState(); });
+      if (typeof unsub === 'function') {
+        storeUnsubscribe = unsub;
+      } else {
+        storeUnsubscribe = function () {};
+      }
+    } catch (e) {
+      /* ignore */
+    }
+  }
+
+  function unsubscribeFromStore() {
+    if (storeUnsubscribe) {
+      try { storeUnsubscribe(); } catch (e) { /* ignore */ }
+      storeUnsubscribe = null;
+    }
+  }
+
+  // Re-evaluate button readiness. Called on store changes and on a periodic
+  // interval so groom/rest re-enable as soon as their timers expire.
+  function refreshButtonStates() {
+    updateDisabledState();
+  }
+
+  function startRefreshInterval() {
+    if (refreshIntervalId !== null) return;
+    if (typeof setInterval !== 'function') return;
+    refreshIntervalId = setInterval(refreshButtonStates, REFRESH_INTERVAL_MS);
+  }
+
+  function stopRefreshInterval() {
+    if (refreshIntervalId !== null) {
+      try { clearInterval(refreshIntervalId); } catch (e) { /* ignore */ }
+      refreshIntervalId = null;
+    }
   }
 
   // The food bowl is rendered natively on the canvas by
@@ -384,6 +539,20 @@
     runFeed({ dogName: name, dogId: id });
   }
 
+  function onGroomClick() {
+    if (groomBtnEl && groomBtnEl.disabled) return;
+    groomToken += 1;
+    commitGroom(groomToken);
+    updateDisabledState();
+  }
+
+  function onRestClick() {
+    if (restBtnEl && restBtnEl.disabled) return;
+    restToken += 1;
+    commitRest(restToken);
+    updateDisabledState();
+  }
+
   // ---------------------------------------------------------------------------
   // Public API
   // ---------------------------------------------------------------------------
@@ -406,7 +575,11 @@
     lastFeedAt = readLastFeedAt();
     ensureActionBar();
     ensureFeedButton();
+    ensureGroomButton();
+    ensureRestButton();
+    subscribeToStore();
     updateDisabledState();
+    startRefreshInterval();
   }
 
   function unmount() {
@@ -421,9 +594,19 @@
       pendingResolve = null;
       try { r(); } catch (e) { /* ignore */ }
     }
+    unsubscribeFromStore();
+    stopRefreshInterval();
     if (feedBtnEl && feedBtnEl.__homeFeedingBound) {
       feedBtnEl.removeEventListener('click', onFeedClick);
       feedBtnEl.__homeFeedingBound = false;
+    }
+    if (groomBtnEl && groomBtnEl.__homeFeedingBound) {
+      groomBtnEl.removeEventListener('click', onGroomClick);
+      groomBtnEl.__homeFeedingBound = false;
+    }
+    if (restBtnEl && restBtnEl.__homeFeedingBound) {
+      restBtnEl.removeEventListener('click', onRestClick);
+      restBtnEl.__homeFeedingBound = false;
     }
     // Preserve the #home-action-bar container in the DOM; only clear its
     // children so a subsequent mount() can re-populate it in place.
@@ -431,6 +614,8 @@
       actionBarEl.innerHTML = '';
     }
     feedBtnEl = null;
+    groomBtnEl = null;
+    restBtnEl = null;
     actionBarEl = null;
     injectedDog = null;
   }
@@ -488,6 +673,17 @@
     simulateFeed: simulateFeed,
     runFeed: runFeed,
     onFeedClick: onFeedClick,
+    onGroomClick: onGroomClick,
+    onRestClick: onRestClick,
+    commitGroom: commitGroom,
+    commitRest: commitRest,
+    updateDisabledState: updateDisabledState,
+    refreshButtonStates: refreshButtonStates,
+    startRefreshInterval: startRefreshInterval,
+    stopRefreshInterval: stopRefreshInterval,
+    getRefreshIntervalId: function () {
+      return refreshIntervalId;
+    },
     getLastFeedAt: function () {
       return readLastFeedAt();
     },

@@ -398,6 +398,28 @@ class TestCareLoopUI(unittest.TestCase):
         self.assertFalse(payload["afterEnabled"]["groom"], "groom should re-enable")
         self.assertFalse(payload["afterEnabled"]["rest"], "rest should re-enable")
 
+    def test_sanctuary_play_need_hungry_animation_sets_emote(self):
+        # Direct sanctuary-level assertion: playNeedHungryAnimation() must set
+        # the dog's emote bubble to the hungry emote.
+        script = DOM_SHIM + """
+        const careLoopHungrySanctuaryModule = await import(%s);
+        const careLoopHungrySanctuary = careLoopHungrySanctuaryModule.default
+          || careLoopHungrySanctuaryModule.HomeSanctuary
+          || globalThis.HomeSanctuary;
+        careLoopShim.document.registerElement('home-field-canvas');
+        careLoopHungrySanctuary.mount(careLoopShim.document.getElementById('home-field-canvas'), {
+          id: 'dog-1',
+          name: 'Ziggy'
+        });
+        careLoopHungrySanctuary.playNeedHungryAnimation();
+        const careLoopHungryDog = careLoopHungrySanctuary.getDog();
+        console.log(JSON.stringify({
+          emoteBubble: careLoopHungryDog ? careLoopHungryDog.emoteBubble : null
+        }));
+        """ % file_url("src/ui/home_sanctuary.js")
+        payload = run_node(script)
+        self.assertEqual(payload["emoteBubble"], "🍖")
+
     def test_animator_tick_triggers_need_emotes(self):
         # Drive the REAL HomeHungerAnimator.tick() (not CompanionDog.update).
         script = DOM_SHIM + """

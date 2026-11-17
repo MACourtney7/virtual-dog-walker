@@ -164,7 +164,7 @@ class TestGroomingTirednessState(unittest.TestCase):
         const metaStore = new DogStateStore({ storage: metaStorage });
         const metaSnap = metaStore.getSnapshot();
         metaSnap.customMetadata = { foo: 'bar', count: 42 };
-        metaStorage.setItem('dog_state', JSON.stringify(metaSnap));
+        metaStorage.setItem('virtual_dog_walker.dog_state.v1', JSON.stringify(metaSnap));
 
         // Fresh store loads persisted state, mutates needs, then persists again.
         const metaStore2 = new DogStateStore({ storage: metaStorage });
@@ -196,18 +196,20 @@ class TestGroomingTirednessState(unittest.TestCase):
             hunger: { lastCompletedAt: 0, durationMs: 120000 }
           }
         };
-        legacyStorage.setItem('dog_state', JSON.stringify(legacyInput));
+        legacyStorage.setItem('virtual_dog_walker.dog_state.v1', JSON.stringify(legacyInput));
 
         const legacyStore = new DogStateStore({ storage: legacyStorage });
         const legacySnap = legacyStore.getSnapshot();
         const legacyGrooming = legacyStore.getGrooming();
         const legacyTiredness = legacyStore.getTiredness();
+        const legacyHunger = legacyStore.getHunger();
         console.log(JSON.stringify({
           grooming: legacySnap.needs.grooming,
           tiredness: legacySnap.needs.tiredness,
           hunger: legacySnap.needs.hunger,
           needsGrooming: legacyGrooming.needsGrooming,
-          isTired: legacyTiredness.isTired
+          isTired: legacyTiredness.isTired,
+          hungerLastFedAt: legacyHunger.lastFedAt
         }));
         """
         )
@@ -224,6 +226,8 @@ class TestGroomingTirednessState(unittest.TestCase):
         self.assertTrue(payload["isTired"])
         # Hunger preserved verbatim.
         self.assertEqual(payload["hunger"]["durationMs"], 120000)
+        # Legacy hydration actually loaded the supplied lastFedAt.
+        self.assertEqual(payload["hungerLastFedAt"], 0)
 
     def test_no_persisted_booleans(self):
         script = store_import() + """

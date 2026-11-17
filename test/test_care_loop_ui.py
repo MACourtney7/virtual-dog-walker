@@ -75,6 +75,19 @@ const careLoopShim = (() => {
         (listeners['click'] || []).forEach((fn) => fn({ type: 'click', target: this }));
       },
       contains() { return true; },
+      // Canvas-like surface so HomeSanctuary.mount() does not bail out early.
+      width: 320,
+      height: 240,
+      parentElement: { clientWidth: 320, clientHeight: 240 },
+      getBoundingClientRect: () => ({ width: 320, height: 240 }),
+      getContext: () => globalThis.__fakeCtx || {
+        save() {}, restore() {}, translate() {}, scale() {}, rotate() {},
+        beginPath() {}, closePath() {}, moveTo() {}, lineTo() {}, arc() {},
+        ellipse() {}, roundRect() {}, fill() {}, stroke() {}, fillText() {},
+        measureText: () => ({ width: 10 }),
+        createRadialGradient: () => ({ addColorStop() {} }),
+        quadraticCurveTo() {}, bezierCurveTo() {}
+      },
       _listeners: listeners
     };
     return btn;
@@ -682,7 +695,14 @@ class TestCareLoopUI(unittest.TestCase):
           globalThis.HomeFeeding.mount({ dogStateStore: careLoopFeedStore });
           const careLoopFeedBtn = careLoopShim.document.getElementById('btn-action-feed');
           careLoopFeedExists = !!careLoopFeedBtn;
-          if (careLoopFeedBtn) careLoopFeedBtn.click();
+          // Feeding is async (setTimeout-driven animation), so drive the
+          // synchronous test hook instead of relying on .click() completing.
+          const careLoopHooks = globalThis.HomeFeeding.__testHooks;
+          if (careLoopHooks && typeof careLoopHooks.simulateFeed === 'function') {
+            careLoopHooks.simulateFeed({ dogId: 'dog-1', dogName: 'Ziggy' });
+          } else if (careLoopFeedBtn) {
+            careLoopFeedBtn.click();
+          }
         } finally {
           try { globalThis.HomeFeeding.unmount(); } catch (_e) { /* ignore */ }
         }

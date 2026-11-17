@@ -31,6 +31,9 @@
   var groomBtnEl = null;
   var restBtnEl = null;
   var storeUnsubscribe = null;
+  // Periodic refresh so groom/rest buttons re-enable when timers expire.
+  var refreshIntervalId = null;
+  var REFRESH_INTERVAL_MS = 1000;
   // Per-action dedup tokens so each action's side effects run at most once.
   var groomToken = 0;
   var committedGroomToken = -1;
@@ -419,6 +422,25 @@
     }
   }
 
+  // Re-evaluate button readiness. Called on store changes and on a periodic
+  // interval so groom/rest re-enable as soon as their timers expire.
+  function refreshButtonStates() {
+    updateDisabledState();
+  }
+
+  function startRefreshInterval() {
+    if (refreshIntervalId !== null) return;
+    if (typeof setInterval !== 'function') return;
+    refreshIntervalId = setInterval(refreshButtonStates, REFRESH_INTERVAL_MS);
+  }
+
+  function stopRefreshInterval() {
+    if (refreshIntervalId !== null) {
+      try { clearInterval(refreshIntervalId); } catch (e) { /* ignore */ }
+      refreshIntervalId = null;
+    }
+  }
+
   // The food bowl is rendered natively on the canvas by
   // HomeSanctuary.drawFoodBowl(); no DOM element is ever injected.
   function showBowl() {
@@ -557,6 +579,7 @@
     ensureRestButton();
     subscribeToStore();
     updateDisabledState();
+    startRefreshInterval();
   }
 
   function unmount() {
@@ -572,6 +595,7 @@
       try { r(); } catch (e) { /* ignore */ }
     }
     unsubscribeFromStore();
+    stopRefreshInterval();
     if (feedBtnEl && feedBtnEl.__homeFeedingBound) {
       feedBtnEl.removeEventListener('click', onFeedClick);
       feedBtnEl.__homeFeedingBound = false;
@@ -654,6 +678,12 @@
     commitGroom: commitGroom,
     commitRest: commitRest,
     updateDisabledState: updateDisabledState,
+    refreshButtonStates: refreshButtonStates,
+    startRefreshInterval: startRefreshInterval,
+    stopRefreshInterval: stopRefreshInterval,
+    getRefreshIntervalId: function () {
+      return refreshIntervalId;
+    },
     getLastFeedAt: function () {
       return readLastFeedAt();
     },

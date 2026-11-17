@@ -368,7 +368,9 @@
       emoteBubble: null,
       emoteTimer: 0,
       beingGroomed: false,
+      groomTimer: 0,
       sleeping: false,
+      sleepTimer: 0,
       // The sanctuary dog is always off-leash and fully self-contained.
       isLeashed: false,
       leash: null,
@@ -414,13 +416,35 @@
   function updateDog(dt) {
     if (!dog) return;
 
+    var dtSec = dt / 1000;
+
     // Emote countdown (dt is in ms; emoteTimer is in seconds).
     if (dog.emoteTimer > 0) {
-      dog.emoteTimer = Math.max(0, dog.emoteTimer - dt / 1000);
+      dog.emoteTimer = Math.max(0, dog.emoteTimer - dtSec);
       if (dog.emoteTimer <= 0) {
         dog.emoteBubble = null;
+      }
+    }
+
+    // Grooming countdown — independent of the emote bubble.
+    if (dog.groomTimer > 0) {
+      dog.groomTimer = Math.max(0, dog.groomTimer - dtSec);
+      if (dog.groomTimer <= 0) {
         dog.beingGroomed = false;
+        if (!dog.sleeping && !forcedState && dog.state === 'sit') {
+          dog.state = 'idle';
+        }
+      }
+    }
+
+    // Sleeping countdown — independent of the emote bubble.
+    if (dog.sleepTimer > 0) {
+      dog.sleepTimer = Math.max(0, dog.sleepTimer - dtSec);
+      if (dog.sleepTimer <= 0) {
         dog.sleeping = false;
+        if (!dog.beingGroomed && !forcedState && dog.state === 'sit') {
+          dog.state = 'idle';
+        }
       }
     }
 
@@ -643,12 +667,14 @@
     };
 
     var CompanionDogClass = getCompanionDogClass();
-    var drawEmote = (CompanionDogClass && CompanionDogClass.prototype &&
-      typeof CompanionDogClass.prototype.drawEmote === 'function')
-      ? CompanionDogClass.prototype.drawEmote
-      : null;
 
-    var entity = {
+    // When the real CompanionDog class is available, build the entity on its
+    // prototype so every prototype method (drawEmote, etc.) resolves naturally.
+    var entity = CompanionDogClass
+      ? Object.create(CompanionDogClass.prototype)
+      : {};
+
+    Object.assign(entity, {
       // Identity / state
       id: dog.id,
       name: dog.name,
@@ -662,8 +688,9 @@
       emoteBubble: dog.emoteBubble || null,
       emoteTimer: dog.emoteTimer || 0,
       beingGroomed: Boolean(dog.beingGroomed),
+      groomTimer: dog.groomTimer || 0,
       sleeping: Boolean(dog.sleeping),
-      drawEmote: drawEmote,
+      sleepTimer: dog.sleepTimer || 0,
 
       // Coat palette (both flat fields and nested object)
       coat: coatObj,
@@ -678,8 +705,6 @@
       leftEar: { angle: 0, vel: 0 },
       rightEar: { angle: 0, vel: 0 },
       hearts: [],
-      emoteBubble: null,
-      emoteTimer: 0,
       hasStick: false,
       isBarking: false,
       barkWaveAlpha: 0,
@@ -700,7 +725,7 @@
       isSitting: dog.state === 'sit',
       isSniffing: dog.state === 'sniff',
       radius: DOG_RADIUS
-    };
+    });
     return entity;
   }
 
@@ -996,10 +1021,87 @@
 
     ctx.restore();
 
+    // Grooming bubbles orbiting the dog.
+    if (dog.beingGroomed) {
+      drawGroomingBubbles();
+    }
+
+    // Sleeping breathing pulse + floating Z cue.
+    if (dog.sleeping) {
+      drawSleepingCue();
+    }
+
     // Food bowl during bowl/eating phases.
     if (isBowlVisible()) {
       drawFoodBowl();
     }
+  }
+
+  // Animated soap / sparkle bubbles orbiting the dog while being groomed.
+  function drawGroomingBubbles() {
+    if (!ctx || !dog) return;
+    var t = (dog.bob || 0) * 0.5;
+    var count = 6;
+    ctx.save();
+    for (var i = 0; i < count; i++) {
+      var phase = t + (i / count) * Math.PI * 2;
+      var orbitR = 22 + Math.sin(phase * 1.7) * 4;
+      var bx = dog.x + Math.cos(phase) * orbitR;
+      var by = dog.y - 6 + Math.sin(phase) * orbitR * 0.55;
+      var r = 3 + (i % 3) * 1.2;
+
+      ctx.globalAlpha = 0.55 + 0.35 * Math.sin(phase * 2);
+      ctx.fillStyle = 'rgba(186, 230, 253, 0.85)';
+      ctx.beginPath();
+      ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+      ctx.lineWidth = 0.8;
+      ctx.beginPath();
+      ctx.arc(bx, by, r, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Sparkle highlight.
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
+      ctx.beginPath();
+      ctx.arc(bx - r * 0.35, by - r * 0.35, r * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  // Gentle breathing pulse + floating Z cue while the dog sleeps.
+  function drawSleepingCue() {
+    if (!ctx || !dog) return;
+    var t = (dog.bob || 0) * 0.5;
+    var pulse = 1 + 0.06 * Math.sin(t * 2);
+
+    ctx.save();
+
+    // Breathing halo.
+    ctx.globalAlpha = 0.18 + 0.08 * Math.sin(t * 2);
+    ctx.fillStyle = 'rgba(148, 197, 255, 0.9)';
+    ctx.beginPath();
+    ctx.ellipse(dog.x, dog.y, 22 * pulse, 12 * pulse, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+
+    // Floating Z cue.
+    var zPhase = (t * 0.6) % 1;
+    var zY = dog.y - 26 - zPhase * 18;
+    ctx.globalAlpha = 1 - zPhase;
+    ctx.fillStyle = '#e0f2fe';
+    ctx.font = 'bold 14px Outfit, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Z', dog.x + 10, zY);
+    ctx.font = 'bold 10px Outfit, sans-serif';
+    ctx.fillText('z', dog.x + 18, zY - 8);
+    ctx.globalAlpha = 1;
+
+    ctx.restore();
   }
 
   // Bowl is visible during both the 'bowl' and 'eating' phases.
@@ -1458,6 +1560,7 @@
   function playGroomingAnimation() {
     if (!dog) return false;
     dog.beingGroomed = true;
+    dog.groomTimer = 3.0;
     dog.state = 'sit';
     dog.emoteBubble = '🧼';
     dog.emoteTimer = 3.0;
@@ -1475,6 +1578,7 @@
   function playSleepingAnimation() {
     if (!dog) return false;
     dog.sleeping = true;
+    dog.sleepTimer = 4.0;
     dog.state = 'sit';
     dog.emoteBubble = '💤';
     dog.emoteTimer = 4.0;
@@ -1483,6 +1587,7 @@
 
   function playNeedMetReaction() {
     if (!dog) return false;
+    // Only refresh the emote bubble; never shorten grooming/sleeping timers.
     dog.emoteBubble = '❤️';
     dog.emoteTimer = 2.2;
     return true;
@@ -1531,7 +1636,26 @@
             setHunger: dogSetHunger,
             playHungryAnimation: dogPlayHungryAnimation,
             playNeedGroomingAnimation: playNeedGroomingAnimation,
-            playNeedRestAnimation: playNeedRestAnimation
+            playNeedRestAnimation: playNeedRestAnimation,
+            getEmoteTimer: function () { return dog ? dog.emoteTimer : 0; },
+            setGroomingState: function (active) {
+              if (!dog) return false;
+              if (active) {
+                return playGroomingAnimation();
+              }
+              dog.beingGroomed = false;
+              dog.groomTimer = 0;
+              return true;
+            },
+            setTirednessState: function (active) {
+              if (!dog) return false;
+              if (active) {
+                return playSleepingAnimation();
+              }
+              dog.sleeping = false;
+              dog.sleepTimer = 0;
+              return true;
+            }
           }
         });
         if (typeof hungerAnimator.start === 'function') {
@@ -1575,6 +1699,7 @@
     mount: mount,
     unmount: unmount,
     getDogSlot: getDogSlot,
+    getDog: function () { return dog; },
     getCompanionDog: getCompanionDog,
     setDogPose: setDogPose,
     setDogState: setDogState,

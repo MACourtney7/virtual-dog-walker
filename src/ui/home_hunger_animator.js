@@ -113,14 +113,26 @@ export class HomeHungerAnimator {
           // A throwing dog hook must never break the animation loop.
         }
       }
-      if (typeof dog.setGrooming === 'function') {
+      if (typeof dog.setGroomingState === 'function') {
+        try {
+          dog.setGroomingState(groomingInfo);
+        } catch (_err) {
+          // A throwing dog hook must never break the animation loop.
+        }
+      } else if (typeof dog.setGrooming === 'function') {
         try {
           dog.setGrooming(groomingInfo);
         } catch (_err) {
           // A throwing dog hook must never break the animation loop.
         }
       }
-      if (typeof dog.setTiredness === 'function') {
+      if (typeof dog.setTirednessState === 'function') {
+        try {
+          dog.setTirednessState(tirednessInfo);
+        } catch (_err) {
+          // A throwing dog hook must never break the animation loop.
+        }
+      } else if (typeof dog.setTiredness === 'function') {
         try {
           dog.setTiredness(tirednessInfo);
         } catch (_err) {

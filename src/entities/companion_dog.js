@@ -745,6 +745,59 @@ export class CompanionDog {
     this.emoteTimer = duration;
   }
 
+  // --- Prototype animation hooks (home view / hunger / grooming / rest) ---
+  // These are intentionally plain-field setters so they resolve on the
+  // prototype and work for Object.create(CompanionDog.prototype) entities.
+
+  setGroomingState(state) {
+    this.grooming = Boolean(state);
+    return this.grooming;
+  }
+
+  playNeedGroomingAnimation(durationMs = 3000) {
+    this.emoteBubble = '🫧';
+    this.emoteTimer = durationMs;
+    return true;
+  }
+
+  playGroomingAnimation(durationMs = 3000) {
+    this.beingGroomed = true;
+    this.emoteBubble = '🫧';
+    this.emoteTimer = durationMs;
+    this.pose = 'groomed';
+    return true;
+  }
+
+  setTirednessState(state) {
+    this.tired = Boolean(state);
+    return this.tired;
+  }
+
+  playNeedRestAnimation(durationMs = 3000) {
+    this.emoteBubble = '💤';
+    this.emoteTimer = durationMs;
+    return true;
+  }
+
+  playSleepingAnimation(durationMs = 5000) {
+    this.sleeping = true;
+    this.pose = 'sleeping';
+    this.emoteTimer = durationMs;
+    return true;
+  }
+
+  playNeedMetReaction(durationMs = 2000) {
+    this.emoteBubble = '❤️';
+    this.emoteTimer = durationMs;
+    return true;
+  }
+
+  playHungryAnimation(durationMs = 3000) {
+    this.emoteBubble = '🍖';
+    this.emoteTimer = durationMs;
+    return true;
+  }
+
   onRemoteBark(sourceDog = null) {
     const respondChance = 0.18 * this.personality.barkyness;
     if (Math.random() < respondChance && !this.isBarking && this.state !== DogState.FETCHING) {
@@ -1337,7 +1390,17 @@ export class CompanionDog {
     // 7. Emote Timers & Particles
     if (this.emoteTimer > 0) {
       this.emoteTimer -= dt;
-      if (this.emoteTimer <= 0) this.emoteBubble = null;
+      if (this.emoteTimer <= 0) {
+        this.emoteTimer = 0;
+        this.emoteBubble = null;
+        // Drop transient animation flags and reset pose, but never clobber
+        // a long-lived pose such as 'camera'.
+        this.beingGroomed = false;
+        this.sleeping = false;
+        if (this.pose !== 'camera') {
+          this.pose = 'idle';
+        }
+      }
     }
 
     // Update hearts
@@ -3451,7 +3514,7 @@ export class CompanionDog {
       ctx.restore();
     }
 
-    // 6. Emote Bubble
+    // 6. Emote Bubble (only when truthy; safe for plain-object `this`)
     if (this.emoteBubble) {
       this.drawEmote(ctx, this.emoteBubble);
     }
@@ -3559,30 +3622,51 @@ export class CompanionDog {
     ctx.restore();
   }
 
+  // Instantiation-proof emote bubble renderer. Reads only plain fields
+  // (x, y, scale, emoteScale) so it is safe to invoke via
+  // CompanionDog.prototype.drawEmote.call(plainEntity, ctx, emote).
   drawEmote(ctx, emote) {
+    if (!ctx || !emote) return;
+    const x = typeof this.x === 'number' ? this.x : 0;
+    const y = typeof this.y === 'number' ? this.y : 0;
+    const scale = (typeof this.emoteScale === 'number' && this.emoteScale > 0)
+      ? this.emoteScale
+      : ((typeof this.scale === 'number' && this.scale > 0) ? this.scale : 1);
+    const text = String(emote);
+
     ctx.save();
-    const bx = this.x - 14;
-    const by = this.y - 38;
+    if (typeof ctx.translate === 'function' && scale !== 1) {
+      ctx.translate(x, y);
+      ctx.scale(scale, scale);
+      ctx.translate(-x, -y);
+    }
+
+    const bx = x - 14;
+    const by = y - 38;
 
     ctx.fillStyle = 'rgba(255, 255, 255, 0.95)';
     ctx.shadowColor = 'rgba(0, 0, 0, 0.2)';
     ctx.shadowBlur = 6;
     ctx.beginPath();
-    ctx.roundRect(bx, by, 28, 22, 6);
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(bx, by, 28, 22, 6);
+    } else {
+      ctx.rect(bx, by, 28, 22);
+    }
     ctx.fill();
 
     // Pointer
     ctx.beginPath();
-    ctx.moveTo(this.x - 3, by + 22);
-    ctx.lineTo(this.x, by + 26);
-    ctx.lineTo(this.x + 3, by + 22);
+    ctx.moveTo(x - 3, by + 22);
+    ctx.lineTo(x, by + 26);
+    ctx.lineTo(x + 3, by + 22);
     ctx.fill();
 
     ctx.shadowBlur = 0;
-    ctx.font = emote.length > 2 ? 'bold 10px Outfit, sans-serif' : '14px serif';
+    ctx.font = text.length > 2 ? 'bold 10px Outfit, sans-serif' : '14px serif';
     ctx.textAlign = 'center';
     ctx.fillStyle = '#0f172a';
-    ctx.fillText(emote, this.x, by + 15);
+    ctx.fillText(text, x, by + 15);
     ctx.restore();
   }
 }

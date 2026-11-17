@@ -84,13 +84,26 @@ const careLoopShim = (() => {
     appendChild(child) { this.children.push(child); return child; },
     contains(el) { return true; }
   };
+  function findInTree(node, id) {
+    if (!node) return null;
+    if (node.id === id) return node;
+    const kids = node.children || [];
+    for (const child of kids) {
+      const found = findInTree(child, id);
+      if (found) return found;
+    }
+    return null;
+  }
   const document = {
     body,
     // NOTE: getElementById does NOT auto-create elements. Callers that need
     // an element must create it via createElement + appendChild, or the test
-    // must pre-register it. This mirrors real DOM semantics.
+    // must pre-register it. This mirrors real DOM semantics. It DOES search
+    // the registered elements map and the body's child tree (by el.id) so
+    // dynamically created + appended elements are discoverable.
     getElementById(id) {
-      return elements.has(id) ? elements.get(id) : null;
+      if (elements.has(id)) return elements.get(id);
+      return findInTree(body, id);
     },
     registerElement(id) {
       if (!elements.has(id)) elements.set(id, makeButton(id));
@@ -343,6 +356,7 @@ class TestCareLoopUI(unittest.TestCase):
           playNeedMetReaction: () => { careLoopSanctuaryCalls.playNeedMetReaction += 1; },
           toast: () => {}
         };
+        window.HomeSanctuary = globalThis.HomeSanctuary;
         await import(%s);
         let careLoopGroomExists = false;
         let careLoopRestExists = false;
@@ -405,6 +419,7 @@ class TestCareLoopUI(unittest.TestCase):
           playNeedMetReaction: () => {},
           toast: () => {}
         };
+        window.HomeSanctuary = globalThis.HomeSanctuary;
         await import(%s);
         let careLoopInitiallyDisabled = { groom: false, rest: false };
         let careLoopAfterEnabled = { groom: true, rest: true };
@@ -419,7 +434,12 @@ class TestCareLoopUI(unittest.TestCase):
           // Flip the store to "due" and force a refresh.
           careLoopReenableState.needsGrooming = true;
           careLoopReenableState.isTired = true;
-          globalThis.HomeFeeding.__testHooks.refreshButtonStates();
+          if (typeof globalThis.HomeFeeding.refreshButtonStates === 'function') {
+            globalThis.HomeFeeding.refreshButtonStates();
+          } else if (globalThis.HomeFeeding.__testHooks &&
+                     typeof globalThis.HomeFeeding.__testHooks.refreshButtonStates === 'function') {
+            globalThis.HomeFeeding.__testHooks.refreshButtonStates();
+          }
           careLoopAfterEnabled = {
             groom: !!(careLoopReGroomBtn && careLoopReGroomBtn.disabled),
             rest: !!(careLoopReRestBtn && careLoopReRestBtn.disabled)
@@ -655,6 +675,7 @@ class TestCareLoopUI(unittest.TestCase):
           playNeedMetReaction: () => { careLoopFeedCalls.needMet += 1; },
           toast: () => {}
         };
+        window.HomeSanctuary = globalThis.HomeSanctuary;
         await import(%s);
         let careLoopFeedExists = false;
         try {

@@ -20,7 +20,7 @@ def node_available():
 
 def run_node(script):
     result = subprocess.run(
-        ["node", "--input-type=module", "-e", script],
+        ["node", "--input-type=module", "-e", script + EXIT_SHIM],
         cwd=ROOT,
         capture_output=True,
         text=True,
@@ -35,6 +35,11 @@ def run_node(script):
     if not lines:
         raise AssertionError(f"node produced no output\nSTDERR:\n{result.stderr}")
     return json.loads(lines[-1])
+
+
+# Appended to every script so lingering setInterval/setTimeout handles (e.g.
+# from HomeFeeding/HomeSanctuary) can never keep the Node event loop alive.
+EXIT_SHIM = "\nprocess.exit(0);\n"
 
 
 # Minimal DOM shim shared by the tests. The modules are IIFEs that attach to
@@ -198,11 +203,17 @@ await import('./src/ui/home_feeding.js');
 const HomeFeeding = globalThis.HomeFeeding;
 HomeFeeding.mount({ dogStateStore: store });
 
-// Simulate a feed click via the test hook (deterministic, no timers).
-const result = HomeFeeding.__testHooks.simulateFeed({ dogId: 'dog-1', dogName: 'Ziggy' });
+let result;
+let after;
+try {
+  // Simulate a feed click via the test hook (deterministic, no timers).
+  result = HomeFeeding.__testHooks.simulateFeed({ dogId: 'dog-1', dogName: 'Ziggy' });
 
-// After feeding, the store should no longer report hungry at the same instant.
-const after = store.getHunger(now);
+  // After feeding, the store should no longer report hungry at the same instant.
+  after = store.getHunger(now);
+} finally {
+  HomeFeeding.unmount();
+}
 
 console.log(JSON.stringify({
   beforeHungry: before.isHungry,
@@ -234,24 +245,32 @@ globalThis.__domShim.elements.set('home-field-canvas', canvas);
 await import('./src/ui/home_feeding.js');
 const HomeFeeding = globalThis.HomeFeeding;
 
-HomeFeeding.mount({ dogStateStore: store });
-HomeFeeding.mount({ dogStateStore: store }); // idempotent
+let bar;
+let btn;
+let clickListenerCount;
+let clickListenersAfterUnmount;
+let storeResolved;
+try {
+  HomeFeeding.mount({ dogStateStore: store });
+  HomeFeeding.mount({ dogStateStore: store }); // idempotent
 
-const bar = globalThis.document.getElementById('home-action-bar');
-const btn = globalThis.document.getElementById('btn-action-feed');
-const clickListeners = (btn && btn._listeners && btn._listeners.click) || [];
-const clickListenerCount = clickListeners.length;
+  bar = globalThis.document.getElementById('home-action-bar');
+  btn = globalThis.document.getElementById('btn-action-feed');
+  const clickListeners = (btn && btn._listeners && btn._listeners.click) || [];
+  clickListenerCount = clickListeners.length;
+  storeResolved = HomeFeeding.getDogStateStore() === store;
+} finally {
+  HomeFeeding.unmount();
+}
 
-HomeFeeding.unmount();
-
-const clickListenersAfterUnmount = (btn && btn._listeners && btn._listeners.click) || [];
+clickListenersAfterUnmount = (btn && btn._listeners && btn._listeners.click) || [];
 
 console.log(JSON.stringify({
   hasBar: !!bar,
   hasBtn: !!btn,
   clickListenerCount,
   clickListenerCountAfterUnmount: clickListenersAfterUnmount.length,
-  storeResolved: HomeFeeding.getDogStateStore() === store
+  storeResolved
 }));
 """
         data = run_node(script)
@@ -282,20 +301,27 @@ globalThis.__domShim.elements.set('home-field-canvas', canvas);
 await import('./src/ui/home_sanctuary.js');
 const HomeSanctuary = globalThis.HomeSanctuary;
 
-// Mount with an explicit slot so the dog exists.
-HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
-
 const hooks = HomeSanctuary.__testHooks;
-const activeAfterMount = hooks.isHungerIntegrationActive();
-const subscribedAfterMount = hooks.hasHungerSubscription();
+let activeAfterMount;
+let subscribedAfterMount;
+let activeAfterRemount;
+let activeAfterUnmount;
+let subscribedAfterUnmount;
+try {
+  // Mount with an explicit slot so the dog exists.
+  HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
 
-// Double mount must not create duplicate intervals/subscriptions.
-HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
-const activeAfterRemount = hooks.isHungerIntegrationActive();
+  activeAfterMount = hooks.isHungerIntegrationActive();
+  subscribedAfterMount = hooks.hasHungerSubscription();
 
-HomeSanctuary.unmount();
-const activeAfterUnmount = hooks.isHungerIntegrationActive();
-const subscribedAfterUnmount = hooks.hasHungerSubscription();
+  // Double mount must not create duplicate intervals/subscriptions.
+  HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
+  activeAfterRemount = hooks.isHungerIntegrationActive();
+} finally {
+  HomeSanctuary.unmount();
+}
+activeAfterUnmount = hooks.isHungerIntegrationActive();
+subscribedAfterUnmount = hooks.hasHungerSubscription();
 
 console.log(JSON.stringify({
   activeAfterMount,
@@ -337,22 +363,26 @@ globalThis.__domShim.elements.set('home-field-canvas', canvas);
 
 await import('./src/ui/home_sanctuary.js');
 const HomeSanctuary = globalThis.HomeSanctuary;
-HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
+let hungryAfter;
+let hungryLater;
+try {
+  HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
 
-// Advance past the hunger threshold and re-sync via the store subscription.
-now = 130000;
-store.feed(130000); // triggers subscribers; resets lastFedAt to 130000
-const hooks = HomeSanctuary.__testHooks;
-const dogAfter = hooks.getDog();
-const hungryAfter = dogAfter ? dogAfter.isHungry : null;
+  // Advance past the hunger threshold and re-sync via the store subscription.
+  now = 130000;
+  store.feed(130000); // triggers subscribers; resets lastFedAt to 130000
+  const hooks = HomeSanctuary.__testHooks;
+  const dogAfter = hooks.getDog();
+  hungryAfter = dogAfter ? dogAfter.isHungry : null;
 
-// Now advance past the threshold again without feeding: the store should
-// report hungry.
-now = 260000;
-const hungerNow = store.getHunger(now);
-const hungryLater = hungerNow.isHungry;
-
-HomeSanctuary.unmount();
+  // Now advance past the threshold again without feeding: the store should
+  // report hungry.
+  now = 260000;
+  const hungerNow = store.getHunger(now);
+  hungryLater = hungerNow.isHungry;
+} finally {
+  HomeSanctuary.unmount();
+}
 
 console.log(JSON.stringify({ hungryAfter, hungryLater }));
 """
@@ -385,37 +415,41 @@ globalThis.__domShim.elements.set('home-field-canvas', canvas);
 
 await import('./src/ui/home_sanctuary.js');
 const HomeSanctuary = globalThis.HomeSanctuary;
-HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
-
-const hooks = HomeSanctuary.__testHooks;
-const animator = hooks.getHungerAnimator();
-
-// Count playHungryAnimation invocations by wrapping the animator's dog hook.
+let hungryAfter;
 let playCount = 0;
-if (animator && animator._dog && typeof animator._dog.playHungryAnimation === 'function') {
-  const originalPlay = animator._dog.playHungryAnimation;
-  animator._dog.playHungryAnimation = () => { playCount++; return originalPlay(); };
+let animator;
+try {
+  HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
+
+  const hooks = HomeSanctuary.__testHooks;
+  animator = hooks.getHungerAnimator();
+
+  // Count playHungryAnimation invocations by wrapping the animator's dog hook.
+  if (animator && animator._dog && typeof animator._dog.playHungryAnimation === 'function') {
+    const originalPlay = animator._dog.playHungryAnimation;
+    animator._dog.playHungryAnimation = () => { playCount++; return originalPlay(); };
+  }
+
+  // Advance past the 120000ms hunger threshold.
+  now = 120001;
+
+  // Drive the store subscription (simulates a tick that re-reads hunger).
+  if (typeof store.notify === 'function') store.notify();
+  else if (typeof store._notify === 'function') store._notify();
+  else store.feed(0); // fallback: re-trigger subscribers without resetting clock
+
+  const dogAfter = hooks.getDog();
+  hungryAfter = dogAfter ? dogAfter.isHungry : null;
+
+  // Manually tick the animator several times to prove periodic triggering.
+  if (animator && typeof animator.tick === 'function') {
+    animator.tick(now);
+    animator.tick(now + 6000);
+    animator.tick(now + 12000);
+  }
+} finally {
+  HomeSanctuary.unmount();
 }
-
-// Advance past the 120000ms hunger threshold.
-now = 120001;
-
-// Drive the store subscription (simulates a tick that re-reads hunger).
-if (typeof store.notify === 'function') store.notify();
-else if (typeof store._notify === 'function') store._notify();
-else store.feed(0); // fallback: re-trigger subscribers without resetting clock
-
-const dogAfter = hooks.getDog();
-const hungryAfter = dogAfter ? dogAfter.isHungry : null;
-
-// Manually tick the animator several times to prove periodic triggering.
-if (animator && typeof animator.tick === 'function') {
-  animator.tick(now);
-  animator.tick(now + 6000);
-  animator.tick(now + 12000);
-}
-
-HomeSanctuary.unmount();
 
 console.log(JSON.stringify({
   hungryAfter,
@@ -453,57 +487,67 @@ globalThis.__domShim.elements.set('home-field-canvas', canvas);
 
 await import('./src/ui/home_sanctuary.js');
 const HomeSanctuary = globalThis.HomeSanctuary;
-HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
-
-await import('./src/ui/home_feeding.js');
-const HomeFeeding = globalThis.HomeFeeding;
-
-// Stable spy dog adapter injected into HomeFeeding so playFeedReaction is
-// observed reliably regardless of how many times getCompanionDog() is called.
+let result;
+let after;
+let stillFed;
+let hungryPlayCountBeforeFeed;
+let hungryPlayCountAfterFeed;
 let feedReactionCount = 0;
-const spyDog = {
-  id: 'dog-1',
-  name: 'Ziggy',
-  playFeedReaction() { feedReactionCount++; return true; }
-};
-HomeFeeding.mount({ dogStateStore: store, dog: spyDog });
+try {
+  HomeSanctuary.mount(canvas, { id: 'dog-1', name: 'Ziggy' });
 
-const hooks = HomeSanctuary.__testHooks;
-const animator = hooks.getHungerAnimator();
+  await import('./src/ui/home_feeding.js');
+  const HomeFeeding = globalThis.HomeFeeding;
 
-// Spy on playHungryAnimation.
-let hungryPlayCount = 0;
-if (animator && animator._dog && typeof animator._dog.playHungryAnimation === 'function') {
-  const originalPlay = animator._dog.playHungryAnimation;
-  animator._dog.playHungryAnimation = () => { hungryPlayCount++; return originalPlay(); };
+  // Stable spy dog adapter injected into HomeFeeding so playFeedReaction is
+  // observed reliably regardless of how many times getCompanionDog() is called.
+  const spyDog = {
+    id: 'dog-1',
+    name: 'Ziggy',
+    playFeedReaction() { feedReactionCount++; return true; }
+  };
+  HomeFeeding.mount({ dogStateStore: store, dog: spyDog });
+
+  try {
+    const hooks = HomeSanctuary.__testHooks;
+    const animator = hooks.getHungerAnimator();
+
+    // Spy on playHungryAnimation.
+    let hungryPlayCount = 0;
+    if (animator && animator._dog && typeof animator._dog.playHungryAnimation === 'function') {
+      const originalPlay = animator._dog.playHungryAnimation;
+      animator._dog.playHungryAnimation = () => { hungryPlayCount++; return originalPlay(); };
+    }
+
+    // Advance past the hunger threshold and tick the animator: hungry animation fires.
+    now = 120001;
+    if (animator && typeof animator.tick === 'function') {
+      animator.tick(now);
+    }
+    hungryPlayCountBeforeFeed = hungryPlayCount;
+
+    // Simulate a feed click via the test hook (deterministic, no timers).
+    result = HomeFeeding.__testHooks.simulateFeed({ dogId: 'dog-1', dogName: 'Ziggy' });
+
+    // The store's lastFedAt must reflect the store clock (120001), not
+    // performance.now().
+    after = store.getHunger(now);
+
+    // Tick the animator again: no new hungry animation should fire.
+    if (animator && typeof animator.tick === 'function') {
+      animator.tick(now + 6000);
+    }
+    hungryPlayCountAfterFeed = hungryPlayCount;
+
+    // Advance a bit but stay under the threshold: still not hungry.
+    now = 120001 + 60000;
+    stillFed = store.getHunger(now);
+  } finally {
+    HomeFeeding.unmount();
+  }
+} finally {
+  HomeSanctuary.unmount();
 }
-
-// Advance past the hunger threshold and tick the animator: hungry animation fires.
-now = 120001;
-if (animator && typeof animator.tick === 'function') {
-  animator.tick(now);
-}
-const hungryPlayCountBeforeFeed = hungryPlayCount;
-
-// Simulate a feed click via the test hook (deterministic, no timers).
-const result = HomeFeeding.__testHooks.simulateFeed({ dogId: 'dog-1', dogName: 'Ziggy' });
-
-// The store's lastFedAt must reflect the store clock (120001), not
-// performance.now().
-const after = store.getHunger(now);
-
-// Tick the animator again: no new hungry animation should fire.
-if (animator && typeof animator.tick === 'function') {
-  animator.tick(now + 6000);
-}
-const hungryPlayCountAfterFeed = hungryPlayCount;
-
-// Advance a bit but stay under the threshold: still not hungry.
-now = 120001 + 60000;
-const stillFed = store.getHunger(now);
-
-HomeFeeding.unmount();
-HomeSanctuary.unmount();
 
 console.log(JSON.stringify({
   beforeHungry: true,

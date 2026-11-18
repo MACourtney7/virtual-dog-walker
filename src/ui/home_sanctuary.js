@@ -1590,9 +1590,31 @@
     dog.state = 'sit';
   }
 
-  function playGroomingAnimation(dogArg, options) {
-    // Backwards-compatible: playGroomingAnimation(dog) or (dog, { onComplete }).
-    var opts = options || {};
+  // Normalise the flexible (options) / (dogArg, options) call contract.
+  // Returns { opts, dogArg } where dogArg is only set when a distinct
+  // non-options object was passed as the first argument.
+  function normalizeCareArgs(arg1, arg2) {
+    var opts = {};
+    var dogArg = null;
+    if (arg1 && typeof arg1 === 'object' && typeof arg1.onComplete === 'function') {
+      opts = arg1;
+    } else {
+      if (arg1 && typeof arg1 === 'object' && arg1 !== dog) {
+        dogArg = arg1;
+      }
+      if (arg2 && typeof arg2 === 'object') {
+        opts = arg2;
+      }
+    }
+    return { opts: opts, dogArg: dogArg };
+  }
+
+  function playGroomingAnimation(arg1, arg2) {
+    // Backwards-compatible: playGroomingAnimation(dog) or (dog, { onComplete })
+    // and forward-compatible: playGroomingAnimation({ onComplete }).
+    var normalized = normalizeCareArgs(arg1, arg2);
+    var opts = normalized.opts;
+    var dogArg = normalized.dogArg;
     if (!dog) return false;
     applyCarePose();
     dog.beingGroomed = true;
@@ -1600,7 +1622,17 @@
     dog.emoteBubble = '🧼';
     dog.emoteTimer = 3.0;
     dog.bob += 0.5;
-    groomCompleteHandler = typeof opts.onComplete === 'function' ? opts.onComplete : null;
+    // Only overwrite the registered handler when an explicit callback is given.
+    if (typeof opts.onComplete === 'function') {
+      groomCompleteHandler = opts.onComplete;
+    }
+    // Mirror state onto an externally supplied dog-like object.
+    if (dogArg && typeof dogArg === 'object') {
+      dogArg.beingGroomed = true;
+      dogArg.groomTimer = 3.0;
+      dogArg.emoteBubble = '🧼';
+      dogArg.emoteTimer = 3.0;
+    }
     return true;
   }
 
@@ -1611,16 +1643,29 @@
     return true;
   }
 
-  function playSleepingAnimation(dogArg, options) {
-    // Backwards-compatible: playSleepingAnimation(dog) or (dog, { onComplete }).
-    var opts = options || {};
+  function playSleepingAnimation(arg1, arg2) {
+    // Backwards-compatible: playSleepingAnimation(dog) or (dog, { onComplete })
+    // and forward-compatible: playSleepingAnimation({ onComplete }).
+    var normalized = normalizeCareArgs(arg1, arg2);
+    var opts = normalized.opts;
+    var dogArg = normalized.dogArg;
     if (!dog) return false;
     applyCarePose();
     dog.sleeping = true;
     dog.sleepTimer = 4.0;
     dog.emoteBubble = '💤';
     dog.emoteTimer = 4.0;
-    restCompleteHandler = typeof opts.onComplete === 'function' ? opts.onComplete : null;
+    // Only overwrite the registered handler when an explicit callback is given.
+    if (typeof opts.onComplete === 'function') {
+      restCompleteHandler = opts.onComplete;
+    }
+    // Mirror state onto an externally supplied dog-like object.
+    if (dogArg && typeof dogArg === 'object') {
+      dogArg.sleeping = true;
+      dogArg.sleepTimer = 4.0;
+      dogArg.emoteBubble = '💤';
+      dogArg.emoteTimer = 4.0;
+    }
     return true;
   }
 

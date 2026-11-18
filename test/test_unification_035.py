@@ -222,8 +222,8 @@ class TestUnification035(unittest.TestCase):
         globalThis.setInterval = u035StrictWindow.setInterval.bind(u035StrictWindow);
         globalThis.clearInterval = u035StrictWindow.clearInterval.bind(u035StrictWindow);
 
-        await import(%s);
-        const u035AnimatorClass = globalThis.HomeHungerAnimator;
+        const u035Mod = await import(%s);
+        const u035AnimatorClass = u035Mod.HomeHungerAnimator || globalThis.HomeHungerAnimator;
         if (!u035AnimatorClass) {
           console.log(JSON.stringify({ error: 'HomeHungerAnimator missing' }));
         } else {
@@ -233,7 +233,16 @@ class TestUnification035(unittest.TestCase):
             playNeedGroomingAnimation() { return true; },
             playNeedRestAnimation() { return true; }
           };
-          const u035Animator = new u035AnimatorClass(u035Dog);
+          const u035Store = {
+            getHunger: () => ({ isHungry: false }),
+            getGrooming: () => ({ needsGrooming: false }),
+            getTiredness: () => ({ isTired: false })
+          };
+          const u035Animator = new u035AnimatorClass({
+            dog: u035Dog,
+            dogStateStore: u035Store,
+            now: () => 0
+          });
           let u035Threw = null;
           try {
             u035Animator.start();
@@ -243,7 +252,7 @@ class TestUnification035(unittest.TestCase):
           }
           console.log(JSON.stringify({ threw: u035Threw }));
         }
-        """ % file_url("src/ui/home_feeding.js")
+        """ % file_url("src/ui/home_hunger_animator.js")
         payload = run_node(script)
         self.assertNotIn("error", payload, "HomeHungerAnimator not exported")
         self.assertIsNone(payload["threw"], "start()/stop() threw: %s" % payload["threw"])
@@ -253,8 +262,8 @@ class TestUnification035(unittest.TestCase):
     # ------------------------------------------------------------------
     def test_req2_round_robin_rotation(self):
         script = DOM_SHIM + """
-        await import(%s);
-        const u035AnimatorClass = globalThis.HomeHungerAnimator;
+        const u035Mod = await import(%s);
+        const u035AnimatorClass = u035Mod.HomeHungerAnimator || globalThis.HomeHungerAnimator;
         if (!u035AnimatorClass) {
           console.log(JSON.stringify({ error: 'HomeHungerAnimator missing' }));
         } else {
@@ -265,24 +274,25 @@ class TestUnification035(unittest.TestCase):
             playNeedGroomingAnimation() { u035Calls.push('groom'); return true; },
             playNeedRestAnimation() { u035Calls.push('rest'); return true; }
           };
-          const u035Animator = new u035AnimatorClass(u035Dog);
-          // Force all 3 needs due via the public setter if present, else
-          // fall back to direct field assignment.
-          if (typeof u035Animator.setNeeds === 'function') {
-            u035Animator.setNeeds({ hungry: true, grooming: true, rest: true });
-          } else {
-            u035Animator.needs = { hungry: true, grooming: true, rest: true };
-            u035Animator.isHungry = true;
-            u035Animator.needsGrooming = true;
-            u035Animator.needsRest = true;
-          }
-          for (let i = 0; i < 6; i++) {
-            try { u035Animator.tick(); } catch (_e) { /* ignore */ }
-          }
+          const u035Store = {
+            getHunger: () => ({ isHungry: true }),
+            getGrooming: () => ({ needsGrooming: true }),
+            getTiredness: () => ({ isTired: true })
+          };
+          let u035Now = 0;
+          const u035Animator = new u035AnimatorClass({
+            dog: u035Dog,
+            dogStateStore: u035Store,
+            animationIntervalMs: 0,
+            now: () => u035Now
+          });
+          u035Now = 1000; u035Animator.tick(1000);
+          u035Now = 2000; u035Animator.tick(2000);
+          u035Now = 3000; u035Animator.tick(3000);
           const u035Uniq = Array.from(new Set(u035Calls));
           console.log(JSON.stringify({ calls: u035Calls, uniq: u035Uniq }));
         }
-        """ % file_url("src/ui/home_feeding.js")
+        """ % file_url("src/ui/home_hunger_animator.js")
         payload = run_node(script)
         self.assertNotIn("error", payload, "HomeHungerAnimator not exported")
         uniq = set(payload["uniq"])
@@ -409,12 +419,14 @@ class TestUnification035(unittest.TestCase):
                           "rest button missing class %r: %r" % (cls, payload["rest"]))
 
     # ------------------------------------------------------------------
-    # REQ-5: Groom/Rest completion invokes showToast with completion text.
+    # REQ-5: Groom/Rest completion invokes showToast with completion text
+    #        via the onComplete callback (NOT immediately on click).
     # ------------------------------------------------------------------
     def test_req5_completion_toasts(self):
         script = DOM_SHIM + """
         u035Shim.document.registerElement('home-field-canvas');
         const u035Toasts = [];
+        const u035Captured = { groom: null, rest: null };
         const u035MockStore = {
           getSnapshot: () => ({
             version: 1,
@@ -437,32 +449,45 @@ class TestUnification035(unittest.TestCase):
           getCompanionDog: () => null,
           setDogPose: () => {},
           setDogState: () => {},
-          // Return false so HomeFeeding falls back to the setter-based
-          // contract and emits the toast synchronously.
-          playGroomingAnimation: () => false,
-          playSleepingAnimation: () => false,
+          // Capture the onComplete callback so the test can fire it later.
+          playGroomingAnimation: (opts) => {
+            u035Captured.groom = opts && opts.onComplete;
+            return true;
+          },
+          playSleepingAnimation: (opts) => {
+            u035Captured.rest = opts && opts.onComplete;
+            return true;
+          },
           playNeedMetReaction: () => {},
           toast: (msg) => { u035Toasts.push(String(msg)); }
         };
         window.HomeSanctuary = globalThis.HomeSanctuary;
         await import(%s);
+        const u035Result = { toastsBefore: [], toastsAfter: [] };
         try {
           globalThis.HomeFeeding.mount({ dogStateStore: u035MockStore });
           const u035Groom = u035Shim.document.getElementById('btn-action-groom');
           const u035Rest = u035Shim.document.getElementById('btn-action-rest');
           if (u035Groom) u035Groom.click();
           if (u035Rest) u035Rest.click();
+          u035Result.toastsBefore = u035Toasts.slice();
+          // Fire the captured completion callbacks.
+          if (typeof u035Captured.groom === 'function') u035Captured.groom();
+          if (typeof u035Captured.rest === 'function') u035Captured.rest();
+          u035Result.toastsAfter = u035Toasts.slice();
         } finally {
           try { globalThis.HomeFeeding.unmount(); } catch (_e) { /* ignore */ }
         }
-        console.log(JSON.stringify({ toasts: u035Toasts }));
+        console.log(JSON.stringify(u035Result));
         """ % file_url("src/ui/home_feeding.js")
         payload = run_node(script)
-        joined = " | ".join(payload["toasts"])
+        self.assertEqual(payload["toastsBefore"], [],
+                         "toast emitted before onComplete: %r" % payload["toastsBefore"])
+        joined = " | ".join(payload["toastsAfter"])
         self.assertRegex(joined, r"loved the groom",
-                         "missing groom completion toast: %r" % payload["toasts"])
+                         "missing groom completion toast: %r" % payload["toastsAfter"])
         self.assertRegex(joined, r"well rested",
-                         "missing rest completion toast: %r" % payload["toasts"])
+                         "missing rest completion toast: %r" % payload["toastsAfter"])
 
 
 if __name__ == "__main__":

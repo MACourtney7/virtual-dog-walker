@@ -132,10 +132,6 @@ const careLoopShim = (() => {
       }
       return elements.get(id);
     },
-```
-
-virtual_dog_walker/test/test_care_loop_ui.py
-```python
     createElement(tag) {
       const el = makeButton('created-' + tag);
       el.tagName = String(tag).toUpperCase();
@@ -172,14 +168,6 @@ virtual_dog_walker/test/test_care_loop_ui.py
       set(target, prop, value) { target[prop] = value; return true; }
     });
   }
-  const window = {
-    document,
-    location: { search: '' },
-```
-
-virtual_dog_walker/test/test_care_loop_ui.py
-```python
-<<<<<<< SEARCH
     createElement(tag) {
       const el = makeButton('created-' + tag);
       el.tagName = String(tag).toUpperCase();
@@ -192,7 +180,7 @@ virtual_dog_walker/test/test_care_loop_ui.py
     setTimeout,
     clearTimeout,
     performance: { now: () => Date.now() }
-  };
+  });
   globalThis.window = window;
   globalThis.document = document;
   globalThis.requestAnimationFrame = window.requestAnimationFrame;

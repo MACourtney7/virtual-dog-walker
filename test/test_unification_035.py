@@ -195,32 +195,18 @@ class TestUnification035(unittest.TestCase):
     # ------------------------------------------------------------------
     # REQ-1: start()/stop() must not throw "Illegal invocation".
     # ------------------------------------------------------------------
-    def test_req1_start_stop_no_illegal_invocation(self):
+    def test_req1_no_illegal_invocation(self):
         script = DOM_SHIM + """
-        // Strict window shim: setInterval/clearInterval enforce this === window.
-        const u035Timers = new Set();
-        const u035StrictWindow = {
-          setInterval(fn, ms) {
-            if (this !== u035StrictWindow) throw new TypeError('Illegal invocation');
-            const id = Symbol('t');
-            u035Timers.add(id);
-            return id;
-          },
-          clearInterval(id) {
-            if (this !== u035StrictWindow) throw new TypeError('Illegal invocation');
-            u035Timers.delete(id);
-          },
-          setTimeout() { return 0; },
-          clearTimeout() {},
-          addEventListener() {},
-          removeEventListener() {},
-          localStorage: globalThis.localStorage,
-          document: globalThis.document
+        // Strict globalThis: setInterval/clearInterval enforce this === globalThis.
+        globalThis.window = globalThis;
+        globalThis.setInterval = function strictSetInterval(fn, ms) {
+          if (this !== globalThis) throw new TypeError('Illegal invocation');
+          return 1;
         };
-        u035StrictWindow.window = u035StrictWindow;
-        globalThis.window = u035StrictWindow;
-        globalThis.setInterval = u035StrictWindow.setInterval.bind(u035StrictWindow);
-        globalThis.clearInterval = u035StrictWindow.clearInterval.bind(u035StrictWindow);
+        globalThis.clearInterval = function strictClearInterval(id) {
+          if (this !== globalThis) throw new TypeError('Illegal invocation');
+          return undefined;
+        };
 
         const u035Mod = await import(%s);
         const u035AnimatorClass = u035Mod.HomeHungerAnimator || globalThis.HomeHungerAnimator;
@@ -238,24 +224,39 @@ class TestUnification035(unittest.TestCase):
             getGrooming: () => ({ needsGrooming: false }),
             getTiredness: () => ({ isTired: false })
           };
-          const u035Animator = new u035AnimatorClass({
-            dog: u035Dog,
-            dogStateStore: u035Store,
-            now: () => 0
-          });
-          let u035Threw = null;
+          const u035Errors = [];
+
+          // Case A: no custom timer fns passed.
           try {
-            u035Animator.start();
-            u035Animator.stop();
+            const a = new u035AnimatorClass({ dog: u035Dog, dogStateStore: u035Store, now: () => 0 });
+            a.start();
+            a.stop();
           } catch (e) {
-            u035Threw = String(e && e.message ? e.message : e);
+            u035Errors.push('A: ' + String(e && e.message ? e.message : e));
           }
-          console.log(JSON.stringify({ threw: u035Threw }));
+
+          // Case B: globalThis.setInterval/clearInterval passed explicitly.
+          try {
+            const b = new u035AnimatorClass({
+              dog: u035Dog,
+              dogStateStore: u035Store,
+              now: () => 0,
+              setIntervalFn: globalThis.setInterval,
+              clearIntervalFn: globalThis.clearInterval
+            });
+            b.start();
+            b.stop();
+          } catch (e) {
+            u035Errors.push('B: ' + String(e && e.message ? e.message : e));
+          }
+
+          console.log(JSON.stringify({ errors: u035Errors }));
         }
         """ % file_url("src/ui/home_hunger_animator.js")
         payload = run_node(script)
         self.assertNotIn("error", payload, "HomeHungerAnimator not exported")
-        self.assertIsNone(payload["threw"], "start()/stop() threw: %s" % payload["threw"])
+        self.assertEqual(payload["errors"], [],
+                         "start()/stop() threw: %r" % payload["errors"])
 
     # ------------------------------------------------------------------
     # REQ-2: tick() rotates round-robin across all 3 need animations.
@@ -390,7 +391,7 @@ class TestUnification035(unittest.TestCase):
         };
         window.HomeSanctuary = globalThis.HomeSanctuary;
         await import(%s);
-        const u035Result = { feed: null, groom: null, rest: null };
+        const u035Result = { feed: null, groom: null, rest: null, groomText: null, restText: null };
         try {
           globalThis.HomeFeeding.mount({ dogStateStore: u035MockStore });
           const u035Feed = u035Shim.document.getElementById('btn-action-feed');
@@ -399,6 +400,8 @@ class TestUnification035(unittest.TestCase):
           u035Result.feed = u035Feed ? u035Feed.className : null;
           u035Result.groom = u035Groom ? u035Groom.className : null;
           u035Result.rest = u035Rest ? u035Rest.className : null;
+          u035Result.groomText = u035Groom ? u035Groom.textContent : null;
+          u035Result.restText = u035Rest ? u035Rest.textContent : null;
         } finally {
           try { globalThis.HomeFeeding.unmount(); } catch (_e) { /* ignore */ }
         }
@@ -409,14 +412,19 @@ class TestUnification035(unittest.TestCase):
         self.assertIsNotNone(payload["groom"], "#btn-action-groom missing")
         self.assertIsNotNone(payload["rest"], "#btn-action-rest missing")
 
-        feed_classes = set(payload["feed"].split())
-        shared = feed_classes & {"home-action-btn", "btn-action"}
-        self.assertTrue(shared, "feed button has no home-action-btn/btn-action class: %r" % payload["feed"])
-        for cls in shared:
-            self.assertIn(cls, payload["groom"].split(),
-                          "groom button missing class %r: %r" % (cls, payload["groom"]))
-            self.assertIn(cls, payload["rest"].split(),
-                          "rest button missing class %r: %r" % (cls, payload["rest"]))
+        # Exact className parity with the feed button.
+        self.assertEqual(payload["groom"], payload["feed"],
+                         "groom className %r != feed className %r"
+                         % (payload["groom"], payload["feed"]))
+        self.assertEqual(payload["rest"], payload["feed"],
+                         "rest className %r != feed className %r"
+                         % (payload["rest"], payload["feed"]))
+
+        # Exact textContent parity.
+        self.assertEqual(payload["groomText"], "🫧 Groom",
+                         "groom textContent: %r" % payload["groomText"])
+        self.assertEqual(payload["restText"], "💤 Rest",
+                         "rest textContent: %r" % payload["restText"])
 
     # ------------------------------------------------------------------
     # REQ-5: Groom/Rest completion invokes showToast with completion text
@@ -450,11 +458,14 @@ class TestUnification035(unittest.TestCase):
           setDogPose: () => {},
           setDogState: () => {},
           // Capture the onComplete callback so the test can fire it later.
-          playGroomingAnimation: (opts) => {
+          // Accept both (opts) and (dogOrOpts, maybeOpts) call signatures.
+          playGroomingAnimation: (dogOrOpts, maybeOpts) => {
+            const opts = (maybeOpts && typeof maybeOpts === 'object') ? maybeOpts : dogOrOpts;
             u035Captured.groom = opts && opts.onComplete;
             return true;
           },
-          playSleepingAnimation: (opts) => {
+          playSleepingAnimation: (dogOrOpts, maybeOpts) => {
+            const opts = (maybeOpts && typeof maybeOpts === 'object') ? maybeOpts : dogOrOpts;
             u035Captured.rest = opts && opts.onComplete;
             return true;
           },
@@ -483,6 +494,9 @@ class TestUnification035(unittest.TestCase):
         payload = run_node(script)
         self.assertEqual(payload["toastsBefore"], [],
                          "toast emitted before onComplete: %r" % payload["toastsBefore"])
+        self.assertEqual(len(payload["toastsAfter"]), 2,
+                         "expected exactly 2 completion toasts (1 per action): %r"
+                         % payload["toastsAfter"])
         joined = " | ".join(payload["toastsAfter"])
         self.assertRegex(joined, r"loved the groom",
                          "missing groom completion toast: %r" % payload["toastsAfter"])

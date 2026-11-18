@@ -68,6 +68,11 @@
   var particles = [];
   var particleFrame = 0;
 
+  // Care-action completion hooks (groom / rest). Invoked after the timer
+  // completes, the timer id is cleared, and resumeRoaming() has run.
+  var groomCompleteHandler = null;
+  var restCompleteHandler = null;
+
   // Hunger integration state.
   var hungerStore = null;
   var hungerAnimator = null;
@@ -430,9 +435,19 @@
     if (dog.groomTimer > 0) {
       dog.groomTimer = Math.max(0, dog.groomTimer - dtSec);
       if (dog.groomTimer <= 0) {
+        dog.groomTimer = 0;
         dog.beingGroomed = false;
         if (!dog.sleeping && !forcedState && dog.state === 'sit') {
           dog.state = 'idle';
+        }
+        // Only restore roaming if rest is not still running.
+        if (!(dog.sleepTimer > 0)) {
+          resumeRoaming();
+        }
+        var groomCb = groomCompleteHandler;
+        groomCompleteHandler = null;
+        if (typeof groomCb === 'function') {
+          try { groomCb(); } catch (e) { /* ignore */ }
         }
       }
     }
@@ -441,9 +456,19 @@
     if (dog.sleepTimer > 0) {
       dog.sleepTimer = Math.max(0, dog.sleepTimer - dtSec);
       if (dog.sleepTimer <= 0) {
+        dog.sleepTimer = 0;
         dog.sleeping = false;
         if (!dog.beingGroomed && !forcedState && dog.state === 'sit') {
           dog.state = 'idle';
+        }
+        // Only restore roaming if grooming is not still running.
+        if (!(dog.groomTimer > 0)) {
+          resumeRoaming();
+        }
+        var restCb = restCompleteHandler;
+        restCompleteHandler = null;
+        if (typeof restCb === 'function') {
+          try { restCb(); } catch (e) { /* ignore */ }
         }
       }
     }
@@ -1557,14 +1582,57 @@
     return true;
   }
 
-  function playGroomingAnimation() {
+  // Shared care-action pose: face the camera and sit, mirroring feeding.
+  function applyCarePose() {
+    if (!dog) return;
+    dog.pose = 'camera';
+    dog.facing = Math.PI / 2;
+    dog.state = 'sit';
+  }
+
+  // Normalise the flexible (options) / (dogArg, options) call contract.
+  // Returns { opts, dogArg } where dogArg is only set when a distinct
+  // non-options object was passed as the first argument.
+  function normalizeCareArgs(arg1, arg2) {
+    var opts = {};
+    var dogArg = null;
+    if (arg1 && typeof arg1 === 'object' && typeof arg1.onComplete === 'function') {
+      opts = arg1;
+    } else {
+      if (arg1 && typeof arg1 === 'object' && arg1 !== dog) {
+        dogArg = arg1;
+      }
+      if (arg2 && typeof arg2 === 'object') {
+        opts = arg2;
+      }
+    }
+    return { opts: opts, dogArg: dogArg };
+  }
+
+  function playGroomingAnimation(arg1, arg2) {
+    // Backwards-compatible: playGroomingAnimation(dog) or (dog, { onComplete })
+    // and forward-compatible: playGroomingAnimation({ onComplete }).
+    var normalized = normalizeCareArgs(arg1, arg2);
+    var opts = normalized.opts;
+    var dogArg = normalized.dogArg;
     if (!dog) return false;
+    applyCarePose();
     dog.beingGroomed = true;
     dog.groomTimer = 3.0;
-    dog.state = 'sit';
     dog.emoteBubble = '🧼';
     dog.emoteTimer = 3.0;
     dog.bob += 0.5;
+    // Only overwrite the registered handler when an explicit callback is given.
+    if (typeof opts.onComplete === 'function') {
+      groomCompleteHandler = opts.onComplete;
+    }
+    // Mirror state onto an externally supplied dog-like object.
+    if (dogArg && typeof dogArg === 'object') {
+      dogArg.beingGroomed = true;
+      dogArg.groomTimer = 3.0;
+      dogArg.emoteBubble = '🧼';
+      dogArg.emoteTimer = 3.0;
+    }
     return true;
   }
 
@@ -1575,13 +1643,29 @@
     return true;
   }
 
-  function playSleepingAnimation() {
+  function playSleepingAnimation(arg1, arg2) {
+    // Backwards-compatible: playSleepingAnimation(dog) or (dog, { onComplete })
+    // and forward-compatible: playSleepingAnimation({ onComplete }).
+    var normalized = normalizeCareArgs(arg1, arg2);
+    var opts = normalized.opts;
+    var dogArg = normalized.dogArg;
     if (!dog) return false;
+    applyCarePose();
     dog.sleeping = true;
     dog.sleepTimer = 4.0;
-    dog.state = 'sit';
     dog.emoteBubble = '💤';
     dog.emoteTimer = 4.0;
+    // Only overwrite the registered handler when an explicit callback is given.
+    if (typeof opts.onComplete === 'function') {
+      restCompleteHandler = opts.onComplete;
+    }
+    // Mirror state onto an externally supplied dog-like object.
+    if (dogArg && typeof dogArg === 'object') {
+      dogArg.sleeping = true;
+      dogArg.sleepTimer = 4.0;
+      dogArg.emoteBubble = '💤';
+      dogArg.emoteTimer = 4.0;
+    }
     return true;
   }
 
@@ -1706,6 +1790,12 @@
     playNeedRestAnimation: playNeedRestAnimation,
     playSleepingAnimation: playSleepingAnimation,
     playNeedMetReaction: playNeedMetReaction,
+    setGroomCompleteHandler: function (fn) {
+      groomCompleteHandler = typeof fn === 'function' ? fn : null;
+    },
+    setRestCompleteHandler: function (fn) {
+      restCompleteHandler = typeof fn === 'function' ? fn : null;
+    },
     __testHooks: {
       frame: function (ts) { frame(ts || 0); },
       getParticles: function () { return particles; },

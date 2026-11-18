@@ -17,6 +17,11 @@ import { DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS } from '../state/dog_state_store.j
 
 export { DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS };
 
+// Resolve the host object that owns `setInterval`/`clearInterval`. In browsers
+// this is `window`; in Node/workers it is `globalThis`. Captured once so the
+// default timer wrappers always target the correct receiver.
+const timerRoot = typeof window !== 'undefined' ? window : globalThis;
+
 export class HomeHungerAnimator {
   /**
    * @param {Object} options
@@ -36,19 +41,34 @@ export class HomeHungerAnimator {
     tickIntervalMs = 1000,
     animationIntervalMs = DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS,
     now = () => Date.now(),
-    setIntervalFn = setInterval,
-    clearIntervalFn = clearInterval
+    setIntervalFn = (...args) => timerRoot.setInterval(...args),
+    clearIntervalFn = (...args) => timerRoot.clearInterval(...args)
   } = {}) {
     this._dogStateStore = dogStateStore;
     this._dog = dog;
     this._tickIntervalMs = tickIntervalMs;
     this._animationIntervalMs = animationIntervalMs;
     this._now = now;
-    this._setIntervalFn = setIntervalFn;
-    this._clearIntervalFn = clearIntervalFn;
+    // Host timer functions must be invoked with `this === window` (or
+    // `globalThis`), otherwise Chrome throws `TypeError: Illegal invocation`.
+    // Binding to `timerRoot` (or wrapping in an arrow that calls through
+    // `timerRoot`) guarantees the correct receiver regardless of how the
+    // function is later invoked.
+    this._setIntervalFn = typeof setIntervalFn === 'function'
+      ? (setIntervalFn === timerRoot.setInterval
+        ? setIntervalFn.bind(timerRoot)
+        : (...args) => setIntervalFn(...args))
+      : null;
+    this._clearIntervalFn = typeof clearIntervalFn === 'function'
+      ? (clearIntervalFn === timerRoot.clearInterval
+        ? clearIntervalFn.bind(timerRoot)
+        : (...args) => clearIntervalFn(...args))
+      : null;
 
     this._intervalId = null;
     this._lastAnimationAt = null;
+    // Persistent rotation index across due needs (hungry / grooming / rest).
+    this._emoteIndex = 0;
   }
 
   /**
@@ -57,7 +77,10 @@ export class HomeHungerAnimator {
    */
   start() {
     if (this._intervalId !== null) return;
-    this._intervalId = this._setIntervalFn(() => this.tick(), this._tickIntervalMs);
+    if (!this._setIntervalFn) return;
+    // Invoke via a local variable so `this` is never the animator instance.
+    const fn = this._setIntervalFn;
+    this._intervalId = fn(() => this.tick(), this._tickIntervalMs);
   }
 
   /**
@@ -65,7 +88,11 @@ export class HomeHungerAnimator {
    */
   stop() {
     if (this._intervalId === null) return;
-    this._clearIntervalFn(this._intervalId);
+    if (this._clearIntervalFn) {
+      // Invoke via a local variable so `this` is never the animator instance.
+      const fn = this._clearIntervalFn;
+      fn(this._intervalId);
+    }
     this._intervalId = null;
   }
 
@@ -145,7 +172,16 @@ export class HomeHungerAnimator {
     const needsGrooming = Boolean(groomingInfo && groomingInfo.needsGrooming);
     const isTired = Boolean(tirednessInfo && tirednessInfo.isTired);
 
-    if (!isHungry && !needsGrooming && !isTired) {
+    // Ordered list of every need that is currently due. Rotation happens
+    // across this list so all due needs get a turn instead of the first one
+    // starving the others.
+    const dueAnimations = [
+      { kind: 'hungry', fn: 'playHungryAnimation', due: isHungry },
+      { kind: 'grooming', fn: 'playNeedGroomingAnimation', due: needsGrooming },
+      { kind: 'rest', fn: 'playNeedRestAnimation', due: isTired }
+    ].filter((x) => x.due);
+
+    if (dueAnimations.length === 0) {
       this._lastAnimationAt = null;
       return;
     }
@@ -158,18 +194,14 @@ export class HomeHungerAnimator {
       nowMs - this._lastAnimationAt >= this._animationIntervalMs;
     if (!due) return;
 
-    let hook = null;
-    if (isHungry) {
-      hook = 'playHungryAnimation';
-    } else if (needsGrooming) {
-      hook = 'playNeedGroomingAnimation';
-    } else if (isTired) {
-      hook = 'playNeedRestAnimation';
-    }
+    // Round-robin: pick the next due need, then advance the persistent index.
+    // The modulo keeps the index in range even if the due set shrinks.
+    const next = dueAnimations[this._emoteIndex % dueAnimations.length];
+    this._emoteIndex = (this._emoteIndex + 1) % dueAnimations.length;
 
-    if (dog && hook && typeof dog[hook] === 'function') {
+    if (dog && next && typeof dog[next.fn] === 'function') {
       try {
-        dog[hook]();
+        dog[next.fn]();
       } catch (_err) {
         // Swallow: a throwing hook must not break the interval loop.
       }

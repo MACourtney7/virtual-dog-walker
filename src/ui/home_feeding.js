@@ -225,6 +225,16 @@
     return true;
   }
 
+  // Resolve the display name for care-action toasts, mirroring the feed path.
+  function resolveDogName() {
+    var dogSlot = null;
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.getDogSlot === 'function') {
+      try { dogSlot = root.HomeSanctuary.getDogSlot(); } catch (e) { /* ignore */ }
+    }
+    var dog = resolveCompanionDog();
+    return (dogSlot && dogSlot.name) || (dog && dog.name) || 'Ziggy';
+  }
+
   // Commit groom side effects exactly once per token.
   function commitGroom(token) {
     if (token === committedGroomToken) return false;
@@ -233,7 +243,33 @@
     if (store && typeof store.groom === 'function') {
       try { store.groom(); } catch (e) { /* ignore */ }
     }
-    invokeSanctuaryOrDog('playGroomingAnimation');
+    var dogName = resolveDogName();
+    var onComplete = function () {
+      showToast(dogName + ' loved the groom! ❤️');
+    };
+    // Prefer the options.onComplete contract; fall back to the setter-based
+    // contract (setGroomCompleteHandler) when the sanctuary exposes it.
+    var wired = false;
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.playGroomingAnimation === 'function') {
+      try {
+        var res = root.HomeSanctuary.playGroomingAnimation(resolveCompanionDog(), { onComplete: onComplete });
+        wired = Boolean(res);
+      } catch (e) { /* fall through */ }
+    }
+    if (!wired) {
+      var handlerRegistered = false;
+      if (root.HomeSanctuary && typeof root.HomeSanctuary.setGroomCompleteHandler === 'function') {
+        try {
+          root.HomeSanctuary.setGroomCompleteHandler(onComplete);
+          handlerRegistered = true;
+        } catch (e) { /* ignore */ }
+      }
+      invokeSanctuaryOrDog('playGroomingAnimation');
+      // Only toast immediately when nothing else will fire onComplete.
+      if (!handlerRegistered) {
+        showToast(dogName + ' loved the groom! ❤️');
+      }
+    }
     playNeedMetReaction();
     return true;
   }
@@ -246,12 +282,36 @@
     if (store && typeof store.rest === 'function') {
       try { store.rest(); } catch (e) { /* ignore */ }
     }
-    invokeSanctuaryOrDog('playSleepingAnimation');
+    var dogName = resolveDogName();
+    var onComplete = function () {
+      showToast(dogName + ' feels well rested! ❤️');
+    };
+    var wired = false;
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.playSleepingAnimation === 'function') {
+      try {
+        var res = root.HomeSanctuary.playSleepingAnimation(resolveCompanionDog(), { onComplete: onComplete });
+        wired = Boolean(res);
+      } catch (e) { /* fall through */ }
+    }
+    if (!wired) {
+      var handlerRegistered = false;
+      if (root.HomeSanctuary && typeof root.HomeSanctuary.setRestCompleteHandler === 'function') {
+        try {
+          root.HomeSanctuary.setRestCompleteHandler(onComplete);
+          handlerRegistered = true;
+        } catch (e) { /* ignore */ }
+      }
+      invokeSanctuaryOrDog('playSleepingAnimation');
+      // Only toast immediately when nothing else will fire onComplete.
+      if (!handlerRegistered) {
+        showToast(dogName + ' feels well rested! ❤️');
+      }
+    }
     playNeedMetReaction();
     return true;
   }
 
-  function emitToast(message) {
+  function showToast(message) {
     if (root.HomeSanctuary && typeof root.HomeSanctuary.toast === 'function') {
       try {
         root.HomeSanctuary.toast(message);
@@ -270,6 +330,9 @@
     }
     // Last resort: no-op (toast is best-effort).
   }
+
+  // Backwards-compatible alias.
+  var emitToast = showToast;
 
   function persistFeed(dogId) {
     var value = JSON.stringify({
@@ -318,58 +381,63 @@
     return actionBarEl;
   }
 
-  function ensureFeedButton() {
+  // Shared className so Feed / Groom / Rest render identically (REQ-4).
+  var ACTION_BUTTON_CLASS = 'btn-action btn-action-feed';
+
+  // Resolve the className Groom/Rest should adopt so they always match Feed's
+  // exact className. Prefers a pre-existing #btn-action-feed's className.
+  function resolveSharedButtonClass() {
+    var existing = document.getElementById('btn-action-feed');
+    if (existing && typeof existing.className === 'string' && existing.className) {
+      return existing.className;
+    }
+    return ACTION_BUTTON_CLASS;
+  }
+
+  // Minimal shared button factory: guarantees identical className across all
+  // three care-action buttons while preserving each button's unique id.
+  // When `preserveExisting` is true, an already-present button keeps its
+  // existing className and textContent untouched.
+  function renderActionButton(id, label, onClick, preserveExisting) {
     var bar = ensureActionBar();
-    feedBtnEl = document.getElementById('btn-action-feed');
-    if (!feedBtnEl) {
-      feedBtnEl = document.createElement('button');
-      feedBtnEl.id = 'btn-action-feed';
-      // Markup reference: id="btn-action-feed"
-      feedBtnEl.type = 'button';
-      feedBtnEl.className = 'btn-action btn-action-feed';
-      feedBtnEl.textContent = '🍖 Feed';
-      bar.appendChild(feedBtnEl);
+    var btn = document.getElementById(id);
+    var existed = Boolean(btn);
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = id;
+      btn.type = 'button';
+      bar.appendChild(btn);
     }
-    if (!feedBtnEl.__homeFeedingBound) {
-      feedBtnEl.addEventListener('click', onFeedClick);
-      feedBtnEl.__homeFeedingBound = true;
+    if (!(preserveExisting && existed)) {
+      // Sync the label so newly created buttons get the correct text.
+      btn.textContent = label;
+      // Enforce the shared className on newly created buttons.
+      btn.className = ACTION_BUTTON_CLASS;
     }
+    if (!btn.__homeFeedingBound) {
+      btn.addEventListener('click', onClick);
+      btn.__homeFeedingBound = true;
+    }
+    return btn;
+  }
+
+  function ensureFeedButton() {
+    // Preserve a pre-existing Feed button's className/textContent.
+    feedBtnEl = renderActionButton('btn-action-feed', '🍖 Feed', onFeedClick, true);
     return feedBtnEl;
   }
 
   function ensureGroomButton() {
-    var bar = ensureActionBar();
-    groomBtnEl = document.getElementById('btn-action-groom');
-    if (!groomBtnEl) {
-      groomBtnEl = document.createElement('button');
-      groomBtnEl.id = 'btn-action-groom';
-      groomBtnEl.type = 'button';
-      groomBtnEl.className = 'btn-action btn-action-groom';
-      groomBtnEl.textContent = 'Groom';
-      bar.appendChild(groomBtnEl);
-    }
-    if (!groomBtnEl.__homeFeedingBound) {
-      groomBtnEl.addEventListener('click', onGroomClick);
-      groomBtnEl.__homeFeedingBound = true;
-    }
+    groomBtnEl = renderActionButton('btn-action-groom', '🫧 Groom', onGroomClick, false);
+    // Always match Feed's exact className.
+    if (groomBtnEl) groomBtnEl.className = resolveSharedButtonClass();
     return groomBtnEl;
   }
 
   function ensureRestButton() {
-    var bar = ensureActionBar();
-    restBtnEl = document.getElementById('btn-action-rest');
-    if (!restBtnEl) {
-      restBtnEl = document.createElement('button');
-      restBtnEl.id = 'btn-action-rest';
-      restBtnEl.type = 'button';
-      restBtnEl.className = 'btn-action btn-action-rest';
-      restBtnEl.textContent = 'Rest';
-      bar.appendChild(restBtnEl);
-    }
-    if (!restBtnEl.__homeFeedingBound) {
-      restBtnEl.addEventListener('click', onRestClick);
-      restBtnEl.__homeFeedingBound = true;
-    }
+    restBtnEl = renderActionButton('btn-action-rest', '💤 Rest', onRestClick, false);
+    // Always match Feed's exact className.
+    if (restBtnEl) restBtnEl.className = resolveSharedButtonClass();
     return restBtnEl;
   }
 
@@ -501,7 +569,7 @@
             clearBowl();
 
             var toast = dogName + ' loved the meal! ❤️';
-            emitToast(toast);
+            showToast(toast);
 
             commitFeed(token, dogId);
 

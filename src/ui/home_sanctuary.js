@@ -1585,6 +1585,7 @@
   // Shared care-action pose: face the camera and sit, mirroring feeding.
   function applyCarePose() {
     if (!dog) return;
+    pose = 'camera';
     dog.pose = 'camera';
     dog.facing = Math.PI / 2;
     dog.state = 'sit';

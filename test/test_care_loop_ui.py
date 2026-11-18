@@ -168,11 +168,9 @@ const careLoopShim = (() => {
       set(target, prop, value) { target[prop] = value; return true; }
     });
   }
-    createElement(tag) {
-      const el = makeButton('created-' + tag);
-      el.tagName = String(tag).toUpperCase();
-      return el;
-    },
+  const window = Object.assign(globalThis, {
+    document,
+    location: { search: '' },
     addEventListener() {},
     removeEventListener() {},
     requestAnimationFrame(fn) { return setTimeout(() => fn(Date.now()), 0); },

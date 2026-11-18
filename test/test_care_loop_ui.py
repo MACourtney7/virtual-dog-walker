@@ -244,6 +244,20 @@ class TestCareLoopUI(unittest.TestCase):
         let careLoopThrew = null;
         let careLoopEmote = null;
         let careLoopHasDrawEmote = false;
+        // Spy on CompanionDog.prototype.drawEmote so we can prove that
+        // render() -> buildDogEntity() resolved the prototype method and
+        // actually drew the hungry emote.
+        const careLoopProto = globalThis.CompanionDog && globalThis.CompanionDog.prototype;
+        const careLoopOriginalDrawEmote = careLoopProto ? careLoopProto.drawEmote : undefined;
+        let careLoopDrawEmoteCalls = 0;
+        let careLoopLastEmote = null;
+        if (careLoopProto && typeof careLoopOriginalDrawEmote === 'function') {
+          careLoopProto.drawEmote = function (emote, ...rest) {
+            careLoopDrawEmoteCalls += 1;
+            careLoopLastEmote = emote;
+            return careLoopOriginalDrawEmote.call(this, emote, ...rest);
+          };
+        }
         try {
           careLoopSanctuary.mount(
             careLoopShim.document.getElementById('home-field-canvas'),
@@ -252,12 +266,15 @@ class TestCareLoopUI(unittest.TestCase):
           careLoopSanctuary.playNeedHungryAnimation();
           const careLoopDog = careLoopSanctuary.getDog();
           careLoopEmote = careLoopDog ? careLoopDog.emoteBubble : null;
-          careLoopHasDrawEmote = typeof careLoopDog.drawEmote === 'function';
           // Exercise the real render path against a fake 2D context.
           careLoopSanctuary.__testHooks.render();
+          careLoopHasDrawEmote = careLoopDrawEmoteCalls >= 1 && careLoopLastEmote === '🍖';
         } catch (e) {
           careLoopThrew = String(e && e.message ? e.message : e);
         } finally {
+          if (careLoopProto && typeof careLoopOriginalDrawEmote === 'function') {
+            careLoopProto.drawEmote = careLoopOriginalDrawEmote;
+          }
           try { careLoopSanctuary.unmount(); } catch (_e) { /* ignore */ }
         }
         console.log(JSON.stringify({

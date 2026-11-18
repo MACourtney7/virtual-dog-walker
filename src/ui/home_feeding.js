@@ -257,11 +257,18 @@
       } catch (e) { /* fall through */ }
     }
     if (!wired) {
+      var handlerRegistered = false;
       if (root.HomeSanctuary && typeof root.HomeSanctuary.setGroomCompleteHandler === 'function') {
-        try { root.HomeSanctuary.setGroomCompleteHandler(onComplete); } catch (e) { /* ignore */ }
+        try {
+          root.HomeSanctuary.setGroomCompleteHandler(onComplete);
+          handlerRegistered = true;
+        } catch (e) { /* ignore */ }
       }
       invokeSanctuaryOrDog('playGroomingAnimation');
-      showToast(dogName + ' loved the groom! ❤️');
+      // Only toast immediately when nothing else will fire onComplete.
+      if (!handlerRegistered) {
+        showToast(dogName + ' loved the groom! ❤️');
+      }
     }
     playNeedMetReaction();
     return true;
@@ -287,11 +294,18 @@
       } catch (e) { /* fall through */ }
     }
     if (!wired) {
+      var handlerRegistered = false;
       if (root.HomeSanctuary && typeof root.HomeSanctuary.setRestCompleteHandler === 'function') {
-        try { root.HomeSanctuary.setRestCompleteHandler(onComplete); } catch (e) { /* ignore */ }
+        try {
+          root.HomeSanctuary.setRestCompleteHandler(onComplete);
+          handlerRegistered = true;
+        } catch (e) { /* ignore */ }
       }
       invokeSanctuaryOrDog('playSleepingAnimation');
-      showToast(dogName + ' feels well rested! ❤️');
+      // Only toast immediately when nothing else will fire onComplete.
+      if (!handlerRegistered) {
+        showToast(dogName + ' feels well rested! ❤️');
+      }
     }
     playNeedMetReaction();
     return true;
@@ -370,21 +384,36 @@
   // Shared className so Feed / Groom / Rest render identically (REQ-4).
   var ACTION_BUTTON_CLASS = 'btn-action btn-action-feed';
 
+  // Resolve the className Groom/Rest should adopt so they always match Feed's
+  // exact className. Prefers a pre-existing #btn-action-feed's className.
+  function resolveSharedButtonClass() {
+    var existing = document.getElementById('btn-action-feed');
+    if (existing && typeof existing.className === 'string' && existing.className) {
+      return existing.className;
+    }
+    return ACTION_BUTTON_CLASS;
+  }
+
   // Minimal shared button factory: guarantees identical className across all
   // three care-action buttons while preserving each button's unique id.
-  function renderActionButton(id, label, onClick) {
+  // When `preserveExisting` is true, an already-present button keeps its
+  // existing className and textContent untouched.
+  function renderActionButton(id, label, onClick, preserveExisting) {
     var bar = ensureActionBar();
     var btn = document.getElementById(id);
+    var existed = Boolean(btn);
     if (!btn) {
       btn = document.createElement('button');
       btn.id = id;
       btn.type = 'button';
       bar.appendChild(btn);
     }
-    // Always sync the label so pre-existing buttons get the correct text.
-    btn.textContent = label;
-    // Always enforce the shared className, even for pre-existing buttons.
-    btn.className = ACTION_BUTTON_CLASS;
+    if (!(preserveExisting && existed)) {
+      // Sync the label so newly created buttons get the correct text.
+      btn.textContent = label;
+      // Enforce the shared className on newly created buttons.
+      btn.className = ACTION_BUTTON_CLASS;
+    }
     if (!btn.__homeFeedingBound) {
       btn.addEventListener('click', onClick);
       btn.__homeFeedingBound = true;
@@ -393,17 +422,22 @@
   }
 
   function ensureFeedButton() {
-    feedBtnEl = renderActionButton('btn-action-feed', '🍖 Feed', onFeedClick);
+    // Preserve a pre-existing Feed button's className/textContent.
+    feedBtnEl = renderActionButton('btn-action-feed', '🍖 Feed', onFeedClick, true);
     return feedBtnEl;
   }
 
   function ensureGroomButton() {
-    groomBtnEl = renderActionButton('btn-action-groom', '🫧 Groom', onGroomClick);
+    groomBtnEl = renderActionButton('btn-action-groom', '🫧 Groom', onGroomClick, false);
+    // Always match Feed's exact className.
+    if (groomBtnEl) groomBtnEl.className = resolveSharedButtonClass();
     return groomBtnEl;
   }
 
   function ensureRestButton() {
-    restBtnEl = renderActionButton('btn-action-rest', '💤 Rest', onRestClick);
+    restBtnEl = renderActionButton('btn-action-rest', '💤 Rest', onRestClick, false);
+    // Always match Feed's exact className.
+    if (restBtnEl) restBtnEl.className = resolveSharedButtonClass();
     return restBtnEl;
   }
 

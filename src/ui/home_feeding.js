@@ -253,7 +253,7 @@
     if (root.HomeSanctuary && typeof root.HomeSanctuary.playGroomingAnimation === 'function') {
       try {
         var res = root.HomeSanctuary.playGroomingAnimation(resolveCompanionDog(), { onComplete: onComplete });
-        wired = Boolean(res);
+        wired = res !== false;
       } catch (e) { /* fall through */ }
     }
     if (!wired) {
@@ -290,7 +290,7 @@
     if (root.HomeSanctuary && typeof root.HomeSanctuary.playSleepingAnimation === 'function') {
       try {
         var res = root.HomeSanctuary.playSleepingAnimation(resolveCompanionDog(), { onComplete: onComplete });
-        wired = Boolean(res);
+        wired = res !== false;
       } catch (e) { /* fall through */ }
     }
     if (!wired) {

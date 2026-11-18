@@ -379,9 +379,10 @@
       btn = document.createElement('button');
       btn.id = id;
       btn.type = 'button';
-      btn.textContent = label;
       bar.appendChild(btn);
     }
+    // Always sync the label so pre-existing buttons get the correct text.
+    btn.textContent = label;
     // Always enforce the shared className, even for pre-existing buttons.
     btn.className = ACTION_BUTTON_CLASS;
     if (!btn.__homeFeedingBound) {

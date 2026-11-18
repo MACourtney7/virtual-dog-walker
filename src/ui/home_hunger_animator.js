@@ -17,6 +17,11 @@ import { DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS } from '../state/dog_state_store.j
 
 export { DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS };
 
+// Resolve the host object that owns `setInterval`/`clearInterval`. In browsers
+// this is `window`; in Node/workers it is `globalThis`. Captured once so the
+// default timer wrappers always target the correct receiver.
+const timerRoot = typeof window !== 'undefined' ? window : globalThis;
+
 export class HomeHungerAnimator {
   /**
    * @param {Object} options
@@ -36,22 +41,28 @@ export class HomeHungerAnimator {
     tickIntervalMs = 1000,
     animationIntervalMs = DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS,
     now = () => Date.now(),
-    setIntervalFn = setInterval,
-    clearIntervalFn = clearInterval
+    setIntervalFn = (...args) => timerRoot.setInterval(...args),
+    clearIntervalFn = (...args) => timerRoot.clearInterval(...args)
   } = {}) {
     this._dogStateStore = dogStateStore;
     this._dog = dog;
     this._tickIntervalMs = tickIntervalMs;
     this._animationIntervalMs = animationIntervalMs;
     this._now = now;
-    // Bind host timer functions so they can be invoked as members without
-    // throwing `TypeError: Illegal invocation` (window.setInterval requires
-    // `this === window`). Arrow wrappers are safe under both window and jsdom.
+    // Host timer functions must be invoked with `this === window` (or
+    // `globalThis`), otherwise Chrome throws `TypeError: Illegal invocation`.
+    // Binding to `timerRoot` (or wrapping in an arrow that calls through
+    // `timerRoot`) guarantees the correct receiver regardless of how the
+    // function is later invoked.
     this._setIntervalFn = typeof setIntervalFn === 'function'
-      ? (...args) => setIntervalFn(...args)
+      ? (setIntervalFn === timerRoot.setInterval
+        ? setIntervalFn.bind(timerRoot)
+        : (...args) => setIntervalFn(...args))
       : null;
     this._clearIntervalFn = typeof clearIntervalFn === 'function'
-      ? (...args) => clearIntervalFn(...args)
+      ? (clearIntervalFn === timerRoot.clearInterval
+        ? clearIntervalFn.bind(timerRoot)
+        : (...args) => clearIntervalFn(...args))
       : null;
 
     this._intervalId = null;
@@ -67,7 +78,9 @@ export class HomeHungerAnimator {
   start() {
     if (this._intervalId !== null) return;
     if (!this._setIntervalFn) return;
-    this._intervalId = this._setIntervalFn(() => this.tick(), this._tickIntervalMs);
+    // Invoke via a local variable so `this` is never the animator instance.
+    const fn = this._setIntervalFn;
+    this._intervalId = fn(() => this.tick(), this._tickIntervalMs);
   }
 
   /**
@@ -76,7 +89,9 @@ export class HomeHungerAnimator {
   stop() {
     if (this._intervalId === null) return;
     if (this._clearIntervalFn) {
-      this._clearIntervalFn(this._intervalId);
+      // Invoke via a local variable so `this` is never the animator instance.
+      const fn = this._clearIntervalFn;
+      fn(this._intervalId);
     }
     this._intervalId = null;
   }

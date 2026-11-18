@@ -245,15 +245,15 @@
     }
     var dogName = resolveDogName();
     var onComplete = function () {
-      emitToast(dogName + ' loved the groom! ❤️');
+      showToast(dogName + ' loved the groom! ❤️');
     };
     // Prefer the options.onComplete contract; fall back to the setter-based
     // contract (setGroomCompleteHandler) when the sanctuary exposes it.
     var wired = false;
     if (root.HomeSanctuary && typeof root.HomeSanctuary.playGroomingAnimation === 'function') {
       try {
-        root.HomeSanctuary.playGroomingAnimation(resolveCompanionDog(), { onComplete: onComplete });
-        wired = true;
+        var res = root.HomeSanctuary.playGroomingAnimation(resolveCompanionDog(), { onComplete: onComplete });
+        wired = Boolean(res);
       } catch (e) { /* fall through */ }
     }
     if (!wired) {
@@ -261,6 +261,7 @@
         try { root.HomeSanctuary.setGroomCompleteHandler(onComplete); } catch (e) { /* ignore */ }
       }
       invokeSanctuaryOrDog('playGroomingAnimation');
+      showToast(dogName + ' loved the groom! ❤️');
     }
     playNeedMetReaction();
     return true;
@@ -276,13 +277,13 @@
     }
     var dogName = resolveDogName();
     var onComplete = function () {
-      emitToast(dogName + ' feels well rested! ❤️');
+      showToast(dogName + ' feels well rested! ❤️');
     };
     var wired = false;
     if (root.HomeSanctuary && typeof root.HomeSanctuary.playSleepingAnimation === 'function') {
       try {
-        root.HomeSanctuary.playSleepingAnimation(resolveCompanionDog(), { onComplete: onComplete });
-        wired = true;
+        var res = root.HomeSanctuary.playSleepingAnimation(resolveCompanionDog(), { onComplete: onComplete });
+        wired = Boolean(res);
       } catch (e) { /* fall through */ }
     }
     if (!wired) {
@@ -290,12 +291,13 @@
         try { root.HomeSanctuary.setRestCompleteHandler(onComplete); } catch (e) { /* ignore */ }
       }
       invokeSanctuaryOrDog('playSleepingAnimation');
+      showToast(dogName + ' feels well rested! ❤️');
     }
     playNeedMetReaction();
     return true;
   }
 
-  function emitToast(message) {
+  function showToast(message) {
     if (root.HomeSanctuary && typeof root.HomeSanctuary.toast === 'function') {
       try {
         root.HomeSanctuary.toast(message);
@@ -314,6 +316,9 @@
     }
     // Last resort: no-op (toast is best-effort).
   }
+
+  // Backwards-compatible alias.
+  var emitToast = showToast;
 
   function persistFeed(dogId) {
     var value = JSON.stringify({
@@ -374,10 +379,11 @@
       btn = document.createElement('button');
       btn.id = id;
       btn.type = 'button';
-      btn.className = ACTION_BUTTON_CLASS;
       btn.textContent = label;
       bar.appendChild(btn);
     }
+    // Always enforce the shared className, even for pre-existing buttons.
+    btn.className = ACTION_BUTTON_CLASS;
     if (!btn.__homeFeedingBound) {
       btn.addEventListener('click', onClick);
       btn.__homeFeedingBound = true;
@@ -528,7 +534,7 @@
             clearBowl();
 
             var toast = dogName + ' loved the meal! ❤️';
-            emitToast(toast);
+            showToast(toast);
 
             commitFeed(token, dogId);
 

@@ -119,9 +119,23 @@ const careLoopShim = (() => {
       return findInTree(body, id);
     },
     registerElement(id) {
-      if (!elements.has(id)) elements.set(id, makeButton(id));
+      if (!elements.has(id)) {
+        const el = makeButton(id);
+        // Canvas-like elements need a 2D context for HomeSanctuary.mount().
+        if (String(id).includes('canvas')) {
+          el.tagName = 'CANVAS';
+          el.width = 1280;
+          el.height = 720;
+          el.getContext = () => makeCtx2d();
+        }
+        elements.set(id, el);
+      }
       return elements.get(id);
     },
+```
+
+virtual_dog_walker/test/test_care_loop_ui.py
+```python
     createElement(tag) {
       const el = makeButton('created-' + tag);
       el.tagName = String(tag).toUpperCase();
@@ -130,19 +144,55 @@ const careLoopShim = (() => {
     addEventListener() {},
     removeEventListener() {}
   };
-  // Make `window` an alias of `globalThis` so modules that attach their
-  // public API to `window` (e.g. HomeFeeding, HomeSanctuary) are visible via
-  // `globalThis.HomeFeeding` / `globalThis.HomeSanctuary` in the tests.
-  const window = globalThis;
-  window.document = document;
-  window.location = { search: '' };
-  window.addEventListener = function () {};
-  window.removeEventListener = function () {};
-  window.requestAnimationFrame = function (fn) { return setTimeout(() => fn(Date.now()), 0); };
-  window.cancelAnimationFrame = function (id) { clearTimeout(id); };
-  window.setTimeout = setTimeout;
-  window.clearTimeout = clearTimeout;
-  window.performance = { now: () => Date.now() };
+  // Shared canvas 2D context stub. Explicit stubs for common methods plus a
+  // Proxy fallback so any unknown ctx method is a no-op instead of throwing.
+  function makeCtx2d() {
+    const base = {
+      canvas: { width: 1280, height: 720 },
+      measureText: () => ({ width: 10 }),
+      createLinearGradient: () => ({ addColorStop() {} }),
+      createRadialGradient: () => ({ addColorStop() {} }),
+      createPattern: () => ({}),
+      getImageData: () => ({ data: [] }),
+      putImageData: () => {},
+      setTransform: () => {},
+      resetTransform: () => {},
+      clearRect: () => {},
+      fillRect: () => {},
+      strokeRect: () => {},
+      setLineDash: () => {},
+      getLineDash: () => []
+    };
+    return new Proxy(base, {
+      get(target, prop) {
+        if (prop in target) return target[prop];
+        if (typeof prop === 'string') return () => {};
+        return undefined;
+      },
+      set(target, prop, value) { target[prop] = value; return true; }
+    });
+  }
+  const window = {
+    document,
+    location: { search: '' },
+```
+
+virtual_dog_walker/test/test_care_loop_ui.py
+```python
+<<<<<<< SEARCH
+    createElement(tag) {
+      const el = makeButton('created-' + tag);
+      el.tagName = String(tag).toUpperCase();
+      return el;
+    },
+    addEventListener() {},
+    removeEventListener() {},
+    requestAnimationFrame(fn) { return setTimeout(() => fn(Date.now()), 0); },
+    cancelAnimationFrame(id) { clearTimeout(id); },
+    setTimeout,
+    clearTimeout,
+    performance: { now: () => Date.now() }
+  };
   globalThis.window = window;
   globalThis.document = document;
   globalThis.requestAnimationFrame = window.requestAnimationFrame;
@@ -167,19 +217,26 @@ careLoopShim.document.registerElement('home-field-canvas');
 
 def fake_ctx_shim() -> str:
     return """
-const careLoopFakeCtx = new Proxy({}, {
+const careLoopFakeCtx = new Proxy({
+  canvas: { width: 1280, height: 720 },
+  measureText: () => ({ width: 10 }),
+  createLinearGradient: () => ({ addColorStop() {} }),
+  createRadialGradient: () => ({ addColorStop() {} }),
+  createPattern: () => ({}),
+  getImageData: () => ({ data: [] }),
+  putImageData: () => {},
+  setTransform: () => {},
+  resetTransform: () => {},
+  clearRect: () => {},
+  fillRect: () => {},
+  strokeRect: () => {},
+  setLineDash: () => {},
+  getLineDash: () => []
+}, {
   get(target, prop) {
-    if (prop === 'canvas') return { width: 1280, height: 720 };
-    if (prop === 'measureText') return () => ({ width: 10 });
-    if (prop === 'createLinearGradient' || prop === 'createRadialGradient') {
-      return () => ({ addColorStop() {} });
-    }
-    if (prop === 'getImageData') return () => ({ data: [] });
-    if (typeof prop === 'string' && prop in target) return target[prop];
-    // Every other 2D-context method (save, restore, translate, scale, rotate,
-    // beginPath, closePath, moveTo, lineTo, arc, ellipse, roundRect, fill,
-    // stroke, fillText, quadraticCurveTo, bezierCurveTo, ...) is a no-op.
-    return () => {};
+    if (prop in target) return target[prop];
+    if (typeof prop === 'string') return () => {};
+    return undefined;
   },
   set(target, prop, value) { target[prop] = value; return true; }
 });

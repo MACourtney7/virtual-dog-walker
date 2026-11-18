@@ -252,10 +252,10 @@ class TestCareLoopUI(unittest.TestCase):
         let careLoopDrawEmoteCalls = 0;
         let careLoopLastEmote = null;
         if (careLoopProto && typeof careLoopOriginalDrawEmote === 'function') {
-          careLoopProto.drawEmote = function (emote, ...rest) {
+          careLoopProto.drawEmote = function (ctxArg, emoteArg, ...rest) {
             careLoopDrawEmoteCalls += 1;
-            careLoopLastEmote = emote;
-            return careLoopOriginalDrawEmote.call(this, emote, ...rest);
+            careLoopLastEmote = emoteArg;
+            return careLoopOriginalDrawEmote.call(this, ctxArg, emoteArg, ...rest);
           };
         }
         try {

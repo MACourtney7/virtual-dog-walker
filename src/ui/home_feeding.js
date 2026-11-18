@@ -225,6 +225,16 @@
     return true;
   }
 
+  // Resolve the display name for care-action toasts, mirroring the feed path.
+  function resolveDogName() {
+    var dogSlot = null;
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.getDogSlot === 'function') {
+      try { dogSlot = root.HomeSanctuary.getDogSlot(); } catch (e) { /* ignore */ }
+    }
+    var dog = resolveCompanionDog();
+    return (dogSlot && dogSlot.name) || (dog && dog.name) || 'Ziggy';
+  }
+
   // Commit groom side effects exactly once per token.
   function commitGroom(token) {
     if (token === committedGroomToken) return false;
@@ -233,7 +243,25 @@
     if (store && typeof store.groom === 'function') {
       try { store.groom(); } catch (e) { /* ignore */ }
     }
-    invokeSanctuaryOrDog('playGroomingAnimation');
+    var dogName = resolveDogName();
+    var onComplete = function () {
+      emitToast(dogName + ' loved the groom! ❤️');
+    };
+    // Prefer the options.onComplete contract; fall back to the setter-based
+    // contract (setGroomCompleteHandler) when the sanctuary exposes it.
+    var wired = false;
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.playGroomingAnimation === 'function') {
+      try {
+        root.HomeSanctuary.playGroomingAnimation(resolveCompanionDog(), { onComplete: onComplete });
+        wired = true;
+      } catch (e) { /* fall through */ }
+    }
+    if (!wired) {
+      if (root.HomeSanctuary && typeof root.HomeSanctuary.setGroomCompleteHandler === 'function') {
+        try { root.HomeSanctuary.setGroomCompleteHandler(onComplete); } catch (e) { /* ignore */ }
+      }
+      invokeSanctuaryOrDog('playGroomingAnimation');
+    }
     playNeedMetReaction();
     return true;
   }
@@ -246,7 +274,23 @@
     if (store && typeof store.rest === 'function') {
       try { store.rest(); } catch (e) { /* ignore */ }
     }
-    invokeSanctuaryOrDog('playSleepingAnimation');
+    var dogName = resolveDogName();
+    var onComplete = function () {
+      emitToast(dogName + ' feels well rested! ❤️');
+    };
+    var wired = false;
+    if (root.HomeSanctuary && typeof root.HomeSanctuary.playSleepingAnimation === 'function') {
+      try {
+        root.HomeSanctuary.playSleepingAnimation(resolveCompanionDog(), { onComplete: onComplete });
+        wired = true;
+      } catch (e) { /* fall through */ }
+    }
+    if (!wired) {
+      if (root.HomeSanctuary && typeof root.HomeSanctuary.setRestCompleteHandler === 'function') {
+        try { root.HomeSanctuary.setRestCompleteHandler(onComplete); } catch (e) { /* ignore */ }
+      }
+      invokeSanctuaryOrDog('playSleepingAnimation');
+    }
     playNeedMetReaction();
     return true;
   }
@@ -318,58 +362,41 @@
     return actionBarEl;
   }
 
-  function ensureFeedButton() {
+  // Shared className so Feed / Groom / Rest render identically (REQ-4).
+  var ACTION_BUTTON_CLASS = 'btn-action btn-action-feed';
+
+  // Minimal shared button factory: guarantees identical className across all
+  // three care-action buttons while preserving each button's unique id.
+  function renderActionButton(id, label, onClick) {
     var bar = ensureActionBar();
-    feedBtnEl = document.getElementById('btn-action-feed');
-    if (!feedBtnEl) {
-      feedBtnEl = document.createElement('button');
-      feedBtnEl.id = 'btn-action-feed';
-      // Markup reference: id="btn-action-feed"
-      feedBtnEl.type = 'button';
-      feedBtnEl.className = 'btn-action btn-action-feed';
-      feedBtnEl.textContent = '🍖 Feed';
-      bar.appendChild(feedBtnEl);
+    var btn = document.getElementById(id);
+    if (!btn) {
+      btn = document.createElement('button');
+      btn.id = id;
+      btn.type = 'button';
+      btn.className = ACTION_BUTTON_CLASS;
+      btn.textContent = label;
+      bar.appendChild(btn);
     }
-    if (!feedBtnEl.__homeFeedingBound) {
-      feedBtnEl.addEventListener('click', onFeedClick);
-      feedBtnEl.__homeFeedingBound = true;
+    if (!btn.__homeFeedingBound) {
+      btn.addEventListener('click', onClick);
+      btn.__homeFeedingBound = true;
     }
+    return btn;
+  }
+
+  function ensureFeedButton() {
+    feedBtnEl = renderActionButton('btn-action-feed', '🍖 Feed', onFeedClick);
     return feedBtnEl;
   }
 
   function ensureGroomButton() {
-    var bar = ensureActionBar();
-    groomBtnEl = document.getElementById('btn-action-groom');
-    if (!groomBtnEl) {
-      groomBtnEl = document.createElement('button');
-      groomBtnEl.id = 'btn-action-groom';
-      groomBtnEl.type = 'button';
-      groomBtnEl.className = 'btn-action btn-action-groom';
-      groomBtnEl.textContent = 'Groom';
-      bar.appendChild(groomBtnEl);
-    }
-    if (!groomBtnEl.__homeFeedingBound) {
-      groomBtnEl.addEventListener('click', onGroomClick);
-      groomBtnEl.__homeFeedingBound = true;
-    }
+    groomBtnEl = renderActionButton('btn-action-groom', '🫧 Groom', onGroomClick);
     return groomBtnEl;
   }
 
   function ensureRestButton() {
-    var bar = ensureActionBar();
-    restBtnEl = document.getElementById('btn-action-rest');
-    if (!restBtnEl) {
-      restBtnEl = document.createElement('button');
-      restBtnEl.id = 'btn-action-rest';
-      restBtnEl.type = 'button';
-      restBtnEl.className = 'btn-action btn-action-rest';
-      restBtnEl.textContent = 'Rest';
-      bar.appendChild(restBtnEl);
-    }
-    if (!restBtnEl.__homeFeedingBound) {
-      restBtnEl.addEventListener('click', onRestClick);
-      restBtnEl.__homeFeedingBound = true;
-    }
+    restBtnEl = renderActionButton('btn-action-rest', '💤 Rest', onRestClick);
     return restBtnEl;
   }
 

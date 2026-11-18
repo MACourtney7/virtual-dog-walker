@@ -123,23 +123,6 @@ const careLoopShim = (() => {
 
 virtual_dog_walker/test/test_care_loop_ui.py
 ```python
-<<<<<<< SEARCH
-def fake_ctx_shim() -> str:
-    return """
-const careLoopFakeCtx = new Proxy({}, {
-  get(target, prop) {
-    if (prop === 'canvas') return { width: 1280, height: 720 };
-    if (prop === 'measureText') return () => ({ width: 10 });
-    if (prop === 'createLinearGradient' || prop === 'createRadialGradient') {
-      return () => ({ addColorStop() {} });
-    }
-    if (prop === 'getImageData') return () => ({ data: [] });
-    if (typeof prop === 'string' && prop in target) return target[prop];
-    return () => {};
-  },
-  set(target, prop, value) { target[prop] = value; return true; }
-});
-"""
     createElement(tag) {
       const el = makeButton('created-' + tag);
       el.tagName = String(tag).toUpperCase();
@@ -221,16 +204,26 @@ careLoopShim.document.registerElement('home-field-canvas');
 
 def fake_ctx_shim() -> str:
     return """
-const careLoopFakeCtx = new Proxy({}, {
+const careLoopFakeCtx = new Proxy({
+  canvas: { width: 1280, height: 720 },
+  measureText: () => ({ width: 10 }),
+  createLinearGradient: () => ({ addColorStop() {} }),
+  createRadialGradient: () => ({ addColorStop() {} }),
+  createPattern: () => ({}),
+  getImageData: () => ({ data: [] }),
+  putImageData: () => {},
+  setTransform: () => {},
+  resetTransform: () => {},
+  clearRect: () => {},
+  fillRect: () => {},
+  strokeRect: () => {},
+  setLineDash: () => {},
+  getLineDash: () => []
+}, {
   get(target, prop) {
-    if (prop === 'canvas') return { width: 1280, height: 720 };
-    if (prop === 'measureText') return () => ({ width: 10 });
-    if (prop === 'createLinearGradient' || prop === 'createRadialGradient') {
-      return () => ({ addColorStop() {} });
-    }
-    if (prop === 'getImageData') return () => ({ data: [] });
-    if (typeof prop === 'string' && prop in target) return target[prop];
-    return () => {};
+    if (prop in target) return target[prop];
+    if (typeof prop === 'string') return () => {};
+    return undefined;
   },
   set(target, prop, value) { target[prop] = value; return true; }
 });

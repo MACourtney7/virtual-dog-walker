@@ -725,6 +725,17 @@ export class Owner {
       this.vx = 0;
       this.vy = 0;
       this.isMoving = false;
+      // Even while force-stopped, keep the owner within leash range of the
+      // dog (the dog may have moved away while pooping).
+      const frozenClamped = clampOwnerToLeash(
+        { x: this.x, y: this.y },
+        { x: leashDog.x, y: leashDog.y },
+        MAX_LEASH_LENGTH
+      );
+      if (frozenClamped) {
+        this.x = frozenClamped.x;
+        this.y = frozenClamped.y;
+      }
       this.depthY = this.y + 12;
       return;
     }
@@ -824,7 +835,7 @@ export class Owner {
         { x: leashDog.x, y: leashDog.y },
         MAX_LEASH_LENGTH
       );
-      if (clamped && clamped !== this) {
+      if (clamped) {
         this.x = clamped.x;
         this.y = clamped.y;
       }

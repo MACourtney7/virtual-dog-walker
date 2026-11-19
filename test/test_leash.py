@@ -76,22 +76,108 @@ def test_owner_frozen_while_pooping_on_leash():
 
 
 def test_owner_free_off_leash():
+    """Off-leash: Owner.update() must not clamp or freeze the owner."""
     script = f"""
-    import {{ isOwnerFrozen, clampOwnerToLeash }} from {json.dumps(LEASH_MODULE)};
-    const dog = {{ x: 0, y: 0, isOnLeash: false, isPooping: true }};
-    const owner = {{ x: 100, y: 0 }};
-    const clamped = clampOwnerToLeash(owner, dog, 3.0);
+    import {{ Owner }} from {json.dumps(OWNER_MODULE)};
+    const owner = new Owner(100, 0, 'Walker', true);
+    owner.setGait('STAND');
+    owner.dog = {{ x: 0, y: 0, isOnLeash: false, isPooping: true }};
+    owner.update(1 / 60, null);
     console.log(JSON.stringify({{
-      frozen: isOwnerFrozen(dog),
-      unchanged: clamped === owner,
-      x: clamped.x,
+      x: owner.x,
+      y: owner.y,
+      vx: owner.vx,
+      vy: owner.vy,
+      isMoving: owner.isMoving,
     }}));
     """
     out = _run_node(script)
-    # Off-leash: not frozen, and clamp is a no-op when caller bypasses it.
-    assert out["frozen"] is False
-    assert out["unchanged"] is True
-    assert out["x"] == 100
+    # Off-leash: not frozen, not clamped, position unchanged.
+    assert abs(out["x"] - 100) < 1e-9
+    assert abs(out["y"]) < 1e-9
+    assert out["vx"] == 0
+    assert out["vy"] == 0
+    assert out["isMoving"] is False
+
+
+def test_owner_update_clamps_to_leash_radius():
+    """AC-3.2: Owner.update() clamps the owner within MAX_LEASH_LENGTH."""
+    script = f"""
+    import {{ Owner }} from {json.dumps(OWNER_MODULE)};
+    import {{ MAX_LEASH_LENGTH }} from {json.dumps(LEASH_MODULE)};
+    const owner = new Owner(10, 0, 'Walker', true);
+    owner.setGait('STAND');
+    owner.dog = {{ x: 0, y: 0, isOnLeash: true, isPooping: false }};
+    owner.update(1 / 60, null);
+    const dist = Math.hypot(owner.x - 0, owner.y - 0);
+    console.log(JSON.stringify({{ x: owner.x, y: owner.y, dist, max: MAX_LEASH_LENGTH }}));
+    """
+    out = _run_node(script)
+    assert abs(out["dist"] - 3.0) < 1e-9
+    assert abs(out["x"] - 3.0) < 1e-9
+    assert abs(out["y"]) < 1e-9
+
+
+def test_owner_update_force_stop_while_pooping():
+    """AC-3.3: Owner.update() freezes the owner while the dog poops on-leash."""
+    script = f"""
+    import {{ Owner }} from {json.dumps(OWNER_MODULE)};
+    const owner = new Owner(0, 0, 'Walker', true);
+    owner.setGait('WALK');
+    owner.targetHeading = 0;
+    owner.angle = 0;
+    owner.dog = {{ x: 0, y: 0, isOnLeash: true, isPooping: true }};
+    owner.update(1 / 60, null);
+    console.log(JSON.stringify({{
+      x: owner.x,
+      y: owner.y,
+      vx: owner.vx,
+      vy: owner.vy,
+      isMoving: owner.isMoving,
+    }}));
+    """
+    out = _run_node(script)
+    # Frozen: no movement integration, zero velocity.
+    assert abs(out["x"]) < 1e-9
+    assert abs(out["y"]) < 1e-9
+    assert out["vx"] == 0
+    assert out["vy"] == 0
+    assert out["isMoving"] is False
+
+
+def test_owner_update_frozen_still_clamped():
+    """Frozen owner is still clamped within leash range of a moved dog."""
+    script = f"""
+    import {{ Owner }} from {json.dumps(OWNER_MODULE)};
+    const owner = new Owner(10, 0, 'Walker', true);
+    owner.setGait('STAND');
+    owner.dog = {{ x: 0, y: 0, isOnLeash: true, isPooping: true }};
+    owner.update(1 / 60, null);
+    const dist = Math.hypot(owner.x - 0, owner.y - 0);
+    console.log(JSON.stringify({{ x: owner.x, y: owner.y, dist }}));
+    """
+    out = _run_node(script)
+    assert abs(out["dist"] - 3.0) < 1e-9
+    assert abs(out["x"] - 3.0) < 1e-9
+    assert abs(out["y"]) < 1e-9
+
+
+def test_owner_update_slowed_dog_holds_owner_back():
+    """AC-4.5: A dog that has moved away drags the owner back within range."""
+    script = f"""
+    import {{ Owner }} from {json.dumps(OWNER_MODULE)};
+    const owner = new Owner(0, 0, 'Walker', true);
+    owner.setGait('STAND');
+    owner.dog = {{ x: 5, y: 0, isOnLeash: true, isPooping: false }};
+    owner.update(1 / 60, null);
+    const dist = Math.hypot(owner.x - 5, owner.y - 0);
+    console.log(JSON.stringify({{ x: owner.x, y: owner.y, dist }}));
+    """
+    out = _run_node(script)
+    assert abs(out["dist"] - 3.0) < 1e-9
+    # Owner is pulled toward the dog along the leash axis.
+    assert abs(out["x"] - 2.0) < 1e-9
+    assert abs(out["y"]) < 1e-9
 
 
 def test_force_stop_releases_after_poop():

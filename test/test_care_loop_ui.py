@@ -487,9 +487,10 @@ class TestCareLoopUI(unittest.TestCase):
         self.assertEqual(payload["sanctuaryCalls"]["playSleepingAnimation"], 1)
         self.assertGreaterEqual(payload["sanctuaryCalls"]["playNeedMetReaction"], 2)
 
-    def test_action_bar_buttons_reenable_when_timers_expire(self):
-        # Groom/rest buttons must start disabled when the store reports the
-        # need is not yet due, then re-enable once the store flips to true.
+    def test_action_bar_buttons_always_clickable(self):
+        # REQ-1: Groom/rest buttons must NEVER be disabled, regardless of
+        # whether the store reports the need as due. Readiness is conveyed
+        # only via the cosmetic `is-needed` class.
         script = DOM_SHIM + register_canvas_shim() + """
         const careLoopReenableState = { needsGrooming: false, isTired: false };
         const careLoopReenableStore = {
@@ -505,6 +506,7 @@ class TestCareLoopUI(unittest.TestCase):
           feed: () => {},
           groom: () => {},
           rest: () => {},
+          isHungry: () => false,
           needsGrooming: () => careLoopReenableState.needsGrooming,
           isTired: () => careLoopReenableState.isTired
         };
@@ -521,15 +523,20 @@ class TestCareLoopUI(unittest.TestCase):
         };
         window.HomeSanctuary = globalThis.HomeSanctuary;
         await import(%s);
-        let careLoopInitiallyDisabled = { groom: false, rest: false };
-        let careLoopAfterEnabled = { groom: true, rest: true };
+        let careLoopInitially = { groom: null, rest: null };
+        let careLoopAfter = { groom: null, rest: null };
         try {
           globalThis.HomeFeeding.mount({ dogStateStore: careLoopReenableStore });
           const careLoopReGroomBtn = careLoopShim.document.getElementById('btn-action-groom');
           const careLoopReRestBtn = careLoopShim.document.getElementById('btn-action-rest');
-          careLoopInitiallyDisabled = {
-            groom: !!(careLoopReGroomBtn && careLoopReGroomBtn.disabled),
-            rest: !!(careLoopReRestBtn && careLoopReRestBtn.disabled)
+          const read = (el) => el ? {
+            disabled: !!el.disabled,
+            ariaDisabled: el.getAttribute('aria-disabled'),
+            needed: (' ' + (el.className || '') + ' ').indexOf(' is-needed ') !== -1
+          } : null;
+          careLoopInitially = {
+            groom: read(careLoopReGroomBtn),
+            rest: read(careLoopReRestBtn)
           };
           // Flip the store to "due" and force a refresh.
           careLoopReenableState.needsGrooming = true;
@@ -540,23 +547,37 @@ class TestCareLoopUI(unittest.TestCase):
                      typeof globalThis.HomeFeeding.__testHooks.refreshButtonStates === 'function') {
             globalThis.HomeFeeding.__testHooks.refreshButtonStates();
           }
-          careLoopAfterEnabled = {
-            groom: !!(careLoopReGroomBtn && careLoopReGroomBtn.disabled),
-            rest: !!(careLoopReRestBtn && careLoopReRestBtn.disabled)
+          careLoopAfter = {
+            groom: read(careLoopReGroomBtn),
+            rest: read(careLoopReRestBtn)
           };
         } finally {
           try { globalThis.HomeFeeding.unmount(); } catch (_e) { /* ignore */ }
         }
         console.log(JSON.stringify({
-          initiallyDisabled: careLoopInitiallyDisabled,
-          afterEnabled: careLoopAfterEnabled
+          initially: careLoopInitially,
+          after: careLoopAfter
         }));
         """ % file_url("src/ui/home_feeding.js")
         payload = run_node(script)
-        self.assertTrue(payload["initiallyDisabled"]["groom"], "groom should start disabled")
-        self.assertTrue(payload["initiallyDisabled"]["rest"], "rest should start disabled")
-        self.assertFalse(payload["afterEnabled"]["groom"], "groom should re-enable")
-        self.assertFalse(payload["afterEnabled"]["rest"], "rest should re-enable")
+        for phase in ("initially", "after"):
+            for name in ("groom", "rest"):
+                btn = payload[phase][name]
+                self.assertIsNotNone(btn, "#btn-action-%s missing (%s)" % (name, phase))
+                self.assertFalse(btn["disabled"],
+                                 "#btn-action-%s must never be disabled (%s)" % (name, phase))
+                self.assertNotEqual(btn["ariaDisabled"], "true",
+                                    "#btn-action-%s must not set aria-disabled=true (%s)"
+                                    % (name, phase))
+        # Readiness is reflected via the cosmetic is-needed class.
+        self.assertFalse(payload["initially"]["groom"]["needed"],
+                         "groom should not be marked needed when timer is non-zero")
+        self.assertFalse(payload["initially"]["rest"]["needed"],
+                         "rest should not be marked needed when timer is non-zero")
+        self.assertTrue(payload["after"]["groom"]["needed"],
+                        "groom should be marked needed once the store reports due")
+        self.assertTrue(payload["after"]["rest"]["needed"],
+                        "rest should be marked needed once the store reports due")
 
     def test_sanctuary_play_need_hungry_animation_sets_emote(self):
         # Direct sanctuary-level assertion: playNeedHungryAnimation() must set

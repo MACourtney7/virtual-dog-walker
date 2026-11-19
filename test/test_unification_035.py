@@ -412,12 +412,19 @@ class TestUnification035(unittest.TestCase):
         self.assertIsNotNone(payload["groom"], "#btn-action-groom missing")
         self.assertIsNotNone(payload["rest"], "#btn-action-rest missing")
 
-        # Exact className parity with the feed button.
-        self.assertEqual(payload["groom"], payload["feed"],
-                         "groom className %r != feed className %r"
+        # Base className parity with the feed button. The cosmetic `is-needed`
+        # readiness token (REQ-1, unification-036) is intentionally excluded
+        # from the comparison so buttons remain always-clickable while still
+        # sharing the same base button class.
+        def _base_class(cls):
+            tokens = [t for t in (cls or "").split() if t != "is-needed"]
+            return " ".join(tokens)
+
+        self.assertEqual(_base_class(payload["groom"]), _base_class(payload["feed"]),
+                         "groom base className %r != feed base className %r"
                          % (payload["groom"], payload["feed"]))
-        self.assertEqual(payload["rest"], payload["feed"],
-                         "rest className %r != feed className %r"
+        self.assertEqual(_base_class(payload["rest"]), _base_class(payload["feed"]),
+                         "rest base className %r != feed base className %r"
                          % (payload["rest"], payload["feed"]))
 
         # Exact textContent parity.

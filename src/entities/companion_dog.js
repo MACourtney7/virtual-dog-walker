@@ -1336,18 +1336,20 @@ export class CompanionDog {
     // (single flat multiplier).
     const baseSpeed = this.baseSpeed;
     const speedScale = baseSpeed > 0 ? (this.getEffectiveSpeed() / baseSpeed) : 1.0;
-    // Zoomies set x/y directly from the parametric curve; skip integration to avoid double movement.
+    // Zoomies set x/y directly from the parametric curve; skip integration to
+    // avoid double movement. Need-based speed reduction for ZOOMIES is applied
+    // by scaling the parametric progression inside updateZoomies() instead.
     if (this.state !== DogState.ZOOMIES) {
       this.x += this.vx * dt;
       this.y += this.vy * dt;
-    }
-    // Need active: apply the additional scaled displacement to ALL movement
-    // paths (including ZOOMIES) WITHOUT mutating the persistent `this.vx` /
-    // `this.vy`, so the dog returns to `baseSpeed` on the next tick once
-    // needs clear. Needs never stack (single flat multiplier).
-    if (speedScale !== 1.0) {
-      this.x += this.vx * (speedScale - 1.0) * dt;
-      this.y += this.vy * (speedScale - 1.0) * dt;
+      // Need active: apply the additional scaled displacement WITHOUT mutating
+      // the persistent `this.vx` / `this.vy`, so the dog returns to `baseSpeed`
+      // on the next tick once needs clear. Needs never stack (single flat
+      // multiplier).
+      if (speedScale !== 1.0) {
+        this.x += this.vx * (speedScale - 1.0) * dt;
+        this.y += this.vy * (speedScale - 1.0) * dt;
+      }
     }
 
     // Screen-space perimeter clamp for off-leash free movement
@@ -3068,7 +3070,14 @@ export class CompanionDog {
       this.transitionTo((this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING);
       return;
     }
-    this.zoomiesPhase += dt * this.zoomiesSpeed;
+    // Need-based speed reduction: scale the parametric progression so the
+    // zoomies path advances at the reduced effective speed (no jitter, no
+    // double integration). Needs never stack (single flat multiplier).
+    const zoomiesBaseSpeed = this.baseSpeed;
+    const zoomiesSpeedScale = zoomiesBaseSpeed > 0
+      ? (this.getEffectiveSpeed() / zoomiesBaseSpeed)
+      : 1.0;
+    this.zoomiesPhase += dt * this.zoomiesSpeed * zoomiesSpeedScale;
 
     const t = this.zoomiesPhase;
     const cx = this.zoomiesCenter.x;
@@ -3087,7 +3096,7 @@ export class CompanionDog {
       // Circular orbit around the owner's LIVE position.
       const ownerX = this.owner ? this.owner.x : cx;
       const ownerY = this.owner ? this.owner.y : cy;
-      this.zoomiesOrbitAngle += dt * this.zoomiesSpeed * (this.zoomiesOrbitDir || 1);
+      this.zoomiesOrbitAngle += dt * this.zoomiesSpeed * zoomiesSpeedScale * (this.zoomiesOrbitDir || 1);
       const orbitR = this.zoomiesOrbitRadius;
       expectedX = ownerX + Math.cos(this.zoomiesOrbitAngle) * orbitR;
       expectedY = ownerY + Math.sin(this.zoomiesOrbitAngle) * orbitR;

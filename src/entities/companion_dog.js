@@ -1340,13 +1340,14 @@ export class CompanionDog {
     if (this.state !== DogState.ZOOMIES) {
       this.x += this.vx * dt;
       this.y += this.vy * dt;
-      // Need active: apply the additional scaled displacement WITHOUT mutating
-      // the persistent `this.vx` / `this.vy`, so the dog returns to
-      // `baseSpeed` on the next tick once needs clear.
-      if (speedScale !== 1.0) {
-        this.x += this.vx * (speedScale - 1.0) * dt;
-        this.y += this.vy * (speedScale - 1.0) * dt;
-      }
+    }
+    // Need active: apply the additional scaled displacement to ALL movement
+    // paths (including ZOOMIES) WITHOUT mutating the persistent `this.vx` /
+    // `this.vy`, so the dog returns to `baseSpeed` on the next tick once
+    // needs clear. Needs never stack (single flat multiplier).
+    if (speedScale !== 1.0) {
+      this.x += this.vx * (speedScale - 1.0) * dt;
+      this.y += this.vy * (speedScale - 1.0) * dt;
     }
 
     // Screen-space perimeter clamp for off-leash free movement

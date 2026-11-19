@@ -1637,7 +1637,13 @@
   // Single entry point for all care button clicks.
   // Routes to the existing care routine when the dog needs the care, otherwise
   // plays the rejection animation without mutating any care timers/needs.
-  function onCareAction(kind) {
+  //
+  // When `opts.skipAnimation` is true (used by HomeFeeding.routeCareAction()),
+  // the caller owns the animation invocation (via commitGroom/commitRest/
+  // commitFeed) so we only clear rejection and report acceptance. This avoids
+  // double-invoking playGroomingAnimation / playSleepingAnimation /
+  // dogPlayFeedReaction.
+  function onCareAction(kind, opts) {
     if (kind !== 'feed' && kind !== 'groom' && kind !== 'rest') return false;
 
     if (!isCareReady(kind)) {
@@ -1645,8 +1651,14 @@
       return false;
     }
 
-    // Ready: clear any lingering rejection and run the existing routine.
+    // Ready: clear any lingering rejection.
     clearRejection();
+
+    var skipAnimation = Boolean(opts && opts.skipAnimation);
+    if (skipAnimation) {
+      // HomeFeeding's commit* routine will invoke the animation exactly once.
+      return true;
+    }
 
     if (kind === 'feed') {
       if (typeof dogPlayFeedReaction === 'function') dogPlayFeedReaction();

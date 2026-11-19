@@ -653,7 +653,9 @@
     if (sanctuary && typeof sanctuary.onCareAction === 'function') {
       var accepted = false;
       try {
-        accepted = sanctuary.onCareAction(kind);
+        // skipAnimation: HomeFeeding's commit* routine owns the animation
+        // invocation, so the sanctuary must not play it a second time.
+        accepted = sanctuary.onCareAction(kind, { skipAnimation: true });
       } catch (e) {
         accepted = false;
       }

@@ -54,6 +54,7 @@ def _run_js(snippet):
     dog_src = _strip_esm(read("src/entities/companion_dog.js"))
     owner_src = _strip_esm(read("src/entities/owner.js"))
     store_src = _strip_esm(read("src/state/dog_state_store.js"))
+    leash_src = _strip_esm(read("src/world/leash.js"))
 
     harness = f"""
 // ---- Mock DOM ----
@@ -145,6 +146,16 @@ window.localStorage = localStorage;
 (() => {{ {dog_src} }})();
 // owner.js exposes Owner on window (via ESM export stripped above).
 (() => {{ {owner_src} }})();
+// leash.js exposes MAX_LEASH_LENGTH / isOwnerFrozen / clampOwnerToLeash.
+// Wrap in an IIFE and re-export the named bindings onto window.Leash.
+(() => {{
+  {leash_src}
+  window.Leash = {{
+    MAX_LEASH_LENGTH: MAX_LEASH_LENGTH,
+    isOwnerFrozen: isOwnerFrozen,
+    clampOwnerToLeash: clampOwnerToLeash
+  }};
+}})();
 // home_sanctuary.js is an IIFE that assigns window.HomeSanctuary.
 (() => {{ {sanctuary_src} }})();
 
@@ -317,8 +328,9 @@ class TestLeashAndPoopIntegration(unittest.TestCase):
         };
         """
         res = _run_js(snippet)
-        if not res.get("available"):
-            self.skipTest("Leash module not present in this build")
+        self.assertTrue(res.get("available"),
+                        "AC-3.1: Leash module (window.Leash.clampOwnerToLeash) "
+                        "must be present in the test harness")
         self.assertTrue(res["withinTolerance"],
                         f"AC-3.1: Owner distance {res['dist']} must not exceed "
                         f"MAX_LEASH_LENGTH {res['max']}")
@@ -335,8 +347,9 @@ class TestLeashAndPoopIntegration(unittest.TestCase):
         return { available: true, frozen: Boolean(frozen) };
         """
         res = _run_js(snippet)
-        if not res.get("available"):
-            self.skipTest("Leash module not present in this build")
+        self.assertTrue(res.get("available"),
+                        "AC-3.2: Leash module (window.Leash.isOwnerFrozen) "
+                        "must be present in the test harness")
         self.assertTrue(res["frozen"],
                         "AC-3.2: Owner must be frozen while the leashed dog is pooping")
 
@@ -356,8 +369,9 @@ class TestLeashAndPoopIntegration(unittest.TestCase):
         };
         """
         res = _run_js(snippet)
-        if not res.get("available"):
-            self.skipTest("Leash module not present in this build")
+        self.assertTrue(res.get("available"),
+                        "AC-3.3: Leash module (window.Leash.isOwnerFrozen) "
+                        "must be present in the test harness")
         self.assertFalse(res["afterPoop"],
                          "AC-3.3: Owner must be free after the dog stops pooping")
         self.assertFalse(res["offLeash"],
@@ -406,8 +420,9 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
         };
         """
         res = _run_js(snippet)
-        if not res.get("available"):
-            self.skipTest("getEffectiveSpeed() not present in this build")
+        self.assertTrue(res.get("available"),
+                        "AC-4.1: CompanionDog.prototype.getEffectiveSpeed() "
+                        "must be present in the test harness")
         self.assertGreater(res["baseline"], 0,
                            "AC-4.1: Baseline effective speed must be positive")
         for kind in ("hungry", "dirty", "tired"):
@@ -420,33 +435,67 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
         """AC-4.3: A slowed leashed dog holds the owner within MAX_LEASH_LENGTH."""
         snippet = """
         const leash = window.Leash || (typeof Leash !== 'undefined' ? Leash : null);
-        if (!leash || typeof leash.clampOwnerToLeash !== 'function') {
+        const CompanionDogClass = window.CompanionDog;
+        if (!leash || typeof leash.clampOwnerToLeash !== 'function'
+            || !CompanionDogClass
+            || typeof CompanionDogClass.prototype.getEffectiveSpeed !== 'function') {
           return { available: false };
         }
         const MAX = leash.MAX_LEASH_LENGTH;
 
-        // Simulate the owner trying to run far ahead of a slowed dog.
-        const dog = { x: 0, y: 0, isOnLeash: true, isPooping: false, isHungry: true };
-        let owner = { x: 0, y: 0, vx: 0, vy: 0 };
-        const step = MAX * 0.5;
-        for (let i = 0; i < 20; i++) {
-          owner.x += step;
+        // Build a real CompanionDog instance with a need active so it is slowed.
+        const dog = Object.create(CompanionDogClass.prototype);
+        dog.x = 0;
+        dog.y = 0;
+        dog.baseSpeed = 200;
+        dog.isHungry = true;
+        dog.needsGrooming = false;
+        dog.isTired = false;
+        dog.isOnLeash = true;
+        dog.isPooping = false;
+
+        const slowedSpeed = dog.getEffectiveSpeed();
+
+        // Owner tries to run ahead at a much faster pace than the slowed dog.
+        const ownerSpeed = 400;
+        const dt = 0.1;
+        let owner = { x: 0, y: 0, vx: ownerSpeed, vy: 0 };
+
+        // Advance both entities for several frames. The dog moves forward at
+        // its slowed speed; the owner tries to sprint ahead but must be held
+        // back by the leash constraint.
+        let maxDist = 0;
+        for (let i = 0; i < 30; i++) {
+          dog.x += slowedSpeed * dt;
+          owner.x += ownerSpeed * dt;
           owner = leash.clampOwnerToLeash(owner, dog);
+          const d = Math.hypot(owner.x - dog.x, owner.y - dog.y);
+          if (d > maxDist) maxDist = d;
         }
-        const dist = Math.hypot(owner.x - dog.x, owner.y - dog.y);
+
+        const finalDist = Math.hypot(owner.x - dog.x, owner.y - dog.y);
         return {
           available: true,
           max: MAX,
-          dist: dist,
-          heldUp: dist <= MAX + 1e-6
+          slowedSpeed: slowedSpeed,
+          dogAdvanced: dog.x > 0,
+          finalDist: finalDist,
+          maxDist: maxDist,
+          heldUp: finalDist <= MAX + 1e-6 && maxDist <= MAX + 1e-6
         };
         """
         res = _run_js(snippet)
-        if not res.get("available"):
-            self.skipTest("Leash module not present in this build")
+        self.assertTrue(res.get("available"),
+                        "AC-4.3: Leash module and CompanionDog.getEffectiveSpeed() "
+                        "must be present in the test harness")
+        self.assertGreater(res["slowedSpeed"], 0,
+                           "AC-4.3: Slowed dog speed must be positive")
+        self.assertTrue(res["dogAdvanced"],
+                        "AC-4.3: The slowed dog must actually advance during the simulation")
         self.assertTrue(res["heldUp"],
                         f"AC-4.3: Owner must be held within MAX_LEASH_LENGTH "
-                        f"({res['max']}) of the slowed dog; got {res['dist']}")
+                        f"({res['max']}) of the slowed dog; "
+                        f"final={res['finalDist']}, max={res['maxDist']}")
 
 
 if __name__ == '__main__':

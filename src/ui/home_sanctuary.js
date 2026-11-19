@@ -1617,7 +1617,10 @@
     var shake = Math.sin(t * Math.PI * 6) * 0.35 * envelope;
     // Hop-back: small backward offset that returns to origin.
     var hop = Math.sin(t * Math.PI) * 6 * envelope;
-    return { dx: 0, dy: -hop, shake: shake };
+    // Backward/horizontal hop-back component (AC-2.1): the dog hops back
+    // along its facing direction in addition to the vertical lift.
+    var dx = -hop * 0.5;
+    return { dx: dx, dy: -hop, shake: shake };
   }
 
   // Tick the rejection animation; clears it once the duration elapses.

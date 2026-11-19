@@ -651,14 +651,11 @@
   function routeCareAction(kind, runRoutine) {
     var sanctuary = root.HomeSanctuary;
     if (sanctuary && typeof sanctuary.onCareAction === 'function') {
-      var accepted = false;
-      try {
-        // skipAnimation: HomeFeeding's commit* routine owns the animation
-        // invocation, so the sanctuary must not play it a second time.
-        accepted = sanctuary.onCareAction(kind, { skipAnimation: true });
-      } catch (e) {
-        accepted = false;
-      }
+      // skipAnimation: HomeFeeding's commit* routine owns the animation
+      // invocation, so the sanctuary must not play it a second time.
+      // Do NOT swallow exceptions here: a thrown error is a real failure,
+      // not a rejection, so let it propagate to the caller.
+      var accepted = sanctuary.onCareAction(kind, { skipAnimation: true });
       if (accepted) {
         runRoutine();
       }

@@ -315,9 +315,10 @@ class TestLeashAndPoopIntegration(unittest.TestCase):
         }
         const MAX = leash.MAX_LEASH_LENGTH;
 
-        // Owner far beyond the leash radius; clamp must pull it back.
+        // Owner far beyond the leash radius (pixel-scale coordinates);
+        // clamp must pull it back to within MAX_LEASH_LENGTH.
         const dog = { x: 0, y: 0, isOnLeash: true, isPooping: false };
-        const owner = { x: MAX * 5, y: 0, vx: 100, vy: 0 };
+        const owner = { x: 250, y: 0, vx: 100, vy: 0 };
         const clamped = leash.clampOwnerToLeash(owner, dog);
         const dist = Math.hypot(clamped.x - dog.x, clamped.y - dog.y);
         return {
@@ -331,6 +332,8 @@ class TestLeashAndPoopIntegration(unittest.TestCase):
         self.assertTrue(res.get("available"),
                         "AC-3.1: Leash module (window.Leash.clampOwnerToLeash) "
                         "must be present in the test harness")
+        self.assertEqual(res["max"], 105,
+                         "AC-3.1: MAX_LEASH_LENGTH must be 105 px")
         self.assertTrue(res["withinTolerance"],
                         f"AC-3.1: Owner distance {res['dist']} must not exceed "
                         f"MAX_LEASH_LENGTH {res['max']}")
@@ -477,9 +480,10 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
         const pooping = dog.isPooping;
 
         // Owner tries to run ahead at a much faster pace than the slowed dog.
+        // Pixel-scale coordinates: owner starts 250 px ahead of the dog.
         const ownerSpeed = 400;
         const dt = 0.1;
-        let simOwner = { x: 0, y: 0, vx: ownerSpeed, vy: 0 };
+        let simOwner = { x: 250, y: 0, vx: ownerSpeed, vy: 0 };
 
         // Advance both entities for several frames. The dog moves forward at
         // its slowed speed; the owner tries to sprint ahead but must be held
@@ -510,6 +514,8 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
         self.assertTrue(res.get("available"),
                         "AC-4.3: Leash module and CompanionDog.getEffectiveSpeed() "
                         "must be present in the test harness")
+        self.assertEqual(res["max"], 105,
+                         "AC-4.3: MAX_LEASH_LENGTH must be 105 px")
         self.assertTrue(res["onLeash"],
                         "AC-4.3: Dog with owner.isLeashed=true must report isOnLeash")
         self.assertFalse(res["pooping"],

@@ -1319,17 +1319,17 @@ export class CompanionDog {
     }
 
     // 3. Movement integration
-    // Zoomies set x/y directly from the parametric curve; skip integration to avoid double movement.
     // Need-based speed reduction: scale the velocity by the ratio of effective
     // speed to base speed BEFORE integration. `this.speed` (baseSpeed) is
     // unchanged; needs never stack (single flat multiplier).
+    const baseSpeed = this.speed;
+    const speedScale = baseSpeed > 0 ? (this.getEffectiveSpeed() / baseSpeed) : 1.0;
+    if (speedScale !== 1.0) {
+      this.vx *= speedScale;
+      this.vy *= speedScale;
+    }
+    // Zoomies set x/y directly from the parametric curve; skip integration to avoid double movement.
     if (this.state !== DogState.ZOOMIES) {
-      const baseSpeed = this.speed;
-      const speedScale = baseSpeed > 0 ? (this.getEffectiveSpeed() / baseSpeed) : 1.0;
-      if (speedScale !== 1.0) {
-        this.vx *= speedScale;
-        this.vy *= speedScale;
-      }
       this.x += this.vx * dt;
       this.y += this.vy * dt;
     }

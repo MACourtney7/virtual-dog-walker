@@ -1533,9 +1533,28 @@
     return Date.now();
   }
 
-  // Resolve the live dog entity getters (isHungry / needsGrooming / isTired).
-  // Falls back to the sanctuary's own hunger snapshot when absent.
+  // Resolve whether the dog currently needs a given care kind.
+  // Single source of truth: prefer the shared DogStateStore methods
+  // (isHungry / needsGrooming / isTired) so this never diverges from
+  // home_feeding.isCareNeeded(). Falls back to the dog entity getters.
   function isCareReady(kind) {
+    var store = resolveHungerStore();
+    if (store) {
+      try {
+        if (kind === 'feed' && typeof store.isHungry === 'function') {
+          return Boolean(store.isHungry());
+        }
+        if (kind === 'groom' && typeof store.needsGrooming === 'function') {
+          return Boolean(store.needsGrooming());
+        }
+        if (kind === 'rest' && typeof store.isTired === 'function') {
+          return Boolean(store.isTired());
+        }
+      } catch (e) {
+        /* fall through to entity getters */
+      }
+    }
+
     var entity = (typeof getDog === 'function') ? getDog() : dog;
     if (kind === 'feed') {
       if (entity && typeof entity.isHungry === 'boolean') return entity.isHungry;
@@ -1634,10 +1653,14 @@
       return true;
     }
     if (kind === 'groom') {
-      return playGroomingAnimation();
+      // Invoke the routine, but always report explicit acceptance.
+      playGroomingAnimation();
+      return true;
     }
     if (kind === 'rest') {
-      return playSleepingAnimation();
+      // Invoke the routine, but always report explicit acceptance.
+      playSleepingAnimation();
+      return true;
     }
     return false;
   }

@@ -464,22 +464,32 @@
   }
 
   // Resolve whether the dog currently needs a given care kind.
-  // Returns false when the store is unavailable (treat as "not needed").
+  // Single source of truth: prefer the shared DogStateStore methods
+  // (isHungry / needsGrooming / isTired) so this never diverges from
+  // HomeSanctuary.isCareReady(). Falls back to the companion dog getters.
   function isCareNeeded(kind) {
     var store = resolveDogStateStore();
-    if (!store) return false;
-    try {
-      if (kind === 'feed' && typeof store.isHungry === 'function') {
-        return Boolean(store.isHungry());
+    if (store) {
+      try {
+        if (kind === 'feed' && typeof store.isHungry === 'function') {
+          return Boolean(store.isHungry());
+        }
+        if (kind === 'groom' && typeof store.needsGrooming === 'function') {
+          return Boolean(store.needsGrooming());
+        }
+        if (kind === 'rest' && typeof store.isTired === 'function') {
+          return Boolean(store.isTired());
+        }
+      } catch (e) {
+        /* fall through to dog entity getters */
       }
-      if (kind === 'groom' && typeof store.needsGrooming === 'function') {
-        return Boolean(store.needsGrooming());
-      }
-      if (kind === 'rest' && typeof store.isTired === 'function') {
-        return Boolean(store.isTired());
-      }
-    } catch (e) {
-      /* ignore */
+    }
+
+    var dog = resolveCompanionDog();
+    if (dog) {
+      if (kind === 'feed' && typeof dog.isHungry === 'boolean') return dog.isHungry;
+      if (kind === 'groom' && typeof dog.needsGrooming === 'boolean') return dog.needsGrooming;
+      if (kind === 'rest' && typeof dog.isTired === 'boolean') return dog.isTired;
     }
     return false;
   }

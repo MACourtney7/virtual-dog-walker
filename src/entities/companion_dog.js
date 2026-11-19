@@ -1338,18 +1338,14 @@ export class CompanionDog {
     const speedScale = baseSpeed > 0 ? (this.getEffectiveSpeed() / baseSpeed) : 1.0;
     // Zoomies set x/y directly from the parametric curve; skip integration to avoid double movement.
     if (this.state !== DogState.ZOOMIES) {
-      if (speedScale === 1.0) {
-        // No active need: integrate the persistent velocity directly.
-        this.x += this.vx * dt;
-        this.y += this.vy * dt;
-      } else {
-        // Need active: integrate a locally scaled velocity WITHOUT mutating
-        // the persistent `this.vx` / `this.vy`, so the dog returns to
-        // `baseSpeed` on the next tick once needs clear.
-        const effVx = this.vx * speedScale;
-        const effVy = this.vy * speedScale;
-        this.x += effVx * dt;
-        this.y += effVy * dt;
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+      // Need active: apply the additional scaled displacement WITHOUT mutating
+      // the persistent `this.vx` / `this.vy`, so the dog returns to
+      // `baseSpeed` on the next tick once needs clear.
+      if (speedScale !== 1.0) {
+        this.x += this.vx * (speedScale - 1.0) * dt;
+        this.y += this.vy * (speedScale - 1.0) * dt;
       }
     }
 

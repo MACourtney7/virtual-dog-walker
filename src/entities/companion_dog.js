@@ -59,6 +59,11 @@ export const LEASH_FEEDFORWARD_SECONDS = 0.12;
 // Minimum forward projection of the slot past the shoulder line.
 export const LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = 2;
 
+// Speed multiplier applied when any need (hunger/grooming/tiredness) is active.
+// Needs never stack multiplicatively: a single 0.4x factor applies regardless
+// of how many needs are active.
+export const NEED_SPEED_MULTIPLIER = 0.4;
+
 // Zoomies path types: the dog can run a figure-eight, orbit the owner, or
 // shuttle back and forth between two points.
 export const ZoomiePath = {
@@ -456,9 +461,46 @@ export class CompanionDog {
 
     // Hunger state (driven by an external DogStateStore via setDogStateStore).
     this.hunger = null;
-    this.isHungry = false;
+    this._isHungry = false;
     this.dogStateStore = null;
     this._dogStateUnsubscribe = null;
+
+    // Grooming / tiredness / poop / leash state backing fields.
+    this._needsGrooming = false;
+    this._isTired = false;
+    this._isPooping = false;
+  }
+
+  // --- Read-only need/state getters ---
+  // These expose derived need signals without allowing external mutation of
+  // the backing fields. Use the corresponding setters to change them.
+
+  get isHungry() {
+    return Boolean(this._isHungry);
+  }
+
+  get needsGrooming() {
+    return Boolean(this._needsGrooming);
+  }
+
+  get isTired() {
+    return Boolean(this._isTired);
+  }
+
+  get isPooping() {
+    return this.state === DogState.POOPING || Boolean(this._isPooping);
+  }
+
+  get isOnLeash() {
+    return Boolean(this.owner && this.owner.isLeashed);
+  }
+
+  // Effective movement speed: base speed reduced by a single flat multiplier
+  // when ANY need is active. Needs never stack multiplicatively.
+  getEffectiveSpeed() {
+    const baseSpeed = this.speed;
+    const hasActiveNeed = this.isHungry || this.needsGrooming || this.isTired;
+    return baseSpeed * (hasActiveNeed ? NEED_SPEED_MULTIPLIER : 1.0);
   }
 
   // packPlayTimer is an alias of packPlayRoleTimer (kept in sync via accessor).
@@ -608,8 +650,8 @@ export class CompanionDog {
   // Idempotent and safe when passed undefined/null.
   setHunger(hungerInfo) {
     this.hunger = hungerInfo === undefined ? null : hungerInfo;
-    this.isHungry = Boolean(hungerInfo && hungerInfo.isHungry);
-    return this.isHungry;
+    this._isHungry = Boolean(hungerInfo && hungerInfo.isHungry);
+    return this._isHungry;
   }
 
   // Attach an external DogStateStore. Subscribes (if supported), syncs
@@ -751,6 +793,7 @@ export class CompanionDog {
 
   setGroomingState(state) {
     this.grooming = Boolean(state);
+    this._needsGrooming = Boolean(state);
     return this.grooming;
   }
 
@@ -770,6 +813,7 @@ export class CompanionDog {
 
   setTirednessState(state) {
     this.tired = Boolean(state);
+    this._isTired = Boolean(state);
     return this.tired;
   }
 
@@ -1276,9 +1320,13 @@ export class CompanionDog {
 
     // 3. Movement integration
     // Zoomies set x/y directly from the parametric curve; skip integration to avoid double movement.
+    // Need-based speed reduction: scale the integrated velocity by the ratio
+    // of effective speed to base speed. `this.speed` (baseSpeed) is unchanged.
     if (this.state !== DogState.ZOOMIES) {
-      this.x += this.vx * dt;
-      this.y += this.vy * dt;
+      const baseSpeed = this.speed;
+      const speedScale = baseSpeed > 0 ? (this.getEffectiveSpeed() / baseSpeed) : 1.0;
+      this.x += this.vx * speedScale * dt;
+      this.y += this.vy * speedScale * dt;
     }
 
     // Screen-space perimeter clamp for off-leash free movement
@@ -3682,6 +3730,7 @@ CompanionDog.LEASH_FORWARD_LEAD_MAX_PX = LEASH_FORWARD_LEAD_MAX_PX;
 CompanionDog.LEASH_FORWARD_LEAD_TARGET_PX = LEASH_FORWARD_LEAD_TARGET_PX;
 CompanionDog.LEASH_FEEDFORWARD_SECONDS = LEASH_FEEDFORWARD_SECONDS;
 CompanionDog.LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX;
+CompanionDog.NEED_SPEED_MULTIPLIER = NEED_SPEED_MULTIPLIER;
 CompanionDog.getLeashSlot = getLeashSlot;
 CompanionDog.ZoomiePath = ZoomiePath;
 CompanionDog.ZOOMIE_PATH_TYPES = ZOOMIE_PATH_TYPES;
@@ -3694,4 +3743,5 @@ if (typeof window !== 'undefined') {
   window.CompanionDog = CompanionDog;
   window.CoatPreset = CoatPreset;
   window.DogState = DogState;
+  window.NEED_SPEED_MULTIPLIER = NEED_SPEED_MULTIPLIER;
 }

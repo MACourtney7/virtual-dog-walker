@@ -233,6 +233,11 @@ export class DogStateStore {
     return this.getHunger(nowMs).isHungry;
   }
 
+  // Read-only selector: true when the dog is hungry.
+  selectIsHungry(nowMs = this._now()) {
+    return this.getHunger(nowMs).isHungry;
+  }
+
   getGrooming(nowMs = this._now()) {
     const grooming = (this._state.needs && this._state.needs.grooming) || {};
     const lastGroomedAt = typeof grooming.lastGroomedAt === 'number' ? grooming.lastGroomedAt : null;
@@ -249,6 +254,11 @@ export class DogStateStore {
     return this.getGrooming(nowMs).needsGrooming;
   }
 
+  // Read-only selector: true when the dog needs grooming.
+  selectNeedsGrooming(nowMs = this._now()) {
+    return this.getGrooming(nowMs).needsGrooming;
+  }
+
   getTiredness(nowMs = this._now()) {
     const tiredness = (this._state.needs && this._state.needs.tiredness) || {};
     const lastRestedAt = typeof tiredness.lastRestedAt === 'number' ? tiredness.lastRestedAt : null;
@@ -262,6 +272,11 @@ export class DogStateStore {
   }
 
   isTired(nowMs = this._now()) {
+    return this.getTiredness(nowMs).isTired;
+  }
+
+  // Read-only selector: true when the dog is tired.
+  selectIsTired(nowMs = this._now()) {
     return this.getTiredness(nowMs).isTired;
   }
 

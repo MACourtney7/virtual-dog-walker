@@ -467,8 +467,8 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
 
         // Build a real CompanionDog instance with a need active so it is slowed.
         // The dog is on-leash because its owner has isLeashed = true.
-        const owner = { x: 0, y: 0, vx: 0, vy: 0, isLeashed: true };
-        const dog = new CompanionDogClass(0, 0, owner);
+        const dogOwner = { x: 0, y: 0, vx: 0, vy: 0, isLeashed: true };
+        const dog = new CompanionDogClass(0, 0, dogOwner);
         dog.baseSpeed = 200;
         dog.setHunger({ isHungry: true });
 
@@ -479,7 +479,7 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
         // Owner tries to run ahead at a much faster pace than the slowed dog.
         const ownerSpeed = 400;
         const dt = 0.1;
-        let owner = { x: 0, y: 0, vx: ownerSpeed, vy: 0 };
+        let simOwner = { x: 0, y: 0, vx: ownerSpeed, vy: 0 };
 
         // Advance both entities for several frames. The dog moves forward at
         // its slowed speed; the owner tries to sprint ahead but must be held
@@ -487,13 +487,13 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
         let maxDist = 0;
         for (let i = 0; i < 30; i++) {
           dog.x += slowedSpeed * dt;
-          owner.x += ownerSpeed * dt;
-          owner = leash.clampOwnerToLeash(owner, dog);
-          const d = Math.hypot(owner.x - dog.x, owner.y - dog.y);
+          simOwner.x += ownerSpeed * dt;
+          simOwner = leash.clampOwnerToLeash(simOwner, dog);
+          const d = Math.hypot(simOwner.x - dog.x, simOwner.y - dog.y);
           if (d > maxDist) maxDist = d;
         }
 
-        const finalDist = Math.hypot(owner.x - dog.x, owner.y - dog.y);
+        const finalDist = Math.hypot(simOwner.x - dog.x, simOwner.y - dog.y);
         return {
           available: true,
           max: MAX,

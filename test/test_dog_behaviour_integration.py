@@ -389,26 +389,39 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
         """AC-4.1 / AC-4.2: Any active need reduces speed; stacking does not zero it."""
         snippet = """
         const CompanionDogClass = window.CompanionDog;
+        const DogStateStoreClass = window.DogStateStore;
         if (!CompanionDogClass || typeof CompanionDogClass.prototype.getEffectiveSpeed !== 'function') {
           return { available: false };
         }
+
+        // Build a real CompanionDog instance (never Object.create + getter writes).
         const makeDog = () => {
-          const d = Object.create(CompanionDogClass.prototype);
+          const d = new CompanionDogClass(0, 0, null);
           d.baseSpeed = 200;
-          d.isHungry = false;
-          d.needsGrooming = false;
-          d.isTired = false;
           return d;
         };
 
-        const baseline = makeDog().getEffectiveSpeed();
+        // Baseline: no needs active.
+        const baselineDog = makeDog();
+        const baseline = baselineDog.getEffectiveSpeed();
 
-        const hungry = makeDog(); hungry.isHungry = true;
-        const dirty = makeDog(); dirty.needsGrooming = true;
-        const tired = makeDog(); tired.isTired = true;
+        // Hungry: drive through the real setHunger() path.
+        const hungry = makeDog();
+        hungry.setHunger({ isHungry: true });
 
+        // Dirty: drive through the real grooming setter.
+        const dirty = makeDog();
+        dirty.setGroomingState(true);
+
+        // Tired: drive through the real tiredness setter.
+        const tired = makeDog();
+        tired.setTirednessState(true);
+
+        // All needs stacked at once.
         const all = makeDog();
-        all.isHungry = true; all.needsGrooming = true; all.isTired = true;
+        all.setHunger({ isHungry: true });
+        all.setGroomingState(true);
+        all.setTirednessState(true);
 
         return {
           available: true,
@@ -416,7 +429,10 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
           hungry: hungry.getEffectiveSpeed(),
           dirty: dirty.getEffectiveSpeed(),
           tired: tired.getEffectiveSpeed(),
-          all: all.getEffectiveSpeed()
+          all: all.getEffectiveSpeed(),
+          hungryFlag: hungry.isHungry,
+          dirtyFlag: dirty.needsGrooming,
+          tiredFlag: tired.isTired
         };
         """
         res = _run_js(snippet)
@@ -425,6 +441,12 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
                         "must be present in the test harness")
         self.assertGreater(res["baseline"], 0,
                            "AC-4.1: Baseline effective speed must be positive")
+        self.assertTrue(res["hungryFlag"],
+                        "AC-4.1: setHunger({isHungry:true}) must set isHungry")
+        self.assertTrue(res["dirtyFlag"],
+                        "AC-4.1: setGroomingState(true) must set needsGrooming")
+        self.assertTrue(res["tiredFlag"],
+                        "AC-4.1: setTirednessState(true) must set isTired")
         for kind in ("hungry", "dirty", "tired"):
             self.assertLess(res[kind], res["baseline"],
                             f"AC-4.1: Dog must be slower when {kind}")
@@ -444,17 +466,15 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
         const MAX = leash.MAX_LEASH_LENGTH;
 
         // Build a real CompanionDog instance with a need active so it is slowed.
-        const dog = Object.create(CompanionDogClass.prototype);
-        dog.x = 0;
-        dog.y = 0;
+        // The dog is on-leash because its owner has isLeashed = true.
+        const owner = { x: 0, y: 0, vx: 0, vy: 0, isLeashed: true };
+        const dog = new CompanionDogClass(0, 0, owner);
         dog.baseSpeed = 200;
-        dog.isHungry = true;
-        dog.needsGrooming = false;
-        dog.isTired = false;
-        dog.isOnLeash = true;
-        dog.isPooping = false;
+        dog.setHunger({ isHungry: true });
 
         const slowedSpeed = dog.getEffectiveSpeed();
+        const onLeash = dog.isOnLeash;
+        const pooping = dog.isPooping;
 
         // Owner tries to run ahead at a much faster pace than the slowed dog.
         const ownerSpeed = 400;
@@ -478,6 +498,8 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
           available: true,
           max: MAX,
           slowedSpeed: slowedSpeed,
+          onLeash: onLeash,
+          pooping: pooping,
           dogAdvanced: dog.x > 0,
           finalDist: finalDist,
           maxDist: maxDist,
@@ -488,6 +510,10 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
         self.assertTrue(res.get("available"),
                         "AC-4.3: Leash module and CompanionDog.getEffectiveSpeed() "
                         "must be present in the test harness")
+        self.assertTrue(res["onLeash"],
+                        "AC-4.3: Dog with owner.isLeashed=true must report isOnLeash")
+        self.assertFalse(res["pooping"],
+                        "AC-4.3: A following dog must not report isPooping")
         self.assertGreater(res["slowedSpeed"], 0,
                            "AC-4.3: Slowed dog speed must be positive")
         self.assertTrue(res["dogAdvanced"],

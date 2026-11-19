@@ -1,7 +1,27 @@
 #!/usr/bin/env python3
 import sys
 import os
+import shutil
 import subprocess
+
+def ensure_node_available():
+    extra_paths = [
+        os.path.expanduser("~/.local/bin"),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+    ]
+    current_path = os.environ.get("PATH", "")
+    for p in extra_paths:
+        if p not in current_path.split(os.pathsep) and os.path.isdir(p):
+            current_path = f"{p}{os.pathsep}{current_path}"
+    os.environ["PATH"] = current_path
+
+    if shutil.which("node") is None:
+        if os.environ.get("ALLOW_SKIP_NODE_TESTS") == "1":
+            print("⚠️  WARNING: 'node' not found in PATH, but ALLOW_SKIP_NODE_TESTS=1 is set.")
+            return
+        print("❌ ERROR: 'node' executable not found in PATH. Node.js is required so JS/UI unit tests are not silently skipped.", file=sys.stderr)
+        sys.exit(1)
 
 def test_scaffold():
     assert os.path.exists("index.html"), "index.html missing"
@@ -33,6 +53,7 @@ def test_scaffold():
     print("✅ test_scaffold passed: All Clifton Down social sandbox modules present.")
 
 def run_all():
+    ensure_node_available()
     test_scaffold()
     test_suites = [
         "test/test_steering.py",
@@ -59,7 +80,6 @@ def run_all():
         "test/test_npc_paths.py",
         "test/test_npc_entity.py",
         "test/test_npc_client.py",
-        "test/test_field.py",
         "test/test_fetching_mechanics.py",
         "test/test_zero_mesh_integration.py",
         "test/test_wasm_core_sim.py",

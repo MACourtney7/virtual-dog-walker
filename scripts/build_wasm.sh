@@ -16,7 +16,8 @@ fi
 echo "Building crate from ${ZERO_PROTOCOL_DIR}/crates/zero_mesh..."
 cargo build --manifest-path "${ZERO_PROTOCOL_DIR}/crates/zero_mesh/Cargo.toml" --target wasm32-unknown-unknown --release
 
-WASM_TARGET_MESH="${ZERO_PROTOCOL_DIR}/target/wasm32-unknown-unknown/release/zero_mesh.wasm"
+MESH_TARGET_ROOT="${CARGO_TARGET_DIR:-${ZERO_PROTOCOL_DIR}/target}"
+WASM_TARGET_MESH="${MESH_TARGET_ROOT}/wasm32-unknown-unknown/release/zero_mesh.wasm"
 if [[ ! -f "${WASM_TARGET_MESH}" ]]; then
     echo "Error: ${WASM_TARGET_MESH} not found after build!" >&2
     exit 1
@@ -40,7 +41,8 @@ echo "=== Building dog_walker_core WebAssembly Package ==="
 echo "Building crate from ${PROJECT_ROOT}/crates/dog_walker_core..."
 cargo build --manifest-path "${PROJECT_ROOT}/crates/dog_walker_core/Cargo.toml" --target wasm32-unknown-unknown --release
 
-WASM_TARGET_CORE="${PROJECT_ROOT}/target/wasm32-unknown-unknown/release/dog_walker_core.wasm"
+CORE_TARGET_ROOT="${CARGO_TARGET_DIR:-${PROJECT_ROOT}/target}"
+WASM_TARGET_CORE="${CORE_TARGET_ROOT}/wasm32-unknown-unknown/release/dog_walker_core.wasm"
 if [[ ! -f "${WASM_TARGET_CORE}" ]]; then
     echo "Error: ${WASM_TARGET_CORE} not found after build!" >&2
     exit 1

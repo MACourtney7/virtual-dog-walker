@@ -1988,6 +1988,160 @@ class TestCareActionsAndRejection(unittest.TestCase):
         self.assertEqual(res["emoteBubble"], "❤️",
                          "Ready feed must run the existing feed reaction")
 
+    def test_care_buttons_never_disabled_when_timers_nonzero(self):
+        snippet = self._mount_snippet("""
+        // Store reports all needs as NOT due (timers non-zero).
+        const store = {
+          getSnapshot: () => ({
+            version: 1,
+            needs: {
+              hunger: { lastFedAt: Date.now(), durationMs: 60000 },
+              grooming: { lastGroomedAt: Date.now(), durationMs: 60000 },
+              tiredness: { lastRestedAt: Date.now(), durationMs: 60000 }
+            }
+          }),
+          subscribe: () => () => {},
+          feed: () => {},
+          groom: () => {},
+          rest: () => {},
+          isHungry: () => false,
+          needsGrooming: () => false,
+          isTired: () => false
+        };
+        window.__vdwDogStateStore = store;
+        window.HomeFeeding.mount({ dogStateStore: store });
+        const feed = document.getElementById('btn-action-feed');
+        const groom = document.getElementById('btn-action-groom');
+        const rest = document.getElementById('btn-action-rest');
+        const read = (el) => el ? {
+          disabled: el.disabled,
+          ariaDisabled: el.getAttribute('aria-disabled'),
+          pointerEvents: el.style ? el.style.pointerEvents : null
+        } : null;
+        const result = { feed: read(feed), groom: read(groom), rest: read(rest) };
+        window.HomeFeeding.unmount();
+        return result;
+        """)
+        res = _run_js(snippet)
+        for name in ("feed", "groom", "rest"):
+            btn = res[name]
+            self.assertIsNotNone(btn, "#btn-action-%s missing" % name)
+            self.assertFalse(btn["disabled"],
+                             "#btn-action-%s must never be disabled" % name)
+            self.assertNotEqual(btn["ariaDisabled"], "true",
+                                "#btn-action-%s must not set aria-disabled=true" % name)
+            self.assertNotEqual(btn["pointerEvents"], "none",
+                                "#btn-action-%s must not set pointer-events: none" % name)
+
+    def test_rejection_click_does_not_mutate_timers_or_score(self):
+        snippet = self._mount_snippet("""
+        const calls = { feed: 0, groom: 0, rest: 0 };
+        const store = {
+          getSnapshot: () => ({
+            version: 1,
+            needs: {
+              hunger: { lastFedAt: Date.now(), durationMs: 60000 },
+              grooming: { lastGroomedAt: Date.now(), durationMs: 60000 },
+              tiredness: { lastRestedAt: Date.now(), durationMs: 60000 }
+            }
+          }),
+          subscribe: () => () => {},
+          feed: () => { calls.feed++; },
+          groom: () => { calls.groom++; },
+          rest: () => { calls.rest++; },
+          isHungry: () => false,
+          needsGrooming: () => false,
+          isTired: () => false
+        };
+        window.__vdwDogStateStore = store;
+        window.HomeFeeding.mount({ dogStateStore: store });
+        const dog = hooks.getDog();
+        const before = {
+          state: dog.state,
+          groomTimer: dog.groomTimer || 0,
+          sleepTimer: dog.sleepTimer || 0,
+          emoteBubble: dog.emoteBubble || null
+        };
+        const feed = document.getElementById('btn-action-feed');
+        const groom = document.getElementById('btn-action-groom');
+        const rest = document.getElementById('btn-action-rest');
+        if (feed) feed.click();
+        if (groom) groom.click();
+        if (rest) rest.click();
+        const after = {
+          state: dog.state,
+          groomTimer: dog.groomTimer || 0,
+          sleepTimer: dog.sleepTimer || 0,
+          emoteBubble: dog.emoteBubble || null
+        };
+        const rejectionActive = hooks.isRejectionActive();
+        window.HomeFeeding.unmount();
+        return {
+          before: before,
+          after: after,
+          calls: calls,
+          rejectionActive: rejectionActive
+        };
+        """)
+        res = _run_js(snippet)
+        self.assertEqual(res["before"], res["after"],
+                         "Rejected care clicks must not mutate dog state/timers")
+        self.assertEqual(res["calls"], {"feed": 0, "groom": 0, "rest": 0},
+                         "Rejected care clicks must not call store feed/groom/rest")
+        self.assertTrue(res["rejectionActive"],
+                        "Rejected care click must trigger the rejection animation")
+
+    def test_ready_click_runs_care_routine(self):
+        snippet = self._mount_snippet("""
+        const calls = { feed: 0, groom: 0, rest: 0 };
+        const store = {
+          getSnapshot: () => ({
+            version: 1,
+            needs: {
+              hunger: { lastFedAt: null, durationMs: 60000 },
+              grooming: { lastGroomedAt: null, durationMs: 60000 },
+              tiredness: { lastRestedAt: null, durationMs: 60000 }
+            }
+          }),
+          subscribe: () => () => {},
+          feed: () => { calls.feed++; },
+          groom: () => { calls.groom++; },
+          rest: () => { calls.rest++; },
+          isHungry: () => true,
+          needsGrooming: () => true,
+          isTired: () => true
+        };
+        window.__vdwDogStateStore = store;
+        window.HomeFeeding.mount({ dogStateStore: store });
+        const dog = hooks.getDog();
+        dog.isHungry = true;
+        dog.needsGrooming = true;
+        dog.isTired = true;
+        const groom = document.getElementById('btn-action-groom');
+        const rest = document.getElementById('btn-action-rest');
+        if (groom) groom.click();
+        if (rest) rest.click();
+        const result = {
+          calls: calls,
+          groomTimer: dog.groomTimer || 0,
+          sleepTimer: dog.sleepTimer || 0,
+          rejectionActive: hooks.isRejectionActive()
+        };
+        window.HomeFeeding.unmount();
+        return result;
+        """)
+        res = _run_js(snippet)
+        self.assertEqual(res["calls"]["groom"], 1,
+                         "Ready groom click must call store.groom() once")
+        self.assertEqual(res["calls"]["rest"], 1,
+                         "Ready rest click must call store.rest() once")
+        self.assertGreater(res["groomTimer"], 0,
+                           "Ready groom click must start the grooming timer")
+        self.assertGreater(res["sleepTimer"], 0,
+                           "Ready rest click must start the sleeping timer")
+        self.assertFalse(res["rejectionActive"],
+                         "Ready care click must not trigger rejection")
+
     def test_rejection_restarts_on_repeat_click(self):
         snippet = self._mount_snippet("""
         const dog = hooks.getDog();
@@ -2020,6 +2174,39 @@ class TestCareActionsAndRejection(unittest.TestCase):
                          "Repeat click must reset the animation frame counter")
         self.assertGreater(res["midFrame"], res["firstFrame"],
                            "updateRejection must advance the frame counter")
+
+    def test_rejection_produces_visual_offset(self):
+        snippet = self._mount_snippet("""
+        const dog = hooks.getDog();
+        dog.isHungry = false;
+        window.HomeSanctuary.playRejection();
+        // Advance the rejection tick so the visual offset is computed.
+        hooks.updateRejection();
+        // Capture the rendered entity's position via a CompanionDog spy.
+        let captured = null;
+        window.CompanionDog = {
+          prototype: {
+            draw: function () { captured = this; }
+          }
+        };
+        hooks.render();
+        const baseX = dog.x;
+        const baseY = dog.y;
+        return {
+          active: hooks.isRejectionActive(),
+          captured: Boolean(captured),
+          dx: captured ? (captured.x - baseX) : 0,
+          dy: captured ? (captured.y - baseY) : 0
+        };
+        """)
+        res = _run_js(snippet)
+        self.assertTrue(res["active"],
+                        "Rejection must remain active immediately after playRejection")
+        self.assertTrue(res["captured"],
+                        "render() must draw the dog via CompanionDog.prototype.draw")
+        # The hop-back offset must move the rendered dog off its base position.
+        self.assertTrue(abs(res["dy"]) > 0 or abs(res["dx"]) > 0,
+                        "Rejection must apply a visible offset to the rendered dog")
 
 
 if __name__ == '__main__':

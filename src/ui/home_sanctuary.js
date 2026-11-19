@@ -75,6 +75,11 @@
   var rejectionActive = false;
   var rejectionEndsAt = 0;
   var rejectionFrame = 0;
+  var rejectionStartedAt = 0;
+  // Visual offset applied to the rendered dog during a rejection.
+  var rejectionOffsetX = 0;
+  var rejectionOffsetY = 0;
+  var rejectionHeadShake = 0;
 
   // Care-action completion hooks (groom / rest). Invoked after the timer
   // completes, the timer id is cleared, and resumeRoaming() has run.
@@ -1021,6 +1026,14 @@
     // so there is zero prototype or world-state leakage.
     var entity = buildDogEntity();
 
+    // Apply the visual rejection offset (head shake + hop-back) so a refused
+    // care action produces an actual on-canvas refusal motion.
+    if (rejectionActive) {
+      entity.x = dog.x + rejectionOffsetX;
+      entity.y = dog.y + rejectionOffsetY;
+      entity.angle = (entity.angle || 0) + rejectionHeadShake;
+    }
+
     // Zoom around the dog's own anchor so the field stays full-size.
     ctx.save();
     ctx.translate(dog.x, dog.y);
@@ -1544,6 +1557,10 @@
     rejectionActive = false;
     rejectionEndsAt = 0;
     rejectionFrame = 0;
+    rejectionStartedAt = 0;
+    rejectionOffsetX = 0;
+    rejectionOffsetY = 0;
+    rejectionHeadShake = 0;
     if (dog) {
       dog.rejectionActive = false;
       dog.rejectionEndsAt = 0;
@@ -1555,8 +1572,12 @@
   // Restarts cleanly when re-entered (resets the animation frame counter).
   function playRejection() {
     rejectionActive = true;
-    rejectionEndsAt = nowMs() + REJECTION_ANIM_MS;
+    rejectionStartedAt = nowMs();
+    rejectionEndsAt = rejectionStartedAt + REJECTION_ANIM_MS;
     rejectionFrame = 0;
+    rejectionOffsetX = 0;
+    rejectionOffsetY = 0;
+    rejectionHeadShake = 0;
     if (dog) {
       dog.rejectionActive = true;
       dog.rejectionEndsAt = rejectionEndsAt;
@@ -1565,11 +1586,30 @@
     return true;
   }
 
+  // Compute the current visual rejection offset (head shake + hop-back).
+  // Returns { dx, dy, shake } in CSS pixels / radians.
+  function computeRejectionOffset() {
+    if (!rejectionActive) return { dx: 0, dy: 0, shake: 0 };
+    var elapsed = nowMs() - rejectionStartedAt;
+    var t = clamp(elapsed / REJECTION_ANIM_MS, 0, 1);
+    // Ease-out envelope so the motion settles before clearing.
+    var envelope = 1 - t;
+    // Head shake: fast sine oscillation, damped over the window.
+    var shake = Math.sin(t * Math.PI * 6) * 0.35 * envelope;
+    // Hop-back: small backward offset that returns to origin.
+    var hop = Math.sin(t * Math.PI) * 6 * envelope;
+    return { dx: 0, dy: -hop, shake: shake };
+  }
+
   // Tick the rejection animation; clears it once the duration elapses.
   function updateRejection() {
     if (!rejectionActive) return;
     rejectionFrame++;
     if (dog) dog.rejectionFrame = rejectionFrame;
+    var offset = computeRejectionOffset();
+    rejectionOffsetX = offset.dx;
+    rejectionOffsetY = offset.dy;
+    rejectionHeadShake = offset.shake;
     if (nowMs() >= rejectionEndsAt) {
       clearRejection();
     }

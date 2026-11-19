@@ -495,10 +495,20 @@ export class CompanionDog {
     return Boolean(this.owner && this.owner.isLeashed);
   }
 
+  // Base (unmodified) movement speed. Proxies `this.speed` so both names stay
+  // in sync regardless of which one callers read or write.
+  get baseSpeed() {
+    return this.speed;
+  }
+
+  set baseSpeed(v) {
+    this.speed = v;
+  }
+
   // Effective movement speed: base speed reduced by a single flat multiplier
   // when ANY need is active. Needs never stack multiplicatively.
   getEffectiveSpeed() {
-    const baseSpeed = this.speed;
+    const baseSpeed = this.baseSpeed;
     const hasActiveNeed = this.isHungry || this.needsGrooming || this.isTired;
     return baseSpeed * (hasActiveNeed ? NEED_SPEED_MULTIPLIER : 1.0);
   }
@@ -1320,18 +1330,18 @@ export class CompanionDog {
 
     // 3. Movement integration
     // Need-based speed reduction: scale the velocity by the ratio of effective
-    // speed to base speed BEFORE integration. `this.speed` (baseSpeed) is
-    // unchanged; needs never stack (single flat multiplier).
-    const baseSpeed = this.speed;
+    // speed to base speed for THIS frame's position integration only. The
+    // persistent `this.vx` / `this.vy` are never mutated, so the dog returns
+    // to `baseSpeed` on the next tick once needs clear. Needs never stack
+    // (single flat multiplier).
+    const baseSpeed = this.baseSpeed;
     const speedScale = baseSpeed > 0 ? (this.getEffectiveSpeed() / baseSpeed) : 1.0;
-    if (speedScale !== 1.0) {
-      this.vx *= speedScale;
-      this.vy *= speedScale;
-    }
+    const effVx = this.vx * speedScale;
+    const effVy = this.vy * speedScale;
     // Zoomies set x/y directly from the parametric curve; skip integration to avoid double movement.
     if (this.state !== DogState.ZOOMIES) {
-      this.x += this.vx * dt;
-      this.y += this.vy * dt;
+      this.x += effVx * dt;
+      this.y += effVy * dt;
     }
 
     // Screen-space perimeter clamp for off-leash free movement

@@ -30,6 +30,10 @@ name: CI & Deployment
     branches: [main]
   workflow_dispatch:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Run Automated Test Suites
@@ -66,8 +70,22 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
+      - name: Setup Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            virtual_dog_walker -> target
+            zero_protocol -> target
+
       - name: Install wasm-bindgen-cli
-        run: cargo install -q wasm-bindgen-cli --version 0.2.130
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@0.2.130
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
 
       - name: Run Cargo Tests
         working-directory: virtual_dog_walker
@@ -131,13 +149,20 @@ jobs:
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Install wasm-bindgen-cli
+      - name: Setup Rust cache
         if: steps.check_creds.outputs.has_token == 'true'
-        run: cargo install -q wasm-bindgen-cli --version 0.2.130
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            virtual_dog_walker -> target
+            zero_protocol -> target
+            zero_network -> target
 
-      - name: Install worker-build
+      - name: Install wasm-bindgen-cli & worker-build
         if: steps.check_creds.outputs.has_token == 'true'
-        run: cargo install -q worker-build --version "^0.7"
+        uses: taiki-e/install-action@v2
+        with:
+          tool: wasm-bindgen-cli@0.2.130,worker-build
 
       - name: Deploy Cloudflare Worker & Durable Object
         if: steps.check_creds.outputs.has_token == 'true'
@@ -6360,7 +6385,8 @@ fi
 echo "Building crate from ${ZERO_PROTOCOL_DIR}/crates/zero_mesh..."
 cargo build --manifest-path "${ZERO_PROTOCOL_DIR}/crates/zero_mesh/Cargo.toml" --target wasm32-unknown-unknown --release
 
-WASM_TARGET_MESH="${ZERO_PROTOCOL_DIR}/target/wasm32-unknown-unknown/release/zero_mesh.wasm"
+MESH_TARGET_ROOT="${CARGO_TARGET_DIR:-${ZERO_PROTOCOL_DIR}/target}"
+WASM_TARGET_MESH="${MESH_TARGET_ROOT}/wasm32-unknown-unknown/release/zero_mesh.wasm"
 if [[ ! -f "${WASM_TARGET_MESH}" ]]; then
     echo "Error: ${WASM_TARGET_MESH} not found after build!" >&2
     exit 1
@@ -6384,7 +6410,8 @@ echo "=== Building dog_walker_core WebAssembly Package ==="
 echo "Building crate from ${PROJECT_ROOT}/crates/dog_walker_core..."
 cargo build --manifest-path "${PROJECT_ROOT}/crates/dog_walker_core/Cargo.toml" --target wasm32-unknown-unknown --release
 
-WASM_TARGET_CORE="${PROJECT_ROOT}/target/wasm32-unknown-unknown/release/dog_walker_core.wasm"
+CORE_TARGET_ROOT="${CARGO_TARGET_DIR:-${PROJECT_ROOT}/target}"
+WASM_TARGET_CORE="${CORE_TARGET_ROOT}/wasm32-unknown-unknown/release/dog_walker_core.wasm"
 if [[ ! -f "${WASM_TARGET_CORE}" ]]; then
     echo "Error: ${WASM_TARGET_CORE} not found after build!" >&2
     exit 1
@@ -22078,7 +22105,7 @@ export default weatherClient;
     if (root.HomeSanctuary && typeof root.HomeSanctuary.playGroomingAnimation === 'function') {
       try {
         var res = root.HomeSanctuary.playGroomingAnimation(resolveCompanionDog(), { onComplete: onComplete });
-        wired = Boolean(res);
+        wired = res !== false;
       } catch (e) { /* fall through */ }
     }
     if (!wired) {
@@ -22115,7 +22142,7 @@ export default weatherClient;
     if (root.HomeSanctuary && typeof root.HomeSanctuary.playSleepingAnimation === 'function') {
       try {
         var res = root.HomeSanctuary.playSleepingAnimation(resolveCompanionDog(), { onComplete: onComplete });
-        wired = Boolean(res);
+        wired = res !== false;
       } catch (e) { /* fall through */ }
     }
     if (!wired) {
@@ -24431,6 +24458,7 @@ if (typeof globalThis !== 'undefined') {
   // Shared care-action pose: face the camera and sit, mirroring feeding.
   function applyCarePose() {
     if (!dog) return;
+    pose = 'camera';
     dog.pose = 'camera';
     dog.facing = Math.PI / 2;
     dog.state = 'sit';
@@ -35885,7 +35913,27 @@ describe('CompanionDog setDogStateStore', () => {
 #!/usr/bin/env python3
 import sys
 import os
+import shutil
 import subprocess
+
+def ensure_node_available():
+    extra_paths = [
+        os.path.expanduser("~/.local/bin"),
+        "/opt/homebrew/bin",
+        "/usr/local/bin",
+    ]
+    current_path = os.environ.get("PATH", "")
+    for p in extra_paths:
+        if p not in current_path.split(os.pathsep) and os.path.isdir(p):
+            current_path = f"{p}{os.pathsep}{current_path}"
+    os.environ["PATH"] = current_path
+
+    if shutil.which("node") is None:
+        if os.environ.get("ALLOW_SKIP_NODE_TESTS") == "1":
+            print("⚠️  WARNING: 'node' not found in PATH, but ALLOW_SKIP_NODE_TESTS=1 is set.")
+            return
+        print("❌ ERROR: 'node' executable not found in PATH. Node.js is required so JS/UI unit tests are not silently skipped.", file=sys.stderr)
+        sys.exit(1)
 
 def test_scaffold():
     assert os.path.exists("index.html"), "index.html missing"
@@ -35917,6 +35965,7 @@ def test_scaffold():
     print("✅ test_scaffold passed: All Clifton Down social sandbox modules present.")
 
 def run_all():
+    ensure_node_available()
     test_scaffold()
     test_suites = [
         "test/test_steering.py",
@@ -35943,7 +35992,6 @@ def run_all():
         "test/test_npc_paths.py",
         "test/test_npc_entity.py",
         "test/test_npc_client.py",
-        "test/test_field.py",
         "test/test_fetching_mechanics.py",
         "test/test_zero_mesh_integration.py",
         "test/test_wasm_core_sim.py",

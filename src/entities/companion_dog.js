@@ -1336,12 +1336,21 @@ export class CompanionDog {
     // (single flat multiplier).
     const baseSpeed = this.baseSpeed;
     const speedScale = baseSpeed > 0 ? (this.getEffectiveSpeed() / baseSpeed) : 1.0;
-    const effVx = this.vx * speedScale;
-    const effVy = this.vy * speedScale;
     // Zoomies set x/y directly from the parametric curve; skip integration to avoid double movement.
     if (this.state !== DogState.ZOOMIES) {
-      this.x += effVx * dt;
-      this.y += effVy * dt;
+      if (speedScale === 1.0) {
+        // No active need: integrate the persistent velocity directly.
+        this.x += this.vx * dt;
+        this.y += this.vy * dt;
+      } else {
+        // Need active: integrate a locally scaled velocity WITHOUT mutating
+        // the persistent `this.vx` / `this.vy`, so the dog returns to
+        // `baseSpeed` on the next tick once needs clear.
+        const effVx = this.vx * speedScale;
+        const effVy = this.vy * speedScale;
+        this.x += effVx * dt;
+        this.y += effVy * dt;
+      }
     }
 
     // Screen-space perimeter clamp for off-leash free movement

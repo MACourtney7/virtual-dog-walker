@@ -165,7 +165,9 @@ JSON.stringify(__res);
 
     if shutil.which("osascript"):
         out = subprocess.check_output(
-            ["osascript", "-l", "JavaScript", "-e", harness], text=True
+            ["osascript", "-l", "JavaScript", "-e", harness],
+            text=True,
+            timeout=30,
         ).strip()
         return json.loads(out)
     if shutil.which("node"):
@@ -175,7 +177,9 @@ if (typeof __res !== 'undefined' && __res !== null) {{
     console.log(JSON.stringify(__res));
 }}
 """
-        out = subprocess.check_output(["node", "-e", node_script], text=True)
+        out = subprocess.check_output(
+            ["node", "-e", node_script], text=True, timeout=30
+        )
         return json.loads(out.strip().splitlines()[-1])
     raise unittest.SkipTest("No JS runtime (osascript or node) available")
 
@@ -527,6 +531,70 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
         self.assertTrue(res["heldUp"],
                         f"AC-4.3: Owner must be held within MAX_LEASH_LENGTH "
                         f"({res['max']}) of the slowed dog; "
+                        f"final={res['finalDist']}, max={res['maxDist']}")
+
+    def test_post_tick_leash_invariant(self):
+        """AC-4.4: Post-tick distance stays within MAX_LEASH_LENGTH.
+
+        Mirrors the main.js tick order: owner.update(dt) runs first, then
+        dog.update(dt). After each full tick the owner must remain within
+        MAX_LEASH_LENGTH of the dog.
+        """
+        snippet = """
+        const leash = window.Leash || (typeof Leash !== 'undefined' ? Leash : null);
+        const OwnerClass = window.Owner;
+        const CompanionDogClass = window.CompanionDog;
+        if (!leash || typeof leash.clampOwnerToLeash !== 'function'
+            || !OwnerClass || !CompanionDogClass) {
+          return { available: false };
+        }
+        const MAX = leash.MAX_LEASH_LENGTH;
+
+        // Minimal field stub: no colliders, no obstacles.
+        const field = {
+          width: 2600,
+          height: 1900,
+          resolveCollisionWithResult(x, y) { return { x, y, collided: false }; },
+          resolveCollision(x, y) { return { x, y }; },
+          getColliders() { return []; },
+          checkWarpGate() { return null; }
+        };
+
+        const owner = new OwnerClass(0, 0, 'Walker', true);
+        owner.isLeashed = true;
+        owner.setGait('JOG');
+        owner.setTargetHeading(0);
+
+        const dog = new CompanionDogClass(0, 0, owner);
+        dog.baseSpeed = 200;
+
+        const dt = 1 / 60;
+        let maxDist = 0;
+        for (let i = 0; i < 120; i++) {
+          // main.js tick order: owner first, then dog.
+          owner.update(dt, field);
+          dog.update(dt, field, [dog], null, []);
+          const d = Math.hypot(owner.x - dog.x, owner.y - dog.y);
+          if (d > maxDist) maxDist = d;
+        }
+        const finalDist = Math.hypot(owner.x - dog.x, owner.y - dog.y);
+        return {
+          available: true,
+          max: MAX,
+          finalDist: finalDist,
+          maxDist: maxDist,
+          withinTolerance: finalDist <= MAX + 1e-6 && maxDist <= MAX + 1e-6
+        };
+        """
+        res = _run_js(snippet)
+        self.assertTrue(res.get("available"),
+                        "AC-4.4: Leash module, Owner and CompanionDog must be "
+                        "present in the test harness")
+        self.assertEqual(res["max"], 105,
+                         "AC-4.4: MAX_LEASH_LENGTH must be 105 px")
+        self.assertTrue(res["withinTolerance"],
+                        f"AC-4.4: Post-tick owner distance must stay within "
+                        f"MAX_LEASH_LENGTH ({res['max']}); "
                         f"final={res['finalDist']}, max={res['maxDist']}")
 
 

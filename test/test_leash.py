@@ -12,6 +12,7 @@ import unittest
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 LEASH_MODULE = os.path.join(REPO_ROOT, "src", "world", "leash.js")
 OWNER_MODULE = os.path.join(REPO_ROOT, "src", "entities", "owner.js")
+DOG_MODULE = os.path.join(REPO_ROOT, "src", "entities", "companion_dog.js")
 
 
 def _node_available():
@@ -166,6 +167,50 @@ class LeashTests(unittest.TestCase):
         self.assertAlmostEqual(out["dist"], 105.0, places=9)
         # Owner is pulled toward the dog along the leash axis.
         self.assertAlmostEqual(out["x"], 395.0, places=9)
+        self.assertAlmostEqual(out["y"], 0.0, places=9)
+
+    def test_real_dog_pooping_freezes_and_clamps_owner(self):
+        """Drive a real CompanionDog into POOPING and verify Owner.update() freezes/clamps."""
+        script = f"""
+        import {{ CompanionDog, DogState }} from {json.dumps(DOG_MODULE)};
+        import {{ Owner }} from {json.dumps(OWNER_MODULE)};
+        import {{ MAX_LEASH_LENGTH }} from {json.dumps(LEASH_MODULE)};
+        const owner = new Owner(1000, 0, 'Walker', true);
+        owner.setGait('WALK');
+        owner.targetHeading = 0;
+        owner.angle = 0;
+        const dog = new CompanionDog(0, 0, owner);
+        dog.state = DogState.POOPING;
+        dog.poopSquatDuration = 2.0;
+        dog.vx = 0;
+        dog.vy = 0;
+        const isPooping = dog.isPooping;
+        const isOnLeash = dog.isOnLeash;
+        owner.dog = dog;
+        owner.update(1 / 60, null);
+        const dist = Math.hypot(owner.x - dog.x, owner.y - dog.y);
+        console.log(JSON.stringify({{
+          isPooping,
+          isOnLeash,
+          x: owner.x,
+          y: owner.y,
+          vx: owner.vx,
+          vy: owner.vy,
+          isMoving: owner.isMoving,
+          dist,
+          max: MAX_LEASH_LENGTH,
+        }}));
+        """
+        out = _run_node(script)
+        self.assertIs(out["isPooping"], True)
+        self.assertIs(out["isOnLeash"], True)
+        # Frozen: zero velocity, not moving.
+        self.assertEqual(out["vx"], 0)
+        self.assertEqual(out["vy"], 0)
+        self.assertIs(out["isMoving"], False)
+        # Clamped within MAX_LEASH_LENGTH of the dog.
+        self.assertAlmostEqual(out["dist"], 105.0, places=9)
+        self.assertAlmostEqual(out["x"], 105.0, places=9)
         self.assertAlmostEqual(out["y"], 0.0, places=9)
 
     def test_force_stop_releases_after_poop(self):

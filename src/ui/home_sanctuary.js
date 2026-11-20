@@ -1663,6 +1663,25 @@
       return true;
     }
 
+    // Accepted care action: also mutate the shared DogStateStore so the
+    // underlying need timers reset. HomeFeeding.routeCareAction() passes
+    // { skipAnimation: true } and owns the store mutation itself, so we only
+    // do this for direct callers.
+    var store = resolveHungerStore();
+    if (store) {
+      try {
+        if (kind === 'feed' && typeof store.feed === 'function') {
+          store.feed();
+        } else if (kind === 'groom' && typeof store.groom === 'function') {
+          store.groom();
+        } else if (kind === 'rest' && typeof store.rest === 'function') {
+          store.rest();
+        }
+      } catch (e) {
+        /* ignore store mutation failures */
+      }
+    }
+
     if (kind === 'feed') {
       if (typeof dogPlayFeedReaction === 'function') dogPlayFeedReaction();
       return true;

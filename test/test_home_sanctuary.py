@@ -2175,6 +2175,38 @@ class TestCareActionsAndRejection(unittest.TestCase):
         self.assertGreater(res["midFrame"], res["firstFrame"],
                            "updateRejection must advance the frame counter")
 
+    def test_accepted_feed_mutates_store(self):
+        snippet = self._mount_snippet("""
+        const calls = { feed: 0, groom: 0, rest: 0 };
+        const store = {
+          getSnapshot: () => ({
+            version: 1,
+            needs: {
+              hunger: { lastFedAt: null, durationMs: 60000 },
+              grooming: { lastGroomedAt: null, durationMs: 60000 },
+              tiredness: { lastRestedAt: null, durationMs: 60000 }
+            }
+          }),
+          subscribe: () => () => {},
+          feed: () => { calls.feed++; },
+          groom: () => { calls.groom++; },
+          rest: () => { calls.rest++; },
+          isHungry: () => true,
+          needsGrooming: () => true,
+          isTired: () => true
+        };
+        window.__vdwDogStateStore = store;
+        const dog = hooks.getDog();
+        dog.isHungry = true;
+        const accepted = window.HomeSanctuary.onCareAction('feed');
+        return { accepted: accepted, calls: calls };
+        """)
+        res = _run_js(snippet)
+        self.assertTrue(res["accepted"],
+                        "Accepted feed must return true")
+        self.assertEqual(res["calls"]["feed"], 1,
+                         "Accepted feed must invoke store.feed() to reset the hunger timer")
+
     def test_rejection_produces_visual_offset(self):
         snippet = self._mount_snippet("""
         const dog = hooks.getDog();

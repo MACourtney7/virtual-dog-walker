@@ -1,5 +1,6 @@
 // Human Owner Player Avatar - Cruise-and-Helm Player Locomotion, Continuous Heading Steering, Ground Halo & Directional 2.5D Silhouette
 import { resolveFieldCollision } from '../engine/wasm_sim_bridge.js';
+import { MAX_LEASH_LENGTH, isOwnerFrozen, clampOwnerToLeash } from '../world/leash.js';
 
 // Gait model constants
 export const Gait = Object.freeze({
@@ -716,6 +717,29 @@ export class Owner {
       return;
     }
 
+    // 0. Leash force-stop: while the dog is pooping on-leash the owner is
+    //    held in place (no movement integration this frame).
+    const leashDog = this.dog || null;
+    const leashActive = Boolean(leashDog && leashDog.isOnLeash);
+    if (leashActive && isOwnerFrozen(leashDog)) {
+      this.vx = 0;
+      this.vy = 0;
+      this.isMoving = false;
+      // Even while force-stopped, keep the owner within leash range of the
+      // dog (the dog may have moved away while pooping).
+      const frozenClamped = clampOwnerToLeash(
+        { x: this.x, y: this.y },
+        { x: leashDog.x, y: leashDog.y },
+        MAX_LEASH_LENGTH
+      );
+      if (frozenClamped) {
+        this.x = frozenClamped.x;
+        this.y = frozenClamped.y;
+      }
+      this.depthY = this.y + 12;
+      return;
+    }
+
     // 1. Gait persists autonomously until changed via setGait / stepGait.
     //    (Legacy directional key handling removed in movement redesign.)
 
@@ -801,6 +825,20 @@ export class Owner {
     if (!this.isMoving) {
       this.vx = 0;
       this.vy = 0;
+    }
+
+    // Leash tether: clamp the owner within MAX_LEASH_LENGTH of the dog while
+    // on-leash. Off-leash movement bypasses the clamp entirely.
+    if (leashActive) {
+      const clamped = clampOwnerToLeash(
+        { x: this.x, y: this.y },
+        { x: leashDog.x, y: leashDog.y },
+        MAX_LEASH_LENGTH
+      );
+      if (clamped) {
+        this.x = clamped.x;
+        this.y = clamped.y;
+      }
     }
 
     // Update leash arm pose state (tension + extension) each frame.

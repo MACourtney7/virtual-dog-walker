@@ -441,29 +441,65 @@
     return restBtnEl;
   }
 
-  function setButtonDisabled(btn, disabled) {
+  // Care buttons are ALWAYS clickable (REQ-1). We never set `disabled` or
+  // `aria-disabled="true"` on Feed/Groom/Rest; readiness is conveyed purely
+  // via a cosmetic `is-needed` class so clicks are never blocked.
+  function setButtonNeeded(btn, needed) {
     if (!btn) return;
-    btn.disabled = !!disabled;
-    btn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
-  }
-
-  function updateDisabledState() {
-    var noDog = getDogSlot() === null || !getCanvas();
-    setButtonDisabled(feedBtnEl, noDog);
-
-    var store = resolveDogStateStore();
-    var groomDisabled = noDog;
-    var restDisabled = noDog;
-    if (store) {
-      if (typeof store.needsGrooming === 'function') {
-        try { groomDisabled = noDog || !store.needsGrooming(); } catch (e) { /* ignore */ }
-      }
-      if (typeof store.isTired === 'function') {
-        try { restDisabled = noDog || !store.isTired(); } catch (e) { /* ignore */ }
+    // Defensive: ensure the button is never left disabled by prior state.
+    btn.disabled = false;
+    btn.setAttribute('aria-disabled', 'false');
+    if (btn.classList && typeof btn.classList.toggle === 'function') {
+      btn.classList.toggle('is-needed', !!needed);
+    } else if (typeof btn.className === 'string') {
+      var has = (' ' + btn.className + ' ').indexOf(' is-needed ') !== -1;
+      if (needed && !has) {
+        btn.className = (btn.className + ' is-needed').trim();
+      } else if (!needed && has) {
+        btn.className = (' ' + btn.className + ' ')
+          .replace(' is-needed ', ' ')
+          .trim();
       }
     }
-    setButtonDisabled(groomBtnEl, groomDisabled);
-    setButtonDisabled(restBtnEl, restDisabled);
+  }
+
+  // Resolve whether the dog currently needs a given care kind.
+  // Single source of truth: prefer the shared DogStateStore methods
+  // (isHungry / needsGrooming / isTired) so this never diverges from
+  // HomeSanctuary.isCareReady(). Falls back to the companion dog getters.
+  function isCareNeeded(kind) {
+    var store = resolveDogStateStore();
+    if (store) {
+      try {
+        if (kind === 'feed' && typeof store.isHungry === 'function') {
+          return Boolean(store.isHungry());
+        }
+        if (kind === 'groom' && typeof store.needsGrooming === 'function') {
+          return Boolean(store.needsGrooming());
+        }
+        if (kind === 'rest' && typeof store.isTired === 'function') {
+          return Boolean(store.isTired());
+        }
+      } catch (e) {
+        /* fall through to dog entity getters */
+      }
+    }
+
+    var dog = resolveCompanionDog();
+    if (dog) {
+      if (kind === 'feed' && typeof dog.isHungry === 'boolean') return dog.isHungry;
+      if (kind === 'groom' && typeof dog.needsGrooming === 'boolean') return dog.needsGrooming;
+      if (kind === 'rest' && typeof dog.isTired === 'boolean') return dog.isTired;
+    }
+    return false;
+  }
+
+  // Refresh the cosmetic readiness classes. Never disables any button.
+  function updateDisabledState() {
+    var noDog = getDogSlot() === null || !getCanvas();
+    setButtonNeeded(feedBtnEl, !noDog && isCareNeeded('feed'));
+    setButtonNeeded(groomBtnEl, !noDog && isCareNeeded('groom'));
+    setButtonNeeded(restBtnEl, !noDog && isCareNeeded('rest'));
   }
 
   // Subscribe to the store so button readiness refreshes on state changes.
@@ -604,21 +640,54 @@
     var dog = resolveCompanionDog();
     var name = (dogSlot && dogSlot.name) || (dog && dog.name) || 'Ziggy';
     var id = (dogSlot && (dogSlot.id || dogSlot.dogId)) || (dog && dog.id) || 'dog-1';
-    runFeed({ dogName: name, dogId: id });
+    routeCareAction('feed', function () {
+      runFeed({ dogName: name, dogId: id });
+    });
+  }
+
+  // Route a care click through HomeSanctuary.onCareAction when available so
+  // the sanctuary owns the "needed vs. rejection" decision and the visual
+  // refusal animation. Falls back to the local readiness check otherwise.
+  function routeCareAction(kind, runRoutine) {
+    var sanctuary = root.HomeSanctuary;
+    if (sanctuary && typeof sanctuary.onCareAction === 'function') {
+      // skipAnimation: HomeFeeding's commit* routine owns the animation
+      // invocation, so the sanctuary must not play it a second time.
+      // Do NOT swallow exceptions here: a thrown error is a real failure,
+      // not a rejection, so let it propagate to the caller.
+      var accepted = sanctuary.onCareAction(kind, { skipAnimation: true });
+      if (accepted) {
+        runRoutine();
+      }
+      updateDisabledState();
+      return accepted;
+    }
+
+    // Fallback: local readiness check + rejection animation.
+    if (isCareNeeded(kind)) {
+      runRoutine();
+      updateDisabledState();
+      return true;
+    }
+    if (sanctuary && typeof sanctuary.playRejection === 'function') {
+      try { sanctuary.playRejection(); } catch (e) { /* ignore */ }
+    }
+    updateDisabledState();
+    return false;
   }
 
   function onGroomClick() {
-    if (groomBtnEl && groomBtnEl.disabled) return;
-    groomToken += 1;
-    commitGroom(groomToken);
-    updateDisabledState();
+    routeCareAction('groom', function () {
+      groomToken += 1;
+      commitGroom(groomToken);
+    });
   }
 
   function onRestClick() {
-    if (restBtnEl && restBtnEl.disabled) return;
-    restToken += 1;
-    commitRest(restToken);
-    updateDisabledState();
+    routeCareAction('rest', function () {
+      restToken += 1;
+      commitRest(restToken);
+    });
   }
 
   // ---------------------------------------------------------------------------

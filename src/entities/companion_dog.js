@@ -1,6 +1,7 @@
 // Companion Dog Entity - Canine Steering AI, Floppy Ear Springs, Leash Mechanics & Ball Fetching
 import { PoopPile } from './waste.js';
 import { stepLeashConstraint, resolveFieldCollision, stepEarSpringsToTargets } from '../engine/wasm_sim_bridge.js';
+import { MAX_LEASH_LENGTH } from '../world/leash.js';
 
 export const DogState = {
   FOLLOWING: 'FOLLOWING',
@@ -58,6 +59,11 @@ export const LEASH_FORWARD_LEAD_TARGET_PX = 48;
 export const LEASH_FEEDFORWARD_SECONDS = 0.12;
 // Minimum forward projection of the slot past the shoulder line.
 export const LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = 2;
+
+// Speed multiplier applied when any need (hunger/grooming/tiredness) is active.
+// Needs never stack multiplicatively: a single 0.4x factor applies regardless
+// of how many needs are active.
+export const NEED_SPEED_MULTIPLIER = 0.4;
 
 // Zoomies path types: the dog can run a figure-eight, orbit the owner, or
 // shuttle back and forth between two points.
@@ -456,9 +462,56 @@ export class CompanionDog {
 
     // Hunger state (driven by an external DogStateStore via setDogStateStore).
     this.hunger = null;
-    this.isHungry = false;
+    this._isHungry = false;
     this.dogStateStore = null;
     this._dogStateUnsubscribe = null;
+
+    // Grooming / tiredness / poop / leash state backing fields.
+    this._needsGrooming = false;
+    this._isTired = false;
+    this._isPooping = false;
+  }
+
+  // --- Read-only need/state getters ---
+  // These expose derived need signals without allowing external mutation of
+  // the backing fields. Use the corresponding setters to change them.
+
+  get isHungry() {
+    return Boolean(this._isHungry);
+  }
+
+  get needsGrooming() {
+    return Boolean(this._needsGrooming);
+  }
+
+  get isTired() {
+    return Boolean(this._isTired);
+  }
+
+  get isPooping() {
+    return this.state === DogState.POOPING || Boolean(this._isPooping);
+  }
+
+  get isOnLeash() {
+    return Boolean(this.owner && this.owner.isLeashed);
+  }
+
+  // Base (unmodified) movement speed. Proxies `this.speed` so both names stay
+  // in sync regardless of which one callers read or write.
+  get baseSpeed() {
+    return this.speed;
+  }
+
+  set baseSpeed(v) {
+    this.speed = v;
+  }
+
+  // Effective movement speed: base speed reduced by a single flat multiplier
+  // when ANY need is active. Needs never stack multiplicatively.
+  getEffectiveSpeed() {
+    const baseSpeed = this.baseSpeed;
+    const hasActiveNeed = this.isHungry || this.needsGrooming || this.isTired;
+    return baseSpeed * (hasActiveNeed ? NEED_SPEED_MULTIPLIER : 1.0);
   }
 
   // packPlayTimer is an alias of packPlayRoleTimer (kept in sync via accessor).
@@ -608,8 +661,8 @@ export class CompanionDog {
   // Idempotent and safe when passed undefined/null.
   setHunger(hungerInfo) {
     this.hunger = hungerInfo === undefined ? null : hungerInfo;
-    this.isHungry = Boolean(hungerInfo && hungerInfo.isHungry);
-    return this.isHungry;
+    this._isHungry = Boolean(hungerInfo && hungerInfo.isHungry);
+    return this._isHungry;
   }
 
   // Attach an external DogStateStore. Subscribes (if supported), syncs
@@ -751,6 +804,7 @@ export class CompanionDog {
 
   setGroomingState(state) {
     this.grooming = Boolean(state);
+    this._needsGrooming = Boolean(state);
     return this.grooming;
   }
 
@@ -770,6 +824,7 @@ export class CompanionDog {
 
   setTirednessState(state) {
     this.tired = Boolean(state);
+    this._isTired = Boolean(state);
     return this.tired;
   }
 
@@ -1275,10 +1330,27 @@ export class CompanionDog {
     }
 
     // 3. Movement integration
-    // Zoomies set x/y directly from the parametric curve; skip integration to avoid double movement.
+    // Need-based speed reduction: scale the velocity by the ratio of effective
+    // speed to base speed for THIS frame's position integration only. The
+    // persistent `this.vx` / `this.vy` are never mutated, so the dog returns
+    // to `baseSpeed` on the next tick once needs clear. Needs never stack
+    // (single flat multiplier).
+    const baseSpeed = this.baseSpeed;
+    const speedScale = baseSpeed > 0 ? (this.getEffectiveSpeed() / baseSpeed) : 1.0;
+    // Zoomies set x/y directly from the parametric curve; skip integration to
+    // avoid double movement. Need-based speed reduction for ZOOMIES is applied
+    // by scaling the parametric progression inside updateZoomies() instead.
     if (this.state !== DogState.ZOOMIES) {
       this.x += this.vx * dt;
       this.y += this.vy * dt;
+      // Need active: apply the additional scaled displacement WITHOUT mutating
+      // the persistent `this.vx` / `this.vy`, so the dog returns to `baseSpeed`
+      // on the next tick once needs clear. Needs never stack (single flat
+      // multiplier).
+      if (speedScale !== 1.0) {
+        this.x += this.vx * (speedScale - 1.0) * dt;
+        this.y += this.vy * (speedScale - 1.0) * dt;
+      }
     }
 
     // Screen-space perimeter clamp for off-leash free movement
@@ -1299,7 +1371,7 @@ export class CompanionDog {
     // Leash constraint & pulling physics: If leashed to owner, hard clamp to max leash length
     if (this.owner && this.owner.isLeashed && this.state !== DogState.FETCHING) {
       stepLeashConstraint(this, this.owner, 65, 4.0, 5.0, dt);
-      const maxLeash = 105;
+      const maxLeash = MAX_LEASH_LENGTH;
       const dx = this.x - this.owner.x;
       const dy = this.y - this.owner.y;
       const dist = Math.hypot(dx, dy);
@@ -2999,7 +3071,14 @@ export class CompanionDog {
       this.transitionTo((this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING);
       return;
     }
-    this.zoomiesPhase += dt * this.zoomiesSpeed;
+    // Need-based speed reduction: scale the parametric progression so the
+    // zoomies path advances at the reduced effective speed (no jitter, no
+    // double integration). Needs never stack (single flat multiplier).
+    const zoomiesBaseSpeed = this.baseSpeed;
+    const zoomiesSpeedScale = zoomiesBaseSpeed > 0
+      ? (this.getEffectiveSpeed() / zoomiesBaseSpeed)
+      : 1.0;
+    this.zoomiesPhase += dt * this.zoomiesSpeed * zoomiesSpeedScale;
 
     const t = this.zoomiesPhase;
     const cx = this.zoomiesCenter.x;
@@ -3018,7 +3097,7 @@ export class CompanionDog {
       // Circular orbit around the owner's LIVE position.
       const ownerX = this.owner ? this.owner.x : cx;
       const ownerY = this.owner ? this.owner.y : cy;
-      this.zoomiesOrbitAngle += dt * this.zoomiesSpeed * (this.zoomiesOrbitDir || 1);
+      this.zoomiesOrbitAngle += dt * this.zoomiesSpeed * zoomiesSpeedScale * (this.zoomiesOrbitDir || 1);
       const orbitR = this.zoomiesOrbitRadius;
       expectedX = ownerX + Math.cos(this.zoomiesOrbitAngle) * orbitR;
       expectedY = ownerY + Math.sin(this.zoomiesOrbitAngle) * orbitR;
@@ -3682,6 +3761,7 @@ CompanionDog.LEASH_FORWARD_LEAD_MAX_PX = LEASH_FORWARD_LEAD_MAX_PX;
 CompanionDog.LEASH_FORWARD_LEAD_TARGET_PX = LEASH_FORWARD_LEAD_TARGET_PX;
 CompanionDog.LEASH_FEEDFORWARD_SECONDS = LEASH_FEEDFORWARD_SECONDS;
 CompanionDog.LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX;
+CompanionDog.NEED_SPEED_MULTIPLIER = NEED_SPEED_MULTIPLIER;
 CompanionDog.getLeashSlot = getLeashSlot;
 CompanionDog.ZoomiePath = ZoomiePath;
 CompanionDog.ZOOMIE_PATH_TYPES = ZOOMIE_PATH_TYPES;
@@ -3694,4 +3774,5 @@ if (typeof window !== 'undefined') {
   window.CompanionDog = CompanionDog;
   window.CoatPreset = CoatPreset;
   window.DogState = DogState;
+  window.NEED_SPEED_MULTIPLIER = NEED_SPEED_MULTIPLIER;
 }

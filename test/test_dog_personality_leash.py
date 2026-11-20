@@ -262,8 +262,14 @@ class TestDogPersonalityLeash(unittest.TestCase):
         self.assertEqual(render_slack["mode"], "SLACK_CATENARY")
         self.assertFalse(render_slack["jitter"])
 
-        # Check source code pattern for 105px leash clamp
-        self.assertIn("105", self.dog_code, "companion_dog.js must reference 105px max leash clamp")
+        # Check source code references the shared MAX_LEASH_LENGTH constant
+        # (single source of truth in src/world/leash.js) rather than a
+        # hardcoded 105px literal.
+        self.assertIn(
+            "MAX_LEASH_LENGTH",
+            self.dog_code,
+            "companion_dog.js must reference the shared MAX_LEASH_LENGTH constant",
+        )
 
     def test_personality_steering_and_social_modifiers(self):
         """

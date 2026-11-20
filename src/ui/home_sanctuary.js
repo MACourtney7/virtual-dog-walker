@@ -43,6 +43,9 @@
   var TURF_VARIATION = 'rgba(52, 98, 42, 0.06)';
   var SANCTUARY_ZOOM = 0.72;
 
+  // Rejection animation duration (ms) for care actions the dog doesn't need.
+  var REJECTION_ANIM_MS = 500;
+
   // ---------------------------------------------------------------------------
   // Module state
   // ---------------------------------------------------------------------------
@@ -67,6 +70,16 @@
 
   var particles = [];
   var particleFrame = 0;
+
+  // Rejection animation state (head-shake + hop-back when a care is not needed).
+  var rejectionActive = false;
+  var rejectionEndsAt = 0;
+  var rejectionFrame = 0;
+  var rejectionStartedAt = 0;
+  // Visual offset applied to the rendered dog during a rejection.
+  var rejectionOffsetX = 0;
+  var rejectionOffsetY = 0;
+  var rejectionHeadShake = 0;
 
   // Care-action completion hooks (groom / rest). Invoked after the timer
   // completes, the timer id is cleared, and resumeRoaming() has run.
@@ -1013,6 +1026,14 @@
     // so there is zero prototype or world-state leakage.
     var entity = buildDogEntity();
 
+    // Apply the visual rejection offset (head shake + hop-back) so a refused
+    // care action produces an actual on-canvas refusal motion.
+    if (rejectionActive) {
+      entity.x = dog.x + rejectionOffsetX;
+      entity.y = dog.y + rejectionOffsetY;
+      entity.angle = (entity.angle || 0) + rejectionHeadShake;
+    }
+
     // Zoom around the dog's own anchor so the field stays full-size.
     ctx.save();
     ctx.translate(dog.x, dog.y);
@@ -1225,6 +1246,7 @@
     var dt = Math.min(timestamp - lastTimestamp, 100); // clamp to avoid huge jumps
     lastTimestamp = timestamp;
 
+    updateRejection();
     updateDog(dt);
     render();
 
@@ -1498,6 +1520,183 @@
       stateTimer = 0;
       pickWanderTarget();
     }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Care actions & rejection animation
+  // ---------------------------------------------------------------------------
+
+  function nowMs() {
+    if (typeof performance !== 'undefined' && typeof performance.now === 'function') {
+      return performance.now();
+    }
+    return Date.now();
+  }
+
+  // Resolve whether the dog currently needs a given care kind.
+  // Single source of truth: prefer the shared DogStateStore methods
+  // (isHungry / needsGrooming / isTired) so this never diverges from
+  // home_feeding.isCareNeeded(). Falls back to the dog entity getters.
+  function isCareReady(kind) {
+    var store = resolveHungerStore();
+    if (store) {
+      try {
+        if (kind === 'feed' && typeof store.isHungry === 'function') {
+          return Boolean(store.isHungry());
+        }
+        if (kind === 'groom' && typeof store.needsGrooming === 'function') {
+          return Boolean(store.needsGrooming());
+        }
+        if (kind === 'rest' && typeof store.isTired === 'function') {
+          return Boolean(store.isTired());
+        }
+      } catch (e) {
+        /* fall through to entity getters */
+      }
+    }
+
+    var entity = (typeof getDog === 'function') ? getDog() : dog;
+    if (kind === 'feed') {
+      if (entity && typeof entity.isHungry === 'boolean') return entity.isHungry;
+      return Boolean(dog && dog.isHungry);
+    }
+    if (kind === 'groom') {
+      if (entity && typeof entity.needsGrooming === 'boolean') return entity.needsGrooming;
+      return Boolean(dog && dog.needsGrooming);
+    }
+    if (kind === 'rest') {
+      if (entity && typeof entity.isTired === 'boolean') return entity.isTired;
+      return Boolean(dog && dog.isTired);
+    }
+    return false;
+  }
+
+  // Clear the rejection animation state and remove the visual class.
+  function clearRejection() {
+    rejectionActive = false;
+    rejectionEndsAt = 0;
+    rejectionFrame = 0;
+    rejectionStartedAt = 0;
+    rejectionOffsetX = 0;
+    rejectionOffsetY = 0;
+    rejectionHeadShake = 0;
+    if (dog) {
+      dog.rejectionActive = false;
+      dog.rejectionEndsAt = 0;
+      dog.rejectionFrame = 0;
+    }
+  }
+
+  // Play the short head-shake + hop-back rejection animation.
+  // Restarts cleanly when re-entered (resets the animation frame counter).
+  function playRejection() {
+    rejectionActive = true;
+    rejectionStartedAt = nowMs();
+    rejectionEndsAt = rejectionStartedAt + REJECTION_ANIM_MS;
+    rejectionFrame = 0;
+    rejectionOffsetX = 0;
+    rejectionOffsetY = 0;
+    rejectionHeadShake = 0;
+    if (dog) {
+      dog.rejectionActive = true;
+      dog.rejectionEndsAt = rejectionEndsAt;
+      dog.rejectionFrame = 0;
+    }
+    return true;
+  }
+
+  // Compute the current visual rejection offset (head shake + hop-back).
+  // Returns { dx, dy, shake } in CSS pixels / radians.
+  function computeRejectionOffset() {
+    if (!rejectionActive) return { dx: 0, dy: 0, shake: 0 };
+    var elapsed = nowMs() - rejectionStartedAt;
+    var t = clamp(elapsed / REJECTION_ANIM_MS, 0, 1);
+    // Ease-out envelope so the motion settles before clearing.
+    var envelope = 1 - t;
+    // Head shake: fast sine oscillation, damped over the window.
+    var shake = Math.sin(t * Math.PI * 6) * 0.35 * envelope;
+    // Hop-back: small backward offset that returns to origin.
+    var hop = Math.sin(t * Math.PI) * 6 * envelope;
+    // Backward/horizontal hop-back component (AC-2.1): the dog hops back
+    // along its facing direction in addition to the vertical lift.
+    var dx = -hop * 0.5;
+    return { dx: dx, dy: -hop, shake: shake };
+  }
+
+  // Tick the rejection animation; clears it once the duration elapses.
+  function updateRejection() {
+    if (!rejectionActive) return;
+    rejectionFrame++;
+    if (dog) dog.rejectionFrame = rejectionFrame;
+    var offset = computeRejectionOffset();
+    rejectionOffsetX = offset.dx;
+    rejectionOffsetY = offset.dy;
+    rejectionHeadShake = offset.shake;
+    if (nowMs() >= rejectionEndsAt) {
+      clearRejection();
+    }
+  }
+
+  // Single entry point for all care button clicks.
+  // Routes to the existing care routine when the dog needs the care, otherwise
+  // plays the rejection animation without mutating any care timers/needs.
+  //
+  // When `opts.skipAnimation` is true (used by HomeFeeding.routeCareAction()),
+  // the caller owns the animation invocation (via commitGroom/commitRest/
+  // commitFeed) so we only clear rejection and report acceptance. This avoids
+  // double-invoking playGroomingAnimation / playSleepingAnimation /
+  // dogPlayFeedReaction.
+  function onCareAction(kind, opts) {
+    if (kind !== 'feed' && kind !== 'groom' && kind !== 'rest') return false;
+
+    if (!isCareReady(kind)) {
+      playRejection();
+      return false;
+    }
+
+    // Ready: clear any lingering rejection.
+    clearRejection();
+
+    var skipAnimation = Boolean(opts && opts.skipAnimation);
+    if (skipAnimation) {
+      // HomeFeeding's commit* routine will invoke the animation exactly once.
+      return true;
+    }
+
+    // Accepted care action: also mutate the shared DogStateStore so the
+    // underlying need timers reset. HomeFeeding.routeCareAction() passes
+    // { skipAnimation: true } and owns the store mutation itself, so we only
+    // do this for direct callers.
+    var store = resolveHungerStore();
+    if (store) {
+      try {
+        if (kind === 'feed' && typeof store.feed === 'function') {
+          store.feed();
+        } else if (kind === 'groom' && typeof store.groom === 'function') {
+          store.groom();
+        } else if (kind === 'rest' && typeof store.rest === 'function') {
+          store.rest();
+        }
+      } catch (e) {
+        /* ignore store mutation failures */
+      }
+    }
+
+    if (kind === 'feed') {
+      if (typeof dogPlayFeedReaction === 'function') dogPlayFeedReaction();
+      return true;
+    }
+    if (kind === 'groom') {
+      // Invoke the routine, but always report explicit acceptance.
+      playGroomingAnimation();
+      return true;
+    }
+    if (kind === 'rest') {
+      // Invoke the routine, but always report explicit acceptance.
+      playSleepingAnimation();
+      return true;
+    }
+    return false;
   }
 
   function getFieldSize() {
@@ -1785,6 +1984,11 @@
     resumeRoaming: resumeRoaming,
     getFieldSize: getFieldSize,
     clearBowl: clearBowl,
+    onCareAction: onCareAction,
+    playRejection: playRejection,
+    clearRejection: clearRejection,
+    isCareReady: isCareReady,
+    REJECTION_ANIM_MS: REJECTION_ANIM_MS,
     playNeedHungryAnimation: playNeedHungryAnimation,
     playNeedGroomingAnimation: playNeedGroomingAnimation,
     playGroomingAnimation: playGroomingAnimation,
@@ -1815,7 +2019,16 @@
         if (!dog) return;
         dog.targetX = x;
         dog.targetY = y;
-      }
+      },
+      onCareAction: onCareAction,
+      playRejection: playRejection,
+      clearRejection: clearRejection,
+      updateRejection: updateRejection,
+      isCareReady: isCareReady,
+      isRejectionActive: function () { return rejectionActive; },
+      getRejectionEndsAt: function () { return rejectionEndsAt; },
+      getRejectionFrame: function () { return rejectionFrame; },
+      REJECTION_ANIM_MS: REJECTION_ANIM_MS
     }
   };
 

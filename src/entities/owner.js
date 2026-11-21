@@ -105,7 +105,7 @@ export class Owner {
     this.isBending = false;
     this.bendTimer = 0;
     this.isLeashed = true;
-    this.leashHandSide = 'right';
+    this.leashHandSide = 'left';
 
     // Chat / Emote bubble
     this.chatText = null;
@@ -189,30 +189,121 @@ export class Owner {
     const shoulderX = 0;
     const shoulderY = sideSign * LEASH_ARM_SHOULDER_OFFSET_PX;
 
-    const reach = lerpNum(LEASH_ARM_BASE_REACH_PX, LEASH_ARM_MAX_REACH_PX, tension);
-
-    // Aim forward with a slight outward bias toward the dog's flank.
-    let armAngle = sideSign * (0.08 + 0.10 * (1 - tension));
+    // Keep the visual arm reach natural so the arm never telescopes 30px down
+    // past the owner's feet.
+    const reach = Math.min(
+      20,
+      lerpNum(LEASH_ARM_BASE_REACH_PX, LEASH_ARM_MAX_REACH_PX, tension)
+    );
 
     // Reduced stride oscillation on the holding arm only.
     // NOTE: armAngle is in RADIANS, so the swing must be an angular amplitude
     // (not a pixel displacement). 0.35 rad * LEASH_ARM_SWING_SCALE (0.15)
     // yields ~0.0525 rad (~3 deg) of gentle, stabilized leash-hand vibration.
     const swingAngle = this.isMoving ? 0.35 : 0;
-    armAngle += Math.sin(this.walkPhase) * swingAngle * LEASH_ARM_SWING_SCALE * sideSign;
+    const swing = Math.sin(this.walkPhase) * swingAngle * LEASH_ARM_SWING_SCALE * sideSign;
 
+    const dog = this.dog;
+    const hasDog = Boolean(
+      dog && typeof dog.x === 'number' && typeof dog.y === 'number'
+    );
+
+    if (hasDog) {
+      // Transform the dog vector into owner-local coordinates.
+      // +x = forward (heading), +y = screen-right of heading.
+      const dxW = dog.x - this.x;
+      const dyW = dog.y - (this.y - 3);
+      const c = Math.cos(this.angle);
+      const s = Math.sin(this.angle);
+      const dogLocalX = dxW * c + dyW * s;  // +forward, -behind
+      const dogLocalY = -dxW * s + dyW * c; // -left, +right
+
+      const sameSide = (dogLocalY * sideSign) >= -2;
+
+      if (sameSide && dogLocalX < -2) {
+        // "straight_behind": the dog is behind on the leash-hand side, so the
+        // arm reaches straight back toward it.
+        const armAngle = Math.atan2(dogLocalY - shoulderY, dogLocalX - shoulderX);
+        let x = shoulderX + Math.cos(armAngle) * reach;
+        let y = shoulderY + Math.sin(armAngle) * reach;
+        // Keep the hand outside the torso on the leash-hand side.
+        if (y * sideSign < LEASH_ARM_SHOULDER_OFFSET_PX) {
+          y = sideSign * LEASH_ARM_SHOULDER_OFFSET_PX;
+        }
+        return {
+          x,
+          y,
+          shoulderX,
+          shoulderY,
+          armAngle,
+          reach,
+          tension,
+          pose: 'straight_behind',
+          elbowLocalX: (shoulderX + x) * 0.5,
+          elbowLocalY: (shoulderY + y) * 0.5
+        };
+      }
+
+      if (!sameSide) {
+        // "across_front": the dog is on the opposite flank, so the arm reaches
+        // across the front chest and wraps around to the opposite side.
+        const elbowLocalX = 7;
+        const elbowLocalY = -sideSign * (LEASH_ARM_SHOULDER_OFFSET_PX * 0.45);
+        const x = Math.max(-8, Math.min(10, dogLocalX * 0.25));
+        const y = -sideSign * (LEASH_ARM_SHOULDER_OFFSET_PX + 5);
+        return {
+          x,
+          y,
+          shoulderX,
+          shoulderY,
+          armAngle: Math.atan2(y - shoulderY, x - shoulderX),
+          reach,
+          tension,
+          pose: 'across_front',
+          elbowLocalX,
+          elbowLocalY
+        };
+      }
+
+      // "forward_heel": normal forward-flank pose toward the dog.
+      const armAngle = Math.atan2(dogLocalY - shoulderY, dogLocalX - shoulderX) + swing;
+      const x = shoulderX + Math.cos(armAngle) * reach;
+      const y = shoulderY + Math.sin(armAngle) * reach;
+      return {
+        x,
+        y,
+        shoulderX,
+        shoulderY,
+        armAngle,
+        reach,
+        tension,
+        pose: 'forward_heel',
+        elbowLocalX: (shoulderX + x) * 0.5,
+        elbowLocalY: (shoulderY + y) * 0.5
+      };
+    }
+
+    // No dog reference: aim forward with a slight outward bias toward the
+    // leash-hand flank.
+    let armAngle = sideSign * (0.08 + 0.10 * (1 - tension));
+    armAngle += swing;
+    const x = shoulderX + Math.cos(armAngle) * reach;
+    const y = shoulderY + Math.sin(armAngle) * reach;
     return {
-      x: shoulderX + Math.cos(armAngle) * reach,
-      y: shoulderY + Math.sin(armAngle) * reach,
+      x,
+      y,
       shoulderX,
       shoulderY,
       armAngle,
       reach,
-      tension
+      tension,
+      pose: 'forward_heel',
+      elbowLocalX: (shoulderX + x) * 0.5,
+      elbowLocalY: (shoulderY + y) * 0.5
     };
   }
 
-  getLeashHandAnchor(preferredSide = this.leashHandSide || 'right') {
+  getLeashHandAnchor(preferredSide = this.leashHandSide || 'left') {
     const side = preferredSide === 'left' ? 'left' : 'right';
     this.leashHandSide = side;
 
@@ -760,14 +851,16 @@ export class Owner {
       this.vx = Math.cos(this.angle) * speed;
       this.vy = Math.sin(this.angle) * speed;
       this.isMoving = true;
-      // Cadence scales with gait speed
-      const cadence = 4.0 + (speed / 265) * 8.0;
-      this.walkPhase += dt * cadence;
     } else {
       this.vx = 0;
       this.vy = 0;
       this.isMoving = false;
     }
+
+    // Record the pre-integration position so the walk stride cadence can be
+    // scaled by the ACTUAL ground displacement (held back by the leash).
+    const prevX = this.x;
+    const prevY = this.y;
 
     // Step-off alignment gate: hold position until facing target heading.
     if (this.stepOffActive) {
@@ -831,6 +924,26 @@ export class Owner {
         this.vy = 0;
         this.isMoving = false;
       }
+    }
+
+    // Advance the walk stride cadence using the ACTUAL ground displacement so
+    // the owner's legs walk slowly when held back by a slow dog and stop
+    // pumping when stopped at the leash limit.
+    const actualDist = Math.hypot(this.x - prevX, this.y - prevY);
+    const actualSpeed = dt > 0 ? actualDist / dt : 0;
+    if (actualSpeed > 2) {
+      const cadence = 4.0 + (actualSpeed / 265) * 8.0;
+      this.walkPhase += dt * cadence;
+    }
+
+    // Advance the walk stride cadence using the ACTUAL ground displacement so
+    // the owner's legs walk slowly when held back by a slow dog and stop
+    // pumping when stopped at the leash limit.
+    const actualDist = Math.hypot(this.x - prevX, this.y - prevY);
+    const actualSpeed = dt > 0 ? actualDist / dt : 0;
+    if (actualSpeed > 2) {
+      const cadence = 4.0 + (actualSpeed / 265) * 8.0;
+      this.walkPhase += dt * cadence;
     }
 
     // Update leash arm pose state (tension + extension) each frame.
@@ -995,10 +1108,16 @@ export class Owner {
         const handX = this.x + handWorldX;
         const handY = this.y - 3 + handWorldY;
 
-        // Locked-elbow pose: the arm is rendered as a straight segment from
-        // shoulder to hand (no lateral elbow bend artifact).
-        const elbowX = (ax + handX) / 2;
-        const elbowY = (ay + handY) / 2;
+        // Elbow position from the resolved pose so the "across_front" pose
+        // visibly bends across the front chest and around to the opposite side.
+        const elbowLocalX = (typeof local.elbowLocalX === 'number')
+          ? local.elbowLocalX
+          : (local.x * 0.5);
+        const elbowLocalY = (typeof local.elbowLocalY === 'number')
+          ? local.elbowLocalY
+          : (local.y * 0.5);
+        const elbowX = this.x + elbowLocalX * c - elbowLocalY * s;
+        const elbowY = this.y - 3 + elbowLocalX * s + elbowLocalY * c;
 
         // Upper arm (shoulder -> elbow)
         ctx.strokeStyle = isFar ? this.getShadedColor(this.jacketColor, -0.18) : this.jacketColor;
@@ -1071,15 +1190,27 @@ export class Owner {
     const leftIsLeashArm = this.isLeashed && leashSideSign === -1;
     const rightIsLeashArm = this.isLeashed && leashSideSign === 1;
 
+    // Resolve the leash-arm pose so depth layering can decide whether the
+    // leash arm belongs in front of or behind the torso.
+    const leashPose = (this.isLeashed && typeof this.computeLeashHandLocal === 'function')
+      ? this.computeLeashHandLocal().pose
+      : null;
+    const leashArmAcrossFront = leashPose === 'across_front';
+    const leashArmStraightBehind = leashPose === 'straight_behind';
+
     // --- DEPTH LAYER 1: Far Arm & Far Leg (behind torso) ---
     if (leftIsFar) {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, true);
-      if (!leftIsLeashArm || sinA < -0.2) {
+      // The far arm is drawn behind the torso unless it is the leash arm in
+      // the across-front pose while facing South (then it belongs in front).
+      const deferLeftArm = leftIsLeashArm && leashArmAcrossFront && sinA >= -0.2;
+      if (!deferLeftArm) {
         drawArm(leftShoulderX, leftShoulderY, -armSwing, true, leftIsLeashArm);
       }
     } else {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, true);
-      if (!rightIsLeashArm || sinA < -0.2) {
+      const deferRightArm = rightIsLeashArm && leashArmAcrossFront && sinA >= -0.2;
+      if (!deferRightArm) {
         drawArm(rightShoulderX, rightShoulderY, armSwing, true, rightIsLeashArm);
       }
     }
@@ -1179,18 +1310,20 @@ export class Owner {
     }
 
     // --- DEPTH LAYER 5: Near Leg & Near Arm (in front of torso) ---
+    // Every arm is drawn exactly once: the near arm always renders in front,
+    // and the far arm renders in front only when it is the leash arm in the
+    // across-front pose while facing South.
     if (leftIsFar) {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, false);
       drawArm(rightShoulderX, rightShoulderY, armSwing, false, rightIsLeashArm);
-      if (leftIsLeashArm && sinA >= -0.2) {
+      if (leftIsLeashArm && leashArmAcrossFront && sinA >= -0.2) {
         drawArm(leftShoulderX, leftShoulderY, -armSwing, false, true);
       }
     } else {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, false);
-      if (rightIsLeashArm && sinA >= -0.2) {
+      drawArm(leftShoulderX, leftShoulderY, -armSwing, false, leftIsLeashArm);
+      if (rightIsLeashArm && leashArmAcrossFront && sinA >= -0.2) {
         drawArm(rightShoulderX, rightShoulderY, armSwing, false, true);
-      } else {
-        drawArm(leftShoulderX, leftShoulderY, -armSwing, false, leftIsLeashArm);
       }
     }
 

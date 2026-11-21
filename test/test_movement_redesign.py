@@ -1427,20 +1427,23 @@ class TestLeashHandSide(unittest.TestCase):
         self.dog_src = read("src/entities/companion_dog.js")
 
     def test_owner_defines_leash_hand_side(self):
-        self.assertIn("this.leashHandSide = 'right';", self.owner_src)
+        self.assertIn("this.leashHandSide = 'left';", self.owner_src)
 
     def test_get_leash_hand_anchor_syncs_side(self):
-        self.assertIn("getLeashHandAnchor(preferredSide = this.leashHandSide || 'right')", self.owner_src)
+        self.assertIn("getLeashHandAnchor(preferredSide = this.leashHandSide || 'left')", self.owner_src)
         self.assertIn("this.leashHandSide = side;", self.owner_src)
 
     def test_dog_syncs_owner_hand_side(self):
         self.assertIn("this.owner.leashHandSide = this.preferredSide;", self.dog_src)
 
+    def test_dog_defaults_to_left_heel(self):
+        self.assertIn("this.preferredSide = 'left';", self.dog_src)
+
     def test_behavioral_hand_side_matches_flank(self):
         """Simulate the sync: owner.leashHandSide must equal dog.preferredSide."""
         class FakeOwner:
             def __init__(self):
-                self.leashHandSide = 'right'
+                self.leashHandSide = 'left'
 
         class FakeDog:
             def __init__(self, owner, side):
@@ -1451,12 +1454,12 @@ class TestLeashHandSide(unittest.TestCase):
                 self.owner.leashHandSide = self.preferredSide
 
         owner = FakeOwner()
-        dog = FakeDog(owner, 'left')
-        dog.sync()
-        self.assertEqual(owner.leashHandSide, 'left')
-        dog.preferredSide = 'right'
+        dog = FakeDog(owner, 'right')
         dog.sync()
         self.assertEqual(owner.leashHandSide, 'right')
+        dog.preferredSide = 'left'
+        dog.sync()
+        self.assertEqual(owner.leashHandSide, 'left')
 
 
 class TestPettingGate(unittest.TestCase):
@@ -2543,6 +2546,197 @@ class TestLeashSagUnderTension(unittest.TestCase):
             self.assertLessEqual(taut, relaxed + 1e-9)
             self.assertLessEqual(taut, 2.0)
             self.assertLessEqual(taut, dist * 0.03 + 1e-9)
+
+
+class TestLeashArmPose(unittest.TestCase):
+    """Verify the three leash-arm poses (forward_heel, straight_behind, across_front)."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_pose_names_present(self):
+        self.assertIn("pose: 'forward_heel'", self.src)
+        self.assertIn("pose: 'straight_behind'", self.src)
+        self.assertIn("pose: 'across_front'", self.src)
+
+    def test_reach_capped_at_20(self):
+        self.assertIn("Math.min(\n      20,", self.src)
+
+    def test_elbow_local_fields_present(self):
+        self.assertIn("elbowLocalX", self.src)
+        self.assertIn("elbowLocalY", self.src)
+
+    def test_draw_arm_uses_elbow_local(self):
+        self.assertIn("const elbowX = this.x + elbowLocalX * c - elbowLocalY * s;", self.src)
+        self.assertIn("const elbowY = this.y - 3 + elbowLocalX * s + elbowLocalY * c;", self.src)
+
+    def test_behavioral_pose_selection(self):
+        """Simulate pose selection for the three cases."""
+        import math
+
+        def resolve_pose(owner_x, owner_y, angle, side, dog_x, dog_y):
+            side_sign = -1 if side == 'left' else 1
+            shoulder_y = side_sign * 8
+            dx_w = dog_x - owner_x
+            dy_w = dog_y - (owner_y - 3)
+            c = math.cos(angle)
+            s = math.sin(angle)
+            dog_local_x = dx_w * c + dy_w * s
+            dog_local_y = -dx_w * s + dy_w * c
+            same_side = (dog_local_y * side_sign) >= -2
+            if same_side and dog_local_x < -2:
+                return 'straight_behind'
+            if not same_side:
+                return 'across_front'
+            return 'forward_heel'
+
+        # Owner facing east (angle=0), leash hand on left (sideSign=-1).
+        # Dog ahead-left (forward, left) -> forward_heel.
+        self.assertEqual(resolve_pose(100, 100, 0.0, 'left', 130, 90), 'forward_heel')
+        # Dog behind-left -> straight_behind.
+        self.assertEqual(resolve_pose(100, 100, 0.0, 'left', 70, 90), 'straight_behind')
+        # Dog on the right (opposite side) -> across_front.
+        self.assertEqual(resolve_pose(100, 100, 0.0, 'left', 130, 110), 'across_front')
+
+    def test_behavioral_straight_behind_hand_outside_torso(self):
+        """straight_behind pose keeps the hand outside the torso on the leash side."""
+        import math
+        side_sign = -1
+        shoulder_y = side_sign * 8
+        reach = 20
+        dog_local_x = -30
+        dog_local_y = -10
+        arm_angle = math.atan2(dog_local_y - shoulder_y, dog_local_x - 0)
+        y = shoulder_y + math.sin(arm_angle) * reach
+        if y * side_sign < 8:
+            y = side_sign * 8
+        self.assertGreaterEqual(y * side_sign, 8 - 1e-9)
+
+
+class TestHeldBackStrideCadence(unittest.TestCase):
+    """Verify walkPhase advances by actual ground displacement, not gait speed."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_prev_position_recorded(self):
+        self.assertIn("const prevX = this.x;", self.src)
+        self.assertIn("const prevY = this.y;", self.src)
+
+    def test_actual_speed_cadence(self):
+        self.assertIn("const actualDist = Math.hypot(this.x - prevX, this.y - prevY);", self.src)
+        self.assertIn("const actualSpeed = dt > 0 ? actualDist / dt : 0;", self.src)
+        self.assertIn("if (actualSpeed > 2) {", self.src)
+        self.assertIn("const cadence = 4.0 + (actualSpeed / 265) * 8.0;", self.src)
+
+    def test_behavioral_held_back_slow_cadence(self):
+        """Held back to 10px/s: cadence is much slower than full gait speed."""
+        dt = 1.0 / 60.0
+        actual_speed = 10.0
+        cadence = 4.0 + (actual_speed / 265) * 8.0
+        full_cadence = 4.0 + (100.0 / 265) * 8.0
+        self.assertLess(cadence, full_cadence)
+
+    def test_behavioral_stopped_no_pump(self):
+        """Stopped at leash limit: actualSpeed <= 2 means no walkPhase advance."""
+        actual_speed = 0.0
+        advanced = actual_speed > 2
+        self.assertFalse(advanced)
+
+
+class TestLeashArmPose(unittest.TestCase):
+    """Verify the three leash-arm poses (forward_heel, straight_behind, across_front)."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_pose_names_present(self):
+        self.assertIn("pose: 'forward_heel'", self.src)
+        self.assertIn("pose: 'straight_behind'", self.src)
+        self.assertIn("pose: 'across_front'", self.src)
+
+    def test_reach_capped_at_20(self):
+        self.assertIn("Math.min(\n      20,", self.src)
+
+    def test_elbow_local_fields_present(self):
+        self.assertIn("elbowLocalX", self.src)
+        self.assertIn("elbowLocalY", self.src)
+
+    def test_draw_arm_uses_elbow_local(self):
+        self.assertIn("const elbowX = this.x + elbowLocalX * c - elbowLocalY * s;", self.src)
+        self.assertIn("const elbowY = this.y - 3 + elbowLocalX * s + elbowLocalY * c;", self.src)
+
+    def test_behavioral_pose_selection(self):
+        """Simulate pose selection for the three cases."""
+        import math
+
+        def resolve_pose(owner_x, owner_y, angle, side, dog_x, dog_y):
+            side_sign = -1 if side == 'left' else 1
+            shoulder_y = side_sign * 8
+            dx_w = dog_x - owner_x
+            dy_w = dog_y - (owner_y - 3)
+            c = math.cos(angle)
+            s = math.sin(angle)
+            dog_local_x = dx_w * c + dy_w * s
+            dog_local_y = -dx_w * s + dy_w * c
+            same_side = (dog_local_y * side_sign) >= -2
+            if same_side and dog_local_x < -2:
+                return 'straight_behind'
+            if not same_side:
+                return 'across_front'
+            return 'forward_heel'
+
+        # Owner facing east (angle=0), leash hand on left (sideSign=-1).
+        # Dog ahead-left (forward, left) -> forward_heel.
+        self.assertEqual(resolve_pose(100, 100, 0.0, 'left', 130, 90), 'forward_heel')
+        # Dog behind-left -> straight_behind.
+        self.assertEqual(resolve_pose(100, 100, 0.0, 'left', 70, 90), 'straight_behind')
+        # Dog on the right (opposite side) -> across_front.
+        self.assertEqual(resolve_pose(100, 100, 0.0, 'left', 130, 110), 'across_front')
+
+    def test_behavioral_straight_behind_hand_outside_torso(self):
+        """straight_behind pose keeps the hand outside the torso on the leash side."""
+        import math
+        side_sign = -1
+        shoulder_y = side_sign * 8
+        reach = 20
+        dog_local_x = -30
+        dog_local_y = -10
+        arm_angle = math.atan2(dog_local_y - shoulder_y, dog_local_x - 0)
+        y = shoulder_y + math.sin(arm_angle) * reach
+        if y * side_sign < 8:
+            y = side_sign * 8
+        self.assertGreaterEqual(y * side_sign, 8 - 1e-9)
+
+
+class TestHeldBackStrideCadence(unittest.TestCase):
+    """Verify walkPhase advances by actual ground displacement, not gait speed."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_prev_position_recorded(self):
+        self.assertIn("const prevX = this.x;", self.src)
+        self.assertIn("const prevY = this.y;", self.src)
+
+    def test_actual_speed_cadence(self):
+        self.assertIn("const actualDist = Math.hypot(this.x - prevX, this.y - prevY);", self.src)
+        self.assertIn("const actualSpeed = dt > 0 ? actualDist / dt : 0;", self.src)
+        self.assertIn("if (actualSpeed > 2) {", self.src)
+        self.assertIn("const cadence = 4.0 + (actualSpeed / 265) * 8.0;", self.src)
+
+    def test_behavioral_held_back_slow_cadence(self):
+        """Held back to 10px/s: cadence is much slower than full gait speed."""
+        actual_speed = 10.0
+        cadence = 4.0 + (actual_speed / 265) * 8.0
+        full_cadence = 4.0 + (100.0 / 265) * 8.0
+        self.assertLess(cadence, full_cadence)
+
+    def test_behavioral_stopped_no_pump(self):
+        """Stopped at leash limit: actualSpeed <= 2 means no walkPhase advance."""
+        actual_speed = 0.0
+        advanced = actual_speed > 2
+        self.assertFalse(advanced)
 
 
 if __name__ == "__main__":

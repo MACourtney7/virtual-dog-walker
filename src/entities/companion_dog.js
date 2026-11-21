@@ -309,8 +309,8 @@ export class CompanionDog {
 
     // Follow offset relative to owner (forward flank, never straight behind)
     this.followDistance = 42;
-    this.followAngleOffset = FLANK_RIGHT.mid; // forward-right flank by default
-    this.preferredSide = 'right'; // 'right' | 'left'
+    this.followAngleOffset = FLANK_LEFT.mid; // forward-left flank by default
+    this.preferredSide = 'left'; // 'right' | 'left'
     this.flankAngle = FLANK_RIGHT.mid; // smoothed flank bearing relative to owner.angle
 
     // Ear spring physics (secondary damper system)

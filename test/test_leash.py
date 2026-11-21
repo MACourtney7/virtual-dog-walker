@@ -213,6 +213,49 @@ class LeashTests(unittest.TestCase):
         self.assertAlmostEqual(out["x"], 52.5, places=9)
         self.assertAlmostEqual(out["y"], 0.0, places=9)
 
+    def test_owner_walks_within_leash_while_pooping_then_stops_at_limit(self):
+        """While pooping on-leash, the owner may walk within MAX_LEASH_LENGTH
+        but is force-stopped (Gait.STAND) once the leash goes taut."""
+        script = f"""
+        import {{ Owner }} from {json.dumps(OWNER_MODULE)};
+        import {{ MAX_LEASH_LENGTH }} from {json.dumps(LEASH_MODULE)};
+        const owner = new Owner(0, 0, 'Walker', true);
+        owner.setGait('WALK');
+        owner.targetHeading = 0;
+        owner.angle = 0;
+        owner.dog = {{ x: 0, y: 0, isOnLeash: true, isPooping: true }};
+        // Walk for a few frames: owner should move while within leash range.
+        owner.update(1 / 60, null);
+        const movedX = owner.x;
+        const movedGait = owner.gait;
+        // Now place the owner at the taut limit and step once more.
+        owner.x = MAX_LEASH_LENGTH;
+        owner.y = 0;
+        owner.setGait('WALK');
+        owner.update(1 / 60, null);
+        const dist = Math.hypot(owner.x - owner.dog.x, owner.y - owner.dog.y);
+        console.log(JSON.stringify({{
+          movedX,
+          movedGait,
+          finalGait: owner.gait,
+          finalVx: owner.vx,
+          finalVy: owner.vy,
+          finalIsMoving: owner.isMoving,
+          dist,
+          max: MAX_LEASH_LENGTH,
+        }}));
+        """
+        out = _run_node(script)
+        # Owner walked while within leash range (did not freeze immediately).
+        self.assertGreater(out["movedX"], 0.0)
+        self.assertEqual(out["movedGait"], "WALK")
+        # At the taut limit the owner is force-stopped.
+        self.assertEqual(out["finalGait"], "STAND")
+        self.assertEqual(out["finalVx"], 0)
+        self.assertEqual(out["finalVy"], 0)
+        self.assertIs(out["finalIsMoving"], False)
+        self.assertAlmostEqual(out["dist"], 52.5, places=9)
+
     def test_force_stop_releases_after_poop(self):
         script = f"""
         import {{ isOwnerFrozen }} from {json.dumps(LEASH_MODULE)};

@@ -61,7 +61,7 @@ export const LEASH_FEEDFORWARD_SECONDS = 0.12;
 export const LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = 2;
 
 // Speed multiplier applied when any need (hunger/grooming/tiredness) is active.
-// Needs never stack multiplicatively: a single 0.4x factor applies regardless
+// Needs never stack multiplicatively: a single 0.15x factor applies regardless
 // of how many needs are active.
 export const NEED_SPEED_MULTIPLIER = 0.15;
 
@@ -311,7 +311,7 @@ export class CompanionDog {
     this.followDistance = 42;
     this.followAngleOffset = FLANK_LEFT.mid; // forward-left flank by default
     this.preferredSide = 'left'; // 'right' | 'left'
-    this.flankAngle = FLANK_RIGHT.mid; // smoothed flank bearing relative to owner.angle
+    this.flankAngle = FLANK_LEFT.mid; // smoothed flank bearing relative to owner.angle
 
     // Ear spring physics (secondary damper system)
     this.leftEar = { angle: 0, vel: 0 };

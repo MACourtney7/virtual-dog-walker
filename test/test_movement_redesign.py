@@ -2576,37 +2576,116 @@ class TestLeashArmPose(unittest.TestCase):
         self.assertIn("if (local.hasElbowBend) {", self.src)
 
     def test_behavioral_pose_selection(self):
-        """Simulate pose selection for the two cases."""
-        import math
+        """Execute Owner.computeLeashHandLocal() in Node across representative headings."""
+        import json
+        import shutil
+        import subprocess
 
-        def resolve_pose(owner_x, owner_y, angle, side, dog_x, dog_y):
-            side_sign = -1 if side == 'left' else 1
-            dx_w = dog_x - owner_x
-            dy_w = dog_y - (owner_y - 3)
-            c = math.cos(angle)
-            s = math.sin(angle)
-            dog_local_x = dx_w * c + dy_w * s
-            if dog_local_x < -2:
-                return 'straight_behind'
-            return 'forward_heel'
+        if shutil.which("node") is None:
+            self.skipTest("node is required to run leash JS tests")
 
-        # Owner facing east (angle=0), leash hand on left (sideSign=-1).
-        # Dog ahead-left (forward, left) -> forward_heel.
-        self.assertEqual(resolve_pose(100, 100, 0.0, 'left', 130, 90), 'forward_heel')
-        # Dog behind-left -> straight_behind.
-        self.assertEqual(resolve_pose(100, 100, 0.0, 'left', 70, 90), 'straight_behind')
-        # Dog on the right (opposite side) but forward -> forward_heel.
-        self.assertEqual(resolve_pose(100, 100, 0.0, 'left', 130, 110), 'forward_heel')
+        owner_module = os.path.join(
+            os.path.dirname(__file__), "..", "src", "entities", "owner.js"
+        )
+        script = f"""
+        import {{ Owner }} from {json.dumps(owner_module)};
+        const headings = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+        const results = [];
+        for (const angle of headings) {{
+          const owner = new Owner(100, 100, 'Walker', true);
+          owner.angle = angle;
+          owner.targetHeading = angle;
+          owner.leashHandSide = 'left';
+          // Dog directly behind the owner (opposite the heading).
+          owner.dog = {{
+            x: 100 - Math.cos(angle) * 60,
+            y: 100 - Math.sin(angle) * 60,
+            isOnLeash: true,
+            isPooping: false
+          }};
+          const behind = owner.computeLeashHandLocal();
+          // Dog on the opposite lateral side but ahead -> crossed side.
+          owner.dog = {{
+            x: 100 + Math.cos(angle) * 40 + Math.sin(angle) * 40,
+            y: 100 + Math.sin(angle) * 40 - Math.cos(angle) * 40,
+            isOnLeash: true,
+            isPooping: false
+          }};
+          const crossed = owner.computeLeashHandLocal();
+          results.push({{
+            angle,
+            behindPose: behind.pose,
+            crossedPose: crossed.pose
+          }});
+        }}
+        console.log(JSON.stringify(results));
+        """
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=os.path.join(os.path.dirname(__file__), ".."),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        results = json.loads(result.stdout.strip())
+        self.assertEqual(len(results), 4)
+        for entry in results:
+            self.assertEqual(entry["behindPose"], "straight_behind")
+            self.assertEqual(entry["crossedPose"], "straight_behind")
 
     def test_behavioral_straight_behind_hand_outside_torso(self):
-        """straight_behind pose keeps the hand outside the torso on the leash side."""
-        import math
-        side_sign = -1
-        shoulder_y = side_sign * 8
-        reach = 20
-        arm_angle = side_sign * (math.pi - 0.15)
-        y = shoulder_y + math.sin(arm_angle) * reach
-        self.assertGreaterEqual(y * side_sign, 8 - 1e-9)
+        """getLeashHandAnchor() clears the 10.5px torso half-width across headings."""
+        import json
+        import shutil
+        import subprocess
+
+        if shutil.which("node") is None:
+            self.skipTest("node is required to run leash JS tests")
+
+        owner_module = os.path.join(
+            os.path.dirname(__file__), "..", "src", "entities", "owner.js"
+        )
+        script = f"""
+        import {{ Owner }} from {json.dumps(owner_module)};
+        const headings = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+        const results = [];
+        for (const angle of headings) {{
+          const owner = new Owner(100, 100, 'Walker', true);
+          owner.angle = angle;
+          owner.targetHeading = angle;
+          owner.leashHandSide = 'left';
+          owner.dog = {{
+            x: 100 - Math.cos(angle) * 60,
+            y: 100 - Math.sin(angle) * 60,
+            isOnLeash: true,
+            isPooping: false
+          }};
+          const anchor = owner.getLeashHandAnchor('left');
+          // Screen-space offset from the owner's torso centre (y - 3).
+          const dx = anchor.x - owner.x;
+          const dy = anchor.y - (owner.y - 3);
+          results.push({{ angle, dx, dy, absDx: Math.abs(dx) }});
+        }}
+        console.log(JSON.stringify(results));
+        """
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=os.path.join(os.path.dirname(__file__), ".."),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        results = json.loads(result.stdout.strip())
+        self.assertEqual(len(results), 4)
+        for entry in results:
+            # Hand must clear the 10.5px torso half-width on the leash side.
+            self.assertGreaterEqual(
+                entry["absDx"],
+                10.5,
+                f"hand at angle {entry['angle']} clips torso: dx={entry['dx']}",
+            )
 
 
 class TestHeldBackStrideCadence(unittest.TestCase):

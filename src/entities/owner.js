@@ -1,6 +1,6 @@
 // Human Owner Player Avatar - Cruise-and-Helm Player Locomotion, Continuous Heading Steering, Ground Halo & Directional 2.5D Silhouette
 import { resolveFieldCollision } from '../engine/wasm_sim_bridge.js';
-import { MAX_LEASH_LENGTH, isOwnerFrozen, clampOwnerToLeash } from '../world/leash.js';
+import { MAX_LEASH_LENGTH, clampOwnerToLeash } from '../world/leash.js';
 
 // Gait model constants
 export const Gait = Object.freeze({
@@ -242,7 +242,13 @@ export class Owner {
         ? 1
         : ((c > 0.25 && s < 0.25) || s < -0.15 ? -1 : 1);
       const outSign = sideSign === -1 ? baseSign : -baseSign;
-      const handWorldX = shScreenX + outSign * LEASH_ARM_SIDE_EXTEND_PX;
+      // Always clear the torso silhouette (10.5px half-width) across all
+      // headings, even when the shoulder projects near the body centre
+      // (e.g. walking due East/West where |shScreenX| < 5).
+      const handWorldX = outSign * Math.max(
+        11.5,
+        Math.abs(shScreenX) + LEASH_ARM_SIDE_EXTEND_PX
+      );
       const handWorldY = shScreenY + LEASH_ARM_DROP_PX;
 
       // Back-project (handWorldX, handWorldY) into owner-local (x, y).
@@ -1070,7 +1076,10 @@ export class Owner {
       const ax = torsoX + shX;
       const ay = torsoY - 7 + shY;
 
-      ctx.fillStyle = isFar ? this.getShadedColor(this.jacketColor, -0.18) : this.jacketColor;
+      const strokeCol = (isFar && !isLeashArm)
+        ? this.getShadedColor(this.jacketColor, -0.18)
+        : this.jacketColor;
+      ctx.fillStyle = strokeCol;
 
       if (isLeashArm && this.isLeashed) {
         // Leash-holding arm: bent elbow reaching toward the dog's flank.

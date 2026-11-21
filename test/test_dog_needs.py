@@ -191,6 +191,42 @@ class DogNeedsTest(unittest.TestCase):
         self.assertEqual(out["restored"], 200)
         self.assertEqual(out["base"], 200)
 
+    def test_store_is_authoritative_over_backing_field(self):
+        """When the store exposes isHungry(), it wins over the backing field."""
+        out = _run_node(
+            """
+            const dog = new CompanionDog(0, 0, null);
+            dog.speed = 200;
+
+            // Backing field says hungry, store says not hungry.
+            dog.setHunger({ isHungry: true, lastFedAt: 0, durationMs: 1 });
+            results.backingHungry = dog._isHungry;
+
+            let storeHungry = false;
+            const store = {
+              isHungry: () => storeHungry,
+              needsGrooming: () => false,
+              isTired: () => false,
+              subscribe: () => () => {},
+              getSnapshot: () => ({ needs: { hunger: { lastFedAt: 0, durationMs: 1 } } })
+            };
+            dog.setDogStateStore(store);
+            results.hungryWhileStoreFalse = dog.isHungry;
+
+            // Store transitions true -> false while the backing field stays true.
+            storeHungry = true;
+            results.hungryWhileStoreTrue = dog.isHungry;
+            storeHungry = false;
+            results.hungryAfterStoreClears = dog.isHungry;
+            results.backingStillHungry = dog._isHungry;
+            """
+        )
+        self.assertTrue(out["backingHungry"])
+        self.assertFalse(out["hungryWhileStoreFalse"])
+        self.assertTrue(out["hungryWhileStoreTrue"])
+        self.assertFalse(out["hungryAfterStoreClears"])
+        self.assertTrue(out["backingStillHungry"])
+
     def test_need_getters_are_read_only(self):
         out = _run_node(
             """
@@ -322,9 +358,10 @@ class DogNeedsTest(unittest.TestCase):
               const dog = new CompanionDog(0, 0, owner);
               dog.speed = 200;
               dog.state = 'FOLLOWING';
-              // Place the dog far from the leash slot so it must travel.
-              dog.x = 300;
-              dog.y = 300;
+              // Start within MAX_LEASH_LENGTH (52.5px) of the owner so the
+              // leash clamp does not dominate the measured displacement.
+              dog.x = 40;
+              dog.y = 0;
               return dog;
             };
 

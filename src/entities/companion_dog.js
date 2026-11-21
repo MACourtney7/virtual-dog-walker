@@ -481,22 +481,24 @@ export class CompanionDog {
   // the backing fields. Use the corresponding setters to change them.
 
   get isHungry() {
+    // When a store exposes the signal it is authoritative: the backing field
+    // is only consulted as a fallback for stores that lack the method.
     if (this.dogStateStore && typeof this.dogStateStore.isHungry === 'function') {
-      return Boolean(this.dogStateStore.isHungry()) || Boolean(this._isHungry);
+      return Boolean(this.dogStateStore.isHungry());
     }
     return Boolean(this._isHungry);
   }
 
   get needsGrooming() {
     if (this.dogStateStore && typeof this.dogStateStore.needsGrooming === 'function') {
-      return Boolean(this.dogStateStore.needsGrooming()) || Boolean(this._needsGrooming);
+      return Boolean(this.dogStateStore.needsGrooming());
     }
     return Boolean(this._needsGrooming);
   }
 
   get isTired() {
     if (this.dogStateStore && typeof this.dogStateStore.isTired === 'function') {
-      return Boolean(this.dogStateStore.isTired()) || Boolean(this._isTired);
+      return Boolean(this.dogStateStore.isTired());
     }
     return Boolean(this._isTired);
   }
@@ -1403,7 +1405,8 @@ export class CompanionDog {
         }
         this.isPullingLeash = false;
       } else {
-      stepLeashConstraint(this, this.owner, 65, 4.0, 5.0, dt);
+      // Soft spring target (~39px) must sit below MAX_LEASH_LENGTH (52.5px).
+      stepLeashConstraint(this, this.owner, Math.round(MAX_LEASH_LENGTH * 0.75), 4.0, 5.0, dt);
 
       // Recompute the leash distance AFTER the constraint step so the pulling
       // physics and hard clamp operate on the post-constraint position.

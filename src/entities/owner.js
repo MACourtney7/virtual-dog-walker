@@ -1178,7 +1178,7 @@ export class Owner {
     }
 
     // --- DEPTH LAYER 2: Accessory (Backpack when facing South / from front) ---
-    if (this.accessory === 'BACKPACK' && sinA > 0.25) {
+    if (this.accessory === 'BACKPACK' && sinA > -0.2) {
       this.drawBackpack(ctx, torsoX, torsoY, angle, true);
     }
 
@@ -1260,7 +1260,7 @@ export class Owner {
 
     // --- DEPTH LAYER 4: Accessory (Backpack when facing North/Side, Scarf, or Hoodie) ---
     if (this.accessory === 'BACKPACK') {
-      if (sinA <= 0.25) {
+      if (sinA <= -0.2) {
         this.drawBackpack(ctx, torsoX, torsoY, angle, false);
       } else {
         this.drawBackpackStraps(ctx, torsoX, torsoY);

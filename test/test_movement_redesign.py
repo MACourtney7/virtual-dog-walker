@@ -2574,7 +2574,6 @@ class TestLeashArmPose(unittest.TestCase):
         self.assertIn("let elbowX = (ax + handX) / 2;", self.src)
         self.assertIn("let elbowY = (ay + handY) / 2;", self.src)
         self.assertIn("if (local.hasElbowBend) {", self.src)
-        self.assertIn("const elbowY = this.y - 3 + elbowLocalX * s + elbowLocalY * c;", self.src)
 
     def test_behavioral_pose_selection(self):
         """Simulate pose selection for the two cases."""

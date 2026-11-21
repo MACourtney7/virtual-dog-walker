@@ -2,9 +2,9 @@
 // ES module with a globalThis fallback for non-module consumers.
 
 export const DOG_STATE_STORAGE_KEY = 'virtual_dog_walker.dog_state.v1';
-export const DEFAULT_HUNGER_DURATION_MS = 1000; // 1 second (temporary debug timer)
-export const DEFAULT_GROOMING_DURATION_MS = 1000; // 1 second (temporary debug timer)
-export const DEFAULT_TIREDNESS_DURATION_MS = 1000; // 1 second (temporary debug timer)
+export const DEFAULT_HUNGER_DURATION_MS = 120000; // 2 minutes
+export const DEFAULT_GROOMING_DURATION_MS = 180000; // 3 minutes
+export const DEFAULT_TIREDNESS_DURATION_MS = 180000; // 3 minutes
 export const DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = 5000; // 5 seconds
 
 export function createInitialDogState(nowMs = Date.now(), hungerDurationMs = DEFAULT_HUNGER_DURATION_MS) {
@@ -154,17 +154,6 @@ export class DogStateStore {
             this._persist(initial);
             return initial;
           }
-          // Temporary debug branch: force the 1s debug durations over any
-          // previously persisted 2-3 minute durations in localStorage so a
-          // page refresh immediately picks up the short timers. The hunger
-          // duration is intentionally preserved so legacy persisted values
-          // (e.g. 120000ms) survive hydration.
-          if (parsed.needs.grooming && typeof parsed.needs.grooming === 'object') {
-            parsed.needs.grooming.durationMs = DEFAULT_GROOMING_DURATION_MS;
-          }
-          if (parsed.needs.tiredness && typeof parsed.needs.tiredness === 'object') {
-            parsed.needs.tiredness.durationMs = DEFAULT_TIREDNESS_DURATION_MS;
-          }
           // Strip any stale persisted derived boolean mirrors: they must
           // always be derived from timestamps/durationMs, never trusted
           // from storage.
@@ -180,15 +169,7 @@ export class DogStateStore {
               Object.prototype.hasOwnProperty.call(parsed.needs.tiredness, 'isTired')) {
             delete parsed.needs.tiredness.isTired;
           }
-          const hydrated = backfillNeeds(parsed);
-          // Re-apply the debug durations after backfill so freshly created
-          // grooming/tiredness needs also use the 1s debug timers. Hunger is
-          // left untouched to preserve the persisted duration.
-          hydrated.needs.grooming.durationMs = DEFAULT_GROOMING_DURATION_MS;
-          hydrated.needs.tiredness.durationMs = DEFAULT_TIREDNESS_DURATION_MS;
-          // Persist the normalised state so the overridden durations stick.
-          this._persist(hydrated);
-          return hydrated;
+          return backfillNeeds(parsed);
         }
       } catch (_e) {
         // Corrupt JSON: fall through to reset.

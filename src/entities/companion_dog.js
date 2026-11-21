@@ -382,7 +382,7 @@ export class CompanionDog {
 
     // Dog Poop Event state
     this.poopTimer = 0;
-    this.nextPoopTime = 5 + Math.random() * 5; // temporary debug timer: poops within 10s
+    this.nextPoopTime = 150 + Math.random() * 90;
     this.poopSquatDuration = 0;
 
     // Richer Canine Mechanics: Scent trails, Sticks, Zoomies & Gait
@@ -1122,7 +1122,7 @@ export class CompanionDog {
       this.poopTimer += dt;
       if (this.poopTimer >= this.nextPoopTime) {
         this.poopTimer = 0;
-        this.nextPoopTime = 5 + Math.random() * 5; // temporary debug timer: poops within 10s
+        this.nextPoopTime = 160 + Math.random() * 80;
         this.state = DogState.POOPING;
         this.poopSquatDuration = 2.0;
         this.vx = 0;

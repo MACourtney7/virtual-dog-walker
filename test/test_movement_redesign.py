@@ -2315,7 +2315,7 @@ class TestHoldingArmSwingAmplitude(unittest.TestCase):
     def test_swing_uses_angular_amplitude(self):
         self.assertIn("const swingAngle = this.isMoving ? 0.35 : 0;", self.src)
         self.assertIn(
-            "armAngle += Math.sin(this.walkPhase) * swingAngle * LEASH_ARM_SWING_SCALE * sideSign;",
+            "const swing = Math.sin(this.walkPhase) * swingAngle * LEASH_ARM_SWING_SCALE * sideSign;",
             self.src,
         )
         # The old pixel-based amplitude must be gone.

@@ -51,7 +51,7 @@ class TestDogStateStore(unittest.TestCase):
             "}));"
         )
         self.assertEqual(data["key"], "virtual_dog_walker.dog_state.v1")
-        self.assertEqual(data["dur"], 120000)
+        self.assertEqual(data["dur"], 1000)
         self.assertEqual(data["anim"], 5000)
 
     def test_initial_state_shape(self):
@@ -63,23 +63,23 @@ class TestDogStateStore(unittest.TestCase):
         self.assertEqual(data["needs"]["hunger"]["lastFedAt"], 1000)
         self.assertEqual(data["needs"]["hunger"]["durationMs"], 5000)
 
-    def test_not_hungry_at_119999ms(self):
+    def test_not_hungry_at_999ms(self):
         data = run_node(
             "const store = new DogStateStore({ storage: null, now: () => 0 });"
             "store.feed(0);"
-            "const h = store.getHunger(119999);"
+            "const h = store.getHunger(999);"
             "console.log(JSON.stringify(h));"
         )
         self.assertFalse(data["isHungry"])
         self.assertEqual(data["remainingMs"], 1)
-        self.assertEqual(data["elapsedMs"], 119999)
+        self.assertEqual(data["elapsedMs"], 999)
         self.assertEqual(data["hungryAt"], data["lastFedAt"] + data["durationMs"])
 
-    def test_hungry_at_120000ms(self):
+    def test_hungry_at_1000ms(self):
         data = run_node(
             "const store = new DogStateStore({ storage: null, now: () => 0 });"
             "store.feed(0);"
-            "const h = store.getHunger(120000);"
+            "const h = store.getHunger(1000);"
             "console.log(JSON.stringify(h));"
         )
         self.assertTrue(data["isHungry"])
@@ -186,8 +186,8 @@ class TestDogStateStore(unittest.TestCase):
             "const persisted = JSON.parse(mem['virtual_dog_walker.dog_state.v1']);"
             "console.log(JSON.stringify({ snap, persisted }));"
         )
-        self.assertEqual(data["snap"]["needs"]["hunger"]["durationMs"], 120000)
-        self.assertEqual(data["persisted"]["needs"]["hunger"]["durationMs"], 120000)
+        self.assertEqual(data["snap"]["needs"]["hunger"]["durationMs"], 1000)
+        self.assertEqual(data["persisted"]["needs"]["hunger"]["durationMs"], 1000)
 
     def test_clock_rollback_clamps_elapsed(self):
         data = run_node(

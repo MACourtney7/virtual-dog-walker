@@ -2604,10 +2604,13 @@ class TestLeashArmPose(unittest.TestCase):
             isPooping: false
           }};
           const behind = owner.computeLeashHandLocal();
-          // Dog on the opposite lateral side but ahead -> crossed side.
+          // Dog ahead but on the OPPOSITE lateral side of the leash hand
+          // (leashHandSide = 'left' => crossed side is screen-right).
+          // Owner-local +y = screen-right of heading, so place the dog at
+          // forward*40 + right*40 where right = (-sin, cos).
           owner.dog = {{
-            x: 100 + Math.cos(angle) * 40 + Math.sin(angle) * 40,
-            y: 100 + Math.sin(angle) * 40 - Math.cos(angle) * 40,
+            x: 100 + Math.cos(angle) * 40 - Math.sin(angle) * 40,
+            y: 100 + Math.sin(angle) * 40 + Math.cos(angle) * 40,
             isOnLeash: true,
             isPooping: false
           }};

@@ -56,6 +56,9 @@ export const LEASH_ARM_MAX_REACH_PX = 30;
 export const LEASH_ARM_TENSION_RAMP_PX = 140; // distance that maps to tension = 1
 export const LEASH_ARM_SHOULDER_OFFSET_PX = 8;
 export const LEASH_ARM_HAND_RADIUS_PX = 3.5;
+export const LEASH_ARM_BACK_REACH_PX = 14;       // reach when dog is behind
+export const LEASH_ARM_BACK_OUTWARD_RAD = 0.35;  // outward angle from hip when dog is behind
+export const LEASH_ARM_MIN_SCREEN_DROP_PX = 5;   // minimum vertical hang below shoulder (ay) so arm always hangs low
 
 function clamp01(v) {
   if (!isFinite(v)) return 0;
@@ -208,59 +211,63 @@ export class Owner {
       dog && typeof dog.x === 'number' && typeof dog.y === 'number'
     );
 
+    // Transform the dog vector into owner-local coordinates.
+    // +x = forward (heading), +y = screen-right of heading.
+    let dogLocalX = 0;
+    let dogLocalY = 0;
+    const c = Math.cos(this.angle);
+    const s = Math.sin(this.angle);
     if (hasDog) {
-      // Transform the dog vector into owner-local coordinates.
-      // +x = forward (heading), +y = screen-right of heading.
       const dxW = dog.x - this.x;
       const dyW = dog.y - (this.y - 3);
-      const c = Math.cos(this.angle);
-      const s = Math.sin(this.angle);
-      const dogLocalX = dxW * c + dyW * s;  // +forward, -behind
-      const dogLocalY = -dxW * s + dyW * c; // -left, +right
+      dogLocalX = dxW * c + dyW * s;  // +forward, -behind
+      dogLocalY = -dxW * s + dyW * c; // -left, +right
+    }
 
-      if (dogLocalX < -2) {
-        // "straight_behind": the dog lags behind, so the arm reaches almost
-        // straight backwards on the leash-hand side (slightly angled outward
-        // by 0.15 rad so it clears the hip/torso cleanly).
-        const armAngle = sideSign * (Math.PI - 0.15) + swing;
-        const x = shoulderX + Math.cos(armAngle) * reach;
-        const y = shoulderY + Math.sin(armAngle) * reach;
-        return {
-          x,
-          y,
-          shoulderX,
-          shoulderY,
-          armAngle,
-          reach,
-          tension,
-          pose: 'straight_behind',
-          elbowLocalX: (shoulderX + x) * 0.5,
-          elbowLocalY: (shoulderY + y) * 0.5
-        };
+    if (hasDog && dogLocalX < -6) {
+      // "straight_behind": the dog lags behind, so the arm reaches almost
+      // straight backwards on the leash-hand side (slightly angled outward
+      // so it clears the hip/torso cleanly).
+      const backReach = LEASH_ARM_BACK_REACH_PX;
+      const armAngle = sideSign * (Math.PI - LEASH_ARM_BACK_OUTWARD_RAD) + swing;
+      let x = shoulderX + Math.cos(armAngle) * backReach;
+      let y = shoulderY + Math.sin(armAngle) * backReach;
+
+      // 2.5D gravity fix: the shoulder sits at this.y - 10 (i.e. -7 relative
+      // to the this.y - 3 torso origin). When the arm points backwards and
+      // sinA > 0, the raw local y can lift the hand ABOVE the shoulder. Clamp
+      // the screen-space vertical offset so the hand always hangs low.
+      const handWorldX = x * c - y * s;
+      const handWorldY = x * s + y * c;
+      const minWorldY = -7 + LEASH_ARM_MIN_SCREEN_DROP_PX; // >= -2
+      if (handWorldY < minWorldY) {
+        const targetWorldY = minWorldY;
+        // Back-project (handWorldX, targetWorldY) into local (x, y).
+        x = handWorldX * c + targetWorldY * s;
+        y = -handWorldX * s + targetWorldY * c;
       }
 
-      // "forward_heel": standard forward-flank pose on the leash-hand side.
-      const armAngle = sideSign * (0.08 + 0.10 * (1 - tension)) + swing;
-      const x = shoulderX + Math.cos(armAngle) * reach;
-      const y = shoulderY + Math.sin(armAngle) * reach;
+      const hasElbowBend = (dogLocalX < -10 && dogLocalY > 8);
       return {
         x,
         y,
         shoulderX,
         shoulderY,
         armAngle,
-        reach,
+        reach: backReach,
         tension,
-        pose: 'forward_heel',
+        pose: 'straight_behind',
+        hasElbowBend,
+        elbowBendScreenX: hasElbowBend ? -2 * sideSign : 0,
+        elbowBendScreenY: hasElbowBend ? 3 : 0,
         elbowLocalX: (shoulderX + x) * 0.5,
         elbowLocalY: (shoulderY + y) * 0.5
       };
     }
 
-    // No dog reference: aim forward with a slight outward bias toward the
-    // leash-hand flank.
-    let armAngle = sideSign * (0.08 + 0.10 * (1 - tension));
-    armAngle += swing;
+    // "forward_heel": standard forward-flank pose on the leash-hand side.
+    // Used when there is no dog reference or the dog is beside/ahead.
+    const armAngle = sideSign * (0.08 + 0.10 * (1 - tension)) + swing;
     const x = shoulderX + Math.cos(armAngle) * reach;
     const y = shoulderY + Math.sin(armAngle) * reach;
     return {
@@ -272,6 +279,9 @@ export class Owner {
       reach,
       tension,
       pose: 'forward_heel',
+      hasElbowBend: false,
+      elbowBendScreenX: 0,
+      elbowBendScreenY: 0,
       elbowLocalX: (shoulderX + x) * 0.5,
       elbowLocalY: (shoulderY + y) * 0.5
     };
@@ -1072,16 +1082,14 @@ export class Owner {
         const handX = this.x + handWorldX;
         const handY = this.y - 3 + handWorldY;
 
-        // Elbow position from the resolved pose so the "across_front" pose
-        // visibly bends across the front chest and around to the opposite side.
-        const elbowLocalX = (typeof local.elbowLocalX === 'number')
-          ? local.elbowLocalX
-          : (local.x * 0.5);
-        const elbowLocalY = (typeof local.elbowLocalY === 'number')
-          ? local.elbowLocalY
-          : (local.y * 0.5);
-        const elbowX = this.x + elbowLocalX * c - elbowLocalY * s;
-        const elbowY = this.y - 3 + elbowLocalX * s + elbowLocalY * c;
+        // Rigid arm: elbow is the straight midpoint from shoulder to hand.
+        // Only the "dog behind and to the right" pose applies a subtle bend.
+        let elbowX = (ax + handX) / 2;
+        let elbowY = (ay + handY) / 2;
+        if (local.hasElbowBend) {
+          elbowX += (local.elbowBendScreenX || 0);
+          elbowY += (local.elbowBendScreenY || 0);
+        }
 
         // Upper arm (shoulder -> elbow)
         ctx.strokeStyle = isFar ? this.getShadedColor(this.jacketColor, -0.18) : this.jacketColor;
@@ -1155,12 +1163,19 @@ export class Owner {
     const rightIsLeashArm = this.isLeashed && leashSideSign === 1;
 
     // --- DEPTH LAYER 1: Far Arm & Far Leg (behind torso) ---
+    // The leash arm must never be shaded dark blue when facing South/East/West
+    // (sinA >= -0.2); it is promoted to the near layer instead.
+    const promoteLeashArm = sinA >= -0.2;
     if (leftIsFar) {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, true);
-      drawArm(leftShoulderX, leftShoulderY, -armSwing, true, leftIsLeashArm);
+      if (!(leftIsLeashArm && promoteLeashArm)) {
+        drawArm(leftShoulderX, leftShoulderY, -armSwing, true, leftIsLeashArm);
+      }
     } else {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, true);
-      drawArm(rightShoulderX, rightShoulderY, armSwing, true, rightIsLeashArm);
+      if (!(rightIsLeashArm && promoteLeashArm)) {
+        drawArm(rightShoulderX, rightShoulderY, armSwing, true, rightIsLeashArm);
+      }
     }
 
     // --- DEPTH LAYER 2: Accessory (Backpack when facing South / from front) ---
@@ -1259,12 +1274,20 @@ export class Owner {
 
     // --- DEPTH LAYER 5: Near Leg & Near Arm (in front of torso) ---
     // Every arm is drawn exactly once: the near arm always renders in front.
+    // A leash arm promoted from the far layer is drawn here with isFar = false
+    // so it uses the normal bright jacket color.
     if (leftIsFar) {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, false);
       drawArm(rightShoulderX, rightShoulderY, armSwing, false, rightIsLeashArm);
+      if (leftIsLeashArm && promoteLeashArm) {
+        drawArm(leftShoulderX, leftShoulderY, -armSwing, false, leftIsLeashArm);
+      }
     } else {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, false);
       drawArm(leftShoulderX, leftShoulderY, -armSwing, false, leftIsLeashArm);
+      if (rightIsLeashArm && promoteLeashArm) {
+        drawArm(rightShoulderX, rightShoulderY, armSwing, false, rightIsLeashArm);
+      }
     }
 
     // --- DEPTH LAYER 6: Head, Face, Ears & Hairstyle ---
@@ -1808,6 +1831,9 @@ Owner.LEASH_ARM_MAX_REACH_PX = LEASH_ARM_MAX_REACH_PX;
 Owner.LEASH_ARM_TENSION_RAMP_PX = LEASH_ARM_TENSION_RAMP_PX;
 Owner.LEASH_ARM_SHOULDER_OFFSET_PX = LEASH_ARM_SHOULDER_OFFSET_PX;
 Owner.LEASH_ARM_HAND_RADIUS_PX = LEASH_ARM_HAND_RADIUS_PX;
+Owner.LEASH_ARM_BACK_REACH_PX = LEASH_ARM_BACK_REACH_PX;
+Owner.LEASH_ARM_BACK_OUTWARD_RAD = LEASH_ARM_BACK_OUTWARD_RAD;
+Owner.LEASH_ARM_MIN_SCREEN_DROP_PX = LEASH_ARM_MIN_SCREEN_DROP_PX;
 Owner.WANDER_SPEED = WANDER_SPEED;
 Owner.WANDER_MAX_TURN_RATE = WANDER_MAX_TURN_RATE;
 Owner.WANDER_DRIFT_AMPLITUDE = WANDER_DRIFT_AMPLITUDE;

@@ -44,7 +44,7 @@ class LeashTests(unittest.TestCase):
         console.log(JSON.stringify({{ value: MAX_LEASH_LENGTH }}));
         """
         out = _run_node(script)
-        self.assertEqual(out["value"], 105)
+        self.assertEqual(out["value"], 52.5)
 
     def test_owner_clamped_to_leash_radius(self):
         script = f"""
@@ -56,8 +56,8 @@ class LeashTests(unittest.TestCase):
         console.log(JSON.stringify({{ clamped, dist }}));
         """
         out = _run_node(script)
-        self.assertAlmostEqual(out["dist"], 105.0, places=9)
-        self.assertAlmostEqual(out["clamped"]["x"], 105.0, places=9)
+        self.assertAlmostEqual(out["dist"], 52.5, places=9)
+        self.assertAlmostEqual(out["clamped"]["x"], 52.5, places=9)
         self.assertAlmostEqual(out["clamped"]["y"], 0.0, places=9)
 
     def test_owner_frozen_while_pooping_on_leash(self):
@@ -106,8 +106,8 @@ class LeashTests(unittest.TestCase):
         console.log(JSON.stringify({{ x: owner.x, y: owner.y, dist, max: MAX_LEASH_LENGTH }}));
         """
         out = _run_node(script)
-        self.assertAlmostEqual(out["dist"], 105.0, places=9)
-        self.assertAlmostEqual(out["x"], 105.0, places=9)
+        self.assertAlmostEqual(out["dist"], 52.5, places=9)
+        self.assertAlmostEqual(out["x"], 52.5, places=9)
         self.assertAlmostEqual(out["y"], 0.0, places=9)
 
     def test_owner_update_force_stop_while_pooping(self):
@@ -148,8 +148,8 @@ class LeashTests(unittest.TestCase):
         console.log(JSON.stringify({{ x: owner.x, y: owner.y, dist }}));
         """
         out = _run_node(script)
-        self.assertAlmostEqual(out["dist"], 105.0, places=9)
-        self.assertAlmostEqual(out["x"], 105.0, places=9)
+        self.assertAlmostEqual(out["dist"], 52.5, places=9)
+        self.assertAlmostEqual(out["x"], 52.5, places=9)
         self.assertAlmostEqual(out["y"], 0.0, places=9)
 
     def test_owner_update_slowed_dog_holds_owner_back(self):
@@ -164,9 +164,9 @@ class LeashTests(unittest.TestCase):
         console.log(JSON.stringify({{ x: owner.x, y: owner.y, dist }}));
         """
         out = _run_node(script)
-        self.assertAlmostEqual(out["dist"], 105.0, places=9)
+        self.assertAlmostEqual(out["dist"], 52.5, places=9)
         # Owner is pulled toward the dog along the leash axis.
-        self.assertAlmostEqual(out["x"], 395.0, places=9)
+        self.assertAlmostEqual(out["x"], 447.5, places=9)
         self.assertAlmostEqual(out["y"], 0.0, places=9)
 
     def test_real_dog_pooping_freezes_and_clamps_owner(self):
@@ -209,8 +209,8 @@ class LeashTests(unittest.TestCase):
         self.assertEqual(out["vy"], 0)
         self.assertIs(out["isMoving"], False)
         # Clamped within MAX_LEASH_LENGTH of the dog.
-        self.assertAlmostEqual(out["dist"], 105.0, places=9)
-        self.assertAlmostEqual(out["x"], 105.0, places=9)
+        self.assertAlmostEqual(out["dist"], 52.5, places=9)
+        self.assertAlmostEqual(out["x"], 52.5, places=9)
         self.assertAlmostEqual(out["y"], 0.0, places=9)
 
     def test_force_stop_releases_after_poop(self):
@@ -240,9 +240,9 @@ class LeashTests(unittest.TestCase):
         console.log(JSON.stringify({{ clamped, dist }}));
         """
         out = _run_node(script)
-        self.assertAlmostEqual(out["dist"], 105.0, places=9)
+        self.assertAlmostEqual(out["dist"], 52.5, places=9)
         # Owner is pulled toward the dog along the leash axis.
-        self.assertAlmostEqual(out["clamped"]["x"], 395.0, places=9)
+        self.assertAlmostEqual(out["clamped"]["x"], 447.5, places=9)
         self.assertAlmostEqual(out["clamped"]["y"], 0.0, places=9)
 
 

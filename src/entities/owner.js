@@ -1093,7 +1093,7 @@ export class Owner {
         }
 
         // Upper arm (shoulder -> elbow)
-        ctx.strokeStyle = isFar ? this.getShadedColor(this.jacketColor, -0.18) : this.jacketColor;
+        ctx.strokeStyle = this.jacketColor;
         ctx.lineWidth = 4.6;
         ctx.lineCap = 'round';
         ctx.beginPath();

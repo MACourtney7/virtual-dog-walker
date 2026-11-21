@@ -255,7 +255,7 @@ export class Owner {
         armAngle: Math.atan2(y - shoulderY, x - shoulderX),
         reach: Math.hypot(x - shoulderX, y - shoulderY),
         tension,
-        pose: 'tucked_hip',
+        pose: 'straight_behind',
         hasElbowBend: false,
         elbowBendScreenX: 0,
         elbowBendScreenY: 0,

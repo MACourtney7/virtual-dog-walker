@@ -156,8 +156,9 @@ export class DogStateStore {
           }
           // Temporary debug branch: force the 1s debug durations over any
           // previously persisted 2-3 minute durations in localStorage so a
-          // page refresh immediately picks up the short timers.
-          parsed.needs.hunger.durationMs = DEFAULT_HUNGER_DURATION_MS;
+          // page refresh immediately picks up the short timers. The hunger
+          // duration is intentionally preserved so legacy persisted values
+          // (e.g. 120000ms) survive hydration.
           if (parsed.needs.grooming && typeof parsed.needs.grooming === 'object') {
             parsed.needs.grooming.durationMs = DEFAULT_GROOMING_DURATION_MS;
           }
@@ -181,8 +182,8 @@ export class DogStateStore {
           }
           const hydrated = backfillNeeds(parsed);
           // Re-apply the debug durations after backfill so freshly created
-          // grooming/tiredness needs also use the 1s debug timers.
-          hydrated.needs.hunger.durationMs = DEFAULT_HUNGER_DURATION_MS;
+          // grooming/tiredness needs also use the 1s debug timers. Hunger is
+          // left untouched to preserve the persisted duration.
           hydrated.needs.grooming.durationMs = DEFAULT_GROOMING_DURATION_MS;
           hydrated.needs.tiredness.durationMs = DEFAULT_TIREDNESS_DURATION_MS;
           // Persist the normalised state so the overridden durations stick.

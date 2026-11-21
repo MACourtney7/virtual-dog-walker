@@ -1,7 +1,7 @@
 // Companion Dog Entity - Canine Steering AI, Floppy Ear Springs, Leash Mechanics & Ball Fetching
 import { PoopPile } from './waste.js';
 import { stepLeashConstraint, resolveFieldCollision, stepEarSpringsToTargets } from '../engine/wasm_sim_bridge.js';
-import { MAX_LEASH_LENGTH } from '../world/leash.js';
+import { MAX_LEASH_LENGTH, clampOwnerToLeash } from '../world/leash.js';
 
 export const DogState = {
   FOLLOWING: 'FOLLOWING',
@@ -1945,9 +1945,16 @@ export class CompanionDog {
       return;
     }
 
-    // Arrival steering calculation matching owner's pace
+    // Arrival steering calculation matching owner's pace.
+    // When any need is active, never let a >1 gait speedScale (e.g. JOG)
+    // boost the dog above its base speed: the needy dog stays at a very slow
+    // fixed pace.
     const slowingRadius = 40;
-    const baseSpeed = this.speed * tuning.speedScale;
+    const hasActiveNeed = this.isHungry || this.needsGrooming || this.isTired;
+    const effectiveSpeedScale = hasActiveNeed
+      ? Math.min(1.0, tuning.speedScale)
+      : tuning.speedScale;
+    const baseSpeed = this.speed * effectiveSpeedScale;
     let targetSpeed = baseSpeed;
     if (dist < slowingRadius) {
       targetSpeed = baseSpeed * (dist / slowingRadius);

@@ -154,6 +154,16 @@ export class DogStateStore {
             this._persist(initial);
             return initial;
           }
+          // Temporary debug branch: force the 1s debug durations over any
+          // previously persisted 2-3 minute durations in localStorage so a
+          // page refresh immediately picks up the short timers.
+          parsed.needs.hunger.durationMs = DEFAULT_HUNGER_DURATION_MS;
+          if (parsed.needs.grooming && typeof parsed.needs.grooming === 'object') {
+            parsed.needs.grooming.durationMs = DEFAULT_GROOMING_DURATION_MS;
+          }
+          if (parsed.needs.tiredness && typeof parsed.needs.tiredness === 'object') {
+            parsed.needs.tiredness.durationMs = DEFAULT_TIREDNESS_DURATION_MS;
+          }
           // Strip any stale persisted derived boolean mirrors: they must
           // always be derived from timestamps/durationMs, never trusted
           // from storage.
@@ -169,7 +179,15 @@ export class DogStateStore {
               Object.prototype.hasOwnProperty.call(parsed.needs.tiredness, 'isTired')) {
             delete parsed.needs.tiredness.isTired;
           }
-          return backfillNeeds(parsed);
+          const hydrated = backfillNeeds(parsed);
+          // Re-apply the debug durations after backfill so freshly created
+          // grooming/tiredness needs also use the 1s debug timers.
+          hydrated.needs.hunger.durationMs = DEFAULT_HUNGER_DURATION_MS;
+          hydrated.needs.grooming.durationMs = DEFAULT_GROOMING_DURATION_MS;
+          hydrated.needs.tiredness.durationMs = DEFAULT_TIREDNESS_DURATION_MS;
+          // Persist the normalised state so the overridden durations stick.
+          this._persist(hydrated);
+          return hydrated;
         }
       } catch (_e) {
         // Corrupt JSON: fall through to reset.

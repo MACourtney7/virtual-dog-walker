@@ -238,7 +238,9 @@ export class Owner {
 
       // Always extend the arm OUTSIDE the torso silhouette so the sleeve is
       // never hidden inside the blue jacket rectangle (|x| <= 10.5).
-      const baseSign = (s < -0.15 || (Math.abs(s) <= 0.15 && c > 0)) ? -1 : 1;
+      const baseSign = (c < -0.25)
+        ? 1
+        : ((c > 0.25 && s < 0.25) || s < -0.15 ? -1 : 1);
       const outSign = sideSign === -1 ? baseSign : -baseSign;
       const handWorldX = shScreenX + outSign * LEASH_ARM_SIDE_EXTEND_PX;
       const handWorldY = shScreenY + LEASH_ARM_DROP_PX;
@@ -1178,7 +1180,7 @@ export class Owner {
     }
 
     // --- DEPTH LAYER 2: Accessory (Backpack when facing South / from front) ---
-    if (this.accessory === 'BACKPACK' && sinA > -0.2) {
+    if (this.accessory === 'BACKPACK' && sinA > 0.25) {
       this.drawBackpack(ctx, torsoX, torsoY, angle, true);
     }
 
@@ -1260,7 +1262,7 @@ export class Owner {
 
     // --- DEPTH LAYER 4: Accessory (Backpack when facing North/Side, Scarf, or Hoodie) ---
     if (this.accessory === 'BACKPACK') {
-      if (sinA <= -0.2) {
+      if (sinA <= 0.25) {
         this.drawBackpack(ctx, torsoX, torsoY, angle, false);
       } else {
         this.drawBackpackStraps(ctx, torsoX, torsoY);

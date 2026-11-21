@@ -2570,7 +2570,10 @@ class TestLeashArmPose(unittest.TestCase):
         self.assertIn("elbowLocalY", self.src)
 
     def test_draw_arm_uses_elbow_local(self):
-        self.assertIn("const elbowX = this.x + elbowLocalX * c - elbowLocalY * s;", self.src)
+        # Rigid arm: elbow is the straight midpoint from shoulder to hand.
+        self.assertIn("let elbowX = (ax + handX) / 2;", self.src)
+        self.assertIn("let elbowY = (ay + handY) / 2;", self.src)
+        self.assertIn("if (local.hasElbowBend) {", self.src)
         self.assertIn("const elbowY = this.y - 3 + elbowLocalX * s + elbowLocalY * c;", self.src)
 
     def test_behavioral_pose_selection(self):

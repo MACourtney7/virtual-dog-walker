@@ -101,7 +101,7 @@ class TestWasmCoreSim(unittest.TestCase):
         dog_path = os.path.join(PROJECT_ROOT, "src", "entities", "companion_dog.js")
         with open(dog_path) as f:
             dog_src = f.read()
-            self.assertIn("stepLeashConstraint(this, this.owner, 65, 4.0, 5.0, dt)", dog_src)
+            self.assertIn("stepLeashConstraint(this, this.owner, Math.round(MAX_LEASH_LENGTH * 0.75), 4.0, 5.0, dt)", dog_src)
             self.assertIn("resolveFieldCollision", dog_src)
             self.assertIn("stepEarSpringsToTargets", dog_src)
 

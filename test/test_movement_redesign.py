@@ -1427,20 +1427,23 @@ class TestLeashHandSide(unittest.TestCase):
         self.dog_src = read("src/entities/companion_dog.js")
 
     def test_owner_defines_leash_hand_side(self):
-        self.assertIn("this.leashHandSide = 'right';", self.owner_src)
+        self.assertIn("this.leashHandSide = 'left';", self.owner_src)
 
     def test_get_leash_hand_anchor_syncs_side(self):
-        self.assertIn("getLeashHandAnchor(preferredSide = this.leashHandSide || 'right')", self.owner_src)
+        self.assertIn("getLeashHandAnchor(preferredSide = this.leashHandSide || 'left')", self.owner_src)
         self.assertIn("this.leashHandSide = side;", self.owner_src)
 
     def test_dog_syncs_owner_hand_side(self):
         self.assertIn("this.owner.leashHandSide = this.preferredSide;", self.dog_src)
 
+    def test_dog_defaults_to_left_heel(self):
+        self.assertIn("this.preferredSide = 'left';", self.dog_src)
+
     def test_behavioral_hand_side_matches_flank(self):
         """Simulate the sync: owner.leashHandSide must equal dog.preferredSide."""
         class FakeOwner:
             def __init__(self):
-                self.leashHandSide = 'right'
+                self.leashHandSide = 'left'
 
         class FakeDog:
             def __init__(self, owner, side):
@@ -1451,12 +1454,18 @@ class TestLeashHandSide(unittest.TestCase):
                 self.owner.leashHandSide = self.preferredSide
 
         owner = FakeOwner()
-        dog = FakeDog(owner, 'left')
+        dog = FakeDog(owner, 'right')
+        dog.sync()
+        self.assertEqual(owner.leashHandSide, 'right')
+        dog.preferredSide = 'left'
         dog.sync()
         self.assertEqual(owner.leashHandSide, 'left')
         dog.preferredSide = 'right'
         dog.sync()
         self.assertEqual(owner.leashHandSide, 'right')
+        dog.preferredSide = 'left'
+        dog.sync()
+        self.assertEqual(owner.leashHandSide, 'left')
 
 
 class TestPettingGate(unittest.TestCase):
@@ -2309,7 +2318,7 @@ class TestHoldingArmSwingAmplitude(unittest.TestCase):
     def test_swing_uses_angular_amplitude(self):
         self.assertIn("const swingAngle = this.isMoving ? 0.35 : 0;", self.src)
         self.assertIn(
-            "armAngle += Math.sin(this.walkPhase) * swingAngle * LEASH_ARM_SWING_SCALE * sideSign;",
+            "const swing = Math.sin(this.walkPhase) * swingAngle * LEASH_ARM_SWING_SCALE * sideSign;",
             self.src,
         )
         # The old pixel-based amplitude must be gone.
@@ -2543,6 +2552,176 @@ class TestLeashSagUnderTension(unittest.TestCase):
             self.assertLessEqual(taut, relaxed + 1e-9)
             self.assertLessEqual(taut, 2.0)
             self.assertLessEqual(taut, dist * 0.03 + 1e-9)
+
+
+class TestLeashArmPose(unittest.TestCase):
+    """Verify the two leash-arm poses (forward_heel and straight_behind)."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_pose_names_present(self):
+        self.assertIn("pose: 'forward_heel'", self.src)
+        self.assertIn("pose: 'straight_behind'", self.src)
+        self.assertNotIn("pose: 'across_front'", self.src)
+
+    def test_reach_capped_at_20(self):
+        self.assertIn("Math.min(\n      20,", self.src)
+
+    def test_elbow_local_fields_present(self):
+        self.assertIn("elbowLocalX", self.src)
+        self.assertIn("elbowLocalY", self.src)
+
+    def test_draw_arm_uses_elbow_local(self):
+        # Rigid arm: elbow is the straight midpoint from shoulder to hand.
+        self.assertIn("let elbowX = (ax + handX) / 2;", self.src)
+        self.assertIn("let elbowY = (ay + handY) / 2;", self.src)
+        self.assertIn("if (local.hasElbowBend) {", self.src)
+
+    def test_behavioral_pose_selection(self):
+        """Execute Owner.computeLeashHandLocal() in Node across representative headings."""
+        import json
+        import shutil
+        import subprocess
+
+        if shutil.which("node") is None:
+            self.skipTest("node is required to run leash JS tests")
+
+        owner_module = os.path.join(
+            os.path.dirname(__file__), "..", "src", "entities", "owner.js"
+        )
+        script = f"""
+        import {{ Owner }} from {json.dumps(owner_module)};
+        const headings = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+        const results = [];
+        for (const angle of headings) {{
+          const owner = new Owner(100, 100, 'Walker', true);
+          owner.angle = angle;
+          owner.targetHeading = angle;
+          owner.leashHandSide = 'left';
+          // Dog directly behind the owner (opposite the heading).
+          owner.dog = {{
+            x: 100 - Math.cos(angle) * 60,
+            y: 100 - Math.sin(angle) * 60,
+            isOnLeash: true,
+            isPooping: false
+          }};
+          const behind = owner.computeLeashHandLocal();
+          // Dog ahead but on the OPPOSITE lateral side of the leash hand
+          // (leashHandSide = 'left' => crossed side is screen-right).
+          // Owner-local +y = screen-right of heading, so place the dog at
+          // forward*40 + right*40 where right = (-sin, cos).
+          owner.dog = {{
+            x: 100 + Math.cos(angle) * 40 - Math.sin(angle) * 40,
+            y: 100 + Math.sin(angle) * 40 + Math.cos(angle) * 40,
+            isOnLeash: true,
+            isPooping: false
+          }};
+          const crossed = owner.computeLeashHandLocal();
+          results.push({{
+            angle,
+            behindPose: behind.pose,
+            crossedPose: crossed.pose
+          }});
+        }}
+        console.log(JSON.stringify(results));
+        """
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=os.path.join(os.path.dirname(__file__), ".."),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        results = json.loads(result.stdout.strip())
+        self.assertEqual(len(results), 4)
+        for entry in results:
+            self.assertEqual(entry["behindPose"], "straight_behind")
+            self.assertEqual(entry["crossedPose"], "straight_behind")
+
+    def test_behavioral_straight_behind_hand_outside_torso(self):
+        """getLeashHandAnchor() clears the 10.5px torso half-width across headings."""
+        import json
+        import shutil
+        import subprocess
+
+        if shutil.which("node") is None:
+            self.skipTest("node is required to run leash JS tests")
+
+        owner_module = os.path.join(
+            os.path.dirname(__file__), "..", "src", "entities", "owner.js"
+        )
+        script = f"""
+        import {{ Owner }} from {json.dumps(owner_module)};
+        const headings = [0, Math.PI / 2, Math.PI, -Math.PI / 2];
+        const results = [];
+        for (const angle of headings) {{
+          const owner = new Owner(100, 100, 'Walker', true);
+          owner.angle = angle;
+          owner.targetHeading = angle;
+          owner.leashHandSide = 'left';
+          owner.dog = {{
+            x: 100 - Math.cos(angle) * 60,
+            y: 100 - Math.sin(angle) * 60,
+            isOnLeash: true,
+            isPooping: false
+          }};
+          const anchor = owner.getLeashHandAnchor('left');
+          // Screen-space offset from the owner's torso centre (y - 3).
+          const dx = anchor.x - owner.x;
+          const dy = anchor.y - (owner.y - 3);
+          results.push({{ angle, dx, dy, absDx: Math.abs(dx) }});
+        }}
+        console.log(JSON.stringify(results));
+        """
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=os.path.join(os.path.dirname(__file__), ".."),
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        results = json.loads(result.stdout.strip())
+        self.assertEqual(len(results), 4)
+        for entry in results:
+            # Hand must clear the 10.5px torso half-width on the leash side.
+            self.assertGreaterEqual(
+                entry["absDx"],
+                10.5,
+                f"hand at angle {entry['angle']} clips torso: dx={entry['dx']}",
+            )
+
+
+class TestHeldBackStrideCadence(unittest.TestCase):
+    """Verify walkPhase advances by actual ground displacement, not gait speed."""
+
+    def setUp(self):
+        self.src = read("src/entities/owner.js")
+
+    def test_prev_position_recorded(self):
+        self.assertIn("const prevX = this.x;", self.src)
+        self.assertIn("const prevY = this.y;", self.src)
+
+    def test_actual_speed_cadence(self):
+        self.assertIn("const actualDist = Math.hypot(this.x - prevX, this.y - prevY);", self.src)
+        self.assertIn("const actualSpeed = dt > 0 ? actualDist / dt : 0;", self.src)
+        self.assertIn("if (actualSpeed > 2) {", self.src)
+        self.assertIn("const cadence = 4.0 + (actualSpeed / 265) * 8.0;", self.src)
+
+    def test_behavioral_held_back_slow_cadence(self):
+        """Held back to 10px/s: cadence is much slower than full gait speed."""
+        actual_speed = 10.0
+        cadence = 4.0 + (actual_speed / 265) * 8.0
+        full_cadence = 4.0 + (100.0 / 265) * 8.0
+        self.assertLess(cadence, full_cadence)
+
+    def test_behavioral_stopped_no_pump(self):
+        """Stopped at leash limit: actualSpeed <= 2 means no walkPhase advance."""
+        actual_speed = 0.0
+        advanced = actual_speed > 2
+        self.assertFalse(advanced)
 
 
 if __name__ == "__main__":

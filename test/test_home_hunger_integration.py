@@ -539,8 +539,11 @@ try {
     }
     hungryPlayCountAfterFeed = hungryPlayCount;
 
-    // Advance a bit but stay under the threshold: still not hungry.
-    now = 120001 + 60000;
+    // Advance a bit but stay under the store's hunger duration: still not
+    // hungry. Use the store's actual duration so this stays correct even when
+    // the debug timer is shortened.
+    const hungerDurationMs = store.getHunger(now).durationMs;
+    now = 120001 + Math.max(1, Math.floor(hungerDurationMs / 2));
     stillFed = store.getHunger(now);
   } finally {
     HomeFeeding.unmount();

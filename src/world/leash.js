@@ -4,7 +4,7 @@
 // MAX_LEASH_LENGTH from the dog while the dog is on-leash. When the dog is
 // force-stopped (pooping on leash) the owner is frozen in place too.
 
-export const MAX_LEASH_LENGTH = 105;
+export const MAX_LEASH_LENGTH = 52.5;
 
 // Returns true when the owner must be force-stopped because the dog is
 // currently pooping while attached to the leash.

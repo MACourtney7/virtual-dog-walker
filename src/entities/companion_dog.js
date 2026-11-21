@@ -1,7 +1,7 @@
 // Companion Dog Entity - Canine Steering AI, Floppy Ear Springs, Leash Mechanics & Ball Fetching
 import { PoopPile } from './waste.js';
 import { stepLeashConstraint, resolveFieldCollision, stepEarSpringsToTargets } from '../engine/wasm_sim_bridge.js';
-import { MAX_LEASH_LENGTH } from '../world/leash.js';
+import { MAX_LEASH_LENGTH, clampOwnerToLeash } from '../world/leash.js';
 
 export const DogState = {
   FOLLOWING: 'FOLLOWING',
@@ -61,9 +61,9 @@ export const LEASH_FEEDFORWARD_SECONDS = 0.12;
 export const LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = 2;
 
 // Speed multiplier applied when any need (hunger/grooming/tiredness) is active.
-// Needs never stack multiplicatively: a single 0.4x factor applies regardless
+// Needs never stack multiplicatively: a single 0.15x factor applies regardless
 // of how many needs are active.
-export const NEED_SPEED_MULTIPLIER = 0.4;
+export const NEED_SPEED_MULTIPLIER = 0.15;
 
 // Zoomies path types: the dog can run a figure-eight, orbit the owner, or
 // shuttle back and forth between two points.
@@ -276,6 +276,10 @@ export class CompanionDog {
     this.sprintSpeed = 290; // px/s while fetching or recalling
 
     this.owner = owner;
+    // Wire the back-reference so Owner.update() can resolve the leash dog.
+    if (this.owner) {
+      this.owner.dog = this;
+    }
     this.coat = coat;
     this.collarColor = collarColor;
     this.radius = 14;
@@ -305,9 +309,9 @@ export class CompanionDog {
 
     // Follow offset relative to owner (forward flank, never straight behind)
     this.followDistance = 42;
-    this.followAngleOffset = FLANK_RIGHT.mid; // forward-right flank by default
-    this.preferredSide = 'right'; // 'right' | 'left'
-    this.flankAngle = FLANK_RIGHT.mid; // smoothed flank bearing relative to owner.angle
+    this.followAngleOffset = FLANK_LEFT.mid; // forward-left flank by default
+    this.preferredSide = 'left'; // 'right' | 'left'
+    this.flankAngle = FLANK_LEFT.mid; // smoothed flank bearing relative to owner.angle
 
     // Ear spring physics (secondary damper system)
     this.leftEar = { angle: 0, vel: 0 };
@@ -477,14 +481,25 @@ export class CompanionDog {
   // the backing fields. Use the corresponding setters to change them.
 
   get isHungry() {
+    // When a store exposes the signal it is authoritative: the backing field
+    // is only consulted as a fallback for stores that lack the method.
+    if (this.dogStateStore && typeof this.dogStateStore.isHungry === 'function') {
+      return Boolean(this.dogStateStore.isHungry());
+    }
     return Boolean(this._isHungry);
   }
 
   get needsGrooming() {
+    if (this.dogStateStore && typeof this.dogStateStore.needsGrooming === 'function') {
+      return Boolean(this.dogStateStore.needsGrooming());
+    }
     return Boolean(this._needsGrooming);
   }
 
   get isTired() {
+    if (this.dogStateStore && typeof this.dogStateStore.isTired === 'function') {
+      return Boolean(this.dogStateStore.isTired());
+    }
     return Boolean(this._isTired);
   }
 
@@ -1370,34 +1385,58 @@ export class CompanionDog {
 
     // Leash constraint & pulling physics: If leashed to owner, hard clamp to max leash length
     if (this.owner && this.owner.isLeashed && this.state !== DogState.FETCHING) {
-      stepLeashConstraint(this, this.owner, 65, 4.0, 5.0, dt);
+      const dogAnchorsLeash = this.isPooping || this.isHungry || this.needsGrooming || this.isTired;
       const maxLeash = MAX_LEASH_LENGTH;
       const dx = this.x - this.owner.x;
       const dy = this.y - this.owner.y;
       const dist = Math.hypot(dx, dy);
 
+      if (dogAnchorsLeash) {
+        // The dog anchors the leash: never pull/teleport the dog toward the
+        // owner. Instead clamp the OWNER within maxLeash of the dog so the
+        // owner cannot drag the slow or pooping dog.
+        if (dist > maxLeash) {
+          const clampedOwner = clampOwnerToLeash(this.owner, this, maxLeash);
+          if (clampedOwner) {
+            this.owner.x = clampedOwner.x;
+            this.owner.y = clampedOwner.y;
+            this.owner.depthY = this.owner.y + 12;
+          }
+        }
+        this.isPullingLeash = false;
+      } else {
+      // Soft spring target (~39px) must sit below MAX_LEASH_LENGTH (52.5px).
+      stepLeashConstraint(this, this.owner, Math.round(MAX_LEASH_LENGTH * 0.75), 4.0, 5.0, dt);
+
+      // Recompute the leash distance AFTER the constraint step so the pulling
+      // physics and hard clamp operate on the post-constraint position.
+      const postDx = this.x - this.owner.x;
+      const postDy = this.y - this.owner.y;
+      const postDist = Math.hypot(postDx, postDy);
+
       // Leash pulling physics
       if (activeBall && activeBall.isThrown) {
         this.isPullingLeash = true;
-      } else if (dist > 95) {
-        const dotAway = dx * this.vx + dy * this.vy;
-        if (dotAway > 0 || dist >= maxLeash) {
+      } else if (postDist > 95) {
+        const dotAway = postDx * this.vx + postDy * this.vy;
+        if (dotAway > 0 || postDist >= maxLeash) {
           // High obedience reduces propensity to pull against leash
-          if (this.personality.obedience < 4 || dist >= 100) {
+          if (this.personality.obedience < 4 || postDist >= 100) {
             this.isPullingLeash = true;
           }
         }
-      } else if (this.leashTugTimer <= 0 && (dist < 48 || (!this.owner.isMoving && Math.hypot(this.vx, this.vy) < 12))) {
+      } else if (this.leashTugTimer <= 0 && (postDist < 48 || (!this.owner.isMoving && Math.hypot(this.vx, this.vy) < 12))) {
         // Dog is at heel or owner stopped and dog is resting
         this.isPullingLeash = false;
       }
 
-      if (dist > maxLeash) {
-        this.x = this.owner.x + (dx / dist) * maxLeash;
-        this.y = this.owner.y + (dy / dist) * maxLeash;
+      if (postDist > maxLeash) {
+        this.x = this.owner.x + (postDx / postDist) * maxLeash;
+        this.y = this.owner.y + (postDy / postDist) * maxLeash;
         this.vx *= 0.5;
         this.vy *= 0.5;
         this.isPullingLeash = true;
+      }
       }
     } else if (this.owner && !this.owner.isLeashed) {
       this.isPullingLeash = false;
@@ -1915,9 +1954,16 @@ export class CompanionDog {
       return;
     }
 
-    // Arrival steering calculation matching owner's pace
+    // Arrival steering calculation matching owner's pace.
+    // When any need is active, never let a >1 gait speedScale (e.g. JOG)
+    // boost the dog above its base speed: the needy dog stays at a very slow
+    // fixed pace.
     const slowingRadius = 40;
-    const baseSpeed = this.speed * tuning.speedScale;
+    const hasActiveNeed = this.isHungry || this.needsGrooming || this.isTired;
+    const effectiveSpeedScale = hasActiveNeed
+      ? Math.min(1.0, tuning.speedScale)
+      : tuning.speedScale;
+    const baseSpeed = this.speed * effectiveSpeedScale;
     let targetSpeed = baseSpeed;
     if (dist < slowingRadius) {
       targetSpeed = baseSpeed * (dist / slowingRadius);
@@ -1947,7 +1993,7 @@ export class CompanionDog {
     const fwdX = Math.cos(heading);
     const fwdY = Math.sin(heading);
     const proj = (this.x - this.owner.x) * fwdX + (this.y - this.owner.y) * fwdY;
-    if (proj < LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX) {
+    if (proj < LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX && !(this.isHungry || this.needsGrooming || this.isTired)) {
       const push = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX - proj;
       this.x += fwdX * push;
       this.y += fwdY * push;

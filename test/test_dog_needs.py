@@ -191,6 +191,42 @@ class DogNeedsTest(unittest.TestCase):
         self.assertEqual(out["restored"], 200)
         self.assertEqual(out["base"], 200)
 
+    def test_store_is_authoritative_over_backing_field(self):
+        """When the store exposes isHungry(), it wins over the backing field."""
+        out = _run_node(
+            """
+            const dog = new CompanionDog(0, 0, null);
+            dog.speed = 200;
+
+            // Backing field says hungry, store says not hungry.
+            dog.setHunger({ isHungry: true, lastFedAt: 0, durationMs: 1 });
+            results.backingHungry = dog._isHungry;
+
+            let storeHungry = false;
+            const store = {
+              isHungry: () => storeHungry,
+              needsGrooming: () => false,
+              isTired: () => false,
+              subscribe: () => () => {},
+              getSnapshot: () => ({ needs: { hunger: { lastFedAt: 0, durationMs: 1 } } })
+            };
+            dog.setDogStateStore(store);
+            results.hungryWhileStoreFalse = dog.isHungry;
+
+            // Store transitions true -> false while the backing field stays true.
+            storeHungry = true;
+            results.hungryWhileStoreTrue = dog.isHungry;
+            storeHungry = false;
+            results.hungryAfterStoreClears = dog.isHungry;
+            results.backingStillHungry = dog._isHungry;
+            """
+        )
+        self.assertTrue(out["backingHungry"])
+        self.assertFalse(out["hungryWhileStoreFalse"])
+        self.assertTrue(out["hungryWhileStoreTrue"])
+        self.assertFalse(out["hungryAfterStoreClears"])
+        self.assertTrue(out["backingStillHungry"])
+
     def test_need_getters_are_read_only(self):
         out = _run_node(
             """
@@ -305,6 +341,57 @@ class DogNeedsTest(unittest.TestCase):
         self.assertAlmostEqual(out["tiredDx"], base_dx * 0.4, places=6)
         # Restored once needs clear.
         self.assertAlmostEqual(out["restoredDx"], base_dx, places=6)
+
+    def test_update_following_displacement_reduced_with_need(self):
+        """Drive updateFollowing() + update() with a need active and assert the
+        dog moves visibly slower (~0.15x base displacement)."""
+        out = _run_node(
+            """
+            const makeOwner = () => ({
+              x: 0, y: 0, vx: 0, vy: 0, angle: 0, heading: 0,
+              isLeashed: true, isMoving: false, gait: 'STAND',
+              leashHandSide: 'left', radius: 16, halfWidth: 10.5
+            });
+
+            const makeDog = () => {
+              const owner = makeOwner();
+              const dog = new CompanionDog(0, 0, owner);
+              dog.speed = 200;
+              dog.state = 'FOLLOWING';
+              // Start within MAX_LEASH_LENGTH (52.5px) of the owner so the
+              // leash clamp does not dominate the measured displacement.
+              dog.x = 40;
+              dog.y = 0;
+              return dog;
+            };
+
+            const dt = 0.1;
+
+            // Baseline (no needs).
+            const baseDog = makeDog();
+            baseDog.updateFollowing(dt, [], null);
+            const baseX0 = baseDog.x;
+            const baseY0 = baseDog.y;
+            baseDog.update(dt, null, [], null, []);
+            results.baseDx = Math.hypot(baseDog.x - baseX0, baseDog.y - baseY0);
+
+            // Hungry.
+            const hungryDog = makeDog();
+            hungryDog.setHunger({ isHungry: true, lastFedAt: 0, durationMs: 1 });
+            hungryDog.updateFollowing(dt, [], null);
+            const hungryX0 = hungryDog.x;
+            const hungryY0 = hungryDog.y;
+            hungryDog.update(dt, null, [], null, []);
+            results.hungryDx = Math.hypot(hungryDog.x - hungryX0, hungryDog.y - hungryY0);
+
+            results.multiplier = NEED_SPEED_MULTIPLIER;
+            """
+        )
+        base_dx = out["baseDx"]
+        self.assertGreater(base_dx, 0)
+        # The needy dog must move visibly slower (~0.15x base displacement).
+        self.assertAlmostEqual(out["hungryDx"], base_dx * 0.15, places=6)
+        self.assertLess(out["hungryDx"], base_dx * 0.5)
 
     def test_zoomies_progression_scaled_by_needs(self):
         out = _run_node(

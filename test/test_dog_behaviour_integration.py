@@ -336,8 +336,8 @@ class TestLeashAndPoopIntegration(unittest.TestCase):
         self.assertTrue(res.get("available"),
                         "AC-3.1: Leash module (window.Leash.clampOwnerToLeash) "
                         "must be present in the test harness")
-        self.assertEqual(res["max"], 105,
-                         "AC-3.1: MAX_LEASH_LENGTH must be 105 px")
+        self.assertEqual(res["max"], 52.5,
+                         "AC-3.1: MAX_LEASH_LENGTH must be 52.5 px")
         self.assertTrue(res["withinTolerance"],
                         f"AC-3.1: Owner distance {res['dist']} must not exceed "
                         f"MAX_LEASH_LENGTH {res['max']}")
@@ -518,8 +518,8 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
         self.assertTrue(res.get("available"),
                         "AC-4.3: Leash module and CompanionDog.getEffectiveSpeed() "
                         "must be present in the test harness")
-        self.assertEqual(res["max"], 105,
-                         "AC-4.3: MAX_LEASH_LENGTH must be 105 px")
+        self.assertEqual(res["max"], 52.5,
+                         "AC-4.3: MAX_LEASH_LENGTH must be 52.5 px")
         self.assertTrue(res["onLeash"],
                         "AC-4.3: Dog with owner.isLeashed=true must report isOnLeash")
         self.assertFalse(res["pooping"],
@@ -590,8 +590,8 @@ class TestNeedsSpeedAndHoldUpIntegration(unittest.TestCase):
         self.assertTrue(res.get("available"),
                         "AC-4.4: Leash module, Owner and CompanionDog must be "
                         "present in the test harness")
-        self.assertEqual(res["max"], 105,
-                         "AC-4.4: MAX_LEASH_LENGTH must be 105 px")
+        self.assertEqual(res["max"], 52.5,
+                         "AC-4.4: MAX_LEASH_LENGTH must be 52.5 px")
         self.assertTrue(res["withinTolerance"],
                         f"AC-4.4: Post-tick owner distance must stay within "
                         f"MAX_LEASH_LENGTH ({res['max']}); "

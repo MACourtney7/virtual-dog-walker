@@ -2,9 +2,9 @@
 // ES module with a globalThis fallback for non-module consumers.
 
 export const DOG_STATE_STORAGE_KEY = 'virtual_dog_walker.dog_state.v1';
-export const DEFAULT_HUNGER_DURATION_MS = 120000; // 2 minutes
-export const DEFAULT_GROOMING_DURATION_MS = 180000; // 3 minutes
-export const DEFAULT_TIREDNESS_DURATION_MS = 180000; // 3 minutes
+export const DEFAULT_HUNGER_DURATION_MS = 1000; // 1 second (temporary debug timer)
+export const DEFAULT_GROOMING_DURATION_MS = 1000; // 1 second (temporary debug timer)
+export const DEFAULT_TIREDNESS_DURATION_MS = 1000; // 1 second (temporary debug timer)
 export const DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = 5000; // 5 seconds
 
 export function createInitialDogState(nowMs = Date.now(), hungerDurationMs = DEFAULT_HUNGER_DURATION_MS) {

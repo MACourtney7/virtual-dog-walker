@@ -218,18 +218,13 @@ export class Owner {
       const dogLocalX = dxW * c + dyW * s;  // +forward, -behind
       const dogLocalY = -dxW * s + dyW * c; // -left, +right
 
-      const sameSide = (dogLocalY * sideSign) >= -2;
-
-      if (sameSide && dogLocalX < -2) {
-        // "straight_behind": the dog is behind on the leash-hand side, so the
-        // arm reaches straight back toward it.
-        const armAngle = Math.atan2(dogLocalY - shoulderY, dogLocalX - shoulderX);
-        let x = shoulderX + Math.cos(armAngle) * reach;
-        let y = shoulderY + Math.sin(armAngle) * reach;
-        // Keep the hand outside the torso on the leash-hand side.
-        if (y * sideSign < LEASH_ARM_SHOULDER_OFFSET_PX) {
-          y = sideSign * LEASH_ARM_SHOULDER_OFFSET_PX;
-        }
+      if (dogLocalX < -2) {
+        // "straight_behind": the dog lags behind, so the arm reaches almost
+        // straight backwards on the leash-hand side (slightly angled outward
+        // by 0.15 rad so it clears the hip/torso cleanly).
+        const armAngle = sideSign * (Math.PI - 0.15) + swing;
+        const x = shoulderX + Math.cos(armAngle) * reach;
+        const y = shoulderY + Math.sin(armAngle) * reach;
         return {
           x,
           y,
@@ -244,29 +239,8 @@ export class Owner {
         };
       }
 
-      if (!sameSide) {
-        // "across_front": the dog is on the opposite flank, so the arm reaches
-        // across the front chest and wraps around to the opposite side.
-        const elbowLocalX = 7;
-        const elbowLocalY = -sideSign * (LEASH_ARM_SHOULDER_OFFSET_PX * 0.45);
-        const x = Math.max(-8, Math.min(10, dogLocalX * 0.25));
-        const y = -sideSign * (LEASH_ARM_SHOULDER_OFFSET_PX + 5);
-        return {
-          x,
-          y,
-          shoulderX,
-          shoulderY,
-          armAngle: Math.atan2(y - shoulderY, x - shoulderX),
-          reach,
-          tension,
-          pose: 'across_front',
-          elbowLocalX,
-          elbowLocalY
-        };
-      }
-
-      // "forward_heel": normal forward-flank pose toward the dog.
-      const armAngle = Math.atan2(dogLocalY - shoulderY, dogLocalX - shoulderX) + swing;
+      // "forward_heel": standard forward-flank pose on the leash-hand side.
+      const armAngle = sideSign * (0.08 + 0.10 * (1 - tension)) + swing;
       const x = shoulderX + Math.cos(armAngle) * reach;
       const y = shoulderY + Math.sin(armAngle) * reach;
       return {
@@ -1180,29 +1154,13 @@ export class Owner {
     const leftIsLeashArm = this.isLeashed && leashSideSign === -1;
     const rightIsLeashArm = this.isLeashed && leashSideSign === 1;
 
-    // Resolve the leash-arm pose so depth layering can decide whether the
-    // leash arm belongs in front of or behind the torso.
-    const leashPose = (this.isLeashed && typeof this.computeLeashHandLocal === 'function')
-      ? this.computeLeashHandLocal().pose
-      : null;
-    const leashArmAcrossFront = leashPose === 'across_front';
-    const leashArmStraightBehind = leashPose === 'straight_behind';
-
     // --- DEPTH LAYER 1: Far Arm & Far Leg (behind torso) ---
     if (leftIsFar) {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, true);
-      // The far arm is drawn behind the torso unless it is the leash arm in
-      // the across-front pose while facing South (then it belongs in front).
-      const deferLeftArm = leftIsLeashArm && leashArmAcrossFront && sinA >= -0.2;
-      if (!deferLeftArm) {
-        drawArm(leftShoulderX, leftShoulderY, -armSwing, true, leftIsLeashArm);
-      }
+      drawArm(leftShoulderX, leftShoulderY, -armSwing, true, leftIsLeashArm);
     } else {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, true);
-      const deferRightArm = rightIsLeashArm && leashArmAcrossFront && sinA >= -0.2;
-      if (!deferRightArm) {
-        drawArm(rightShoulderX, rightShoulderY, armSwing, true, rightIsLeashArm);
-      }
+      drawArm(rightShoulderX, rightShoulderY, armSwing, true, rightIsLeashArm);
     }
 
     // --- DEPTH LAYER 2: Accessory (Backpack when facing South / from front) ---
@@ -1300,21 +1258,13 @@ export class Owner {
     }
 
     // --- DEPTH LAYER 5: Near Leg & Near Arm (in front of torso) ---
-    // Every arm is drawn exactly once: the near arm always renders in front,
-    // and the far arm renders in front only when it is the leash arm in the
-    // across-front pose while facing South.
+    // Every arm is drawn exactly once: the near arm always renders in front.
     if (leftIsFar) {
       drawLeg(perpX * hipSpan, perpY * hipSpan, -legSwing, false);
       drawArm(rightShoulderX, rightShoulderY, armSwing, false, rightIsLeashArm);
-      if (leftIsLeashArm && leashArmAcrossFront && sinA >= -0.2) {
-        drawArm(leftShoulderX, leftShoulderY, -armSwing, false, true);
-      }
     } else {
       drawLeg(-perpX * hipSpan, -perpY * hipSpan, legSwing, false);
       drawArm(leftShoulderX, leftShoulderY, -armSwing, false, leftIsLeashArm);
-      if (rightIsLeashArm && leashArmAcrossFront && sinA >= -0.2) {
-        drawArm(rightShoulderX, rightShoulderY, armSwing, false, true);
-      }
     }
 
     // --- DEPTH LAYER 6: Head, Face, Ears & Hairstyle ---

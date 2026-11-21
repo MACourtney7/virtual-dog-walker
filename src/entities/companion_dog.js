@@ -1405,25 +1405,31 @@ export class CompanionDog {
       } else {
       stepLeashConstraint(this, this.owner, 65, 4.0, 5.0, dt);
 
+      // Recompute the leash distance AFTER the constraint step so the pulling
+      // physics and hard clamp operate on the post-constraint position.
+      const postDx = this.x - this.owner.x;
+      const postDy = this.y - this.owner.y;
+      const postDist = Math.hypot(postDx, postDy);
+
       // Leash pulling physics
       if (activeBall && activeBall.isThrown) {
         this.isPullingLeash = true;
-      } else if (dist > 95) {
-        const dotAway = dx * this.vx + dy * this.vy;
-        if (dotAway > 0 || dist >= maxLeash) {
+      } else if (postDist > 95) {
+        const dotAway = postDx * this.vx + postDy * this.vy;
+        if (dotAway > 0 || postDist >= maxLeash) {
           // High obedience reduces propensity to pull against leash
-          if (this.personality.obedience < 4 || dist >= 100) {
+          if (this.personality.obedience < 4 || postDist >= 100) {
             this.isPullingLeash = true;
           }
         }
-      } else if (this.leashTugTimer <= 0 && (dist < 48 || (!this.owner.isMoving && Math.hypot(this.vx, this.vy) < 12))) {
+      } else if (this.leashTugTimer <= 0 && (postDist < 48 || (!this.owner.isMoving && Math.hypot(this.vx, this.vy) < 12))) {
         // Dog is at heel or owner stopped and dog is resting
         this.isPullingLeash = false;
       }
 
-      if (dist > maxLeash) {
-        this.x = this.owner.x + (dx / dist) * maxLeash;
-        this.y = this.owner.y + (dy / dist) * maxLeash;
+      if (postDist > maxLeash) {
+        this.x = this.owner.x + (postDx / postDist) * maxLeash;
+        this.y = this.owner.y + (postDy / postDist) * maxLeash;
         this.vx *= 0.5;
         this.vy *= 0.5;
         this.isPullingLeash = true;

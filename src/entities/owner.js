@@ -56,10 +56,6 @@ export const LEASH_ARM_MAX_REACH_PX = 30;
 export const LEASH_ARM_TENSION_RAMP_PX = 140; // distance that maps to tension = 1
 export const LEASH_ARM_SHOULDER_OFFSET_PX = 8;
 export const LEASH_ARM_HAND_RADIUS_PX = 3.5;
-export const LEASH_ARM_BACK_REACH_PX = 14;       // reach when dog is behind
-export const LEASH_ARM_BACK_OUTWARD_RAD = 0.35;  // outward angle from hip when dog is behind
-export const LEASH_ARM_MIN_SCREEN_DROP_PX = 5;   // minimum vertical hang below shoulder (ay) so arm always hangs low
-export const LEASH_ARM_HIP_DROP_PX = 6.5;        // tucked hip pose: hand hangs this far below the shoulder in screen Y
 export const LEASH_ARM_SIDE_EXTEND_PX = 6.5; // horizontal offset from shoulder (keeps hand outside torso)
 export const LEASH_ARM_DROP_PX = 9.5;        // vertical drop below shoulder (matches 12px normal arm length)
 
@@ -1841,10 +1837,6 @@ Owner.LEASH_ARM_MAX_REACH_PX = LEASH_ARM_MAX_REACH_PX;
 Owner.LEASH_ARM_TENSION_RAMP_PX = LEASH_ARM_TENSION_RAMP_PX;
 Owner.LEASH_ARM_SHOULDER_OFFSET_PX = LEASH_ARM_SHOULDER_OFFSET_PX;
 Owner.LEASH_ARM_HAND_RADIUS_PX = LEASH_ARM_HAND_RADIUS_PX;
-Owner.LEASH_ARM_BACK_REACH_PX = LEASH_ARM_BACK_REACH_PX;
-Owner.LEASH_ARM_BACK_OUTWARD_RAD = LEASH_ARM_BACK_OUTWARD_RAD;
-Owner.LEASH_ARM_MIN_SCREEN_DROP_PX = LEASH_ARM_MIN_SCREEN_DROP_PX;
-Owner.LEASH_ARM_HIP_DROP_PX = LEASH_ARM_HIP_DROP_PX;
 Owner.LEASH_ARM_SIDE_EXTEND_PX = LEASH_ARM_SIDE_EXTEND_PX;
 Owner.LEASH_ARM_DROP_PX = LEASH_ARM_DROP_PX;
 Owner.WANDER_SPEED = WANDER_SPEED;

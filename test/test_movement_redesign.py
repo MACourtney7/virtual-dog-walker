@@ -1460,6 +1460,9 @@ class TestLeashHandSide(unittest.TestCase):
         dog.preferredSide = 'left'
         dog.sync()
         self.assertEqual(owner.leashHandSide, 'left')
+        dog.preferredSide = 'right'
+        dog.sync()
+        self.assertEqual(owner.leashHandSide, 'right')
         dog.preferredSide = 'left'
         dog.sync()
         self.assertEqual(owner.leashHandSide, 'left')
@@ -2552,7 +2555,7 @@ class TestLeashSagUnderTension(unittest.TestCase):
 
 
 class TestLeashArmPose(unittest.TestCase):
-    """Verify the three leash-arm poses (forward_heel, straight_behind, across_front)."""
+    """Verify the two leash-arm poses (forward_heel and straight_behind)."""
 
     def setUp(self):
         self.src = read("src/entities/owner.js")

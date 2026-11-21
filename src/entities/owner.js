@@ -936,16 +936,6 @@ export class Owner {
       this.walkPhase += dt * cadence;
     }
 
-    // Advance the walk stride cadence using the ACTUAL ground displacement so
-    // the owner's legs walk slowly when held back by a slow dog and stop
-    // pumping when stopped at the leash limit.
-    const actualDist = Math.hypot(this.x - prevX, this.y - prevY);
-    const actualSpeed = dt > 0 ? actualDist / dt : 0;
-    if (actualSpeed > 2) {
-      const cadence = 4.0 + (actualSpeed / 265) * 8.0;
-      this.walkPhase += dt * cadence;
-    }
-
     // Update leash arm pose state (tension + extension) each frame.
     if (this.isLeashed) {
       const dog = this.dog || null;

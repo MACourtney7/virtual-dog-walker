@@ -1460,6 +1460,9 @@ class TestLeashHandSide(unittest.TestCase):
         dog.preferredSide = 'left'
         dog.sync()
         self.assertEqual(owner.leashHandSide, 'left')
+        dog.preferredSide = 'left'
+        dog.sync()
+        self.assertEqual(owner.leashHandSide, 'left')
 
 
 class TestPettingGate(unittest.TestCase):

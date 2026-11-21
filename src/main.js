@@ -45,6 +45,9 @@ export class CliftonDownGame {
     const startY = 1000;
     this.owner = new Owner(startX, startY, 'Walker', true);
     this.dog = new CompanionDog(startX + 40, startY + 20, this.owner, CoatPreset.CHOCOLATE_TAN);
+    // Wire the owner -> dog back-reference so Owner.update() can resolve the
+    // leash dog (taut-limit stop, leash clamping).
+    this.owner.dog = this.dog;
     this.ball = new TennisBall(startX + 20, startY + 20);
     this.ball.inOwnerPossession = true;
 

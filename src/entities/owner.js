@@ -717,28 +717,11 @@ export class Owner {
       return;
     }
 
-    // 0. Leash force-stop: while the dog is pooping on-leash the owner is
-    //    held in place (no movement integration this frame).
+    // 0. Leash state: while the dog is pooping on-leash the owner may still
+    //    walk inside the MAX_LEASH_LENGTH radius. The owner is only stopped
+    //    once the leash goes taut at the limit (handled after integration).
     const leashDog = this.dog || null;
     const leashActive = Boolean(leashDog && leashDog.isOnLeash);
-    if (leashActive && isOwnerFrozen(leashDog)) {
-      this.vx = 0;
-      this.vy = 0;
-      this.isMoving = false;
-      // Even while force-stopped, keep the owner within leash range of the
-      // dog (the dog may have moved away while pooping).
-      const frozenClamped = clampOwnerToLeash(
-        { x: this.x, y: this.y },
-        { x: leashDog.x, y: leashDog.y },
-        MAX_LEASH_LENGTH
-      );
-      if (frozenClamped) {
-        this.x = frozenClamped.x;
-        this.y = frozenClamped.y;
-      }
-      this.depthY = this.y + 12;
-      return;
-    }
 
     // 1. Gait persists autonomously until changed via setGait / stepGait.
     //    (Legacy directional key handling removed in movement redesign.)
@@ -830,6 +813,7 @@ export class Owner {
     // Leash tether: clamp the owner within MAX_LEASH_LENGTH of the dog while
     // on-leash. Off-leash movement bypasses the clamp entirely.
     if (leashActive) {
+      const dist = Math.hypot(this.x - leashDog.x, this.y - leashDog.y);
       const clamped = clampOwnerToLeash(
         { x: this.x, y: this.y },
         { x: leashDog.x, y: leashDog.y },
@@ -838,6 +822,14 @@ export class Owner {
       if (clamped) {
         this.x = clamped.x;
         this.y = clamped.y;
+      }
+      // On-leash pooping: once the owner hits the taut leash limit while the
+      // dog is pooping, force the owner to stop walking.
+      if (leashDog.isPooping && dist >= MAX_LEASH_LENGTH - 1e-3) {
+        this.setGait(Gait.STAND);
+        this.vx = 0;
+        this.vy = 0;
+        this.isMoving = false;
       }
     }
 

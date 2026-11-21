@@ -63,7 +63,7 @@ export const LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = 2;
 // Speed multiplier applied when any need (hunger/grooming/tiredness) is active.
 // Needs never stack multiplicatively: a single 0.4x factor applies regardless
 // of how many needs are active.
-export const NEED_SPEED_MULTIPLIER = 0.4;
+export const NEED_SPEED_MULTIPLIER = 0.15;
 
 // Zoomies path types: the dog can run a figure-eight, orbit the owner, or
 // shuttle back and forth between two points.
@@ -276,6 +276,10 @@ export class CompanionDog {
     this.sprintSpeed = 290; // px/s while fetching or recalling
 
     this.owner = owner;
+    // Wire the back-reference so Owner.update() can resolve the leash dog.
+    if (this.owner) {
+      this.owner.dog = this;
+    }
     this.coat = coat;
     this.collarColor = collarColor;
     this.radius = 14;
@@ -477,14 +481,23 @@ export class CompanionDog {
   // the backing fields. Use the corresponding setters to change them.
 
   get isHungry() {
+    if (this.dogStateStore && typeof this.dogStateStore.isHungry === 'function') {
+      return Boolean(this.dogStateStore.isHungry()) || Boolean(this._isHungry);
+    }
     return Boolean(this._isHungry);
   }
 
   get needsGrooming() {
+    if (this.dogStateStore && typeof this.dogStateStore.needsGrooming === 'function') {
+      return Boolean(this.dogStateStore.needsGrooming()) || Boolean(this._needsGrooming);
+    }
     return Boolean(this._needsGrooming);
   }
 
   get isTired() {
+    if (this.dogStateStore && typeof this.dogStateStore.isTired === 'function') {
+      return Boolean(this.dogStateStore.isTired()) || Boolean(this._isTired);
+    }
     return Boolean(this._isTired);
   }
 
@@ -1370,11 +1383,27 @@ export class CompanionDog {
 
     // Leash constraint & pulling physics: If leashed to owner, hard clamp to max leash length
     if (this.owner && this.owner.isLeashed && this.state !== DogState.FETCHING) {
-      stepLeashConstraint(this, this.owner, 65, 4.0, 5.0, dt);
+      const dogAnchorsLeash = this.isPooping || this.isHungry || this.needsGrooming || this.isTired;
       const maxLeash = MAX_LEASH_LENGTH;
       const dx = this.x - this.owner.x;
       const dy = this.y - this.owner.y;
       const dist = Math.hypot(dx, dy);
+
+      if (dogAnchorsLeash) {
+        // The dog anchors the leash: never pull/teleport the dog toward the
+        // owner. Instead clamp the OWNER within maxLeash of the dog so the
+        // owner cannot drag the slow or pooping dog.
+        if (dist > maxLeash) {
+          const clampedOwner = clampOwnerToLeash(this.owner, this, maxLeash);
+          if (clampedOwner) {
+            this.owner.x = clampedOwner.x;
+            this.owner.y = clampedOwner.y;
+            this.owner.depthY = this.owner.y + 12;
+          }
+        }
+        this.isPullingLeash = false;
+      } else {
+      stepLeashConstraint(this, this.owner, 65, 4.0, 5.0, dt);
 
       // Leash pulling physics
       if (activeBall && activeBall.isThrown) {
@@ -1398,6 +1427,7 @@ export class CompanionDog {
         this.vx *= 0.5;
         this.vy *= 0.5;
         this.isPullingLeash = true;
+      }
       }
     } else if (this.owner && !this.owner.isLeashed) {
       this.isPullingLeash = false;
@@ -1947,7 +1977,7 @@ export class CompanionDog {
     const fwdX = Math.cos(heading);
     const fwdY = Math.sin(heading);
     const proj = (this.x - this.owner.x) * fwdX + (this.y - this.owner.y) * fwdY;
-    if (proj < LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX) {
+    if (proj < LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX && !(this.isHungry || this.needsGrooming || this.isTired)) {
       const push = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX - proj;
       this.x += fwdX * push;
       this.y += fwdY * push;

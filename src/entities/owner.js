@@ -60,6 +60,8 @@ export const LEASH_ARM_BACK_REACH_PX = 14;       // reach when dog is behind
 export const LEASH_ARM_BACK_OUTWARD_RAD = 0.35;  // outward angle from hip when dog is behind
 export const LEASH_ARM_MIN_SCREEN_DROP_PX = 5;   // minimum vertical hang below shoulder (ay) so arm always hangs low
 export const LEASH_ARM_HIP_DROP_PX = 6.5;        // tucked hip pose: hand hangs this far below the shoulder in screen Y
+export const LEASH_ARM_SIDE_EXTEND_PX = 6.5; // horizontal offset from shoulder (keeps hand outside torso)
+export const LEASH_ARM_DROP_PX = 9.5;        // vertical drop below shoulder (matches 12px normal arm length)
 
 function clamp01(v) {
   if (!isFinite(v)) return 0;
@@ -234,11 +236,12 @@ export class Owner {
       const shScreenX = -sideSign * s * shoulderSpan;
       const shScreenY = -7 + (sideSign * c * 0.36 * shoulderSpan);
 
-      const dxW = hasDog ? (dog.x - this.x) : 0;
-      const outwardNudge = (Math.abs(shScreenX) > 2 ? Math.sign(shScreenX) : -sideSign) * 1.5;
-      const dogPullX = Math.max(-3.0, Math.min(3.0, (dxW - shScreenX) * 0.04));
-      const handWorldX = shScreenX + outwardNudge + dogPullX;
-      const handWorldY = shScreenY + LEASH_ARM_HIP_DROP_PX;
+      // Always extend the arm OUTSIDE the torso silhouette so the sleeve is
+      // never hidden inside the blue jacket rectangle (|x| <= 10.5).
+      const baseSign = (s < -0.15 || (Math.abs(s) <= 0.15 && c > 0)) ? -1 : 1;
+      const outSign = sideSign === -1 ? baseSign : -baseSign;
+      const handWorldX = shScreenX + outSign * LEASH_ARM_SIDE_EXTEND_PX;
+      const handWorldY = shScreenY + LEASH_ARM_DROP_PX;
 
       // Back-project (handWorldX, handWorldY) into owner-local (x, y).
       const x = handWorldX * c + handWorldY * s;
@@ -1831,6 +1834,8 @@ Owner.LEASH_ARM_BACK_REACH_PX = LEASH_ARM_BACK_REACH_PX;
 Owner.LEASH_ARM_BACK_OUTWARD_RAD = LEASH_ARM_BACK_OUTWARD_RAD;
 Owner.LEASH_ARM_MIN_SCREEN_DROP_PX = LEASH_ARM_MIN_SCREEN_DROP_PX;
 Owner.LEASH_ARM_HIP_DROP_PX = LEASH_ARM_HIP_DROP_PX;
+Owner.LEASH_ARM_SIDE_EXTEND_PX = LEASH_ARM_SIDE_EXTEND_PX;
+Owner.LEASH_ARM_DROP_PX = LEASH_ARM_DROP_PX;
 Owner.WANDER_SPEED = WANDER_SPEED;
 Owner.WANDER_MAX_TURN_RATE = WANDER_MAX_TURN_RATE;
 Owner.WANDER_DRIFT_AMPLITUDE = WANDER_DRIFT_AMPLITUDE;

@@ -366,9 +366,9 @@ pub fn score_ambient_rest(input: &UtilityInput<'_>) -> f32 {
 }
 
 pub fn score_bark_impulse(input: &UtilityInput<'_>) -> f32 {
-    let ready = finite_or(input.buffer.slots[DOG_BUF_SOCIAL_COOLDOWN], 0.0) <= 0.0
-        || finite_or(input.buffer.slots[DOG_BUF_CMD_BARK], 0.0) > 0.5;
-    if !ready {
+    // Cooldown is authoritative: a bark command cannot bypass it.
+    let cooldown = finite_or(input.buffer.slots[DOG_BUF_SOCIAL_COOLDOWN], 0.0);
+    if cooldown > 0.0 {
         return 0.0;
     }
     let stubbornness = unit(input.traits.stubbornness);
@@ -809,11 +809,11 @@ fn zoomie_path_for(active_utility_id: u32, input: &UtilityInput<'_>) -> ZoomiePa
 }
 
 pub fn select_zoomie_path(input: &UtilityInput<'_>) -> ZoomiePathId {
-    let stored = active_utility_from_buffer(input.buffer);
-    let (best, _) = select_best_utility(input);
-    let active = match stored {
+    // Contract: only the stored active utility id is authoritative here. We do
+    // not fall back to `select_best_utility`, so a non-zoomie (or invalid)
+    // stored id always yields `ZoomiePathId::None`.
+    let active = match active_utility_from_buffer(input.buffer) {
         Some(id) if id == UTIL_ZOOMIES => UTIL_ZOOMIES,
-        _ if best == UTIL_ZOOMIES => UTIL_ZOOMIES,
         _ => u32::MAX,
     };
     zoomie_path_for(active, input)
@@ -933,8 +933,8 @@ pub fn integrate_micro_expressions(
 
     let nearest_scent_dist = nearest_scent_distance(buffer, px, py).unwrap_or(f32::INFINITY);
 
-    let bark_ready = finite_or(buffer.slots[DOG_BUF_SOCIAL_COOLDOWN], 0.0) <= 0.0
-        || finite_or(buffer.slots[DOG_BUF_CMD_BARK], 0.0) > 0.5;
+    // Cooldown is authoritative: a bark command cannot bypass it.
+    let bark_ready = finite_or(buffer.slots[DOG_BUF_SOCIAL_COOLDOWN], 0.0) <= 0.0;
 
     let mut events = 0u32;
 
@@ -944,7 +944,10 @@ pub fn integrate_micro_expressions(
     if wrapped && matches!(gait, GaitModeId::Gallop) {
         events |= DOG_EVENT_GALLOP_PUFF;
     }
-    if nose_twitch > 0.8 && nearest_scent_dist <= 16.0 {
+    // `DOG_BUF_SCENT0..3` slots represent both scents and sticks. The nose
+    // twitch max is exactly 0.8 (0.1 + 0.5*1.0 + 0.2*1.0), so use `>=` to keep
+    // this event reachable at full curiosity/energy.
+    if nose_twitch >= 0.8 && nearest_scent_dist <= 16.0 {
         events |= DOG_EVENT_SCENT_DEPOSITED;
     }
     if score_recall(input) > 0.7 && score_ambient_rest(input) > 0.5 {
@@ -1784,6 +1787,103 @@ mod tests {
         };
         let events = integrate_micro_expressions(&mut buffer, &input, 0.016);
         assert_ne!(events & DOG_EVENT_BARK_TRIGGERED, 0);
+    }
+
+    #[test]
+    fn bark_event_blocked_by_cooldown_even_with_command() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_TRAIT_STUBBORNNESS] = 1.0;
+        buffer.slots[DOG_BUF_BALL_ACTIVE] = 1.0;
+        buffer.slots[DOG_BUF_BALL_X] = 0.0;
+        buffer.slots[DOG_BUF_BALL_Y] = 0.0;
+        buffer.slots[DOG_BUF_CMD_BARK] = 1.0;
+        buffer.slots[DOG_BUF_SOCIAL_COOLDOWN] = 1.0;
+        buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = UTIL_BARK_IMPULSE as f32;
+
+        let snap = snapshot(&buffer);
+        let traits = PersonalityTraits {
+            stubbornness: 1.0,
+            ..base_traits()
+        };
+        let input = UtilityInput {
+            buffer: &snap,
+            combo: blank_combo(),
+            traits,
+            obstacles: &obstacles,
+        };
+
+        assert_eq!(score_bark_impulse(&input), 0.0);
+        let events = integrate_micro_expressions(&mut buffer, &input, 0.016);
+        assert_eq!(events & DOG_EVENT_BARK_TRIGGERED, 0);
+    }
+
+    #[test]
+    fn select_zoomie_path_ignores_best_utility_fallback() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        // Stored id is non-zoomie even though traits would make zoomies win.
+        buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = UTIL_HEEL_FOLLOW as f32;
+        buffer.slots[DOG_BUF_TRAIT_ENERGY] = 1.0;
+        buffer.slots[DOG_BUF_CAM_ACTIVE] = 1.0;
+        buffer.slots[DOG_BUF_CAM_LEFT] = 0.0;
+        buffer.slots[DOG_BUF_CAM_TOP] = 0.0;
+        buffer.slots[DOG_BUF_CAM_RIGHT] = 1920.0;
+        buffer.slots[DOG_BUF_CAM_BOTTOM] = 1080.0;
+
+        let traits = PersonalityTraits {
+            energy: 1.0,
+            ..base_traits()
+        };
+        let input = UtilityInput {
+            buffer: &buffer,
+            combo: blank_combo(),
+            traits,
+            obstacles: &obstacles,
+        };
+
+        let (best, _) = select_best_utility(&input);
+        assert_eq!(best, UTIL_ZOOMIES);
+        assert_eq!(select_zoomie_path(&input), ZoomiePathId::None);
+
+        // Invalid stored id also yields None.
+        buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = -1.0;
+        let input = UtilityInput {
+            buffer: &buffer,
+            combo: blank_combo(),
+            traits,
+            obstacles: &obstacles,
+        };
+        assert_eq!(select_zoomie_path(&input), ZoomiePathId::None);
+    }
+
+    #[test]
+    fn scent_deposited_fires_at_max_nose_twitch() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_SCENT_COUNT] = 1.0;
+        buffer.slots[DOG_BUF_SCENT0_X] = 10.0;
+        buffer.slots[DOG_BUF_SCENT0_Y] = 0.0;
+        buffer.slots[DOG_BUF_TRAIT_CURIOSITY] = 1.0;
+        buffer.slots[DOG_BUF_TRAIT_ENERGY] = 1.0;
+        // Pick a `now` where the nose oscillator is at its peak (sin == 1).
+        buffer.slots[DOG_BUF_NOW_SEC] = core::f32::consts::FRAC_PI_2 / 4.0;
+
+        let snap = snapshot(&buffer);
+        let traits = PersonalityTraits {
+            curiosity: 1.0,
+            energy: 1.0,
+            ..base_traits()
+        };
+        let input = UtilityInput {
+            buffer: &snap,
+            combo: blank_combo(),
+            traits,
+            obstacles: &obstacles,
+        };
+        let events = integrate_micro_expressions(&mut buffer, &input, 0.016);
+        assert!(buffer.slots[DOG_BUF_NOSE_TWITCH] >= 0.8);
+        assert_ne!(events & DOG_EVENT_SCENT_DEPOSITED, 0);
     }
 
     #[test]

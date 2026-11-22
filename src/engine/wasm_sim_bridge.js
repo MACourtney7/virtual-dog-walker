@@ -8,6 +8,25 @@ let simWorldHeight = 2400.0;
 // True once the exact field obstacle set has been uploaded to the Wasm sim (see syncWorldObstacles).
 let worldObstaclesReady = false;
 
+// --- Zero-copy step bridge state -------------------------------------------------------------
+// Raw Wasm linear memory (from initSync / default()), used to build the Float32Array view.
+let wasmMemory = null;
+// Cached Float32Array view over the 128-slot dog buffer (recreated only on memory growth).
+let dogBufferView = null;
+// The buffer pointer the cached view was created from (0 = not yet resolved).
+let dogBufferPtr = 0;
+// Number of Float32 slots in the dog buffer contract.
+const DOG_BUFFER_SLOTS = 128;
+// Pending command flags (cleared only after a successful step_dog_buffer()).
+const pendingCommands = {
+  whistleRecall: false,
+  pet: false,
+  praise: false,
+  bark: false,
+  triggerZoomies: false,
+  fetchBall: false
+};
+
 export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0) {
   simWorldWidth = worldWidth;
   simWorldHeight = worldHeight;
@@ -19,7 +38,10 @@ export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0) {
       if (typeof window !== 'undefined') {
         const mod = await import('../wasm_core/dog_walker_core.js');
         if (typeof mod.default === 'function') {
-          await mod.default();
+          const initResult = await mod.default();
+          if (initResult && initResult.memory) {
+            wasmMemory = initResult.memory;
+          }
         }
         if (typeof mod.WasmWorldSim === 'function') {
           wasmSimInstance = new mod.WasmWorldSim(worldWidth, worldHeight);
@@ -38,6 +60,228 @@ export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0) {
 
 export function getWasmSim() {
   return wasmSimInstance;
+}
+
+function isNodeRuntime() {
+  return typeof process !== 'undefined' && !!process.versions && !!process.versions.node;
+}
+
+/**
+ * Synchronously initializes the Wasm core in Node.js. Locates the .wasm file relative to this
+ * module (never the process cwd), reads it with fs.readFileSync, and calls initSync(bytes).
+ * Returns the cached WasmWorldSim singleton. Throws an actionable error on failure.
+ */
+export function initWasmSimSync(worldWidth = 3200.0, worldHeight = 2400.0) {
+  simWorldWidth = worldWidth;
+  simWorldHeight = worldHeight;
+  if (wasmSimInstance) return wasmSimInstance;
+  if (!isNodeRuntime()) {
+    throw new Error('initWasmSimSync is only supported in Node.js; use initWasmSim() in the browser.');
+  }
+
+  // Resolve the wasm path relative to this module, not the process cwd.
+  const { fileURLToPath } = require('node:url');
+  const fs = require('node:fs');
+  const path = require('node:path');
+  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  const wasmPath = path.resolve(moduleDir, '..', 'wasm_core', 'dog_walker_core_bg.wasm');
+
+  let wasmBytes;
+  try {
+    wasmBytes = fs.readFileSync(wasmPath);
+  } catch (e) {
+    throw new Error(`dog_walker_core wasm init failed: ${wasmPath}`);
+  }
+
+  let mod;
+  try {
+    mod = require('../wasm_core/dog_walker_core.js');
+  } catch (e) {
+    throw new Error(`dog_walker_core wasm init failed: ${wasmPath}`);
+  }
+
+  try {
+    const initResult = mod.initSync(wasmBytes);
+    if (initResult && initResult.memory) {
+      wasmMemory = initResult.memory;
+    }
+    wasmSimInstance = new mod.WasmWorldSim(worldWidth, worldHeight);
+  } catch (e) {
+    throw new Error(`dog_walker_core wasm init failed: ${wasmPath}`);
+  }
+
+  console.log('[WasmSimBridge] Core simulation engine initialized synchronously (Rust/Wasm).');
+  return wasmSimInstance;
+}
+
+/**
+ * Returns the cached 128-slot Float32Array view over the dog buffer, recreating it only when the
+ * underlying Wasm memory has grown (buffer identity changed). Throws on invalid pointer/length.
+ */
+function getDogBufferView() {
+  if (!wasmSimInstance || typeof wasmSimInstance.dog_buffer_ptr !== 'function') {
+    throw new Error('Wasm sim not initialized');
+  }
+  if (!wasmMemory) {
+    throw new Error('Wasm sim not initialized');
+  }
+  const ptr = wasmSimInstance.dog_buffer_ptr();
+  if (!ptr) {
+    throw new Error('Wasm dog buffer pointer is 0');
+  }
+  if (dogBufferView && dogBufferView.buffer === wasmMemory.buffer && dogBufferPtr === ptr) {
+    return dogBufferView;
+  }
+  const view = new Float32Array(wasmMemory.buffer, ptr, DOG_BUFFER_SLOTS);
+  if (view.length !== DOG_BUFFER_SLOTS) {
+    throw new Error(`Wasm dog buffer view length ${view.length} !== ${DOG_BUFFER_SLOTS}`);
+  }
+  dogBufferView = view;
+  dogBufferPtr = ptr;
+  return dogBufferView;
+}
+
+function normalizeTrait(v) {
+  const n = (Number(v) - 1) / 4;
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
+
+function writePoint(buf, base, x, y) {
+  buf[base] = Number.isFinite(x) ? x : NaN;
+  buf[base + 1] = Number.isFinite(y) ? y : NaN;
+}
+
+/**
+ * Steps the companion dog through the Wasm authority buffer. Writes inputs [0..63], calls
+ * step_dog_buffer(), hydrates outputs [64..127] onto `dog`, and returns the event bitmask.
+ */
+export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs) {
+  if (!wasmSimInstance) {
+    throw new Error('Wasm sim not initialized');
+  }
+  const buf = getDogBufferView();
+
+  const owner = dog && dog.owner ? dog.owner : null;
+  const nowSec = (typeof performance !== 'undefined' && performance.now)
+    ? performance.now() / 1000
+    : Date.now() / 1000;
+
+  // Inputs [0..63]
+  buf[0] = dt;
+  buf[1] = nowSec;
+  buf[2] = owner && Number.isFinite(owner.x) ? owner.x : 0;
+  buf[3] = owner && Number.isFinite(owner.y) ? owner.y : 0;
+  buf[4] = owner && Number.isFinite(owner.vx) ? owner.vx : 0;
+  buf[5] = owner && Number.isFinite(owner.vy) ? owner.vy : 0;
+  buf[6] = owner && Number.isFinite(owner.heading) ? owner.heading : 0;
+  buf[7] = owner && Number.isFinite(owner.halfWidth) ? owner.halfWidth : 0;
+  buf[8] = owner && Number.isFinite(owner.gaitId) ? owner.gaitId : 0;
+  buf[9] = owner && owner.isMoving ? 1 : 0;
+  buf[10] = dog && dog.isOnLeash ? 1 : 0;
+  buf[11] = (dog && dog.preferredSide === 'right') ? 1 : -1;
+  buf[12] = dog && dog.isHungry ? 1 : 0;
+  buf[13] = dog && dog.needsGrooming ? 1 : 0;
+  buf[14] = dog && dog.isTired ? 1 : 0;
+  buf[15] = activeBall && activeBall.active ? 1 : 0;
+  buf[16] = activeBall && activeBall.isThrown ? 1 : 0;
+  buf[17] = activeBall && Number.isFinite(activeBall.x) ? activeBall.x : 0;
+  buf[18] = activeBall && Number.isFinite(activeBall.y) ? activeBall.y : 0;
+  const cam = field && field.camera ? field.camera : null;
+  buf[19] = cam && cam.active ? 1 : 0;
+  buf[20] = cam && Number.isFinite(cam.left) ? cam.left : 0;
+  buf[21] = cam && Number.isFinite(cam.top) ? cam.top : 0;
+  buf[22] = cam && Number.isFinite(cam.right) ? cam.right : 0;
+  buf[23] = cam && Number.isFinite(cam.bottom) ? cam.bottom : 0;
+  buf[24] = field && field.zoneIsSunny ? 1 : 0;
+  const traits = (dog && dog.traits) ? dog.traits : {};
+  buf[25] = normalizeTrait(traits.curiosity);
+  buf[26] = normalizeTrait(traits.energy);
+  buf[27] = normalizeTrait(traits.stubbornness);
+  buf[28] = normalizeTrait(traits.loyalty);
+  buf[29] = pendingCommands.whistleRecall ? 1 : 0;
+  buf[30] = pendingCommands.pet ? 1 : 0;
+  buf[31] = pendingCommands.praise ? 1 : 0;
+  buf[32] = pendingCommands.bark ? 1 : 0;
+  buf[33] = pendingCommands.triggerZoomies ? 1 : 0;
+  buf[34] = pendingCommands.fetchBall ? 1 : 0;
+
+  // Peers [38..45], NPCs [46..53], scents [54..61]
+  const peers = Array.isArray(otherDogs) ? otherDogs : [];
+  const peerCount = Math.min(4, peers.length);
+  buf[35] = peerCount;
+  for (let i = 0; i < 4; i++) {
+    const p = i < peerCount ? peers[i] : null;
+    writePoint(buf, 38 + i * 2, p ? p.x : NaN, p ? p.y : NaN);
+  }
+
+  const npcList = Array.isArray(npcs) ? npcs : [];
+  const npcCount = Math.min(4, npcList.length);
+  buf[36] = npcCount;
+  for (let i = 0; i < 4; i++) {
+    const n = i < npcCount ? npcList[i] : null;
+    writePoint(buf, 46 + i * 2, n ? n.x : NaN, n ? n.y : NaN);
+  }
+
+  const scents = (dog && Array.isArray(dog.scents)) ? dog.scents : [];
+  const scentCount = Math.min(4, scents.length);
+  buf[37] = scentCount;
+  for (let i = 0; i < 4; i++) {
+    const s = i < scentCount ? scents[i] : null;
+    writePoint(buf, 54 + i * 2, s ? s.x : NaN, s ? s.y : NaN);
+  }
+
+  // Step the authoritative simulation.
+  wasmSimInstance.step_dog_buffer();
+
+  // Clear pending commands only after a successful step.
+  pendingCommands.whistleRecall = false;
+  pendingCommands.pet = false;
+  pendingCommands.praise = false;
+  pendingCommands.bark = false;
+  pendingCommands.triggerZoomies = false;
+  pendingCommands.fetchBall = false;
+
+  // Outputs [64..127]
+  dog.x = buf[64];
+  dog.y = buf[65];
+  dog.vx = buf[66];
+  dog.vy = buf[67];
+  dog.angle = buf[68];
+  dog.state = buf[69];
+  dog.roamSubMode = buf[70];
+  dog.zoomiesPath = buf[71];
+
+  dog.leftEar = dog.leftEar || {};
+  dog.leftEar.angle = buf[108];
+  dog.leftEar.vel = buf[109];
+  dog.rightEar = dog.rightEar || {};
+  dog.rightEar.angle = buf[110];
+  dog.rightEar.vel = buf[111];
+  dog.wagSpeed = buf[112];
+  dog.tailAngle = buf[113];
+  dog.noseTwitch = buf[114];
+  dog.targetSlot = { x: buf[115], y: buf[116] };
+
+  const leashFlags = buf[117] | 0;
+  dog.isPullingLeash = (leashFlags & 1) !== 0;
+  dog.leashTension = buf[118];
+  dog.leashSagPx = buf[119];
+  dog.leashVibrationPx = buf[120];
+  dog.ownerClampedX = buf[121];
+  dog.ownerClampedY = buf[122];
+  const ownerFlags = buf[123] | 0;
+  dog.ownerWasClamped = (ownerFlags & 1) !== 0;
+  dog.ownerFrozen = (ownerFlags & 2) !== 0;
+
+  return buf[127] | 0;
+}
+
+/** Queues a pending command flag to be consumed on the next stepCompanionDogWasm() call. */
+export function queueDogCommand(name) {
+  if (name in pendingCommands) {
+    pendingCommands[name] = true;
+  }
 }
 
 export function stepEarSprings(leftEar, rightEar, dogVx, dogVy, dogAngle, dt) {

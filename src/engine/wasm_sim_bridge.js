@@ -1,6 +1,8 @@
 // src/engine/wasm_sim_bridge.js
 // Strangler-Fig Simulation Bridge: Rust/Wasm accelerated simulation with transparent JS fallback.
 
+import initWasmDefault, { initSync, WasmWorldSim } from '../wasm_core/dog_walker_core.js';
+
 let wasmSimInstance = null;
 let initPromise = null;
 let simWorldWidth = 3200.0;
@@ -17,15 +19,6 @@ let dogBufferView = null;
 let dogBufferPtr = 0;
 // Number of Float32 slots in the dog buffer contract.
 const DOG_BUFFER_SLOTS = 128;
-// Pending command flags (cleared only after a successful step_dog_buffer()).
-const pendingCommands = {
-  whistleRecall: false,
-  pet: false,
-  praise: false,
-  bark: false,
-  triggerZoomies: false,
-  fetchBall: false
-};
 
 export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0) {
   simWorldWidth = worldWidth;
@@ -36,15 +29,14 @@ export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0) {
   initPromise = (async () => {
     try {
       if (typeof window !== 'undefined') {
-        const mod = await import('../wasm_core/dog_walker_core.js');
-        if (typeof mod.default === 'function') {
-          const initResult = await mod.default();
+        if (typeof initWasmDefault === 'function') {
+          const initResult = await initWasmDefault();
           if (initResult && initResult.memory) {
             wasmMemory = initResult.memory;
           }
         }
-        if (typeof mod.WasmWorldSim === 'function') {
-          wasmSimInstance = new mod.WasmWorldSim(worldWidth, worldHeight);
+        if (typeof WasmWorldSim === 'function') {
+          wasmSimInstance = new WasmWorldSim(worldWidth, worldHeight);
           console.log('[WasmSimBridge] Core simulation engine initialized (Rust/Wasm).');
           return wasmSimInstance;
         }
@@ -80,10 +72,21 @@ export function initWasmSimSync(worldWidth = 3200.0, worldHeight = 2400.0) {
   }
 
   // Resolve the wasm path relative to this module, not the process cwd.
-  const { fileURLToPath } = require('node:url');
-  const fs = require('node:fs');
-  const path = require('node:path');
-  const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+  // Node built-ins are loaded via process.getBuiltinModule() so browser bundlers never see
+  // static `node:` imports and no `require()` is needed in this ESM module.
+  const getBuiltin = (typeof process !== 'undefined' && typeof process.getBuiltinModule === 'function')
+    ? process.getBuiltinModule.bind(process)
+    : null;
+  if (!getBuiltin) {
+    throw new Error('initWasmSimSync requires Node.js >= 22.3 (process.getBuiltinModule is unavailable).');
+  }
+  const urlMod = getBuiltin('node:url');
+  const fs = getBuiltin('node:fs');
+  const path = getBuiltin('node:path');
+  if (!urlMod || !fs || !path) {
+    throw new Error('initWasmSimSync failed to load Node.js built-in modules (node:url, node:fs, node:path).');
+  }
+  const moduleDir = path.dirname(urlMod.fileURLToPath(import.meta.url));
   const wasmPath = path.resolve(moduleDir, '..', 'wasm_core', 'dog_walker_core_bg.wasm');
 
   let wasmBytes;
@@ -93,19 +96,12 @@ export function initWasmSimSync(worldWidth = 3200.0, worldHeight = 2400.0) {
     throw new Error(`dog_walker_core wasm init failed: ${wasmPath}`);
   }
 
-  let mod;
   try {
-    mod = require('../wasm_core/dog_walker_core.js');
-  } catch (e) {
-    throw new Error(`dog_walker_core wasm init failed: ${wasmPath}`);
-  }
-
-  try {
-    const initResult = mod.initSync(wasmBytes);
+    const initResult = initSync(wasmBytes);
     if (initResult && initResult.memory) {
       wasmMemory = initResult.memory;
     }
-    wasmSimInstance = new mod.WasmWorldSim(worldWidth, worldHeight);
+    wasmSimInstance = new WasmWorldSim(worldWidth, worldHeight);
   } catch (e) {
     throw new Error(`dog_walker_core wasm init failed: ${wasmPath}`);
   }
@@ -163,9 +159,11 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   const buf = getDogBufferView();
 
   const owner = dog && dog.owner ? dog.owner : null;
-  const nowSec = (typeof performance !== 'undefined' && performance.now)
-    ? performance.now() / 1000
-    : Date.now() / 1000;
+  const nowSec = (dog && dog.nowSec != null)
+    ? dog.nowSec
+    : ((typeof performance !== 'undefined' && performance.now)
+      ? performance.now() / 1000
+      : Date.now() / 1000);
 
   // Inputs [0..63]
   buf[0] = dt;
@@ -176,35 +174,45 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   buf[5] = owner && Number.isFinite(owner.vy) ? owner.vy : 0;
   buf[6] = owner && Number.isFinite(owner.heading) ? owner.heading : 0;
   buf[7] = owner && Number.isFinite(owner.halfWidth) ? owner.halfWidth : 0;
-  buf[8] = owner && Number.isFinite(owner.gaitId) ? owner.gaitId : 0;
+  const ownerGait = owner ? (owner.gait ?? owner.gaitId) : 0;
+  buf[8] = Number.isFinite(ownerGait) ? ownerGait : 0;
   buf[9] = owner && owner.isMoving ? 1 : 0;
   buf[10] = dog && dog.isOnLeash ? 1 : 0;
   buf[11] = (dog && dog.preferredSide === 'right') ? 1 : -1;
-  buf[12] = dog && dog.isHungry ? 1 : 0;
-  buf[13] = dog && dog.needsGrooming ? 1 : 0;
-  buf[14] = dog && dog.isTired ? 1 : 0;
-  buf[15] = activeBall && activeBall.active ? 1 : 0;
-  buf[16] = activeBall && activeBall.isThrown ? 1 : 0;
-  buf[17] = activeBall && Number.isFinite(activeBall.x) ? activeBall.x : 0;
-  buf[18] = activeBall && Number.isFinite(activeBall.y) ? activeBall.y : 0;
-  const cam = field && field.camera ? field.camera : null;
+  const store = (dog && dog.dogStateStore) ? dog.dogStateStore : null;
+  const isHungry = store && store.isHungry != null ? store.isHungry : (dog && dog.isHungry);
+  const needsGrooming = store && store.needsGrooming != null ? store.needsGrooming : (dog && dog.needsGrooming);
+  const isTired = store && store.isTired != null ? store.isTired : (dog && dog.isTired);
+  buf[12] = isHungry ? 1 : 0;
+  buf[13] = needsGrooming ? 1 : 0;
+  buf[14] = isTired ? 1 : 0;
+  const ball = (activeBall != null) ? activeBall : (dog && dog.activeBall ? dog.activeBall : null);
+  buf[15] = ball && ball.active ? 1 : 0;
+  buf[16] = ball && ball.isThrown ? 1 : 0;
+  buf[17] = ball && Number.isFinite(ball.x) ? ball.x : 0;
+  buf[18] = ball && Number.isFinite(ball.y) ? ball.y : 0;
+  const cam = (field && field.camera) ? field.camera : ((dog && dog.camera) ? dog.camera : null);
   buf[19] = cam && cam.active ? 1 : 0;
   buf[20] = cam && Number.isFinite(cam.left) ? cam.left : 0;
   buf[21] = cam && Number.isFinite(cam.top) ? cam.top : 0;
   buf[22] = cam && Number.isFinite(cam.right) ? cam.right : 0;
   buf[23] = cam && Number.isFinite(cam.bottom) ? cam.bottom : 0;
-  buf[24] = field && field.zoneIsSunny ? 1 : 0;
-  const traits = (dog && dog.traits) ? dog.traits : {};
-  buf[25] = normalizeTrait(traits.curiosity);
-  buf[26] = normalizeTrait(traits.energy);
-  buf[27] = normalizeTrait(traits.stubbornness);
-  buf[28] = normalizeTrait(traits.loyalty);
-  buf[29] = pendingCommands.whistleRecall ? 1 : 0;
-  buf[30] = pendingCommands.pet ? 1 : 0;
-  buf[31] = pendingCommands.praise ? 1 : 0;
-  buf[32] = pendingCommands.bark ? 1 : 0;
-  buf[33] = pendingCommands.triggerZoomies ? 1 : 0;
-  buf[34] = pendingCommands.fetchBall ? 1 : 0;
+  const isSunny = field
+    ? (field.isSunny ?? field.zoneConfig?.sunny ?? field.zoneIsSunny)
+    : false;
+  buf[24] = isSunny ? 1 : 0;
+  const personality = (dog && dog.personality) ? dog.personality : {};
+  buf[25] = normalizeTrait(personality.curiosity ?? 3);
+  buf[26] = normalizeTrait(personality.energy ?? 3);
+  buf[27] = normalizeTrait(personality.stubbornness ?? 2);
+  buf[28] = normalizeTrait(personality.loyalty ?? 4);
+  const cmds = (dog && dog.pendingCommands) ? dog.pendingCommands : null;
+  buf[29] = cmds && cmds.whistleRecall ? 1 : 0;
+  buf[30] = cmds && cmds.pet ? 1 : 0;
+  buf[31] = cmds && cmds.praise ? 1 : 0;
+  buf[32] = cmds && cmds.bark ? 1 : 0;
+  buf[33] = cmds && cmds.triggerZoomies ? 1 : 0;
+  buf[34] = cmds && cmds.fetchBall ? 1 : 0;
 
   // Peers [38..45], NPCs [46..53], scents [54..61]
   const peers = Array.isArray(otherDogs) ? otherDogs : [];
@@ -235,12 +243,14 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   wasmSimInstance.step_dog_buffer();
 
   // Clear pending commands only after a successful step.
-  pendingCommands.whistleRecall = false;
-  pendingCommands.pet = false;
-  pendingCommands.praise = false;
-  pendingCommands.bark = false;
-  pendingCommands.triggerZoomies = false;
-  pendingCommands.fetchBall = false;
+  if (cmds) {
+    cmds.whistleRecall = false;
+    cmds.pet = false;
+    cmds.praise = false;
+    cmds.bark = false;
+    cmds.triggerZoomies = false;
+    cmds.fetchBall = false;
+  }
 
   // Outputs [64..127]
   dog.x = buf[64];
@@ -251,6 +261,8 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   dog.state = buf[69];
   dog.roamSubMode = buf[70];
   dog.zoomiesPath = buf[71];
+  dog.gaitMode = buf[72];
+  dog.gaitPhase = buf[73];
 
   dog.leftEar = dog.leftEar || {};
   dog.leftEar.angle = buf[108];
@@ -275,13 +287,6 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   dog.ownerFrozen = (ownerFlags & 2) !== 0;
 
   return buf[127] | 0;
-}
-
-/** Queues a pending command flag to be consumed on the next stepCompanionDogWasm() call. */
-export function queueDogCommand(name) {
-  if (name in pendingCommands) {
-    pendingCommands[name] = true;
-  }
 }
 
 export function stepEarSprings(leftEar, rightEar, dogVx, dogVy, dogAngle, dt) {

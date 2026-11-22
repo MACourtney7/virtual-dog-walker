@@ -1,6 +1,7 @@
 // Companion Dog Entity - Canine Steering AI, Floppy Ear Springs, Leash Mechanics & Ball Fetching
 import { PoopPile } from './waste.js';
 import { stepCompanionDogWasm, getWasmSim } from '../engine/wasm_sim_bridge.js';
+import { MAX_LEASH_LENGTH } from '../world/leash.js';
 
 export const DogState = {
   FOLLOWING: 'FOLLOWING',
@@ -2036,14 +2037,16 @@ export class CompanionDog {
 
     // Minimal sag (<= 2px and <= 3% of leash length) so the lead reads as taut.
     // Under high tension / pulling the lead must stay taut: never increase sag.
+    // The shared MAX_LEASH_LENGTH constant bounds the rendered lead length.
     const sagCap = Math.min(2.0, leashLen * 0.03);
     const sag = Math.min(sagCap, this.leashSagPx || 0);
+    const clampedLeashLen = Math.min(leashLen, MAX_LEASH_LENGTH);
 
     ctx.strokeStyle = '#dc2626'; // Vivid crimson red nylon
     ctx.lineWidth = this.isPullingLeash ? 2.6 : 2.2;
     ctx.beginPath();
     ctx.moveTo(handX, handY);
-    ctx.lineTo(collarX, collarY);
+    ctx.lineTo(handX + ux * clampedLeashLen, handY + uy * clampedLeashLen);
     ctx.stroke();
     ctx.restore();
   }

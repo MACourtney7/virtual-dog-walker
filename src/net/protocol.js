@@ -16,6 +16,13 @@ export function validatePersonality(personality) {
   if (personality === null || typeof personality !== 'object' || Array.isArray(personality)) {
     throw new Error('invalid personality: expected a plain object');
   }
+  const proto = Object.getPrototypeOf(personality);
+  if (proto !== Object.prototype && proto !== null) {
+    throw new Error('invalid personality: expected plain object');
+  }
+  if (Object.getOwnPropertyNames(personality).length !== 4 || Object.getOwnPropertySymbols(personality).length !== 0) {
+    throw new Error('invalid personality: expected exactly 4 keys');
+  }
   const keys = Object.keys(personality);
   for (const key of keys) {
     if (!PERSONALITY_KEYS.includes(key)) {
@@ -62,12 +69,12 @@ export class Protocol {
     const extraMeta = (meta && typeof meta === 'object') ? meta : {};
     // Honor an explicitly provided dogName verbatim (including the empty string).
     // Only fall back to the default 'Ziggy' when no dogName key is supplied at all.
-    const resolvedDogName = (typeof meta.dogName === 'string')
-      ? meta.dogName
+    const resolvedDogName = (typeof extraMeta.dogName === 'string')
+      ? extraMeta.dogName
       : 'Ziggy';
     // Honor an explicit hasDog boolean; otherwise derive it from the dog name/coat.
-    const resolvedHasDog = (typeof meta.hasDog === 'boolean')
-      ? meta.hasDog
+    const resolvedHasDog = (typeof extraMeta.hasDog === 'boolean')
+      ? extraMeta.hasDog
       : ((typeof resolvedDogName === 'string' && resolvedDogName.length > 0) || Boolean(dogCoatName));
     const personality = (extraMeta.personality === undefined)
       ? DEFAULT_PERSONALITY

@@ -1,6 +1,6 @@
 // Companion Dog Entity - Canine Steering AI, Floppy Ear Springs, Leash Mechanics & Ball Fetching
 import { PoopPile } from './waste.js';
-import { stepLeashConstraint, resolveFieldCollision, stepEarSpringsToTargets } from '../engine/wasm_sim_bridge.js';
+import { stepLeashConstraint, resolveFieldCollision, stepEarSpringsToTargets, stepCompanionDogWasm } from '../engine/wasm_sim_bridge.js';
 import { MAX_LEASH_LENGTH, clampOwnerToLeash } from '../world/leash.js';
 
 export const DogState = {
@@ -64,6 +64,27 @@ export const LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX = 2;
 // Needs never stack multiplicatively: a single 0.15x factor applies regardless
 // of how many needs are active.
 export const NEED_SPEED_MULTIPLIER = 0.15;
+
+// Event bitmask flags emitted by the Wasm companion-dog simulation step.
+// Each bit corresponds to a discrete side-effect the JS layer must execute.
+export const DogEventBit = {
+  POOP_DROPPED: 1 << 0,
+  BARK_TRIGGERED: 1 << 1,
+  GALLOP_PUFF: 1 << 2,
+  SCENT_DEPOSITED: 1 << 3,
+  WHINE_AUDIO: 1 << 4,
+  PANT_AUDIO: 1 << 5,
+  SNIFF_AUDIO: 1 << 6,
+  BALL_GRABBED: 1 << 7,
+  BALL_HANDOFF: 1 << 8,
+  STICK_PICKED_UP: 1 << 9,
+  STRAY_TRIGGERED: 1 << 10,
+  STRAY_RESOLVED: 1 << 11,
+  HEARTS_SPAWNED: 1 << 12
+};
+
+// Compatibility constant for care/rejection animation timing.
+export const REJECTION_ANIM_MS = 500;
 
 // Zoomies path types: the dog can run a figure-eight, orbit the owner, or
 // shuttle back and forth between two points.
@@ -285,12 +306,12 @@ export class CompanionDog {
     this.radius = 14;
     this.depthY = this.y + 6;
 
-    // Canine Personality Model (1-5 scale)
+    // Canine Personality Model (1-5 scale, canonical traits)
     this.personality = {
-      playfulness: 3,
-      shyness: 2,
-      barkyness: 2,
-      obedience: 4,
+      curiosity: 3,
+      energy: 3,
+      stubbornness: 2,
+      loyalty: 4,
       ...(personality || {})
     };
     this.setPersonality(this.personality);
@@ -650,21 +671,21 @@ export class CompanionDog {
       return Math.max(1, Math.min(5, Math.round(num)));
     };
 
-    if (p.playfulness !== undefined) {
-      this.personality.playfulness = clampTrait(p.playfulness, this.personality.playfulness || 3);
+    if (p.curiosity !== undefined) {
+      this.personality.curiosity = clampTrait(p.curiosity, this.personality.curiosity || 3);
     }
-    if (p.shyness !== undefined) {
-      this.personality.shyness = clampTrait(p.shyness, this.personality.shyness || 2);
+    if (p.energy !== undefined) {
+      this.personality.energy = clampTrait(p.energy, this.personality.energy || 3);
     }
-    if (p.barkyness !== undefined) {
-      this.personality.barkyness = clampTrait(p.barkyness, this.personality.barkyness || 2);
+    if (p.stubbornness !== undefined) {
+      this.personality.stubbornness = clampTrait(p.stubbornness, this.personality.stubbornness || 2);
     }
-    if (p.obedience !== undefined) {
-      this.personality.obedience = clampTrait(p.obedience, this.personality.obedience || 4);
+    if (p.loyalty !== undefined) {
+      this.personality.loyalty = clampTrait(p.loyalty, this.personality.loyalty || 4);
     }
 
     // Increases enthusiasm and speed during ball fetch sprint
-    this.sprintSpeed = 260 + this.personality.playfulness * 15;
+    this.sprintSpeed = 260 + this.personality.energy * 15;
   }
 
   setChat(text, duration = 3.5) {
@@ -1018,14 +1039,171 @@ export class CompanionDog {
   }
 
   update(dt, field, otherDogs = [], activeBall = null, npcs = []) {
-    const isLeashed = Boolean(this.owner && this.owner.isLeashed);
-    const nearbyNPCs = npcs || [];
-    this.checkNPCInteractions(nearbyNPCs);
-
     // Sync current zone reference for sunny-zone rolling evaluation
     if (field && field.zoneConfig) {
       this.currentZone = field.zoneConfig;
     }
+
+    // Delegate all decision, steering, leash, and need math to the Wasm
+    // simulation step. The bridge returns an event bitmask describing the
+    // discrete side-effects the JS layer must execute this frame.
+    const bitmask = stepCompanionDogWasm(this, dt, field, otherDogs, activeBall, npcs);
+    this.executeDogEventBitmask(bitmask, field, activeBall);
+
+    // Post-step bookkeeping: depth sort, bark wave decay, emote timer, hearts.
+    this.depthY = this.y + 6;
+
+    // Bark Wave Animation
+    if (this.isBarking) {
+      this.barkWaveRadius += 160 * dt;
+      this.barkWaveAlpha = Math.max(0, 1.0 - this.barkWaveRadius / 60);
+      if (this.barkWaveAlpha <= 0) this.isBarking = false;
+    }
+
+    // Emote Timers & Particles
+    if (this.emoteTimer > 0) {
+      this.emoteTimer -= dt;
+      if (this.emoteTimer <= 0) {
+        this.emoteTimer = 0;
+        this.emoteBubble = null;
+        this.beingGroomed = false;
+        this.sleeping = false;
+        if (this.pose !== 'camera') {
+          this.pose = 'idle';
+        }
+      }
+    }
+
+    // Update hearts
+    for (let i = this.hearts.length - 1; i >= 0; i--) {
+      const h = this.hearts[i];
+      h.y += h.vy * dt;
+      h.alpha -= dt * 0.7;
+      if (h.alpha <= 0) this.hearts.splice(i, 1);
+    }
+  }
+
+  // Execute the discrete side-effects described by the Wasm event bitmask.
+  // Each handler is isolated so one exception never stops the remaining
+  // events or the simulation.
+  executeDogEventBitmask(bitmask, field = null, activeBall = null) {
+    if (!bitmask) return;
+    const run = (fn) => {
+      try {
+        fn();
+      } catch (err) {
+        console.warn('[CompanionDog] event error', err);
+      }
+    };
+
+    if (bitmask & DogEventBit.POOP_DROPPED) {
+      run(() => {
+        const pile = new PoopPile(null, this.x, this.y);
+        if (field && typeof field.addPoopPile === 'function') {
+          field.addPoopPile(pile);
+        }
+        if (typeof this.onPoopDropped === 'function') {
+          this.onPoopDropped(this, pile);
+        }
+      });
+    }
+
+    if (bitmask & DogEventBit.BARK_TRIGGERED) {
+      run(() => {
+        this.isBarking = true;
+        this.barkWaveRadius = 6;
+        this.barkWaveAlpha = 1.0;
+        this.setEmote('Woof!', 1.8);
+        this.wagSpeed = 16;
+        this.audio?.playBark?.();
+      });
+    }
+
+    if (bitmask & DogEventBit.GALLOP_PUFF) {
+      run(() => {
+        field?.particleSystem?.emitGallopPuff?.(this.x, this.y, this.angle);
+      });
+    }
+
+    if (bitmask & DogEventBit.SCENT_DEPOSITED) {
+      run(() => {
+        field?.addScent?.(this.x, this.y, 'dog', this);
+      });
+    }
+
+    if (bitmask & DogEventBit.WHINE_AUDIO) {
+      run(() => {
+        this.audio?.playWhine?.();
+      });
+    }
+
+    if (bitmask & DogEventBit.PANT_AUDIO) {
+      run(() => {
+        this.audio?.playPant?.();
+      });
+    }
+
+    if (bitmask & DogEventBit.SNIFF_AUDIO) {
+      run(() => {
+        this.audio?.playSniff?.();
+      });
+    }
+
+    if (bitmask & DogEventBit.BALL_GRABBED) {
+      run(() => {
+        this.hasBall = true;
+        activeBall?.attachToDog?.(this);
+        this.setEmote('🎾', 2.0);
+      });
+    }
+
+    if (bitmask & DogEventBit.BALL_HANDOFF) {
+      run(() => {
+        activeBall?.retrieveByOwner?.();
+        this.hasBall = false;
+        this.targetBall = null;
+        this.setEmote('❤️', 2.0);
+      });
+    }
+
+    if (bitmask & DogEventBit.STICK_PICKED_UP) {
+      run(() => {
+        this.hasStick = true;
+        this.setEmote('🪵', 2.5);
+      });
+    }
+
+    if (bitmask & DogEventBit.STRAY_TRIGGERED) {
+      run(() => {
+        this.isLost = true;
+        if (typeof this.onStrayTriggered === 'function') {
+          this.onStrayTriggered(this);
+        }
+      });
+    }
+
+    if (bitmask & DogEventBit.STRAY_RESOLVED) {
+      run(() => {
+        this.isLost = false;
+        if (typeof this.onStrayResolved === 'function') {
+          this.onStrayResolved(this);
+        }
+      });
+    }
+
+    if (bitmask & DogEventBit.HEARTS_SPAWNED) {
+      run(() => {
+        this.hearts.push({
+          x: this.x + (Math.random() - 0.5) * 20,
+          y: this.y - 10,
+          vy: -35 - Math.random() * 25,
+          alpha: 1.0,
+          size: 10 + Math.random() * 4
+        });
+        this.setEmote('❤️', 2.0);
+      });
+    }
+  }
 
     // Rare zoomies cooldown tick (off-leash only)
     if (!isLeashed && this.zoomiesCooldown > 0 && this.state !== DogState.ZOOMIES) {
@@ -1522,196 +1700,6 @@ export class CompanionDog {
     }
   }
 
-  checkNPCInteractions(npcs) {
-    if (!npcs || !Array.isArray(npcs) || npcs.length === 0) return;
-
-    for (const npc of npcs) {
-      if (!npc) continue;
-      const dist = Math.hypot(this.x - npc.x, this.y - npc.y);
-      if (dist >= 80) continue;
-
-      // 1. Barkyness roll (Joggers)
-      if ((npc.isJogger || npc.type === 'jogger') && this.personality.barkyness >= 3) {
-        if (!this.isBarking && this.state !== DogState.FETCHING && Math.random() < (0.015 * (this.personality.barkyness - 2))) {
-          this.bark();
-        }
-      }
-
-      // 2. Shyness roll (Berth avoidance)
-      if (this.personality.shyness >= 3) {
-        if (dist < 75 && dist > 0.001) {
-          const shyForce = (1.0 - dist / 75) * (this.speed * 0.45) * ((this.personality.shyness - 2) / 3);
-          this.vx += ((this.x - npc.x) / dist) * shyForce;
-          this.vy += ((this.y - npc.y) / dist) * shyForce;
-        }
-      }
-
-      // 3. Playfulness roll (Wag / Bow)
-      if (this.personality.playfulness >= 4) {
-        this.wagSpeed = Math.max(this.wagSpeed, 14 + this.personality.playfulness * 2);
-        if (!this.owner?.isLeashed && this.state === DogState.ROAMING && dist < 50 && Math.random() < 0.008) {
-          this.state = DogState.PLAY_BOW;
-          this.stateTimer = 1.8;
-          this.emoteBubble = '🐾';
-          this.emoteTimer = 1.8;
-        }
-      }
-    }
-  }
-
-  updateLost(dt) {
-    this.vx = 0;
-    this.vy = 0;
-    this.wagSpeed = 4;
-
-    // Retrieval check
-    if (this.owner) {
-      const distToOwner = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
-      if (distToOwner < 55) {
-        this.state = DogState.RECALLED;
-        this.isLost = false;
-        this.ownerStillTimer = 0;
-        this.strayCheckTimer = 0;
-        this.emoteBubble = '❤️';
-        this.emoteTimer = 2.5;
-        this.wagSpeed = 18;
-        if (typeof this.onStrayResolved === 'function') {
-          this.onStrayResolved(this);
-        }
-      }
-    }
-  }
-
-  updatePooping(dt, field) {
-    this.vx = 0;
-    this.vy = 0;
-    this.wagSpeed = 3;
-    this.poopSquatDuration -= dt;
-
-    if (this.poopSquatDuration <= 0) {
-      const pile = new PoopPile(null, this.x, this.y);
-      if (field && typeof field.addPoopPile === 'function') {
-        field.addPoopPile(pile);
-      }
-      if (typeof this.onPoopDropped === 'function') {
-        this.onPoopDropped(this, pile);
-      }
-      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
-    }
-  }
-  checkSocialInteractions(otherDogs, dt = 0.016, field = null) {
-    if (!otherDogs || !Array.isArray(otherDogs)) return false;
-    if (this.state === DogState.FETCHING || this.state === DogState.RECALLED || this.state === DogState.LOST || this.state === DogState.POOPING) return false;
-
-    const selfLeashed = Boolean(this.owner && this.owner.isLeashed);
-    // Approach probability modified by shyness: low shyness dogs approach eagerly, high shyness approach with lower probability
-    const baseProb = Math.max(0.008, 0.045 - (this.personality.shyness - 1) * 0.009);
-
-    for (const other of otherDogs) {
-      if (!other || other === this) continue;
-      if (other.state === DogState.FETCHING || this.state === DogState.FETCHING) continue;
-
-      const otherLeashed = Boolean(other.owner && other.owner.isLeashed);
-      const dogDist = Math.hypot(this.x - other.x, this.y - other.y);
-
-      // Regime A: both off-leash -> high-affinity active play
-      if (!selfLeashed && !otherLeashed) {
-        const socialRange = 220;
-        const offLeashProb = baseProb * 2.2 * (0.8 + (this.personality.playfulness || 3) * 0.15);
-        if (dogDist < socialRange && this.socialCooldown <= 0 &&
-            this.state !== DogState.SOCIAL_GREET && this.state !== DogState.PLAY_BOW &&
-            Math.random() < offLeashProb) {
-          const playBowDirectChance = (this.personality.playfulness - 1) * 0.12;
-          if (Math.random() < playBowDirectChance) {
-            this.state = DogState.PLAY_BOW;
-            this.stateTimer = 2.4;
-            this.wagSpeed = 14 + this.personality.playfulness * 2;
-            this.emoteBubble = '🐾';
-            this.emoteTimer = 2.0;
-          } else {
-            this.state = DogState.SOCIAL_GREET;
-            this.stateTimer = 3.2;
-            this.wagSpeed = 12 + this.personality.playfulness * 2;
-            this.emoteBubble = Math.random() < 0.5 ? '🐾' : (Math.random() < 0.5 ? '🐶' : '❤️');
-            this.emoteTimer = 2.5;
-          }
-          this.socialTargetDog = other;
-          this.socialCooldown = 12.0;
-          return true;
-        }
-        continue;
-      }
-
-      // Regime B1: self off-leash, other on-leash -> reduced approach
-      if (!selfLeashed && otherLeashed) {
-        const mixedOffProb = baseProb * 0.25;
-        if (dogDist < 110 && this.socialCooldown <= 0 &&
-            this.state !== DogState.SOCIAL_GREET && this.state !== DogState.PLAY_BOW &&
-            Math.random() < mixedOffProb) {
-          this.state = DogState.SOCIAL_GREET;
-          this.stateTimer = 2.2;
-          this.wagSpeed = 12 + this.personality.playfulness * 2;
-          this.emoteBubble = Math.random() < 0.5 ? '🐾' : '🐶';
-          this.emoteTimer = 2.0;
-          this.socialTargetDog = other;
-          this.socialCooldown = 14.0;
-          return true;
-        }
-        continue;
-      }
-
-      // Regime B2: self on-leash, other off-leash -> subtle interaction + stat-driven leash tug
-      if (selfLeashed && !otherLeashed) {
-        if (dogDist < 150 || other.socialTargetDog === this) {
-          this.angle = lerpAngle(this.angle, Math.atan2(other.y - this.y, other.x - this.x), Math.min(1, dt * 8));
-          this.wagSpeed = Math.max(this.wagSpeed, 14 + (this.personality.playfulness || 3) * 2);
-          this.socialGazeAngle = Math.atan2(other.y - this.y, other.x - this.x);
-          this.socialGazeTimer = 0.5;
-          if (!this.emoteBubble && this.socialCooldown <= 0) {
-            this.emoteBubble = Math.random() < 0.5 ? '🐾' : '🐶';
-            this.emoteTimer = 2.0;
-            this.socialCooldown = 6.0;
-          }
-          if ((dogDist < 120 || other.socialTargetDog === this) && this.leashPullCooldown <= 0) {
-            const play = this.personality.playfulness || 3;
-            const obed = this.personality.obedience || 4;
-            const shy = this.personality.shyness || 2;
-            const pullFactor = (play / 5) * ((6 - obed) / 5) * ((6 - shy) / 5);
-            if (Math.random() < pullFactor * 0.45 * dt) {
-              this.triggerSocialLeashTug(other);
-            }
-          }
-        }
-        continue;
-      }
-
-      // Regime C: both on-leash -> minimal passing glance
-      if (selfLeashed && otherLeashed) {
-        if (dogDist < 90 && this.socialCooldown <= 0 && Math.random() < baseProb * 0.15) {
-          this.socialGazeAngle = Math.atan2(other.y - this.y, other.x - this.x);
-          this.socialGazeTimer = 0.5;
-          this.angle = lerpAngle(this.angle, this.socialGazeAngle, Math.min(1, dt * 5));
-          this.wagSpeed = Math.max(this.wagSpeed, 11);
-          this.socialCooldown = 10.0;
-        }
-        continue;
-      }
-    }
-    return false;
-  }
-
-  triggerSocialLeashTug(targetDog) {
-    if (!this.owner || !this.owner.isLeashed || !targetDog) return false;
-    this.leashTugTarget = targetDog;
-    this.leashTugTimer = 0.45;
-    this.leashPullCooldown = 14.0 + Math.random() * 6.0;
-    this.isPullingLeash = true;
-    this.emoteBubble = '🐾';
-    this.emoteTimer = 1.8;
-    this.wagSpeed = 16 + (this.personality.playfulness || 3) * 2;
-    return true;
-  }
-
   // Public helper: compute the leash target slot for the given owner.
   getLeashSlot(owner = this.owner) {
     return getLeashSlot(owner);
@@ -1900,6 +1888,14 @@ export class CompanionDog {
   }
 
   updateFollowing(dt, otherDogs = [], field = null) {
+    // Legacy entry point retained for compatibility. All steering is now
+    // delegated to the Wasm simulation step via update().
+    if (!this.owner) return;
+    const bitmask = stepCompanionDogWasm(this, dt, field, otherDogs, null, []);
+    this.executeDogEventBitmask(bitmask, field, null);
+  }
+
+  _legacyUpdateFollowingRemoved(dt, otherDogs = [], field = null) {
     if (!this.owner) return;
 
     if (!this.owner.isLeashed) {
@@ -2001,6 +1997,14 @@ export class CompanionDog {
   }
 
   updateRoaming(dt, otherDogs = [], field = null) {
+    // Legacy entry point retained for compatibility. All steering is now
+    // delegated to the Wasm simulation step via update().
+    if (!this.owner) return;
+    const bitmask = stepCompanionDogWasm(this, dt, field, otherDogs, null, []);
+    this.executeDogEventBitmask(bitmask, field, null);
+  }
+
+  _legacyUpdateRoamingRemoved(dt, otherDogs = [], field = null) {
     if (!this.owner) return;
 
     if (this.owner.isLeashed) {
@@ -2529,7 +2533,7 @@ export class CompanionDog {
     }
   }
 
-  updateSocialGreet(dt, otherDogs = []) {
+  _legacyUpdateSocialGreetRemoved(dt, otherDogs = []) {
     if (!this.socialTargetDog || this.socialTargetDog.state === DogState.FETCHING) {
       this.socialTargetDog = null;
       this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
@@ -2683,7 +2687,7 @@ export class CompanionDog {
     }
   }
 
-  updatePackPlay(dt, field = null) {
+  _legacyUpdatePackPlayRemoved(dt, field = null) {
     const partner = this.packPlayPartner;
 
     // Safety: break the bond if the partner vanished, left pack play, or either
@@ -2913,7 +2917,7 @@ export class CompanionDog {
     }
   }
 
-  updateRecalled(dt) {
+  _legacyUpdateRecalledRemoved(dt) {
     if (!this.owner) {
       this.state = DogState.ROAMING;
       return;
@@ -2991,7 +2995,7 @@ export class CompanionDog {
     }
   }
 
-  updateFetching(dt) {
+  _legacyUpdateFetchingRemoved(dt) {
     if (!this.targetBall) {
       this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
       return;
@@ -3053,7 +3057,7 @@ export class CompanionDog {
     }
   }
 
-  updatePlayBow(dt) {
+  _legacyUpdatePlayBowRemoved(dt) {
     this.vx *= 0.5;
     this.vy *= 0.5;
     this.stateTimer -= dt;
@@ -3070,7 +3074,7 @@ export class CompanionDog {
     }
   }
 
-  updateSniff(dt) {
+  _legacyUpdateSniffRemoved(dt) {
     this.vx *= 0.4;
     this.vy *= 0.4;
     this.stateTimer -= dt;
@@ -3086,7 +3090,7 @@ export class CompanionDog {
     }
   }
 
-  updateSitting(dt) {
+  _legacyUpdateSittingRemoved(dt) {
     this.vx = 0;
     this.vy = 0;
     this.stateTimer -= dt;
@@ -3102,7 +3106,7 @@ export class CompanionDog {
     }
   }
 
-  updateZoomies(dt, field) {
+  _legacyUpdateZoomiesRemoved(dt, field) {
     if (this.owner && this.owner.isLeashed) {
       this.state = DogState.FOLLOWING;
       return;
@@ -3261,7 +3265,7 @@ export class CompanionDog {
     }
   }
 
-  updateSniffingTrail(dt, field) {
+  _legacyUpdateSniffingTrailRemoved(dt, field) {
     this.stateTimer -= dt;
     this.sniffTime += dt;
     this.noseTwitch = Math.sin(this.sniffTime * 25) * 1.6;
@@ -3814,6 +3818,8 @@ CompanionDog.ZOOMIE_PATH_TYPES = ZOOMIE_PATH_TYPES;
 CompanionDog.RoamSubMode = RoamSubMode;
 CompanionDog.resolveCoatPresetByName = resolveCoatPresetByName;
 CompanionDog.ACTIVE_REST_BLOCKED_STATES = Object.freeze(new Set([...ACTIVE_REST_BLOCKED_STATES]));
+CompanionDog.DogEventBit = DogEventBit;
+CompanionDog.REJECTION_ANIM_MS = REJECTION_ANIM_MS;
 
 // Browser global exposure so the Home Sanctuary can reuse the authentic model.
 if (typeof window !== 'undefined') {
@@ -3821,4 +3827,6 @@ if (typeof window !== 'undefined') {
   window.CoatPreset = CoatPreset;
   window.DogState = DogState;
   window.NEED_SPEED_MULTIPLIER = NEED_SPEED_MULTIPLIER;
+  window.DogEventBit = DogEventBit;
+  window.REJECTION_ANIM_MS = REJECTION_ANIM_MS;
 }

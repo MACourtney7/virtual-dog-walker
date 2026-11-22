@@ -273,6 +273,8 @@ pub fn constrain_leash_and_owner(
     let is_on_leash = buffer.slots[DOG_BUF_IS_ON_LEASH] > 0.5;
 
     if !is_on_leash {
+        buffer.slots[DOG_BUF_DOG_X] = dog_x;
+        buffer.slots[DOG_BUF_DOG_Y] = dog_y;
         buffer.slots[DOG_BUF_LEASH_TENSION] = 0.0;
         buffer.slots[DOG_BUF_LEASH_SAG_PX] = 0.0;
         buffer.slots[DOG_BUF_LEASH_VIBRATION_PX] = 0.0;
@@ -288,7 +290,7 @@ pub fn constrain_leash_and_owner(
             owner_clamped_x: owner_x,
             owner_clamped_y: owner_y,
             owner_was_clamped: false,
-            owner_frozen: decision.owner_frozen,
+            owner_frozen: false,
             is_pulling_leash: false,
             leash_taut: false,
             leash_tension: 0.0,
@@ -833,6 +835,102 @@ mod tests {
             frozen_only.slots[DOG_BUF_OWNER_FLAGS],
             DOG_OWNER_FLAG_FROZEN as f32
         ));
+    }
+
+    #[test]
+    fn off_leash_sanitizes_non_finite_positions() {
+        let mut buffer = make_buffer();
+        buffer.slots[DOG_BUF_DOG_X] = f32::NAN;
+        buffer.slots[DOG_BUF_DOG_Y] = f32::INFINITY;
+        buffer.slots[DOG_BUF_OWNER_X] = f32::NEG_INFINITY;
+        buffer.slots[DOG_BUF_OWNER_Y] = f32::NAN;
+        buffer.slots[DOG_BUF_IS_ON_LEASH] = 0.0;
+
+        // Deliberately pass a frozen decision to prove off-leash always reports false.
+        let out = constrain_leash_and_owner(&mut buffer, &decision(false, true));
+
+        assert!(!out.owner_frozen);
+        assert!(approx(out.dog_clamped_x, 0.0));
+        assert!(approx(out.dog_clamped_y, 0.0));
+        assert!(buffer.slots[DOG_BUF_DOG_X].is_finite());
+        assert!(buffer.slots[DOG_BUF_DOG_Y].is_finite());
+        assert!(buffer.slots[DOG_BUF_OWNER_CLAMPED_X].is_finite());
+        assert!(buffer.slots[DOG_BUF_OWNER_CLAMPED_Y].is_finite());
+        assert!(approx(buffer.slots[DOG_BUF_DOG_X], 0.0));
+        assert!(approx(buffer.slots[DOG_BUF_DOG_Y], 0.0));
+        assert!(approx(buffer.slots[DOG_BUF_OWNER_CLAMPED_X], 0.0));
+        assert!(approx(buffer.slots[DOG_BUF_OWNER_CLAMPED_Y], 0.0));
+    }
+
+    #[test]
+    fn on_leash_sanitizes_non_finite_positions() {
+        let mut buffer = make_buffer();
+        buffer.slots[DOG_BUF_DOG_X] = f32::INFINITY;
+        buffer.slots[DOG_BUF_DOG_Y] = f32::NAN;
+        buffer.slots[DOG_BUF_OWNER_X] = f32::NAN;
+        buffer.slots[DOG_BUF_OWNER_Y] = f32::INFINITY;
+        buffer.slots[DOG_BUF_OWNER_HEADING] = f32::NAN;
+        buffer.slots[DOG_BUF_IS_ON_LEASH] = 1.0;
+
+        let out = constrain_leash_and_owner(&mut buffer, &decision(false, false));
+
+        assert!(out.dog_clamped_x.is_finite());
+        assert!(out.dog_clamped_y.is_finite());
+        assert!(out.owner_clamped_x.is_finite());
+        assert!(out.owner_clamped_y.is_finite());
+        assert!(buffer.slots[DOG_BUF_DOG_X].is_finite());
+        assert!(buffer.slots[DOG_BUF_DOG_Y].is_finite());
+        assert!(buffer.slots[DOG_BUF_OWNER_CLAMPED_X].is_finite());
+        assert!(buffer.slots[DOG_BUF_OWNER_CLAMPED_Y].is_finite());
+        assert!(approx(buffer.slots[DOG_BUF_DOG_X], 0.0));
+        assert!(approx(buffer.slots[DOG_BUF_DOG_Y], 0.0));
+        assert!(approx(buffer.slots[DOG_BUF_OWNER_CLAMPED_X], 0.0));
+        assert!(approx(buffer.slots[DOG_BUF_OWNER_CLAMPED_Y], 0.0));
+    }
+
+    #[test]
+    fn apply_leash_and_needs_off_leash_sanitizes_non_finite_positions() {
+        let mut buffer = make_buffer();
+        buffer.slots[DOG_BUF_DOG_X] = f32::NAN;
+        buffer.slots[DOG_BUF_DOG_Y] = f32::INFINITY;
+        buffer.slots[DOG_BUF_OWNER_X] = f32::NEG_INFINITY;
+        buffer.slots[DOG_BUF_OWNER_Y] = f32::NAN;
+        buffer.slots[DOG_BUF_OWNER_HEADING] = f32::NAN;
+        buffer.slots[DOG_BUF_OWNER_HALF_WIDTH] = f32::NAN;
+        buffer.slots[DOG_BUF_PREFERRED_SIDE_SIGN] = f32::NAN;
+        buffer.slots[DOG_BUF_IS_ON_LEASH] = 0.0;
+
+        apply_leash_and_needs(&mut buffer, combo(false, false, false, false));
+
+        assert!(buffer.slots[DOG_BUF_TARGET_SLOT_X].is_finite());
+        assert!(buffer.slots[DOG_BUF_TARGET_SLOT_Y].is_finite());
+        assert!(approx(buffer.slots[DOG_BUF_DOG_X], 0.0));
+        assert!(approx(buffer.slots[DOG_BUF_DOG_Y], 0.0));
+        assert!(approx(buffer.slots[DOG_BUF_OWNER_CLAMPED_X], 0.0));
+        assert!(approx(buffer.slots[DOG_BUF_OWNER_CLAMPED_Y], 0.0));
+        assert!(approx(buffer.slots[DOG_BUF_OWNER_FLAGS], 0.0));
+    }
+
+    #[test]
+    fn apply_leash_and_needs_on_leash_sanitizes_non_finite_positions() {
+        let mut buffer = make_buffer();
+        buffer.slots[DOG_BUF_DOG_X] = f32::INFINITY;
+        buffer.slots[DOG_BUF_DOG_Y] = f32::NAN;
+        buffer.slots[DOG_BUF_OWNER_X] = f32::NAN;
+        buffer.slots[DOG_BUF_OWNER_Y] = f32::NEG_INFINITY;
+        buffer.slots[DOG_BUF_OWNER_HEADING] = f32::NAN;
+        buffer.slots[DOG_BUF_OWNER_HALF_WIDTH] = f32::NAN;
+        buffer.slots[DOG_BUF_PREFERRED_SIDE_SIGN] = f32::NAN;
+        buffer.slots[DOG_BUF_IS_ON_LEASH] = 1.0;
+
+        apply_leash_and_needs(&mut buffer, combo(true, false, false, false));
+
+        assert!(buffer.slots[DOG_BUF_TARGET_SLOT_X].is_finite());
+        assert!(buffer.slots[DOG_BUF_TARGET_SLOT_Y].is_finite());
+        assert!(approx(buffer.slots[DOG_BUF_DOG_X], 0.0));
+        assert!(approx(buffer.slots[DOG_BUF_DOG_Y], 0.0));
+        assert!(approx(buffer.slots[DOG_BUF_OWNER_CLAMPED_X], 0.0));
+        assert!(approx(buffer.slots[DOG_BUF_OWNER_CLAMPED_Y], 0.0));
     }
 
     #[test]

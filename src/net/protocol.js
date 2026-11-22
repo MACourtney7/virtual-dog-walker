@@ -1,5 +1,42 @@
 // Pure In-Browser WebRTC Multiplayer Protocol & Packet Definitions
 
+export const PERSONALITY_KEYS = ['curiosity', 'energy', 'stubbornness', 'loyalty'];
+
+export const DEFAULT_PERSONALITY = {
+  curiosity: 3,
+  energy: 3,
+  stubbornness: 2,
+  loyalty: 4
+};
+
+// Validate a canonical personality object. Throws on any deviation from the
+// strict schema: exactly the four canonical keys, each an integer in 1..5.
+// Never mutates the input and never coerces/defaults network values.
+export function validatePersonality(personality) {
+  if (personality === null || typeof personality !== 'object' || Array.isArray(personality)) {
+    throw new Error('invalid personality: expected a plain object');
+  }
+  const keys = Object.keys(personality);
+  for (const key of keys) {
+    if (!PERSONALITY_KEYS.includes(key)) {
+      throw new Error(`invalid personality: unexpected key "${key}"`);
+    }
+  }
+  for (const key of PERSONALITY_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(personality, key)) {
+      throw new Error(`invalid personality: missing key "${key}"`);
+    }
+    const value = personality[key];
+    if (typeof value !== 'number' || !Number.isInteger(value) || Number.isNaN(value)) {
+      throw new Error(`invalid personality: "${key}" must be an integer`);
+    }
+    if (value < 1 || value > 5) {
+      throw new Error(`invalid personality: "${key}" out of range (1..5)`);
+    }
+  }
+  return true;
+}
+
 export const PacketType = {
   HELLO: 'HELLO',
   WELCOME: 'WELCOME',
@@ -32,6 +69,10 @@ export class Protocol {
     const resolvedHasDog = (typeof meta.hasDog === 'boolean')
       ? meta.hasDog
       : ((typeof resolvedDogName === 'string' && resolvedDogName.length > 0) || Boolean(dogCoatName));
+    const personality = (meta.personality !== undefined && meta.personality !== null)
+      ? meta.personality
+      : DEFAULT_PERSONALITY;
+    validatePersonality(personality);
     return {
       type: PacketType.HELLO,
       senderId: peerId,
@@ -46,7 +87,12 @@ export class Protocol {
       accessory: extraMeta.accessory || 'NONE',
       skinTone: extraMeta.skinTone,
       collarColor: extraMeta.collarColor,
-      personality: extraMeta.personality || null,
+      personality: {
+        curiosity: personality.curiosity,
+        energy: personality.energy,
+        stubbornness: personality.stubbornness,
+        loyalty: personality.loyalty
+      },
       timestamp: Date.now()
     };
   }

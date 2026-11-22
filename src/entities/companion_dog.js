@@ -1,6 +1,6 @@
 // Companion Dog Entity - Canine Steering AI, Floppy Ear Springs, Leash Mechanics & Ball Fetching
 import { PoopPile } from './waste.js';
-import { stepLeashConstraint, resolveFieldCollision, stepEarSpringsToTargets, stepCompanionDogWasm } from '../engine/wasm_sim_bridge.js';
+import { stepCompanionDogWasm } from '../engine/wasm_sim_bridge.js';
 import { MAX_LEASH_LENGTH, clampOwnerToLeash } from '../world/leash.js';
 
 export const DogState = {
@@ -889,7 +889,7 @@ export class CompanionDog {
   }
 
   onRemoteBark(sourceDog = null) {
-    const respondChance = 0.18 * this.personality.barkyness;
+    const respondChance = 0.18 * this.personality.energy;
     if (Math.random() < respondChance && !this.isBarking && this.state !== DogState.FETCHING) {
       this.bark();
     }
@@ -920,15 +920,14 @@ export class CompanionDog {
       this._breakPackPlay();
     }
 
-    // Stat-driven social cool-off post-whistle: high obedience and shyness
-    // increase the cool-off (up to 45s), high playfulness decreases it
-    // (down to 8s). Normalised 1..5 -> 0..1 so the bands are exact:
-    //   (5,1,5) -> 41s, (3,3,3) -> 23s, (2,4,1) -> 13.5s, (1,5,1) -> 8s
+    // Stat-driven social cool-off post-whistle: high loyalty and stubbornness
+    // increase the cool-off (up to 45s), high energy decreases it
+    // (down to 8s). Normalised 1..5 -> 0..1 so the bands are exact.
     if (wasInPackPlay) {
-      const obedNorm = ((this.personality?.obedience || 3) - 1) / 4; // 0..1
-      const shyNorm = ((this.personality?.shyness || 3) - 1) / 4; // 0..1
-      const playNorm = ((this.personality?.playfulness || 3) - 1) / 4; // 0..1
-      const cd = 18.0 + obedNorm * 18.0 + shyNorm * 4.0 - playNorm * 12.0;
+      const loyalNorm = ((this.personality?.loyalty || 3) - 1) / 4; // 0..1
+      const stubbornNorm = ((this.personality?.stubbornness || 3) - 1) / 4; // 0..1
+      const energyNorm = ((this.personality?.energy || 3) - 1) / 4; // 0..1
+      const cd = 18.0 + loyalNorm * 18.0 + stubbornNorm * 4.0 - energyNorm * 12.0;
       this.socialCooldown = Math.max(8.0, Math.min(45.0, cd));
     }
 
@@ -1043,11 +1042,6 @@ export class CompanionDog {
     if (field && field.zoneConfig) {
       this.currentZone = field.zoneConfig;
     }
-
-    // NPC proximity reactions (jogger bark trigger). Kept in the JS layer so
-    // the Wasm step stays focused on steering/needs; the actual bark is still
-    // emitted through the event bitmask path below.
-    this.checkNPCInteractions(npcs);
 
     // Delegate all decision, steering, leash, and need math to the Wasm
     // simulation step. The bridge returns an event bitmask describing the
@@ -1196,29 +1190,19 @@ export class CompanionDog {
       });
     }
 
-  }
-
-  // NPC proximity reactions. Currently only the jogger bark trigger: a dog
-  // with high energy/stubbornness may bark at a passing jogger. The bark is
-  // routed through bark() so it uses the same wave/emote/audio path as the
-  // Wasm-emitted BARK_TRIGGERED event.
-  checkNPCInteractions(npcs) {
-    if (!npcs || !Array.isArray(npcs) || npcs.length === 0) return;
-    if (this.isBarking || this.state === DogState.FETCHING || this.state === DogState.POOPING) return;
-
-    for (const npc of npcs) {
-      if (!npc) continue;
-      const dist = Math.hypot(this.x - npc.x, this.y - npc.y);
-      if (dist >= 80) continue;
-
-      // Jogger reaction: energetic/stubborn dogs bark at passing joggers.
-      if ((npc.isJogger || npc.type === 'jogger') && this.personality.energy >= 3) {
-        if (Math.random() < 0.015 * (this.personality.energy - 2)) {
-          this.bark();
-          break;
-        }
-      }
+    if (bitmask & DogEventBit.HEARTS_SPAWNED) {
+      run(() => {
+        this.hearts.push({
+          x: this.x + (Math.random() - 0.5) * 20,
+          y: this.y - 10,
+          vy: -35 - Math.random() * 25,
+          alpha: 1.0,
+          size: 10 + Math.random() * 4
+        });
+        this.setEmote('❤️', 2.0);
+      });
     }
+
   }
 
   // Public helper: compute the leash target slot for the given owner.
@@ -1469,8 +1453,8 @@ export class CompanionDog {
     partner.emoteBubble = '🐶';
     this.emoteTimer = 2.5;
     partner.emoteTimer = 2.5;
-    this.wagSpeed = Math.min(22, Math.max(16, 16 + (this.personality?.playfulness || 3)));
-    partner.wagSpeed = Math.min(22, Math.max(16, 16 + (partner.personality?.playfulness || 3)));
+    this.wagSpeed = Math.min(22, Math.max(16, 16 + (this.personality?.energy || 3)));
+    partner.wagSpeed = Math.min(22, Math.max(16, 16 + (partner.personality?.energy || 3)));
     return true;
   }
 
@@ -1533,7 +1517,7 @@ export class CompanionDog {
     }
     this.packPlayTimer = this.packPlayRoleTimer;
 
-    const playfulness = this.personality?.playfulness || 3;
+    const energy = this.personality?.energy || 3;
     const screen = this._getScreenPerimeter(field);
 
     // Shared landmark exploration: bias the lead waypoint toward the nearest
@@ -1685,7 +1669,7 @@ export class CompanionDog {
       this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 12));
     }
 
-    this.wagSpeed = Math.min(22, Math.max(16, 16 + playfulness));
+    this.wagSpeed = Math.min(22, Math.max(16, 16 + energy));
 
     // Periodic playful emote/pant burst every 6-8s.
     this.packPlayEmoteTimer -= dt;
@@ -1886,7 +1870,7 @@ export class CompanionDog {
     this.vx *= 0.5;
     this.vy *= 0.5;
     this.stateTimer -= dt;
-    this.wagSpeed = 14 + this.personality.playfulness * 2;
+    this.wagSpeed = 14 + this.personality.energy * 2;
     if (this.stateTimer <= 0) {
       // Both off-leash: escalate into sustained pack play when a partner is available.
       const partner = this.socialTargetDog;

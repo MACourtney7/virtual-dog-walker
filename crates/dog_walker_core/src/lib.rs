@@ -24,6 +24,15 @@ fn sanitize_dt(raw: f32) -> f32 {
     }
 }
 
+/// Map NaN/inf to `0.0`, otherwise pass the value through unchanged.
+fn sanitize_f32(v: f32) -> f32 {
+    if v.is_finite() {
+        v
+    } else {
+        0.0
+    }
+}
+
 fn slot_f32(buf: &DogSimBuffer, index: usize) -> f32 {
     buf.slots[index]
 }
@@ -92,6 +101,17 @@ impl WasmWorldSim {
         // 1. Read and sanitize dt to [0.0, 0.1].
         let dt = sanitize_dt(slot_f32(&self.dog_buffer, DOG_BUF_DT));
 
+        // 1b. Sanitize persisted dog state so NaN/inf never propagates.
+        for index in [
+            DOG_BUF_DOG_X,
+            DOG_BUF_DOG_Y,
+            DOG_BUF_DOG_VX,
+            DOG_BUF_DOG_VY,
+            DOG_BUF_DOG_ANGLE,
+        ] {
+            self.dog_buffer.slots[index] = sanitize_f32(self.dog_buffer.slots[index]);
+        }
+
         // 2. Build the discrete combo from buffer inputs.
         let combo = DiscreteCombo {
             is_on_leash: slot_bool(&self.dog_buffer, DOG_BUF_IS_ON_LEASH),
@@ -107,13 +127,13 @@ impl WasmWorldSim {
 
         // 4. Compute and write the leash slot from owner inputs.
         let leash_slot = dog_leash_needs::compute_leash_slot(
-            slot_f32(&self.dog_buffer, DOG_BUF_OWNER_X),
-            slot_f32(&self.dog_buffer, DOG_BUF_OWNER_Y),
-            slot_f32(&self.dog_buffer, DOG_BUF_OWNER_VX),
-            slot_f32(&self.dog_buffer, DOG_BUF_OWNER_VY),
-            slot_f32(&self.dog_buffer, DOG_BUF_OWNER_HEADING),
-            slot_f32(&self.dog_buffer, DOG_BUF_OWNER_HALF_WIDTH),
-            slot_f32(&self.dog_buffer, DOG_BUF_PREFERRED_SIDE_SIGN),
+            sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_OWNER_X)),
+            sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_OWNER_Y)),
+            sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_OWNER_VX)),
+            sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_OWNER_VY)),
+            sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_OWNER_HEADING)),
+            sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_OWNER_HALF_WIDTH)),
+            sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_PREFERRED_SIDE_SIGN)),
         );
         dog_leash_needs::write_leash_slot(&mut self.dog_buffer, &leash_slot);
 
@@ -130,23 +150,27 @@ impl WasmWorldSim {
         self.dog_buffer.slots[DOG_BUF_DOG_STATE_ID] = next_state as u32 as f32;
 
         // 7. Integrate movement from desired speed, multiplier, and steer.
-        let speed = (util.desired_speed * decision.speed_multiplier).max(0.0);
-        let vx = util.steer_x * speed;
-        let vy = util.steer_y * speed;
+        let speed = sanitize_f32((util.desired_speed * decision.speed_multiplier).max(0.0));
+        let vx = sanitize_f32(util.steer_x * speed);
+        let vy = sanitize_f32(util.steer_y * speed);
 
-        let next_x = slot_f32(&self.dog_buffer, DOG_BUF_DOG_X) + vx * dt;
-        let next_y = slot_f32(&self.dog_buffer, DOG_BUF_DOG_Y) + vy * dt;
+        let next_x = sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_DOG_X) + vx * dt);
+        let next_y = sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_DOG_Y) + vy * dt);
 
         self.dog_buffer.slots[DOG_BUF_DOG_X] = next_x;
         self.dog_buffer.slots[DOG_BUF_DOG_Y] = next_y;
         self.dog_buffer.slots[DOG_BUF_DOG_VX] = vx;
         self.dog_buffer.slots[DOG_BUF_DOG_VY] = vy;
 
-        if vx != 0.0 || vy != 0.0 {
-            self.dog_buffer.slots[DOG_BUF_DOG_ANGLE] = vy.atan2(vx);
+        if speed > 0.001 {
+            self.dog_buffer.slots[DOG_BUF_DOG_ANGLE] = sanitize_f32(vy.atan2(vx));
         }
 
         // 8. Clamp final dog/owner positions against the leash constraint.
+        self.dog_buffer.slots[DOG_BUF_OWNER_X] =
+            sanitize_f32(self.dog_buffer.slots[DOG_BUF_OWNER_X]);
+        self.dog_buffer.slots[DOG_BUF_OWNER_Y] =
+            sanitize_f32(self.dog_buffer.slots[DOG_BUF_OWNER_Y]);
         dog_leash_needs::constrain_leash_and_owner(&mut self.dog_buffer, &decision);
 
         // 9. Persist the event bitmask from utility events only.
@@ -381,6 +405,52 @@ mod tests {
         let _ = sim.resolve_collision(10.0, 10.0, 16.0);
         let after_collision = sim.dog_buffer_ptr();
         assert_eq!(first, after_collision);
+    }
+
+    #[test]
+    fn dog_contract_step_buffer_sanitizes_nan_and_inf_inputs() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        sim.dog_buffer.slots[DOG_BUF_DT] = 0.016;
+        sim.dog_buffer.slots[DOG_BUF_DOG_X] = f32::NAN;
+        sim.dog_buffer.slots[DOG_BUF_DOG_Y] = f32::INFINITY;
+        sim.dog_buffer.slots[DOG_BUF_OWNER_X] = f32::NEG_INFINITY;
+
+        sim.step_dog_buffer();
+
+        for index in [
+            DOG_BUF_DOG_X,
+            DOG_BUF_DOG_Y,
+            DOG_BUF_DOG_VX,
+            DOG_BUF_DOG_VY,
+            DOG_BUF_DOG_ANGLE,
+            DOG_BUF_OWNER_X,
+            DOG_BUF_OWNER_Y,
+        ] {
+            assert!(
+                sim.dog_buffer.slots[index].is_finite(),
+                "slot {} must be finite after sanitized step",
+                index
+            );
+        }
+    }
+
+    #[test]
+    fn dog_contract_step_buffer_preserves_angle_when_speed_is_zero() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        sim.dog_buffer.slots[DOG_BUF_DT] = 0.016;
+        let sentinel_angle = 1.234_f32;
+        sim.dog_buffer.slots[DOG_BUF_DOG_ANGLE] = sentinel_angle;
+
+        sim.step_dog_buffer();
+
+        let speed = sim.dog_buffer.slots[DOG_BUF_DOG_VX].hypot(sim.dog_buffer.slots[DOG_BUF_DOG_VY]);
+        if speed <= 0.001 {
+            assert_eq!(
+                sim.dog_buffer.slots[DOG_BUF_DOG_ANGLE].to_bits(),
+                sentinel_angle.to_bits(),
+                "angle must be preserved when speed <= 0.001"
+            );
+        }
     }
 
     #[test]

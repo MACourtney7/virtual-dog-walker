@@ -1,7 +1,6 @@
 // Companion Dog Entity - Canine Steering AI, Floppy Ear Springs, Leash Mechanics & Ball Fetching
 import { PoopPile } from './waste.js';
-import { stepCompanionDogWasm } from '../engine/wasm_sim_bridge.js';
-import { MAX_LEASH_LENGTH, clampOwnerToLeash } from '../world/leash.js';
+import { stepCompanionDogWasm, getWasmSim } from '../engine/wasm_sim_bridge.js';
 
 export const DogState = {
   FOLLOWING: 'FOLLOWING',
@@ -499,6 +498,16 @@ export class CompanionDog {
     this._needsGrooming = false;
     this._isTired = false;
     this._isPooping = false;
+
+    // Pending command flags consumed by the Wasm simulation step.
+    this.pendingCommands = {
+      whistleRecall: false,
+      pet: false,
+      praise: false,
+      bark: false,
+      triggerZoomies: false,
+      fetchBall: false
+    };
   }
 
   // --- Read-only need/state getters ---
@@ -599,6 +608,7 @@ export class CompanionDog {
   }
 
   triggerZoomies(pathType = null) {
+    if (this.pendingCommands) this.pendingCommands.triggerZoomies = true;
     if (this.owner && this.owner.isLeashed) return false;
     if (this.state === DogState.LOST || this.state === DogState.POOPING) return false;
     this.dropStick();
@@ -912,6 +922,7 @@ export class CompanionDog {
   }
 
   bark(audioEngine = null) {
+    if (this.pendingCommands) this.pendingCommands.bark = true;
     this.state = DogState.BARKING;
     this.stateTimer = 0.45;
     this.isBarking = true;
@@ -927,6 +938,7 @@ export class CompanionDog {
   }
 
   whistleRecall() {
+    if (this.pendingCommands) this.pendingCommands.whistleRecall = true;
     const wasLost = this.state === DogState.LOST || this.isLost;
 
     // Whistle is the play breaker: dissolve any active pack-play bond.
@@ -995,6 +1007,7 @@ export class CompanionDog {
   // resets idleRestTimer-driven state or triggers zoomies, so a leashed dog
   // keeps following smoothly while being praised.
   praise() {
+    if (this.pendingCommands) this.pendingCommands.praise = true;
     this.happiness = Math.min(100, this.happiness + 20);
     this.wagSpeed = 18;
     this.emoteBubble = '❤️';
@@ -1015,6 +1028,7 @@ export class CompanionDog {
   }
 
   pet() {
+    if (this.pendingCommands) this.pendingCommands.pet = true;
     this.happiness = Math.min(100, this.happiness + 20);
     this.idleRestTimer = 0;
     this.wagSpeed = 18;
@@ -1039,6 +1053,7 @@ export class CompanionDog {
   }
 
   fetchBall(ball) {
+    if (this.pendingCommands) this.pendingCommands.fetchBall = true;
     // If leashed, lost, or pooping, the dog NEVER enters FETCHING state and does not chase balls
     if (this.owner && this.owner.isLeashed) {
       return;
@@ -1054,6 +1069,9 @@ export class CompanionDog {
   }
 
   update(dt, field, otherDogs = [], activeBall = null, npcs = []) {
+    // Safe no-op while the browser async Wasm init hasn't finished yet.
+    if (!getWasmSim()) return;
+
     // Sync current zone reference for sunny-zone rolling evaluation
     if (field && field.zoneConfig) {
       this.currentZone = field.zoneConfig;
@@ -1064,6 +1082,25 @@ export class CompanionDog {
     // discrete side-effects the JS layer must execute this frame.
     const bitmask = stepCompanionDogWasm(this, dt, field, otherDogs, activeBall, npcs);
     this.executeDogEventBitmask(bitmask, field, activeBall);
+
+    // Hydrate owner from Wasm-side clamp/freeze flags.
+    if (this.owner && this.ownerWasClamped) {
+      this.owner.x = this.ownerClampedX;
+      this.owner.y = this.ownerClampedY;
+    }
+    if (this.owner && this.ownerFrozen) {
+      if (typeof this.owner.setGait === 'function') {
+        this.owner.setGait('STAND');
+      } else {
+        this.owner.gait = 'STAND';
+      }
+    }
+
+    // Keep the carried stick glued to the dog's position.
+    if (this.hasStick && this.carriedStick) {
+      this.carriedStick.x = this.x;
+      this.carriedStick.y = this.y;
+    }
 
     // Autonomous reaction barking: joggers passing nearby and remote dogs
     // within earshot can trigger a spontaneous bark (barkyness-gated).
@@ -1266,6 +1303,25 @@ export class CompanionDog {
 
     if (bitmask & DogEventBit.STICK_PICKED_UP) {
       run(() => {
+        // Attach the nearest uncarried stick within range if not already held.
+        if (!this.carriedStick && field && Array.isArray(field.sticks)) {
+          let nearest = null;
+          let nearestDist = Infinity;
+          for (const stick of field.sticks) {
+            if (!stick || stick.isCarried) continue;
+            if (typeof stick.x !== 'number' || typeof stick.y !== 'number') continue;
+            const d = Math.hypot(stick.x - this.x, stick.y - this.y);
+            if (d < nearestDist) {
+              nearestDist = d;
+              nearest = stick;
+            }
+          }
+          if (nearest) {
+            this.carriedStick = nearest;
+            nearest.isCarried = true;
+            nearest.carrier = this;
+          }
+        }
         this.hasStick = true;
         this.setEmote('🪵', 2.5);
       });
@@ -1273,7 +1329,9 @@ export class CompanionDog {
 
     if (bitmask & DogEventBit.STRAY_TRIGGERED) {
       run(() => {
+        this.isStray = true;
         this.isLost = true;
+        this.state = DogState.LOST;
         if (typeof this.onStrayTriggered === 'function') {
           this.onStrayTriggered(this);
         }
@@ -1282,6 +1340,7 @@ export class CompanionDog {
 
     if (bitmask & DogEventBit.STRAY_RESOLVED) {
       run(() => {
+        this.isStray = false;
         this.isLost = false;
         if (typeof this.onStrayResolved === 'function') {
           this.onStrayResolved(this);
@@ -1576,694 +1635,6 @@ export class CompanionDog {
       const selfLeashed = Boolean(this.owner && this.owner.isLeashed);
       this.transitionTo(selfLeashed ? DogState.FOLLOWING : DogState.ROAMING);
       this.idleRestTimer = 0;
-    }
-  }
-
-  _legacyUpdatePackPlayRemoved(dt, field = null) {
-    return;
-  }
-
-  _unusedPackPlayBody(dt, field = null) {
-    const partner = this.packPlayPartner;
-
-    // Safety: break the bond if the partner vanished, left pack play, or either
-    // dog became leashed.
-    if (!partner || partner.state !== DogState.PACK_PLAY ||
-        (this.owner && this.owner.isLeashed) ||
-        (partner.owner && partner.owner.isLeashed)) {
-      this._breakPackPlay();
-      this.transitionTo((this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING);
-      return;
-    }
-
-    const dx = partner.x - this.x;
-    const dy = partner.y - this.y;
-    const dist = Math.hypot(dx, dy) || 1;
-
-    // Coordinated role swapping: only the LEAD dog drives the swap so both
-    // dogs always hold complementary roles (never two LEADs / two CHASEs).
-    if (this.packPlayRole === 'LEAD') {
-      this.packPlayRoleTimer -= dt;
-      if (this.packPlayRoleTimer <= 0) {
-        this.packPlayRole = 'CHASE';
-        if (this.packPlayPartner) this.packPlayPartner.packPlayRole = 'LEAD';
-        this.packPlayRoleTimer = 4.0 + Math.random() * 3.0;
-        if (this.packPlayPartner) this.packPlayPartner.packPlayRoleTimer = this.packPlayRoleTimer;
-      }
-    } else if (this.packPlayPartner) {
-      // CHASE dog mirrors the partner's role to stay strictly complementary.
-      this.packPlayRole = (this.packPlayPartner.packPlayRole === 'LEAD') ? 'CHASE' : 'LEAD';
-    }
-    this.packPlayTimer = this.packPlayRoleTimer;
-
-    const energy = this.personality?.energy || 3;
-    const screen = this._getScreenPerimeter(field);
-
-    // Shared landmark exploration: bias the lead waypoint toward the nearest
-    // landmark (tree, bench, or scent node/prop) within 220px so both dogs
-    // investigate it together.
-    let nearestLandmark = null;
-    let nearestLandmarkDist = Infinity;
-    const considerLandmark = (lm, defaultR) => {
-      if (!lm || typeof lm.x !== 'number') return;
-      const ly = (typeof lm.depthY === 'number') ? lm.depthY : lm.y;
-      if (typeof ly !== 'number') return;
-      const d = Math.hypot(lm.x - this.x, ly - this.y);
-      if (d < 220 && d < nearestLandmarkDist) {
-        nearestLandmark = { x: lm.x, y: ly, r: lm.r || lm.radius || lm.trunkRadius || defaultR };
-        nearestLandmarkDist = d;
-      }
-    };
-    if (field) {
-      if (Array.isArray(field.trees)) {
-        for (const tree of field.trees) considerLandmark(tree, 18);
-      }
-      if (Array.isArray(field.benches)) {
-        for (const bench of field.benches) considerLandmark(bench, 32);
-      }
-      const scentNodes = Array.isArray(field.scentNodes)
-        ? field.scentNodes
-        : (Array.isArray(field.props) ? field.props : null);
-      if (scentNodes) {
-        for (const node of scentNodes) considerLandmark(node, 16);
-      }
-    }
-
-    let desiredX;
-    let desiredY;
-    let modeSpeed;
-
-    if (this.packPlayRole === 'LEAD') {
-      // Lead dog canters toward a looping waypoint around the owner/field.
-      this.packPlayWaypointTimer -= dt;
-      if (!this.packPlayWaypoint || this.packPlayWaypointTimer <= 0 ||
-          Math.hypot(this.packPlayWaypoint.x - this.x, this.packPlayWaypoint.y - this.y) < 30) {
-        this.packPlayWaypointTimer = 2.5 + Math.random() * 2.0;
-        if (nearestLandmark) {
-          // Skirt the landmark so both dogs converge on it together.
-          const dxL = nearestLandmark.x - this.x;
-          const dyL = nearestLandmark.y - this.y;
-          const dL = Math.hypot(dxL, dyL) || 1;
-          const skirt = (nearestLandmark.r || 20) + 40;
-          this.packPlayWaypoint = {
-            x: nearestLandmark.x - (dxL / dL) * skirt,
-            y: nearestLandmark.y - (dyL / dL) * skirt
-          };
-        } else {
-          const anchorX = this.owner ? this.owner.x : this.x;
-          const anchorY = this.owner ? this.owner.y : this.y;
-          const angle = Math.random() * Math.PI * 2;
-          const radius = 90 + Math.random() * 110;
-          this.packPlayWaypoint = {
-            x: anchorX + Math.cos(angle) * radius,
-            y: anchorY + Math.sin(angle) * radius
-          };
-        }
-      }
-      desiredX = this.packPlayWaypoint.x;
-      desiredY = this.packPlayWaypoint.y;
-      modeSpeed = Math.min(200, Math.max(150, 150 + Math.random() * 60)); // [150, 200] px/s
-    } else {
-      // Chase dog pursues the lead dog, flanking when close.
-      if (dist > 75) {
-        desiredX = partner.x;
-        desiredY = partner.y;
-        modeSpeed = Math.min(210, Math.max(150, 170 + Math.random() * 50)); // [150, 210] px/s
-      } else if (dist < 35) {
-        // Veer/flank alongside at matching speed.
-        const tangentX = -dy / dist;
-        const tangentY = dx / dist;
-        desiredX = this.x + tangentX * 60;
-        desiredY = this.y + tangentY * 60;
-        modeSpeed = Math.min(210, Math.max(150, 150 + Math.random() * 40));
-      } else {
-        desiredX = partner.x;
-        desiredY = partner.y;
-        modeSpeed = Math.min(210, Math.max(150, 150 + Math.random() * 40));
-      }
-    }
-    // Final clamp: chase speed must never exceed 210 px/s.
-    modeSpeed = Math.min(210, Math.max(150, modeSpeed));
-
-    let dirX = desiredX - this.x;
-    let dirY = desiredY - this.y;
-    const dirLen = Math.hypot(dirX, dirY) || 1;
-    dirX /= dirLen;
-    dirY /= dirLen;
-
-    let vx = dirX * modeSpeed;
-    let vy = dirY * modeSpeed;
-
-    // Obstacle avoidance: skirt around trunks/props.
-    const obstacles = this._getFieldObstacles(field);
-    for (const obs of obstacles) {
-      const odx = this.x - obs.x;
-      const ody = this.y - obs.y;
-      const odist = Math.hypot(odx, ody);
-      const avoidRadius = (obs.r || 18) + this.radius + 18;
-      if (odist < avoidRadius && odist > 0.001) {
-        const nx = odx / odist;
-        const ny = ody / odist;
-        const strength = (avoidRadius - odist) / avoidRadius;
-        vx += (nx * 0.7 + -ny * 0.6) * modeSpeed * strength;
-        vy += (ny * 0.7 + nx * 0.6) * modeSpeed * strength;
-      }
-    }
-
-    // Screen perimeter steering (soft margin 85px, hard clamp 32px).
-    if (screen) {
-      const softMargin = 85;
-      let inwardX = 0;
-      let inwardY = 0;
-      if (this.x < screen.left + softMargin) inwardX += 1;
-      if (this.x > screen.right - softMargin) inwardX -= 1;
-      if (this.y < screen.top + softMargin) inwardY += 1;
-      if (this.y > screen.bottom - softMargin) inwardY -= 1;
-      if (inwardX !== 0 || inwardY !== 0) {
-        const toCenterX = screen.centerX - this.x;
-        const toCenterY = screen.centerY - this.y;
-        const toCenterLen = Math.hypot(toCenterX, toCenterY) || 1;
-        const blend = 0.55;
-        vx = vx * (1 - blend) + (toCenterX / toCenterLen) * modeSpeed * blend;
-        vy = vy * (1 - blend) + (toCenterY / toCenterLen) * modeSpeed * blend;
-      }
-    }
-
-    // Owner-distance tether: keep within max roam distance of the owner.
-    if (this.owner) {
-      const distToOwner = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
-      if (distToOwner > 320) {
-        const bias = Math.min(1.0, (distToOwner - 320) / 80);
-        const toOwnerX = (this.owner.x - this.x) / (distToOwner || 1);
-        const toOwnerY = (this.owner.y - this.y) / (distToOwner || 1);
-        vx = vx * (1.0 - bias) + toOwnerX * modeSpeed * bias;
-        vy = vy * (1.0 - bias) + toOwnerY * modeSpeed * bias;
-      }
-    }
-
-    this.vx = vx;
-    this.vy = vy;
-
-    if (Math.hypot(this.vx, this.vy) > 8) {
-      this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 12));
-    }
-
-    this.wagSpeed = Math.min(22, Math.max(16, 16 + energy));
-
-    // Periodic playful emote/pant burst every 6-8s.
-    this.packPlayEmoteTimer -= dt;
-    if (this.packPlayEmoteTimer <= 0) {
-      this.packPlayEmoteTimer = 6.0 + Math.random() * 2.0;
-      const emotes = ['🐾', '🐶', '❤️'];
-      this.emoteBubble = emotes[Math.floor(Math.random() * emotes.length)];
-      this.emoteTimer = 1.8;
-      if (this.audio && typeof this.audio.playPant === 'function') {
-        this.audio.playPant();
-      }
-    }
-
-    // Hard clamp to the visible screen perimeter.
-    if (screen) {
-      this.x = Math.max(screen.left + 32, Math.min(screen.right - 32, this.x));
-      this.y = Math.max(screen.top + 32, Math.min(screen.bottom - 32, this.y));
-    }
-
-    // Obstacle and world boundary collisions.
-    if (field) {
-      resolveFieldCollision(this, this.radius, field);
-    }
-
-    // Re-apply the screen hard clamp (32px inset) so collision pushback never
-    // pushes the dog off-screen or into the edge band.
-    if (this.camera) {
-      const perim = this._getScreenPerimeter();
-      if (perim) {
-        this.x = Math.max(perim.left + 32, Math.min(perim.right - 32, this.x));
-        this.y = Math.max(perim.top + 32, Math.min(perim.bottom - 32, this.y));
-      }
-    }
-
-    // Final speed magnitude clamp: obstacle avoidance and perimeter steering
-    // must never push the pack-play speed above 210 px/s.
-    const currentSpeed = Math.hypot(this.vx, this.vy);
-    if (currentSpeed > 210) {
-      const scale = 210 / currentSpeed;
-      this.vx *= scale;
-      this.vy *= scale;
-    }
-  }
-
-  _legacyUpdateRecalledRemoved(dt) {
-    return;
-  }
-
-  _unusedRecalledBody(dt) {
-    if (!this.owner) {
-      this.state = DogState.ROAMING;
-      return;
-    }
-
-    if (!this.isRecalledToHeel) {
-      // Sprints back directly to owner
-      const dx = this.owner.x - this.x;
-      const dy = this.owner.y - this.y;
-      const dist = Math.hypot(dx, dy);
-
-      if (dist < 40) {
-        this.isRecalledToHeel = true;
-        this.emoteBubble = '🐾';
-        this.emoteTimer = 1.5;
-        this.vx = 0;
-        this.vy = 0;
-      } else {
-        const targetSpeed = this.sprintSpeed;
-        this.vx = (dx / dist) * targetSpeed;
-        this.vy = (dy / dist) * targetSpeed;
-        this.angle = Math.atan2(this.vy, this.vx);
-        this.wagSpeed = 18;
-      }
-    }
-
-    if (this.isRecalledToHeel) {
-      // Executes tight close heel following. When on-leash, use the leash
-      // slot geometry; when off-leash, preserve the tight-heel follow offset
-      // relative to the owner's forward flank.
-      this.followDistance = 35;
-      let targetX;
-      let targetY;
-      if (this.owner && this.owner.isLeashed) {
-        const slot = getLeashSlot(this.owner);
-        this.targetSlot = slot;
-        targetX = slot.x;
-        targetY = slot.y;
-      } else {
-        this.targetSlot = null;
-        const heading = resolveOwnerHeading(this.owner);
-        const sideSign = this.preferredSide === 'left' ? -1 : 1;
-        const bearing = heading + sideSign * FLANK_RIGHT.mid;
-        targetX = this.owner.x + Math.cos(bearing) * this.followDistance;
-        targetY = this.owner.y + Math.sin(bearing) * this.followDistance;
-      }
-
-      const dx = targetX - this.x;
-      const dy = targetY - this.y;
-      const dist = Math.hypot(dx, dy);
-
-      const slowingRadius = 35;
-      let targetSpeed = this.speed;
-      if (dist < slowingRadius) {
-        targetSpeed = this.speed * (dist / slowingRadius);
-      }
-
-      if (dist > 6) {
-        this.vx = (dx / dist) * targetSpeed;
-        this.vy = (dy / dist) * targetSpeed;
-        this.angle = Math.atan2(this.vy, this.vx);
-        this.wagSpeed = 12;
-      } else {
-        this.vx = 0;
-        this.vy = 0;
-        this.wagSpeed = 8;
-      }
-
-      this.recallHeelTimer -= dt;
-      if (this.recallHeelTimer <= 0) {
-        this.isRecalledToHeel = false;
-        this.followDistance = 42;
-        this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
-      }
-    }
-  }
-
-  _legacyUpdateFetchingRemoved(dt) {
-    return;
-  }
-
-  _unusedFetchingBody(dt) {
-    if (!this.targetBall) {
-      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
-      return;
-    }
-
-    if (!this.hasBall) {
-      // Sprint toward ball
-      const dx = this.targetBall.x - this.x;
-      const dy = this.targetBall.y - this.y;
-      const dist = Math.hypot(dx, dy);
-
-      if (dist > 14) {
-        this.vx = (dx / dist) * this.sprintSpeed;
-        this.vy = (dy / dist) * this.sprintSpeed;
-        this.angle = Math.atan2(this.vy, this.vx);
-        this.wagSpeed = 16;
-      } else {
-        // Grab the ball!
-        this.hasBall = true;
-        this.targetBall.attachToDog(this);
-        this.emoteBubble = '🎾';
-        this.emoteTimer = 2.0;
-      }
-    } else {
-      // Return ball to owner
-      if (!this.owner) {
-        this.hasBall = false;
-        this.targetBall.drop(this.x, this.y);
-        this.targetBall = null;
-        this.state = DogState.ROAMING;
-        return;
-      }
-
-      const dx = this.owner.x - this.x;
-      const dy = this.owner.y - this.y;
-      const dist = Math.hypot(dx, dy);
-
-      if (dist > 36) {
-        this.vx = (dx / dist) * this.speed;
-        this.vy = (dy / dist) * this.speed;
-        this.angle = Math.atan2(this.vy, this.vx);
-        this.wagSpeed = 14;
-      } else {
-        // Hand off ball to owner
-        if (typeof this.targetBall.retrieveByOwner === 'function') {
-          this.targetBall.retrieveByOwner();
-        } else {
-          this.targetBall.inOwnerPossession = true;
-          this.targetBall.isCarried = false;
-          this.targetBall.carrier = null;
-        }
-        this.hasBall = false;
-        this.targetBall = null;
-        this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
-        this.pet();
-        this.emoteBubble = '❤️';
-        this.emoteTimer = 2.0;
-      }
-    }
-  }
-
-  _legacyUpdatePlayBowRemoved(dt) {
-    return;
-  }
-
-  _unusedPlayBowBody(dt) {
-    this.vx *= 0.5;
-    this.vy *= 0.5;
-    this.stateTimer -= dt;
-    this.wagSpeed = 14 + this.personality.energy * 2;
-    if (this.stateTimer <= 0) {
-      // Both off-leash: escalate into sustained pack play when a partner is available.
-      const partner = this.socialTargetDog;
-      const wasBothOffLeash = Boolean(!this.owner?.isLeashed && partner && !partner.owner?.isLeashed);
-      if (wasBothOffLeash && this._tryStartPackPlay(partner)) {
-        this.socialTargetDog = null;
-        return;
-      }
-      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
-    }
-  }
-
-  _legacyUpdateSniffRemoved(dt) {
-    return;
-  }
-
-  _unusedSniffBody(dt) {
-    this.vx *= 0.4;
-    this.vy *= 0.4;
-    this.stateTimer -= dt;
-    this.wagSpeed = 4;
-    // Spontaneous barking influenced by barkyness
-    if (Math.random() < (this.personality.barkyness * 0.001) && !this.isBarking) {
-      this.bark();
-    }
-    if (this.owner && this.owner.isMoving && this.owner.isLeashed) {
-      this.state = DogState.FOLLOWING;
-    } else if (this.stateTimer <= 0) {
-      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
-    }
-  }
-
-  _legacyUpdateSittingRemoved(dt) {
-    return;
-  }
-
-  _unusedSittingBody(dt) {
-    this.vx = 0;
-    this.vy = 0;
-    this.stateTimer -= dt;
-    this.wagSpeed = 4;
-    // Spontaneous barking influenced by barkyness
-    if (Math.random() < (this.personality.barkyness * 0.001) && !this.isBarking) {
-      this.bark();
-    }
-    if (this.owner && this.owner.isMoving && this.owner.isLeashed) {
-      this.state = DogState.FOLLOWING;
-    } else if (this.stateTimer <= 0) {
-      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
-    }
-  }
-
-  _legacyUpdateZoomiesRemoved(dt, field) {
-    return;
-  }
-
-  _unusedZoomiesBody(dt, field) {
-    if (this.owner && this.owner.isLeashed) {
-      this.state = DogState.FOLLOWING;
-      return;
-    }
-    this.zoomiesTimer -= dt;
-    if (this.zoomiesTimer <= 0) {
-      this.vx = 0;
-      this.vy = 0;
-      this.zoomiesPhase = 0;
-      this.emoteBubble = '👅';
-      this.emoteTimer = 2.0;
-      this.transitionTo((this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING);
-      return;
-    }
-    // Need-based speed reduction: scale the parametric progression so the
-    // zoomies path advances at the reduced effective speed (no jitter, no
-    // double integration). Needs never stack (single flat multiplier).
-    const zoomiesBaseSpeed = this.baseSpeed;
-    const zoomiesSpeedScale = zoomiesBaseSpeed > 0
-      ? (this.getEffectiveSpeed() / zoomiesBaseSpeed)
-      : 1.0;
-    this.zoomiesPhase += dt * this.zoomiesSpeed * zoomiesSpeedScale;
-
-    const t = this.zoomiesPhase;
-    const cx = this.zoomiesCenter.x;
-    const cy = this.zoomiesCenter.y;
-    const rx = 135;
-    const ry = 80;
-
-    const activePath = this.zoomiesPath || ZoomiePath.FIGURE_EIGHT;
-
-    let expectedX;
-    let expectedY;
-    let dx;
-    let dy;
-
-    if (activePath === ZoomiePath.ORBIT_OWNER) {
-      // Circular orbit around the owner's LIVE position.
-      const ownerX = this.owner ? this.owner.x : cx;
-      const ownerY = this.owner ? this.owner.y : cy;
-      this.zoomiesOrbitAngle += dt * this.zoomiesSpeed * zoomiesSpeedScale * (this.zoomiesOrbitDir || 1);
-      const orbitR = this.zoomiesOrbitRadius;
-      expectedX = ownerX + Math.cos(this.zoomiesOrbitAngle) * orbitR;
-      expectedY = ownerY + Math.sin(this.zoomiesOrbitAngle) * orbitR;
-      if (this.zoomiesOrbitOffset) {
-        expectedX += this.zoomiesOrbitOffset.x;
-        expectedY += this.zoomiesOrbitOffset.y;
-      }
-      dx = -Math.sin(this.zoomiesOrbitAngle) * orbitR * (this.zoomiesOrbitDir || 1);
-      dy = Math.cos(this.zoomiesOrbitAngle) * orbitR * (this.zoomiesOrbitDir || 1);
-    } else if (activePath === ZoomiePath.SHUTTLE) {
-      // Shuttle back and forth between two anchors along the owner's heading.
-      const s = Math.sin(this.zoomiesPhase);
-      const ax = this.zoomiesShuttleA.x;
-      const ay = this.zoomiesShuttleA.y;
-      const bx = this.zoomiesShuttleB.x;
-      const by = this.zoomiesShuttleB.y;
-      expectedX = ax + (bx - ax) * 0.5 * (s + 1);
-      expectedY = ay + (by - ay) * 0.5 * (s + 1);
-      // Analytic derivative: d(expected)/dt = 0.5 * (b - a) * cos(phase) * zoomiesSpeed
-      dx = (bx - ax) * 0.5 * Math.cos(this.zoomiesPhase);
-      dy = (by - ay) * 0.5 * Math.cos(this.zoomiesPhase);
-    } else {
-      // Parametric figure-eight retaining Phase 3 regex compatibility.
-      expectedX = cx + rx * Math.sin(this.zoomiesPhase);
-      expectedY = cy + ry * (Math.sin(this.zoomiesPhase * 2) * 0.5);
-      dx = rx * Math.cos(t);
-      dy = ry * Math.cos(2 * t);
-    }
-
-    // Proactive obstacle repulsion: steer the path clear of trunks/props.
-    let orbitObstacleHit = false;
-    if (field) {
-      const obstacles = this._getFieldObstacles(field);
-      for (const obs of obstacles) {
-        const odx = expectedX - obs.x;
-        const ody = expectedY - obs.y;
-        const odist = Math.hypot(odx, ody);
-        const minClearance = (obs.r || 18) + this.radius + 22;
-        if (odist < minClearance) {
-          let nx = 0;
-          let ny = 1;
-          if (odist > 0.001) {
-            nx = odx / odist;
-            ny = ody / odist;
-          }
-          const push = minClearance - odist;
-          const pushX = nx * push;
-          const pushY = ny * push;
-          expectedX += pushX;
-          expectedY += pushY;
-          this.zoomiesCenter.x += pushX;
-          this.zoomiesCenter.y += pushY;
-          if (this.zoomiesOrbitOffset) {
-            this.zoomiesOrbitOffset.x += pushX;
-            this.zoomiesOrbitOffset.y += pushY;
-          }
-          if (this.zoomiesShuttleA && this.zoomiesShuttleB) {
-            this.zoomiesShuttleA.x += pushX;
-            this.zoomiesShuttleA.y += pushY;
-            this.zoomiesShuttleB.x += pushX;
-            this.zoomiesShuttleB.y += pushY;
-          }
-          orbitObstacleHit = true;
-        }
-      }
-    }
-
-    // Decay the persistent orbit offset when no obstacle is pushing it.
-    if (activePath === ZoomiePath.ORBIT_OWNER && !orbitObstacleHit && this.zoomiesOrbitOffset) {
-      this.zoomiesOrbitOffset.x *= Math.max(0, 1 - dt * 1.5);
-      this.zoomiesOrbitOffset.y *= Math.max(0, 1 - dt * 1.5);
-    }
-
-    // Set position to the expected position FIRST, then resolve collisions so
-    // the push-out operates on fresh coordinates (no stale-position oscillation).
-    this.x = expectedX;
-    this.y = expectedY;
-
-    // Collision-aware: resolve obstacles/bounds and shift the orbit center if displaced.
-    if (field) {
-      resolveFieldCollision(this, this.radius, field);
-      const dispX = this.x - expectedX;
-      const dispY = this.y - expectedY;
-      this.zoomiesCenter.x += (this.x - expectedX);
-      this.zoomiesCenter.y += (this.y - expectedY);
-      if (this.zoomiesOrbitOffset) {
-        this.zoomiesOrbitOffset.x += dispX;
-        this.zoomiesOrbitOffset.y += dispY;
-      }
-      if (this.zoomiesShuttleA && this.zoomiesShuttleB) {
-        this.zoomiesShuttleA.x += dispX;
-        this.zoomiesShuttleA.y += dispY;
-        this.zoomiesShuttleB.x += dispX;
-        this.zoomiesShuttleB.y += dispY;
-      }
-    }
-
-    // Analytic tangent velocity vector
-    this.vx = dx * this.zoomiesSpeed;
-    this.vy = dy * this.zoomiesSpeed;
-
-    const targetAngle = Math.atan2(dy, dx);
-    this.angle = lerpAngle(this.angle, targetAngle, Math.min(1, dt * 12));
-    this.wagSpeed = 24;
-
-    // Panting audio during zoomies (throttled)
-    this._pantCooldown -= dt;
-    if (this._pantCooldown <= 0 && this.audio && typeof this.audio.playPant === 'function') {
-      this.audio.playPant();
-      this._pantCooldown = 1.2;
-    }
-
-    if (field && field.particleSystem && Math.random() < 0.35) {
-      field.particleSystem.emitGallopPuff(this.x, this.y, this.angle);
-    }
-  }
-
-  _legacyUpdateSniffingTrailRemoved(dt, field) {
-    return;
-  }
-
-  _unusedSniffingTrailBody(dt, field) {
-    this.stateTimer -= dt;
-    this.sniffTime += dt;
-    this.noseTwitch = Math.sin(this.sniffTime * 25) * 1.6;
-
-    const now = Date.now();
-    const cooldownActive = (now - this.lastSniffFollowAt) < 14000;
-
-    // Snout position for vapor particles
-    const snoutDist = 20;
-    const sx = this.x + Math.cos(this.angle) * snoutDist;
-    const sy = this.y + Math.sin(this.angle) * snoutDist;
-    if (field && field.particleSystem && Math.random() < 0.22) {
-      field.particleSystem.emitSniffParticles(sx, sy, this.angle);
-    }
-
-    // Sniffing audio (throttled)
-    this._pantCooldown -= dt;
-    if (this._pantCooldown <= 0 && this.audio && typeof this.audio.playSniff === 'function') {
-      this.audio.playSniff();
-      this._pantCooldown = 0.9;
-    }
-
-    // Follow or inspect target scent node (gated by 14s cooldown)
-    if (this.targetScent && this.targetScent.life > 0) {
-      const dx = this.targetScent.x - this.x;
-      const dy = this.targetScent.y - this.y;
-      const dist = Math.hypot(dx, dy);
-
-      if (dist > 12) {
-        if (!cooldownActive) {
-          const sniffSpeed = this.speed * 0.38;
-          this.vx = (dx / dist) * sniffSpeed;
-          this.vy = (dy / dist) * sniffSpeed;
-          this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 10));
-        } else {
-          this.vx *= 0.5;
-          this.vy *= 0.5;
-        }
-      } else {
-        this.vx *= 0.5;
-        this.vy *= 0.5;
-        // Reached node: record cooldown timestamp once on first arrival only
-        if (this.targetScent && this.lastReachedScent !== this.targetScent) {
-          this.lastReachedScent = this.targetScent;
-          this.lastSniffFollowAt = now;
-          this.visitedScents.add(this.targetScent);
-        }
-        // Seek next connected scent if available (exclude own scents and already-visited nodes)
-        if (field && typeof field.getNearbyScents === 'function') {
-          const nearby = field.getNearbyScents(this.x, this.y, 65).filter(s =>
-            s !== this.targetScent &&
-            s.sourceId !== (this.id || 'self') &&
-            s.source !== this &&
-            !this.visitedScents.has(s)
-          );
-          if (nearby.length > 0) {
-            const next = nearby[Math.floor(Math.random() * nearby.length)];
-            this.targetScent = next;
-          }
-        }
-      }
-    } else {
-      this.vx *= 0.5;
-      this.vy *= 0.5;
-    }
-
-    this.wagSpeed = 8;
-    if (this.owner && this.owner.isMoving && this.owner.isLeashed) {
-      this.state = DogState.FOLLOWING;
-    } else if (this.owner && !this.owner.isLeashed && Math.hypot(this.x - this.owner.x, this.y - this.owner.y) > 160) {
-      this.state = DogState.ROAMING;
-    } else if (this.stateTimer <= 0) {
-      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
-      this.targetScent = null;
     }
   }
 

@@ -141,17 +141,112 @@ fn zoomie_index(path: ZoomiePathId) -> f32 {
     path as u32 as f32
 }
 
-/// Camera "openness" proxy: fewer obstacles means more room to roam.
+/// Camera "openness" proxy derived from the visible camera rect.
 fn camera_open_space(input: &UtilityInput<'_>) -> f32 {
-    let n = input.obstacles.len() as f32;
-    unit(1.0 / (1.0 + n * 0.25))
+    let b = &input.buffer.slots;
+    if finite_or(b[DOG_BUF_CAM_ACTIVE], 0.0) <= 0.5 {
+        return 0.5;
+    }
+    let left = finite_or(b[DOG_BUF_CAM_LEFT], 0.0);
+    let top = finite_or(b[DOG_BUF_CAM_TOP], 0.0);
+    let right = finite_or(b[DOG_BUF_CAM_RIGHT], 0.0);
+    let bottom = finite_or(b[DOG_BUF_CAM_BOTTOM], 0.0);
+    if !(right > left) || !(bottom > top) {
+        return 0.0;
+    }
+    let area = (right - left) * (bottom - top);
+    if !area.is_finite() || area <= 0.0 {
+        return 0.0;
+    }
+    unit((area / (1920.0 * 1080.0)).sqrt())
 }
 
-fn ball_available(input: &UtilityInput<'_>) -> bool {
-    if input.combo.has_ball {
-        return true;
+fn ball_active(buffer: &DogSimBuffer) -> bool {
+    finite_or(buffer.slots[DOG_BUF_BALL_ACTIVE], 0.0) > 0.5
+}
+
+fn peer_count(buffer: &DogSimBuffer) -> usize {
+    let n = finite_or(buffer.slots[DOG_BUF_PEER_COUNT], 0.0);
+    if n <= 0.0 {
+        0
+    } else {
+        (n as usize).min(4)
     }
-    finite_or(input.buffer.slots[DOG_BUF_BALL_ACTIVE], 0.0) > 0.5
+}
+
+fn npc_count(buffer: &DogSimBuffer) -> usize {
+    let n = finite_or(buffer.slots[DOG_BUF_NPC_COUNT], 0.0);
+    if n <= 0.0 {
+        0
+    } else {
+        (n as usize).min(4)
+    }
+}
+
+fn scent_count(buffer: &DogSimBuffer) -> usize {
+    let n = finite_or(buffer.slots[DOG_BUF_SCENT_COUNT], 0.0);
+    if n <= 0.0 {
+        0
+    } else {
+        (n as usize).min(4)
+    }
+}
+
+fn slot_xy(buffer: &DogSimBuffer, base_x: usize, base_y: usize, i: usize) -> (f32, f32) {
+    (
+        finite_or(buffer.slots[base_x + 2 * i], 0.0),
+        finite_or(buffer.slots[base_y + 2 * i], 0.0),
+    )
+}
+
+fn nearest_peer_distance(buffer: &DogSimBuffer, px: f32, py: f32) -> Option<f32> {
+    let mut best: Option<f32> = None;
+    for i in 0..peer_count(buffer) {
+        let (x, y) = slot_xy(buffer, DOG_BUF_PEER0_X, DOG_BUF_PEER0_Y, i);
+        let d = magnitude(px - x, py - y);
+        best = Some(best.map_or(d, |value| value.min(d)));
+    }
+    best
+}
+
+fn nearest_npc_distance(buffer: &DogSimBuffer, px: f32, py: f32) -> Option<f32> {
+    let mut best: Option<f32> = None;
+    for i in 0..npc_count(buffer) {
+        let (x, y) = slot_xy(buffer, DOG_BUF_NPC0_X, DOG_BUF_NPC0_Y, i);
+        let d = magnitude(px - x, py - y);
+        best = Some(best.map_or(d, |value| value.min(d)));
+    }
+    best
+}
+
+fn nearest_scent_distance(buffer: &DogSimBuffer, px: f32, py: f32) -> Option<f32> {
+    let mut best: Option<f32> = None;
+    for i in 0..scent_count(buffer) {
+        let (x, y) = slot_xy(buffer, DOG_BUF_SCENT0_X, DOG_BUF_SCENT0_Y, i);
+        let d = magnitude(px - x, py - y);
+        best = Some(best.map_or(d, |value| value.min(d)));
+    }
+    best
+}
+
+fn nearest_company_distance(buffer: &DogSimBuffer, px: f32, py: f32) -> Option<f32> {
+    match (
+        nearest_peer_distance(buffer, px, py),
+        nearest_npc_distance(buffer, px, py),
+    ) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (Some(a), None) => Some(a),
+        (None, Some(b)) => Some(b),
+        (None, None) => None,
+    }
+}
+
+#[inline]
+fn dog_position(buffer: &DogSimBuffer) -> (f32, f32) {
+    (
+        finite_or(buffer.slots[DOG_BUF_POS_X], 0.0),
+        finite_or(buffer.slots[DOG_BUF_POS_Y], 0.0),
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -159,24 +254,31 @@ fn ball_available(input: &UtilityInput<'_>) -> bool {
 // ---------------------------------------------------------------------------
 
 pub fn score_heel_follow(input: &UtilityInput<'_>) -> f32 {
-    let curiosity = unit(input.traits.curiosity as f32);
-    let energy = unit(input.traits.energy as f32);
-    let loyalty = unit(input.traits.loyalty as f32);
-    let base = 0.20 + 0.45 * loyalty + 0.15 * energy - 0.20 * curiosity;
-    let leash_bonus = if input.combo.is_on_leash { 0.20 } else { 0.0 };
-    unit(base + leash_bonus)
+    let loyalty = unit(input.traits.loyalty);
+    let stubbornness = unit(input.traits.stubbornness);
+    let (px, py) = dog_position(input.buffer);
+    let tx = finite_or(
+        input.buffer.slots[DOG_BUF_TARGET_SLOT_X],
+        finite_or(input.buffer.slots[DOG_BUF_OWNER_X], px),
+    );
+    let ty = finite_or(
+        input.buffer.slots[DOG_BUF_TARGET_SLOT_Y],
+        finite_or(input.buffer.slots[DOG_BUF_OWNER_Y], py),
+    );
+    let proximity = unit(1.0 - magnitude(px - tx, py - ty) / 160.0);
+    unit(0.20 + 0.45 * loyalty + 0.35 * proximity - 0.20 * stubbornness)
 }
 
 pub fn score_fetch_ball(input: &UtilityInput<'_>) -> f32 {
-    if input.combo.is_on_leash
+    if !ball_active(input.buffer)
+        || input.combo.is_on_leash
         || input.combo.is_pooping
         || input.combo.has_need
-        || !ball_available(input)
     {
         return 0.0;
     }
-    let curiosity = unit(input.traits.curiosity as f32);
-    let energy = unit(input.traits.energy as f32);
+    let curiosity = unit(input.traits.curiosity);
+    let energy = unit(input.traits.energy);
     unit(0.30 + 0.40 * energy + 0.30 * curiosity)
 }
 
@@ -184,8 +286,8 @@ pub fn score_recall(input: &UtilityInput<'_>) -> f32 {
     if finite_or(input.buffer.slots[DOG_BUF_CMD_WHISTLE_RECALL], 0.0) <= 0.5 {
         return 0.0;
     }
-    let loyalty = unit(input.traits.loyalty as f32);
-    let stubbornness = unit(input.traits.stubbornness as f32);
+    let loyalty = unit(input.traits.loyalty);
+    let stubbornness = unit(input.traits.stubbornness);
     unit(0.35 + 0.50 * loyalty - 0.35 * stubbornness)
 }
 
@@ -193,47 +295,58 @@ pub fn score_roam_explore(input: &UtilityInput<'_>) -> f32 {
     if input.combo.is_on_leash {
         return 0.0;
     }
-    let curiosity = unit(input.traits.curiosity as f32);
-    let energy = unit(input.traits.energy as f32);
-    unit(0.20 + 0.45 * curiosity + 0.15 * energy + 0.20 * camera_open_space(input))
+    let curiosity = unit(input.traits.curiosity);
+    unit(0.20 + 0.45 * curiosity + 0.35 * camera_open_space(input))
 }
 
 pub fn score_scout_ahead(input: &UtilityInput<'_>) -> f32 {
     if input.combo.is_on_leash {
         return 0.0;
     }
-    let curiosity = unit(input.traits.curiosity as f32);
-    let energy = unit(input.traits.energy as f32);
-    let loyalty = unit(input.traits.loyalty as f32);
-    unit(0.15 + 0.40 * curiosity + 0.25 * energy - 0.20 * loyalty)
+    let energy = unit(input.traits.energy);
+    let (px, py) = dog_position(input.buffer);
+    let ox = finite_or(input.buffer.slots[DOG_BUF_OWNER_X], px);
+    let oy = finite_or(input.buffer.slots[DOG_BUF_OWNER_Y], py);
+    let heading = finite_or(input.buffer.slots[DOG_BUF_OWNER_HEADING], 0.0);
+    let forward = (px - ox) * heading.cos() + (py - oy) * heading.sin();
+    let forward_norm = unit(forward / 160.0);
+    unit(0.15 + 0.40 * energy + 0.35 * forward_norm)
 }
 
 pub fn score_lag_and_sniff(input: &UtilityInput<'_>) -> f32 {
-    let curiosity = unit(input.traits.curiosity as f32);
-    let energy = unit(input.traits.energy as f32);
-    let stubbornness = unit(input.traits.stubbornness as f32);
-    unit(0.10 + 0.45 * curiosity + 0.20 * stubbornness - 0.15 * energy)
+    let curiosity = unit(input.traits.curiosity);
+    let energy = unit(input.traits.energy);
+    let (px, py) = dog_position(input.buffer);
+    let proximity = nearest_scent_distance(input.buffer, px, py)
+        .map(|d| unit(1.0 - d / 200.0))
+        .unwrap_or(0.0);
+    unit(0.10 + 0.45 * curiosity + 0.30 * proximity - 0.15 * energy)
 }
 
 pub fn score_check_in(input: &UtilityInput<'_>) -> f32 {
-    let curiosity = unit(input.traits.curiosity as f32);
-    let energy = unit(input.traits.energy as f32);
-    let loyalty = unit(input.traits.loyalty as f32);
-    unit(0.15 + 0.50 * loyalty + 0.15 * curiosity + 0.10 * energy)
+    let loyalty = unit(input.traits.loyalty);
+    let stubbornness = unit(input.traits.stubbornness);
+    let (px, py) = dog_position(input.buffer);
+    let ox = finite_or(input.buffer.slots[DOG_BUF_OWNER_X], px);
+    let oy = finite_or(input.buffer.slots[DOG_BUF_OWNER_Y], py);
+    let distance_norm = unit(magnitude(px - ox, py - oy) / 240.0);
+    unit(0.15 + 0.50 * loyalty + 0.25 * distance_norm - 0.25 * stubbornness)
 }
 
 pub fn score_social_greet(input: &UtilityInput<'_>) -> f32 {
-    let curiosity = unit(input.traits.curiosity as f32);
-    let energy = unit(input.traits.energy as f32);
-    let loyalty = unit(input.traits.loyalty as f32);
-    unit(0.10 + 0.35 * energy + 0.25 * curiosity + 0.15 * loyalty)
+    let loyalty = unit(input.traits.loyalty);
+    let stubbornness = unit(input.traits.stubbornness);
+    let (px, py) = dog_position(input.buffer);
+    let proximity = nearest_company_distance(input.buffer, px, py)
+        .map(|d| unit(1.0 - d / 160.0))
+        .unwrap_or(0.0);
+    unit(0.10 + 0.40 * loyalty + 0.40 * proximity - 0.20 * stubbornness)
 }
 
 pub fn score_pack_play(input: &UtilityInput<'_>) -> f32 {
-    let curiosity = unit(input.traits.curiosity as f32);
-    let energy = unit(input.traits.energy as f32);
-    let stubbornness = unit(input.traits.stubbornness as f32);
-    unit(0.10 + 0.45 * energy + 0.20 * curiosity - 0.15 * stubbornness)
+    let energy = unit(input.traits.energy);
+    let peer_ratio = peer_count(input.buffer) as f32 / 4.0;
+    unit(0.10 + 0.45 * energy + 0.35 * peer_ratio)
 }
 
 pub fn score_zoomies(input: &UtilityInput<'_>) -> f32 {
@@ -242,23 +355,33 @@ pub fn score_zoomies(input: &UtilityInput<'_>) -> f32 {
     {
         return 0.0;
     }
-    let curiosity = unit(input.traits.curiosity as f32);
-    let energy = unit(input.traits.energy as f32);
-    unit(0.15 + 0.65 * energy + 0.20 * curiosity)
+    let energy = unit(input.traits.energy);
+    unit(0.15 + 0.65 * energy + 0.20 * camera_open_space(input))
 }
 
 pub fn score_ambient_rest(input: &UtilityInput<'_>) -> f32 {
-    let curiosity = unit(input.traits.curiosity as f32);
-    let energy = unit(input.traits.energy as f32);
-    let stubbornness = unit(input.traits.stubbornness as f32);
-    unit(0.25 + 0.40 * (1.0 - energy) + 0.15 * stubbornness - 0.15 * curiosity)
+    let energy = unit(input.traits.energy);
+    let idle = unit(finite_or(input.buffer.slots[DOG_BUF_IDLE_REST_TIMER], 0.0) / 4.0);
+    unit(0.25 + 0.45 * (1.0 - energy) + 0.30 * idle)
 }
 
 pub fn score_bark_impulse(input: &UtilityInput<'_>) -> f32 {
-    let energy = unit(input.traits.energy as f32);
-    let stubbornness = unit(input.traits.stubbornness as f32);
-    let loyalty = unit(input.traits.loyalty as f32);
-    unit(0.05 + 0.30 * stubbornness + 0.15 * energy - 0.10 * loyalty)
+    let ready = finite_or(input.buffer.slots[DOG_BUF_SOCIAL_COOLDOWN], 0.0) <= 0.0
+        || finite_or(input.buffer.slots[DOG_BUF_CMD_BARK], 0.0) > 0.5;
+    if !ready {
+        return 0.0;
+    }
+    let stubbornness = unit(input.traits.stubbornness);
+    let (px, py) = dog_position(input.buffer);
+    let mut nearest = nearest_company_distance(input.buffer, px, py);
+    if ball_active(input.buffer) {
+        let bx = finite_or(input.buffer.slots[DOG_BUF_BALL_X], px);
+        let by = finite_or(input.buffer.slots[DOG_BUF_BALL_Y], py);
+        let ball_d = magnitude(px - bx, py - by);
+        nearest = Some(nearest.map_or(ball_d, |value| value.min(ball_d)));
+    }
+    let proximity = nearest.map(|d| unit(1.0 - d / 160.0)).unwrap_or(0.0);
+    unit(0.05 + 0.45 * stubbornness + 0.40 * proximity)
 }
 
 fn score_all(input: &UtilityInput<'_>) -> [f32; UTIL_COUNT] {
@@ -284,32 +407,37 @@ fn score_all(input: &UtilityInput<'_>) -> [f32; UTIL_COUNT] {
 
 fn pick_best(scores: &[f32; UTIL_COUNT], current: Option<u32>) -> (u32, f32) {
     let mut best_id: u32 = 0;
-    let mut best_score = f32::NEG_INFINITY;
+    let mut best_effective = f32::NEG_INFINITY;
 
-    for (index, raw) in scores.iter().enumerate() {
-        let id = index as u32;
-        let mut score = unit(*raw);
-        if Some(id) == current {
-            score = unit(score + 0.12);
-        }
-        // Strictly greater: ties break towards the lower utility id.
-        if score > best_score {
-            best_score = score;
-            best_id = id;
+    for index in 0..UTIL_COUNT {
+        let base = unit(scores[index]);
+        let effective = if current == Some(index as u32) {
+            base + 0.12
+        } else {
+            base
+        };
+        // Strictly greater so ties break towards the lower utility id.
+        if effective > best_effective {
+            best_effective = effective;
+            best_id = index as u32;
         }
     }
 
-    (best_id, unit(best_score))
+    (best_id, unit(scores[best_id as usize]))
+}
+
+fn active_utility_from_buffer(buffer: &DogSimBuffer) -> Option<u32> {
+    let raw = finite_or(buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID], -1.0);
+    if raw >= 0.0 && raw <= 11.0 && (raw - raw.round()).abs() < 1e-4 {
+        Some(raw.round() as u32)
+    } else {
+        None
+    }
 }
 
 pub fn select_best_utility(input: &UtilityInput<'_>) -> (u32, f32) {
     let scores = score_all(input);
-    let stored = finite_or(input.buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID], -1.0) as i32;
-    let current = if (0..UTIL_COUNT as i32).contains(&stored) {
-        Some(stored as u32)
-    } else {
-        None
-    };
+    let current = active_utility_from_buffer(input.buffer);
     pick_best(&scores, current)
 }
 
@@ -317,7 +445,7 @@ pub fn select_best_utility(input: &UtilityInput<'_>) -> (u32, f32) {
 // Steering
 // ---------------------------------------------------------------------------
 
-fn target_for(active: u32, input: &UtilityInput<'_>) -> (f32, f32, f32) {
+fn target_for(active: u32, input: &UtilityInput<'_>) -> (f32, f32) {
     let b = &input.buffer.slots;
     let px = finite_or(b[DOG_BUF_POS_X], 0.0);
     let py = finite_or(b[DOG_BUF_POS_Y], 0.0);
@@ -326,48 +454,60 @@ fn target_for(active: u32, input: &UtilityInput<'_>) -> (f32, f32, f32) {
     let now = finite_or(b[DOG_BUF_NOW_SEC], 0.0);
 
     match active {
-        UTIL_HEEL_FOLLOW | UTIL_RECALL | UTIL_CHECK_IN => (ox, oy, 0.90),
+        UTIL_HEEL_FOLLOW | UTIL_RECALL | UTIL_CHECK_IN => (ox, oy),
         UTIL_FETCH_BALL => (
             finite_or(b[DOG_BUF_BALL_X], ox),
             finite_or(b[DOG_BUF_BALL_Y], oy),
-            0.85,
         ),
         UTIL_ROAM_EXPLORE | UTIL_LAG_AND_SNIFF | UTIL_SCOUT_AHEAD => (
             ox + (now * 0.7).sin() * 120.0,
             oy + (now * 0.9).cos() * 120.0,
-            0.60,
         ),
-        UTIL_SOCIAL_GREET | UTIL_PACK_PLAY => (
-            finite_or(b[DOG_BUF_PEER_X], ox),
-            finite_or(b[DOG_BUF_PEER_Y], oy),
-            0.70,
-        ),
+        UTIL_SOCIAL_GREET | UTIL_PACK_PLAY => {
+            if nearest_peer_distance(input.buffer, px, py).is_some() {
+                (
+                    finite_or(b[DOG_BUF_PEER_X], ox),
+                    finite_or(b[DOG_BUF_PEER_Y], oy),
+                )
+            } else {
+                (
+                    finite_or(b[DOG_BUF_NPC_X], ox),
+                    finite_or(b[DOG_BUF_NPC_Y], oy),
+                )
+            }
+        }
         UTIL_ZOOMIES => (
             ox + (now * 1.3).sin() * 80.0,
             oy + (now * 1.3).cos() * 80.0,
-            0.80,
         ),
-        UTIL_AMBIENT_REST | UTIL_BARK_IMPULSE => (px, py, 0.0),
-        _ => (ox, oy, 0.50),
+        UTIL_AMBIENT_REST | UTIL_BARK_IMPULSE => (px, py),
+        _ => (ox, oy),
     }
 }
 
 fn seek_force(input: &UtilityInput<'_>, active: u32, px: f32, py: f32) -> (f32, f32) {
-    let (tx, ty, strength) = target_for(active, input);
+    let (tx, ty) = target_for(active, input);
     let dx = tx - px;
     let dy = ty - py;
     let distance = magnitude(dx, dy);
-    if distance > 1e-4 && strength > 0.0 {
-        (dx / distance * strength, dy / distance * strength)
+    if distance > 1e-4 {
+        (dx / distance, dy / distance)
     } else {
         (0.0, 0.0)
     }
 }
 
-fn arrive_force(input: &UtilityInput<'_>) -> (f32, f32) {
-    let vx = finite_or(input.buffer.slots[DOG_BUF_VEL_X], 0.0);
-    let vy = finite_or(input.buffer.slots[DOG_BUF_VEL_Y], 0.0);
-    (-vx * 0.05, -vy * 0.05)
+fn arrive_force(input: &UtilityInput<'_>, active: u32, px: f32, py: f32) -> (f32, f32) {
+    let (tx, ty) = target_for(active, input);
+    let dx = tx - px;
+    let dy = ty - py;
+    let distance = magnitude(dx, dy);
+    if distance > 1e-4 {
+        let scale = (distance / 24.0).clamp(0.0, 1.0);
+        (dx / distance * scale, dy / distance * scale)
+    } else {
+        (0.0, 0.0)
+    }
 }
 
 fn obstacle_center_radius(obstacle: &WorldObstacle) -> (f32, f32, f32) {
@@ -387,12 +527,12 @@ fn obstacle_skirt_force(input: &UtilityInput<'_>, px: f32, py: f32) -> (f32, f32
 
     for obstacle in input.obstacles {
         let (ox, oy, radius) = obstacle_center_radius(obstacle);
-        let limit = radius + 24.0 + 8.0;
+        let limit = radius + 32.0;
         let dx = px - ox;
         let dy = py - oy;
         let distance = magnitude(dx, dy);
-        if distance > 1e-4 && distance < limit {
-            let strength = (1.0 - distance / limit) * 1.5;
+        if limit > 0.0 && distance > 1e-4 && distance < limit {
+            let strength = 1.0 - distance / limit;
             fx += dx / distance * strength;
             fy += dy / distance * strength;
         }
@@ -447,8 +587,8 @@ fn soft_tether_force(input: &UtilityInput<'_>, px: f32, py: f32) -> (f32, f32) {
     let dy = oy - py;
     let distance = magnitude(dx, dy);
 
-    if distance > 39.0 {
-        let strength = ((distance - 39.0) * 0.02).min(1.0);
+    if distance > 39.0 && distance > 1e-4 {
+        let strength = ((distance - 39.0) / (52.5 - 39.0)).clamp(0.0, 1.0);
         (dx / distance * strength, dy / distance * strength)
     } else {
         (0.0, 0.0)
@@ -456,45 +596,110 @@ fn soft_tether_force(input: &UtilityInput<'_>, px: f32, py: f32) -> (f32, f32) {
 }
 
 fn npc_berth_force(input: &UtilityInput<'_>, px: f32, py: f32) -> (f32, f32) {
-    let nx = finite_or(input.buffer.slots[DOG_BUF_NPC_X], px);
-    let ny = finite_or(input.buffer.slots[DOG_BUF_NPC_Y], py);
-    let dx = px - nx;
-    let dy = py - ny;
-    let distance = magnitude(dx, dy);
-
-    if distance > 1e-4 && distance < 30.0 {
-        let strength = (30.0 - distance) / 30.0 * 1.2;
-        (dx / distance * strength, dy / distance * strength)
-    } else {
-        (0.0, 0.0)
+    let mut fx = 0.0;
+    let mut fy = 0.0;
+    for i in 0..npc_count(input.buffer) {
+        let (nx, ny) = slot_xy(input.buffer, DOG_BUF_NPC0_X, DOG_BUF_NPC0_Y, i);
+        let dx = px - nx;
+        let dy = py - ny;
+        let distance = magnitude(dx, dy);
+        if distance > 1e-4 && distance < 30.0 {
+            let strength = (30.0 - distance) / 30.0 * 1.2;
+            fx += dx / distance * strength;
+            fy += dy / distance * strength;
+        }
     }
+    (fx, fy)
 }
 
-fn social_circle_force(input: &UtilityInput<'_>, px: f32, py: f32) -> (f32, f32) {
-    let ox = finite_or(input.buffer.slots[DOG_BUF_PEER_X], px);
-    let oy = finite_or(input.buffer.slots[DOG_BUF_PEER_Y], py);
-    let dx = ox - px;
-    let dy = oy - py;
-    let distance = magnitude(dx, dy);
-
-    if distance > 1e-4 && distance < 80.0 {
-        let ux = dx / distance;
-        let uy = dy / distance;
-        let falloff = 1.0 - distance / 80.0;
-        let attract = 0.25 * falloff;
-        let tangent = 0.20 * falloff;
-        (ux * attract - uy * tangent, uy * attract + ux * tangent)
-    } else {
-        (0.0, 0.0)
-    }
-}
-
-fn zoomies_parametric_step(input: &UtilityInput<'_>, active: u32) -> (f32, f32) {
-    if active != UTIL_ZOOMIES {
+fn social_circle_force(
+    input: &UtilityInput<'_>,
+    active_utility_id: u32,
+    px: f32,
+    py: f32,
+) -> (f32, f32) {
+    if active_utility_id != UTIL_SOCIAL_GREET && active_utility_id != UTIL_PACK_PLAY {
         return (0.0, 0.0);
     }
-    let now = finite_or(input.buffer.slots[DOG_BUF_NOW_SEC], 0.0);
-    ((now * 2.1).sin() * 0.5, (now * 2.7).cos() * 0.5)
+
+    let mut nearest: Option<(f32, f32, f32)> = None;
+    for i in 0..peer_count(input.buffer) {
+        let (ox, oy) = slot_xy(input.buffer, DOG_BUF_PEER0_X, DOG_BUF_PEER0_Y, i);
+        let dx = ox - px;
+        let dy = oy - py;
+        let distance = magnitude(dx, dy);
+        if nearest.map_or(true, |(_, _, d)| distance < d) {
+            nearest = Some((dx, dy, distance));
+        }
+    }
+
+    if let Some((dx, dy, distance)) = nearest {
+        if distance > 1e-4 {
+            let ux = dx / distance;
+            let uy = dy / distance;
+            return (-uy, ux);
+        }
+    }
+
+    (0.0, 0.0)
+}
+
+fn zoomies_parametric_step(input: &UtilityInput<'_>, active_utility_id: u32) -> (f32, f32) {
+    if active_utility_id != UTIL_ZOOMIES {
+        return (0.0, 0.0);
+    }
+
+    let b = &input.buffer.slots;
+    let path = finite_or(b[DOG_BUF_ZOOMIE_PATH_ID], 0.0).round() as i32;
+    let px = finite_or(b[DOG_BUF_POS_X], 0.0);
+    let py = finite_or(b[DOG_BUF_POS_Y], 0.0);
+    let phase = finite_or(b[DOG_BUF_ZOOMIES_PHASE], 0.0);
+
+    let cx_default = finite_or(b[DOG_BUF_OWNER_X], px);
+    let cy_default = finite_or(b[DOG_BUF_OWNER_Y], py);
+
+    let (tx, ty) = match path {
+        p if p == ZoomiePathId::FigureEight as u32 as i32 => {
+            let cx = finite_or(b[DOG_BUF_ZOOMIES_CENTER_X], cx_default);
+            let cy = finite_or(b[DOG_BUF_ZOOMIES_CENTER_Y], cy_default);
+            let a = (phase * core::f32::consts::TAU).sin() * 60.0;
+            let c = (phase * core::f32::consts::TAU * 2.0).sin() * 30.0;
+            (cx + a, cy + c)
+        }
+        p if p == ZoomiePathId::OrbitOwner as u32 as i32 => {
+            let cx = finite_or(b[DOG_BUF_ZOOMIES_CENTER_X], cx_default);
+            let cy = finite_or(b[DOG_BUF_ZOOMIES_CENTER_Y], cy_default);
+            let radius = finite_or(b[DOG_BUF_ZOOMIES_ORBIT_RADIUS], 60.0);
+            let angle = finite_or(b[DOG_BUF_ZOOMIES_ORBIT_ANGLE], 0.0);
+            let dir = if finite_or(b[DOG_BUF_ZOOMIES_ORBIT_DIR], 1.0) >= 0.0 {
+                1.0
+            } else {
+                -1.0
+            };
+            (
+                cx + (angle * dir).cos() * radius,
+                cy + (angle * dir).sin() * radius,
+            )
+        }
+        p if p == ZoomiePathId::Shuttle as u32 as i32 => {
+            let ax = finite_or(b[DOG_BUF_ZOOMIES_SHUTTLE_AX], cx_default);
+            let ay = finite_or(b[DOG_BUF_ZOOMIES_SHUTTLE_AY], cy_default);
+            let bx = finite_or(b[DOG_BUF_ZOOMIES_SHUTTLE_BX], cx_default);
+            let by = finite_or(b[DOG_BUF_ZOOMIES_SHUTTLE_BY], cy_default);
+            let t = 0.5 + 0.5 * (phase * core::f32::consts::TAU).sin();
+            (ax + (bx - ax) * t, ay + (by - ay) * t)
+        }
+        _ => return (0.0, 0.0),
+    };
+
+    let dx = tx - px;
+    let dy = ty - py;
+    let distance = magnitude(dx, dy);
+    if distance > 1e-4 {
+        (dx / distance, dy / distance)
+    } else {
+        (0.0, 0.0)
+    }
 }
 
 pub fn compute_steering(input: &UtilityInput<'_>, active_utility_id: u32) -> (f32, f32) {
@@ -503,12 +708,12 @@ pub fn compute_steering(input: &UtilityInput<'_>, active_utility_id: u32) -> (f3
     let py = finite_or(b[DOG_BUF_POS_Y], 0.0);
 
     let (sx, sy) = seek_force(input, active_utility_id, px, py);
-    let (ax, ay) = arrive_force(input);
+    let (ax, ay) = arrive_force(input, active_utility_id, px, py);
     let (ox, oy) = obstacle_skirt_force(input, px, py);
     let (mx, my) = screen_perimeter_force(input, px, py);
     let (tx, ty) = soft_tether_force(input, px, py);
     let (nx, ny) = npc_berth_force(input, px, py);
-    let (cx, cy) = social_circle_force(input, px, py);
+    let (cx, cy) = social_circle_force(input, active_utility_id, px, py);
     let (zx, zy) = zoomies_parametric_step(input, active_utility_id);
 
     let fx = sx + ax + ox + mx + tx + nx + cx + zx;
@@ -529,42 +734,89 @@ pub fn compute_steering(input: &UtilityInput<'_>, active_utility_id: u32) -> (f3
 // ---------------------------------------------------------------------------
 
 pub fn select_roam_submode(input: &UtilityInput<'_>, active_utility_id: u32) -> RoamSubModeId {
+    select_roam_submode_internal(input, active_utility_id).0
+}
+
+fn select_roam_submode_internal(
+    input: &UtilityInput<'_>,
+    active_utility_id: u32,
+) -> (RoamSubModeId, bool) {
     match active_utility_id {
-        UTIL_SCOUT_AHEAD => RoamSubModeId::ScoutAhead,
-        UTIL_LAG_AND_SNIFF => RoamSubModeId::LagAndSniff,
-        UTIL_CHECK_IN => RoamSubModeId::CheckIn,
-        UTIL_ROAM_EXPLORE => {
-            let curiosity = unit(input.traits.curiosity as f32);
-            let energy = unit(input.traits.energy as f32);
-            if curiosity >= 0.66 {
-                RoamSubModeId::Explore
-            } else if energy >= 0.66 {
-                RoamSubModeId::CatchUp
-            } else if curiosity >= 0.33 {
-                RoamSubModeId::LookBack
-            } else {
-                RoamSubModeId::MicroPause
-            }
-        }
-        _ => RoamSubModeId::Baseline,
+        UTIL_SCOUT_AHEAD => return (RoamSubModeId::ScoutAhead, false),
+        UTIL_LAG_AND_SNIFF => return (RoamSubModeId::LagAndSniff, false),
+        UTIL_CHECK_IN => return (RoamSubModeId::CheckIn, false),
+        UTIL_ROAM_EXPLORE => {}
+        _ => return (RoamSubModeId::Baseline, false),
+    }
+
+    let b = &input.buffer.slots;
+
+    if finite_or(b[DOG_BUF_ROAM_LOOKBACK_TIMER], 0.0) > 0.0 {
+        return (RoamSubModeId::LookBack, false);
+    }
+    if finite_or(b[DOG_BUF_ROAM_MICROPAUSE_TIMER], 0.0) > 0.0 {
+        return (RoamSubModeId::MicroPause, false);
+    }
+    if finite_or(b[DOG_BUF_CATCH_UP_TIMER], 0.0) > 0.0 {
+        return (RoamSubModeId::CatchUp, false);
+    }
+
+    let curiosity = unit(input.traits.curiosity);
+    let energy = unit(input.traits.energy);
+
+    if curiosity >= 0.66 {
+        return (RoamSubModeId::Explore, false);
+    }
+    if energy >= 0.66 {
+        return (RoamSubModeId::CatchUp, false);
+    }
+
+    // Micro-pause jitter uses the shared RNG seed. Signal the caller so the
+    // advanced seed can be written back into the buffer.
+    let seed = finite_or(b[DOG_BUF_RNG_SEED], 0.0) as u32;
+    let mut rng = Mulberry32::new(seed);
+    let roll = rng.next_f64();
+    if roll < 0.25 {
+        return (RoamSubModeId::MicroPause, true);
+    }
+
+    let baseline = finite_or(b[DOG_BUF_ROAM_BASELINE_TIMER], 0.0);
+    let submode_timer = finite_or(b[DOG_BUF_ROAM_SUBMODE_TIMER], 0.0);
+    if baseline > 0.0 || submode_timer > 0.0 {
+        return (RoamSubModeId::Baseline, true);
+    }
+
+    if curiosity >= 0.33 {
+        return (RoamSubModeId::LookBack, true);
+    }
+
+    (RoamSubModeId::Baseline, true)
+}
+
+fn zoomie_path_for(active_utility_id: u32, input: &UtilityInput<'_>) -> ZoomiePathId {
+    if active_utility_id != UTIL_ZOOMIES {
+        return ZoomiePathId::None;
+    }
+    let energy = unit(input.traits.energy);
+    let space = camera_open_space(input);
+    if energy >= 0.7 && space >= 0.5 {
+        ZoomiePathId::FigureEight
+    } else if space >= 0.5 {
+        ZoomiePathId::OrbitOwner
+    } else {
+        ZoomiePathId::Shuttle
     }
 }
 
 pub fn select_zoomie_path(input: &UtilityInput<'_>) -> ZoomiePathId {
+    let stored = active_utility_from_buffer(input.buffer);
     let (best, _) = select_best_utility(input);
-    if best != UTIL_ZOOMIES {
-        return ZoomiePathId::None;
-    }
-
-    let seed = finite_or(input.buffer.slots[DOG_BUF_RNG_SEED], 0.0).to_bits()
-        ^ finite_or(input.buffer.slots[DOG_BUF_NOW_SEC], 0.0).to_bits();
-    let mut rng = Mulberry32::new(seed);
-    let roll = rng.next_f64();
-
-    match (roll * 3.0) as u32 {
-        0 => ZoomiePathId::FigureEight,
-        1 => ZoomiePathId::OrbitOwner,
-        _ => ZoomiePathId::Shuttle,    }
+    let active = match stored {
+        Some(id) if id == UTIL_ZOOMIES => UTIL_ZOOMIES,
+        _ if best == UTIL_ZOOMIES => UTIL_ZOOMIES,
+        _ => u32::MAX,
+    };
+    zoomie_path_for(active, input)
 }
 
 // ---------------------------------------------------------------------------
@@ -670,69 +922,67 @@ pub fn integrate_micro_expressions(
     let nose_twitch = unit(nose_base * nose_oscillator);
 
     // Events --------------------------------------------------------------
-    let active = finite_or(buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID], -1.0) as i32;
-    let active = if (0..UTIL_COUNT as i32).contains(&active) {
-        active as u32
-    } else {
-        u32::MAX
-    };
+    let active = active_utility_from_buffer(buffer).unwrap_or(u32::MAX);
+
+    let (px, py) = dog_position(buffer);
+    let (ox, oy) = (
+        finite_or(buffer.slots[DOG_BUF_OWNER_X], px),
+        finite_or(buffer.slots[DOG_BUF_OWNER_Y], py),
+    );
+    let owner_distance = magnitude(px - ox, py - oy);
+
+    let nearest_scent_dist = nearest_scent_distance(buffer, px, py).unwrap_or(f32::INFINITY);
+
+    let bark_ready = finite_or(buffer.slots[DOG_BUF_SOCIAL_COOLDOWN], 0.0) <= 0.0
+        || finite_or(buffer.slots[DOG_BUF_CMD_BARK], 0.0) > 0.5;
 
     let mut events = 0u32;
 
-    if active == UTIL_BARK_IMPULSE {
+    if score_bark_impulse(input) > 0.85 && bark_ready {
         events |= DOG_EVENT_BARK_TRIGGERED;
     }
     if wrapped && matches!(gait, GaitModeId::Gallop) {
         events |= DOG_EVENT_GALLOP_PUFF;
     }
-    if active == UTIL_LAG_AND_SNIFF {
-        events |= DOG_EVENT_SNIFF_AUDIO;
-        if nose_twitch > 0.5 {
-            events |= DOG_EVENT_SCENT_DEPOSITED;
-        }
+    if nose_twitch > 0.8 && nearest_scent_dist <= 16.0 {
+        events |= DOG_EVENT_SCENT_DEPOSITED;
     }
-    if active == UTIL_RECALL && loyalty < 0.4 {
+    if score_recall(input) > 0.7 && score_ambient_rest(input) > 0.5 {
         events |= DOG_EVENT_WHINE_AUDIO;
     }
-    if input.combo.has_need {
-        events |= DOG_EVENT_WHINE_AUDIO;
-    }
-    if energy > 0.7 && speed > 1.0 {
+    if energy < 0.25 && matches!(gait, GaitModeId::Trot | GaitModeId::Gallop) {
         events |= DOG_EVENT_PANT_AUDIO;
     }
+    if nose_twitch > 0.6 && nearest_scent_dist <= 24.0 {
+        events |= DOG_EVENT_SNIFF_AUDIO;
+    }
 
-    if active == UTIL_FETCH_BALL && ball_available(input) {
-        if speed < 2.0 {
+    if ball_active(buffer) {
+        let bx = finite_or(buffer.slots[DOG_BUF_BALL_X], px);
+        let by = finite_or(buffer.slots[DOG_BUF_BALL_Y], py);
+        if magnitude(px - bx, py - by) <= 8.0 {
             events |= DOG_EVENT_BALL_GRABBED;
         }
-        let ox = finite_or(buffer.slots[DOG_BUF_OWNER_X], 0.0);
-        let oy = finite_or(buffer.slots[DOG_BUF_OWNER_Y], 0.0);
-        let px = finite_or(buffer.slots[DOG_BUF_POS_X], 0.0);
-        let py = finite_or(buffer.slots[DOG_BUF_POS_Y], 0.0);
-        if magnitude(px - ox, py - oy) < 24.0 {
+        if active == UTIL_FETCH_BALL && owner_distance <= 16.0 {
             events |= DOG_EVENT_BALL_HANDOFF;
         }
     }
 
-    if active == UTIL_ROAM_EXPLORE && wrapped && speed > 5.0 {
+    if nearest_scent_dist <= 8.0 && curiosity > 0.4 {
         events |= DOG_EVENT_STICK_PICKED_UP;
     }
 
-    if active == UTIL_SOCIAL_GREET {
-        let nx = finite_or(buffer.slots[DOG_BUF_NPC_X], 0.0);
-        let ny = finite_or(buffer.slots[DOG_BUF_NPC_Y], 0.0);
-        let px = finite_or(buffer.slots[DOG_BUF_POS_X], 0.0);
-        let py = finite_or(buffer.slots[DOG_BUF_POS_Y], 0.0);
-        let distance = magnitude(px - nx, py - ny);
-        if distance < 60.0 {
-            events |= DOG_EVENT_STRAY_TRIGGERED;
-        }
-        if distance < 20.0 {
-            events |= DOG_EVENT_STRAY_RESOLVED;
-        }
-        if loyalty > 0.5 {
-            events |= DOG_EVENT_HEARTS_SPAWNED;
-        }
+    if !input.combo.is_on_leash && owner_distance > 120.0 && curiosity > 0.6 {
+        events |= DOG_EVENT_STRAY_TRIGGERED;
+    }
+
+    let state_id = finite_or(buffer.slots[DOG_BUF_DOG_STATE_ID], -1.0);
+    if (state_id - DogStateId::Stray as u32 as f32).abs() < 1e-4 && owner_distance < 80.0 {
+        events |= DOG_EVENT_STRAY_RESOLVED;
+    }
+
+    if score_social_greet(input) > 0.8 {
+        events |= DOG_EVENT_HEARTS_SPAWNED;
     }
 
     // Persist outputs -----------------------------------------------------
@@ -749,6 +999,17 @@ pub fn integrate_micro_expressions(
 // ---------------------------------------------------------------------------
 // Top level step
 // ---------------------------------------------------------------------------
+
+/// Base target speed for an active utility prior to score/trait scaling.
+pub(crate) fn base_desired_speed(active_utility_id: u32) -> f32 {
+    match active_utility_id {
+        UTIL_ZOOMIES | UTIL_FETCH_BALL => 48.0,
+        UTIL_ROAM_EXPLORE | UTIL_SCOUT_AHEAD | UTIL_PACK_PLAY | UTIL_SOCIAL_GREET => 32.0,
+        UTIL_HEEL_FOLLOW | UTIL_RECALL | UTIL_CHECK_IN | UTIL_LAG_AND_SNIFF => 18.0,
+        UTIL_AMBIENT_REST | UTIL_BARK_IMPULSE => 0.0,
+        _ => 0.0,
+    }
+}
 
 pub fn step_utility_ai(
     buffer: &mut DogSimBuffer,
@@ -778,17 +1039,28 @@ pub fn step_utility_ai(
 
     let (active_utility_id, active_utility_score) = select_best_utility(&input);
     let (steer_x, steer_y) = compute_steering(&input, active_utility_id);
-    let roam_submode = select_roam_submode(&input, active_utility_id);
-    let zoomie_path = select_zoomie_path(&input);
+    let (roam_submode, rng_used) = select_roam_submode_internal(&input, active_utility_id);
+    let zoomie_path = zoomie_path_for(active_utility_id, &input);
 
     buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = active_utility_id as f32;
     buffer.slots[DOG_BUF_ACTIVE_UTILITY_SCORE] = active_utility_score;
     buffer.slots[DOG_BUF_ROAM_SUBMODE_ID] = roam_index(roam_submode);
     buffer.slots[DOG_BUF_ZOOMIE_PATH_ID] = zoomie_index(zoomie_path);
 
+    if rng_used {
+        let old_seed = finite_or(buffer.slots[DOG_BUF_RNG_SEED], 0.0) as u32;
+        let mut rng = Mulberry32::new(old_seed);
+        let advanced = (rng.next_f64() * (u32::MAX as f64)) as u32;
+        buffer.slots[DOG_BUF_RNG_SEED] = advanced as f32;
+    }
+
     let events = integrate_micro_expressions(buffer, &input, dt);
 
-    let desired_speed = speed_of(buffer);
+    let energy = unit(input.traits.energy);
+    let stubbornness = unit(input.traits.stubbornness);
+    let trait_scale = (0.5 + 0.5 * energy) * (1.0 - 0.3 * stubbornness);
+    let base_speed = base_desired_speed(active_utility_id);
+    let desired_speed = (base_speed * unit(active_utility_score) * trait_scale).clamp(0.0, 64.0);
     let desired_gait = gait_from_speed(desired_speed);
 
     let ear_target_raw = 0.15
@@ -896,20 +1168,37 @@ mod tests {
 
     #[test]
     fn fetch_requires_free_paws_and_live_ball() {
-        let buffer = blank_buffer();
         let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_BALL_ACTIVE] = 1.0;
 
-        let mut combo = blank_combo();
-        combo.has_ball = true;
-        combo.is_on_leash = true;
-        let input = UtilityInput {
-            buffer: &buffer,
-            combo,
-            traits: base_traits(),
-            obstacles: &obstacles,
-        };
-        assert_eq!(score_fetch_ball(&input), 0.0);
+        {
+            let mut combo = blank_combo();
+            combo.has_ball = true;
+            combo.is_on_leash = true;
+            let input = UtilityInput {
+                buffer: &buffer,
+                combo,
+                traits: base_traits(),
+                obstacles: &obstacles,
+            };
+            assert_eq!(score_fetch_ball(&input), 0.0);
+        }
 
+        // combo.has_ball alone is insufficient when BALL_ACTIVE is low.
+        buffer.slots[DOG_BUF_BALL_ACTIVE] = 0.0;
+        {
+            let mut combo = blank_combo();
+            combo.has_ball = true;
+            let input = UtilityInput {
+                buffer: &buffer,
+                combo,
+                traits: base_traits(),
+                obstacles: &obstacles,
+            };
+            assert_eq!(score_fetch_ball(&input), 0.0);        }
+
+        buffer.slots[DOG_BUF_BALL_ACTIVE] = 1.0;
         let mut combo = blank_combo();
         combo.has_ball = true;
         let input = UtilityInput {
@@ -1168,5 +1457,543 @@ mod tests {
         assert_eq!(output.events, buffer.slots[DOG_BUF_EVENT_BITMASK] as u32);
         assert!(output.steer_x.is_finite() && output.steer_y.is_finite());
         assert!(magnitude(output.steer_x, output.steer_y) <= 1.0 + 1e-5);
+    }
+
+    #[test]
+    fn scores_react_to_modulation() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let buffer = blank_buffer();
+
+        let low = PersonalityTraits {
+            loyalty: 0.1,
+            stubbornness: 0.9,
+            ..base_traits()
+        };
+        let high = PersonalityTraits {
+            loyalty: 0.9,
+            stubbornness: 0.1,
+            ..base_traits()
+        };
+        let combo = blank_combo();
+
+        let low_input = UtilityInput {
+            buffer: &buffer,
+            combo,
+            traits: low,
+            obstacles: &obstacles,
+        };
+        let high_input = UtilityInput {
+            buffer: &buffer,
+            combo,
+            traits: high,
+            obstacles: &obstacles,
+        };
+
+        assert!(score_heel_follow(&high_input) > score_heel_follow(&low_input));
+        assert!(score_check_in(&high_input) > score_check_in(&low_input));
+    }
+
+    #[test]
+    fn camera_open_space_modulates_roam_and_zoomies() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut big = blank_buffer();
+        big.slots[DOG_BUF_CAM_ACTIVE] = 1.0;
+        big.slots[DOG_BUF_CAM_LEFT] = 0.0;
+        big.slots[DOG_BUF_CAM_TOP] = 0.0;
+        big.slots[DOG_BUF_CAM_RIGHT] = 1920.0;
+        big.slots[DOG_BUF_CAM_BOTTOM] = 1080.0;
+
+        let mut tiny = blank_buffer();
+        tiny.slots[DOG_BUF_CAM_ACTIVE] = 1.0;
+        tiny.slots[DOG_BUF_CAM_RIGHT] = 10.0;
+        tiny.slots[DOG_BUF_CAM_BOTTOM] = 10.0;
+
+        let traits = base_traits();
+        let combo = blank_combo();
+        let big_input = UtilityInput {
+            buffer: &big,
+            combo,
+            traits,
+            obstacles: &obstacles,
+        };
+        let tiny_input = UtilityInput {
+            buffer: &tiny,
+            combo,
+            traits,
+            obstacles: &obstacles,
+        };
+
+        assert!(score_roam_explore(&big_input) > score_roam_explore(&tiny_input));
+        assert!(score_zoomies(&big_input) > score_zoomies(&tiny_input));
+    }
+
+    #[test]
+    fn scores_read_multiple_peers_npcs_and_scents() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_PEER_COUNT] = 2.0;
+        buffer.slots[DOG_BUF_PEER0_X] = 100.0;
+        buffer.slots[DOG_BUF_PEER0_Y] = 100.0;
+        buffer.slots[DOG_BUF_PEER1_X] = 20.0;
+        buffer.slots[DOG_BUF_PEER1_Y] = 20.0;
+
+        buffer.slots[DOG_BUF_NPC_COUNT] = 1.0;
+        buffer.slots[DOG_BUF_NPC0_X] = 30.0;
+        buffer.slots[DOG_BUF_NPC0_Y] = 30.0;
+
+        buffer.slots[DOG_BUF_SCENT_COUNT] = 2.0;
+        buffer.slots[DOG_BUF_SCENT0_X] = 10.0;
+        buffer.slots[DOG_BUF_SCENT0_Y] = 0.0;
+        buffer.slots[DOG_BUF_SCENT1_X] = 5.0;
+        buffer.slots[DOG_BUF_SCENT1_Y] = 0.0;
+
+        let traits = base_traits();
+        let combo = blank_combo();
+        let input = UtilityInput {
+            buffer: &buffer,
+            combo,
+            traits,
+            obstacles: &obstacles,
+        };
+
+        assert!(score_social_greet(&input) > 0.1);
+        assert!(score_pack_play(&input) > 0.2);
+        assert!(score_lag_and_sniff(&input) > 0.2);
+    }
+
+    #[test]
+    fn pick_best_returns_raw_pre_hysteresis_score() {
+        let mut scores = [0.0f32; UTIL_COUNT];
+        scores[UTIL_HEEL_FOLLOW as usize] = 0.95;
+        scores[UTIL_FETCH_BALL as usize] = 1.0;
+
+        let (best, raw) = pick_best(&scores, Some(UTIL_HEEL_FOLLOW));
+        assert_eq!(best, UTIL_HEEL_FOLLOW);
+        assert!((raw - 0.95).abs() < 1e-6);
+    }
+
+    #[test]
+    fn active_utility_id_validation_rejects_fractional_and_out_of_range() {
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = -0.5;
+        assert_eq!(active_utility_from_buffer(&buffer), None);
+        buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = 11.9;
+        assert_eq!(active_utility_from_buffer(&buffer), None);
+        buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = 5.0;
+        assert_eq!(active_utility_from_buffer(&buffer), Some(5));
+    }
+
+    #[test]
+    fn arrive_force_scales_with_distance() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let traits = base_traits();
+        let combo = blank_combo();
+
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_DOG_X] = 100.0;
+        buffer.slots[DOG_BUF_DOG_Y] = 100.0;
+        buffer.slots[DOG_BUF_OWNER_X] = 112.0;
+        buffer.slots[DOG_BUF_OWNER_Y] = 100.0;
+
+        let (ax, ay) = {
+            let input = UtilityInput {
+                buffer: &buffer,
+                combo,
+                traits,
+                obstacles: &obstacles,
+            };
+            arrive_force(&input, UTIL_HEEL_FOLLOW, 100.0, 100.0)
+        };
+        assert!(ax > 0.0);
+        assert!(ay.abs() < 1e-4);
+        assert!(magnitude(ax, ay) <= 1.0);
+
+        buffer.slots[DOG_BUF_OWNER_X] = 300.0;
+        let (ax2, ay2) = {
+            let input = UtilityInput {
+                buffer: &buffer,
+                combo,
+                traits,
+                obstacles: &obstacles,
+            };
+            arrive_force(&input, UTIL_HEEL_FOLLOW, 100.0, 100.0)
+        };
+        assert!(magnitude(ax2, ay2) >= magnitude(ax, ay) - 1e-4);
+    }
+
+    #[test]
+    fn soft_tether_pulls_only_when_leashed_and_far() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let traits = base_traits();
+
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_OWNER_X] = 100.0;
+        buffer.slots[DOG_BUF_OWNER_Y] = 0.0;
+
+        {
+            let combo = blank_combo();
+            let input = UtilityInput {
+                buffer: &buffer,
+                combo,
+                traits,
+                obstacles: &obstacles,
+            };
+            assert_eq!(soft_tether_force(&input, 0.0, 0.0), (0.0, 0.0));
+        }
+
+        let mut combo = blank_combo();
+        combo.is_on_leash = true;
+        let input = UtilityInput {
+            buffer: &buffer,
+            combo,
+            traits,
+            obstacles: &obstacles,
+        };
+        let (tx, _ty) = soft_tether_force(&input, 0.0, 0.0);
+        assert!(tx > 0.0);
+    }
+
+    #[test]
+    fn social_force_only_for_social_utilities() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_PEER_COUNT] = 1.0;
+        buffer.slots[DOG_BUF_PEER0_X] = 40.0;
+        buffer.slots[DOG_BUF_PEER0_Y] = 0.0;
+
+        let traits = base_traits();
+        let combo = blank_combo();
+        let input = UtilityInput {
+            buffer: &buffer,
+            combo,
+            traits,
+            obstacles: &obstacles,
+        };
+
+        assert_eq!(
+            social_circle_force(&input, UTIL_HEEL_FOLLOW, 0.0, 0.0),
+            (0.0, 0.0)
+        );
+        let (cx, cy) = social_circle_force(&input, UTIL_SOCIAL_GREET, 0.0, 0.0);
+        assert!(magnitude(cx, cy) > 0.0);
+    }
+
+    #[test]
+    fn zoomie_path_selection_respects_active_and_traits() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = UTIL_HEEL_FOLLOW as f32;
+
+        let traits = base_traits();
+        let combo = blank_combo();
+
+        {
+            let input = UtilityInput {
+                buffer: &buffer,
+                combo,
+                traits,
+                obstacles: &obstacles,
+            };
+            assert_eq!(select_zoomie_path(&input), ZoomiePathId::None);
+        }
+
+        buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = UTIL_ZOOMIES as f32;
+        buffer.slots[DOG_BUF_CAM_ACTIVE] = 1.0;
+        buffer.slots[DOG_BUF_CAM_LEFT] = 0.0;
+        buffer.slots[DOG_BUF_CAM_TOP] = 0.0;
+        buffer.slots[DOG_BUF_CAM_RIGHT] = 1920.0;
+        buffer.slots[DOG_BUF_CAM_BOTTOM] = 1080.0;
+
+        {
+            let high = PersonalityTraits {
+                energy: 1.0,
+                ..base_traits()
+            };
+            let input = UtilityInput {
+                buffer: &buffer,
+                combo,
+                traits: high,
+                obstacles: &obstacles,
+            };
+            assert_eq!(select_zoomie_path(&input), ZoomiePathId::FigureEight);
+        }
+
+        {
+            let low = PersonalityTraits {
+                energy: 0.1,
+                ..base_traits()
+            };
+            let input = UtilityInput {
+                buffer: &buffer,
+                combo,
+                traits: low,
+                obstacles: &obstacles,
+            };
+            assert_eq!(select_zoomie_path(&input), ZoomiePathId::OrbitOwner);
+        }
+    }
+
+    #[test]
+    fn base_desired_speed_mapping() {
+        assert_eq!(base_desired_speed(UTIL_ZOOMIES), 48.0);
+        assert_eq!(base_desired_speed(UTIL_FETCH_BALL), 48.0);
+        assert_eq!(base_desired_speed(UTIL_ROAM_EXPLORE), 32.0);
+        assert_eq!(base_desired_speed(UTIL_SCOUT_AHEAD), 32.0);
+        assert_eq!(base_desired_speed(UTIL_HEEL_FOLLOW), 18.0);
+        assert_eq!(base_desired_speed(UTIL_RECALL), 18.0);
+        assert_eq!(base_desired_speed(UTIL_AMBIENT_REST), 0.0);
+        assert_eq!(base_desired_speed(UTIL_BARK_IMPULSE), 0.0);
+    }
+
+    #[test]
+    fn step_derives_desired_gait_from_desired_speed() {
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_TRAIT_CURIOSITY] = 1.0;
+        buffer.slots[DOG_BUF_TRAIT_ENERGY] = 1.0;
+        buffer.slots[DOG_BUF_TRAIT_LOYALTY] = 0.0;
+        buffer.slots[DOG_BUF_TRAIT_STUBBORNNESS] = 0.0;
+
+        let obstacles: [WorldObstacle; 0] = [];
+        let output = step_utility_ai(&mut buffer, &obstacles, blank_combo(), 0.016);
+
+        assert_eq!(output.desired_gait, gait_from_speed(output.desired_speed));
+        assert!(output.desired_speed >= 0.0 && output.desired_speed <= 48.0 + 1e-4);
+    }
+
+    #[test]
+    fn bark_event_fires_when_impulse_is_high() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_TRAIT_STUBBORNNESS] = 1.0;
+        buffer.slots[DOG_BUF_BALL_ACTIVE] = 1.0;
+        buffer.slots[DOG_BUF_BALL_X] = 0.0;
+        buffer.slots[DOG_BUF_BALL_Y] = 0.0;
+        buffer.slots[DOG_BUF_CMD_BARK] = 1.0;
+        buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = UTIL_BARK_IMPULSE as f32;
+
+        let snap = snapshot(&buffer);
+        let traits = PersonalityTraits {
+            stubbornness: 1.0,
+            ..base_traits()
+        };
+        let input = UtilityInput {
+            buffer: &snap,
+            combo: blank_combo(),
+            traits,
+            obstacles: &obstacles,
+        };
+        let events = integrate_micro_expressions(&mut buffer, &input, 0.016);
+        assert_ne!(events & DOG_EVENT_BARK_TRIGGERED, 0);
+    }
+
+    #[test]
+    fn scent_events_require_proximity() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_SCENT_COUNT] = 1.0;
+        buffer.slots[DOG_BUF_SCENT0_X] = 4.0;
+        buffer.slots[DOG_BUF_SCENT0_Y] = 0.0;
+        buffer.slots[DOG_BUF_TRAIT_CURIOSITY] = 1.0;
+
+        let snap = snapshot(&buffer);
+        let traits = PersonalityTraits {
+            curiosity: 1.0,
+            ..base_traits()
+        };
+        let input = UtilityInput {
+            buffer: &snap,
+            combo: blank_combo(),
+            traits,
+            obstacles: &obstacles,
+        };
+        let events = integrate_micro_expressions(&mut buffer, &input, 0.016);
+        assert_ne!(events & DOG_EVENT_STICK_PICKED_UP, 0);
+    }
+
+    #[test]
+    fn pant_event_requires_low_energy_and_fast_gait() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_DOG_VX] = 50.0;
+
+        let snap = snapshot(&buffer);
+        let traits = PersonalityTraits {
+            energy: 0.1,
+            ..base_traits()
+        };
+        let input = UtilityInput {
+            buffer: &snap,
+            combo: blank_combo(),
+            traits,
+            obstacles: &obstacles,
+        };
+        let events = integrate_micro_expressions(&mut buffer, &input, 0.016);
+        assert_ne!(events & DOG_EVENT_PANT_AUDIO, 0);
+    }
+
+    #[test]
+    fn ball_events_require_proximity_and_fetch_state() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_BALL_ACTIVE] = 1.0;
+        buffer.slots[DOG_BUF_BALL_X] = 2.0;
+        buffer.slots[DOG_BUF_BALL_Y] = 0.0;
+        buffer.slots[DOG_BUF_OWNER_X] = 0.0;
+        buffer.slots[DOG_BUF_OWNER_Y] = 0.0;
+        buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = UTIL_FETCH_BALL as f32;
+
+        let snap = snapshot(&buffer);
+        let traits = base_traits();
+        let input = UtilityInput {
+            buffer: &snap,
+            combo: blank_combo(),
+            traits,
+            obstacles: &obstacles,
+        };
+        let events = integrate_micro_expressions(&mut buffer, &input, 0.016);
+        assert_ne!(events & DOG_EVENT_BALL_GRABBED, 0);
+        assert_ne!(events & DOG_EVENT_BALL_HANDOFF, 0);
+    }
+
+    #[test]
+    fn stray_events_follow_owner_distance_and_state() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let traits = PersonalityTraits {
+            curiosity: 1.0,
+            ..base_traits()
+        };
+
+        {
+            let mut buffer = blank_buffer();
+            buffer.slots[DOG_BUF_OWNER_X] = 200.0;
+            buffer.slots[DOG_BUF_OWNER_Y] = 0.0;
+            let snap = snapshot(&buffer);
+            let input = UtilityInput {
+                buffer: &snap,
+                combo: blank_combo(),
+                traits,
+                obstacles: &obstacles,
+            };
+            let events = integrate_micro_expressions(&mut buffer, &input, 0.016);
+            assert_ne!(events & DOG_EVENT_STRAY_TRIGGERED, 0);
+        }
+
+        {
+            let mut buffer = blank_buffer();
+            buffer.slots[DOG_BUF_OWNER_X] = 10.0;
+            buffer.slots[DOG_BUF_DOG_STATE_ID] = DogStateId::Stray as u32 as f32;
+            let snap = snapshot(&buffer);
+            let input = UtilityInput {
+                buffer: &snap,
+                combo: blank_combo(),
+                traits,
+                obstacles: &obstacles,
+            };
+            let events = integrate_micro_expressions(&mut buffer, &input, 0.016);
+            assert_ne!(events & DOG_EVENT_STRAY_RESOLVED, 0);
+        }
+    }
+
+    #[test]
+    fn whine_and_hearts_events_follow_scores() {
+        let obstacles: [WorldObstacle; 0] = [];
+
+        {
+            let mut buffer = blank_buffer();
+            buffer.slots[DOG_BUF_CMD_WHISTLE_RECALL] = 1.0;
+            buffer.slots[DOG_BUF_IDLE_REST_TIMER] = 4.0;
+            let snap = snapshot(&buffer);
+            let traits = PersonalityTraits {
+                loyalty: 1.0,
+                stubbornness: 0.0,
+                energy: 0.0,
+                ..base_traits()
+            };
+            let input = UtilityInput {
+                buffer: &snap,
+                combo: blank_combo(),
+                traits,
+                obstacles: &obstacles,
+            };
+            let events = integrate_micro_expressions(&mut buffer, &input, 0.016);
+            assert_ne!(events & DOG_EVENT_WHINE_AUDIO, 0);
+        }
+
+        {
+            let mut buffer = blank_buffer();
+            buffer.slots[DOG_BUF_PEER_COUNT] = 1.0;
+            buffer.slots[DOG_BUF_PEER0_X] = 0.0;
+            buffer.slots[DOG_BUF_PEER0_Y] = 0.0;
+            let snap = snapshot(&buffer);
+            let traits = PersonalityTraits {
+                loyalty: 1.0,
+                stubbornness: 0.0,
+                ..base_traits()
+            };
+            let input = UtilityInput {
+                buffer: &snap,
+                combo: blank_combo(),
+                traits,
+                obstacles: &obstacles,
+            };
+            let events = integrate_micro_expressions(&mut buffer, &input, 0.016);
+            assert_ne!(events & DOG_EVENT_HEARTS_SPAWNED, 0);
+        }
+    }
+
+    #[test]
+    fn rng_seed_written_back_when_roam_uses_jitter() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_TRAIT_CURIOSITY] = 0.3;
+        buffer.slots[DOG_BUF_TRAIT_ENERGY] = 0.3;
+        buffer.slots[DOG_BUF_TRAIT_STUBBORNNESS] = 0.5;
+        buffer.slots[DOG_BUF_TRAIT_LOYALTY] = 0.0;
+        buffer.slots[DOG_BUF_TARGET_SLOT_X] = 10000.0;
+        buffer.slots[DOG_BUF_TARGET_SLOT_Y] = 10000.0;
+        buffer.slots[DOG_BUF_CAM_ACTIVE] = 1.0;
+        buffer.slots[DOG_BUF_CAM_LEFT] = 0.0;
+        buffer.slots[DOG_BUF_CAM_TOP] = 0.0;
+        buffer.slots[DOG_BUF_CAM_RIGHT] = 1920.0;
+        buffer.slots[DOG_BUF_CAM_BOTTOM] = 1080.0;
+        buffer.slots[DOG_BUF_RNG_SEED] = 12345.0;
+
+        let before = buffer.slots[DOG_BUF_RNG_SEED];
+        let output = step_utility_ai(&mut buffer, &obstacles, blank_combo(), 0.016);
+
+        assert_eq!(output.active_utility_id, UTIL_ROAM_EXPLORE);
+        assert_ne!(buffer.slots[DOG_BUF_RNG_SEED], before);
+    }
+
+    #[test]
+    fn non_finite_inputs_are_sanitized() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_DOG_X] = f32::NAN;
+        buffer.slots[DOG_BUF_DOG_Y] = f32::INFINITY;
+        buffer.slots[DOG_BUF_OWNER_X] = f32::NEG_INFINITY;
+        buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = f32::NAN;
+        buffer.slots[DOG_BUF_TRAIT_CURIOSITY] = f32::NAN;
+
+        let traits = PersonalityTraits {
+            curiosity: f32::NAN,
+            ..base_traits()
+        };
+        let input = UtilityInput {
+            buffer: &buffer,
+            combo: blank_combo(),
+            traits,
+            obstacles: &obstacles,
+        };
+
+        let (best, score) = select_best_utility(&input);
+        assert!(best < UTIL_COUNT as u32);
+        assert!(score.is_finite());
+
+        let (sx, sy) = compute_steering(&input, best);
+        assert!(sx.is_finite() && sy.is_finite());
+
+        let mut buffer2 = blank_buffer();
+        let _ = step_utility_ai(&mut buffer2, &obstacles, blank_combo(), f32::NAN);
     }
 }

@@ -1065,6 +1065,10 @@ export class CompanionDog {
     const bitmask = stepCompanionDogWasm(this, dt, field, otherDogs, activeBall, npcs);
     this.executeDogEventBitmask(bitmask, field, activeBall);
 
+    // Autonomous reaction barking: joggers passing nearby and remote dogs
+    // within earshot can trigger a spontaneous bark (barkyness-gated).
+    this._updateReactionBarking(dt, otherDogs, npcs);
+
     // Post-step bookkeeping: depth sort, bark wave decay, emote timer, hearts.
     this.depthY = this.y + 6;
 
@@ -1095,6 +1099,48 @@ export class CompanionDog {
       h.y += h.vy * dt;
       h.alpha -= dt * 0.7;
       if (h.alpha <= 0) this.hearts.splice(i, 1);
+    }
+  }
+
+  // Autonomous reaction barking driven by nearby joggers and remote dogs.
+  // Gated by the barkyness personality trait and a short cooldown so the dog
+  // never spams barks. Never interrupts FETCHING or an active bark.
+  _updateReactionBarking(dt, otherDogs = [], npcs = []) {
+    if (this.isBarking || this.state === DogState.FETCHING) return;
+
+    this._reactionBarkCooldown = Math.max(0, (this._reactionBarkCooldown || 0) - dt);
+    if (this._reactionBarkCooldown > 0) return;
+
+    const barkyness = this.personality?.barkyness || 2;
+
+    // Jogger reaction: a passing jogger within ~120px can provoke a bark.
+    if (Array.isArray(npcs)) {
+      for (const npc of npcs) {
+        if (!npc || !npc.isJogger) continue;
+        const dx = (npc.x || 0) - this.x;
+        const dy = (npc.y || 0) - this.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 120 && Math.random() < 0.02 * barkyness) {
+          this.bark();
+          this._reactionBarkCooldown = 3.0;
+          return;
+        }
+      }
+    }
+
+    // Remote dog response: another dog within earshot may provoke a reply.
+    if (Array.isArray(otherDogs)) {
+      for (const other of otherDogs) {
+        if (!other || other === this) continue;
+        const dx = (other.x || 0) - this.x;
+        const dy = (other.y || 0) - this.y;
+        const dist = Math.hypot(dx, dy);
+        if (dist < 260 && other.isBarking && Math.random() < 0.01 * barkyness) {
+          this.bark();
+          this._reactionBarkCooldown = 3.0;
+          return;
+        }
+      }
     }
   }
 

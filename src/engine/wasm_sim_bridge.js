@@ -1,12 +1,24 @@
 // src/engine/wasm_sim_bridge.js
 // Strangler-Fig Simulation Bridge: Rust/Wasm accelerated simulation with transparent JS fallback.
 
+import { initSync, WasmWorldSim } from '../wasm_core/dog_walker_core.js';
+
 let wasmSimInstance = null;
 let initPromise = null;
 let simWorldWidth = 3200.0;
 let simWorldHeight = 2400.0;
 // True once the exact field obstacle set has been uploaded to the Wasm sim (see syncWorldObstacles).
 let worldObstaclesReady = false;
+
+// --- Zero-copy step bridge state -------------------------------------------------------------
+// Raw Wasm linear memory (from initSync / default()), used to build the Float32Array view.
+let wasmMemory = null;
+// Cached Float32Array view over the 128-slot dog buffer (recreated only on memory growth).
+let dogBufferView = null;
+// The buffer pointer the cached view was created from (0 = not yet resolved).
+let dogBufferPtr = 0;
+// Number of Float32 slots in the dog buffer contract.
+const DOG_BUFFER_SLOTS = 128;
 
 export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0) {
   simWorldWidth = worldWidth;
@@ -19,7 +31,10 @@ export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0) {
       if (typeof window !== 'undefined') {
         const mod = await import('../wasm_core/dog_walker_core.js');
         if (typeof mod.default === 'function') {
-          await mod.default();
+          const initResult = await mod.default();
+          if (initResult && initResult.memory) {
+            wasmMemory = initResult.memory;
+          }
         }
         if (typeof mod.WasmWorldSim === 'function') {
           wasmSimInstance = new mod.WasmWorldSim(worldWidth, worldHeight);
@@ -38,6 +53,338 @@ export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0) {
 
 export function getWasmSim() {
   return wasmSimInstance;
+}
+
+function isNodeRuntime() {
+  return typeof process !== 'undefined' && !!process.versions && !!process.versions.node;
+}
+
+/**
+ * Synchronously initializes the Wasm core in Node.js. Locates the .wasm file relative to this
+ * module (never the process cwd), reads it with fs.readFileSync, and calls initSync(bytes).
+ * Returns the cached WasmWorldSim singleton. Throws an actionable error on failure.
+ */
+export function initWasmSimSync(worldWidth = 3200.0, worldHeight = 2400.0) {
+  simWorldWidth = worldWidth;
+  simWorldHeight = worldHeight;
+  if (wasmSimInstance) return wasmSimInstance;
+  if (!isNodeRuntime()) {
+    throw new Error('initWasmSimSync is only supported in Node.js; use initWasmSim() in the browser.');
+  }
+
+  // Resolve the wasm path relative to this module, not the process cwd.
+  // Node built-ins are loaded via process.getBuiltinModule() so browser bundlers never see
+  // static `node:` imports and no `require()` is needed in this ESM module.
+  const getBuiltin = (typeof process !== 'undefined' && typeof process.getBuiltinModule === 'function')
+    ? process.getBuiltinModule.bind(process)
+    : null;
+  if (!getBuiltin) {
+    throw new Error('initWasmSimSync requires Node.js >= 22.3 (process.getBuiltinModule is unavailable).');
+  }
+  const urlMod = getBuiltin('node:url');
+  const fs = getBuiltin('node:fs');
+  const path = getBuiltin('node:path');
+  if (!urlMod || !fs || !path) {
+    throw new Error('initWasmSimSync failed to load Node.js built-in modules (node:url, node:fs, node:path).');
+  }
+  const moduleDir = path.dirname(urlMod.fileURLToPath(import.meta.url));
+  const wasmPath = path.resolve(moduleDir, '..', 'wasm_core', 'dog_walker_core_bg.wasm');
+
+  let wasmBytes;
+  try {
+    wasmBytes = fs.readFileSync(wasmPath);
+  } catch (e) {
+    throw new Error(`dog_walker_core wasm init failed: ${wasmPath}`);
+  }
+
+  try {
+    const initResult = initSync(wasmBytes);
+    if (initResult && initResult.memory) {
+      wasmMemory = initResult.memory;
+    }
+    wasmSimInstance = new WasmWorldSim(worldWidth, worldHeight);
+  } catch (e) {
+    throw new Error(`dog_walker_core wasm init failed: ${wasmPath}`);
+  }
+
+  console.log('[WasmSimBridge] Core simulation engine initialized synchronously (Rust/Wasm).');
+  return wasmSimInstance;
+}
+
+/**
+ * Returns the cached 128-slot Float32Array view over the dog buffer, recreating it only when the
+ * underlying Wasm memory has grown (buffer identity changed). Throws on invalid pointer/length.
+ */
+function getDogBufferView() {
+  if (!wasmSimInstance || typeof wasmSimInstance.dog_buffer_ptr !== 'function') {
+    throw new Error('Wasm sim not initialized');
+  }
+  if (!wasmMemory) {
+    throw new Error('Wasm sim not initialized');
+  }
+  const ptr = wasmSimInstance.dog_buffer_ptr();
+  if (!ptr) {
+    throw new Error('Wasm dog buffer pointer is 0');
+  }
+  if (dogBufferView && dogBufferView.buffer === wasmMemory.buffer && dogBufferPtr === ptr) {
+    return dogBufferView;
+  }
+  const view = new Float32Array(wasmMemory.buffer, ptr, DOG_BUFFER_SLOTS);
+  if (view.length !== DOG_BUFFER_SLOTS) {
+    throw new Error(`Wasm dog buffer view length ${view.length} !== ${DOG_BUFFER_SLOTS}`);
+  }
+  dogBufferView = view;
+  dogBufferPtr = ptr;
+  return dogBufferView;
+}
+
+// --- Enum mapping helpers (mirror dog_contract.rs) -------------------------------------------
+
+/** Maps a DogStateId numeric id to the JS dog state string. */
+export function dogStateIdToState(id, isOnLeash = false) {
+  switch (id | 0) {
+    case 0: return isOnLeash ? 'FOLLOWING' : 'IDLE_SNIFF';
+    case 1: return 'FOLLOWING';
+    case 2: return 'ROAMING';
+    case 3: return 'POOPING';
+    case 4: return 'FETCHING';
+    case 5: return 'SOCIAL_GREET';
+    case 6: return 'ZOOMIES';
+    case 7: return 'LYING_DOWN';
+    case 8: return 'LOST';
+    case 9: return 'RECALLED';
+    case 10: return 'BARKING';
+    default: return 'IDLE_SNIFF';
+  }
+}
+
+/** Maps a JS dog state string to its DogStateId numeric id. */
+export function dogStateToId(state) {
+  switch (state) {
+    case 'FOLLOWING': return 1;
+    case 'ROAMING': return 2;
+    case 'POOPING': return 3;
+    case 'FETCHING': return 4;
+    case 'SOCIAL_GREET': return 5;
+    case 'PACK_PLAY': return 5;
+    case 'ZOOMIES': return 6;
+    case 'LYING_DOWN': return 7;
+    case 'SITTING': return 7;
+    case 'ROLLING': return 7;
+    case 'LOST': return 8;
+    case 'RECALLED': return 9;
+    case 'BARKING': return 10;
+    case 'IDLE_SNIFF': return 0;
+    default: return 0;
+  }
+}
+
+/** Maps a RoamSubModeId numeric id to the JS roam sub-mode string. */
+export function roamSubModeIdToSubMode(id) {
+  switch (id | 0) {
+    case 0: return 'FREE_EXPLORE';
+    case 1: return 'FREE_EXPLORE';
+    case 2: return 'SCOUT_AHEAD';
+    case 3: return 'LAG_AND_SNIFF';
+    case 4: return 'CHECK_IN';
+    case 5: return 'FLANK_PACE';
+    case 6: return 'FLANK_PACE';
+    case 7: return 'FLANK_PACE';
+    default: return 'FREE_EXPLORE';
+  }
+}
+
+/** Maps a ZoomiePathId numeric id to the JS zoomie path string (null for None). */
+export function zoomiePathIdToPath(id) {
+  switch (id | 0) {
+    case 0: return null;
+    case 1: return 'FIGURE_EIGHT';
+    case 2: return 'ORBIT_OWNER';
+    case 3: return 'SHUTTLE';
+    default: return null;
+  }
+}
+
+/** Maps a GaitModeId numeric id to the JS gait mode string. */
+export function gaitModeIdToMode(id) {
+  switch (id | 0) {
+    case 0: return 'IDLE';
+    case 1: return 'WALK';
+    case 2: return 'TROT';
+    case 3: return 'GALLOP';
+    default: return 'IDLE';
+  }
+}
+
+function normalizeTrait(v) {
+  const n = (Number(v) - 1) / 4;
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
+
+function writePoint(buf, base, x, y) {
+  buf[base] = Number.isFinite(x) ? x : NaN;
+  buf[base + 1] = Number.isFinite(y) ? y : NaN;
+}
+
+/**
+ * Steps the companion dog through the Wasm authority buffer. Writes inputs [0..63], calls
+ * step_dog_buffer(), hydrates outputs [64..127] onto `dog`, and returns the event bitmask.
+ */
+export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs) {
+  if (!wasmSimInstance) {
+    throw new Error('Wasm sim not initialized');
+  }
+  const buf = getDogBufferView();
+
+  const owner = dog && dog.owner ? dog.owner : null;
+  const isOnLeash = Boolean((dog && dog.isOnLeash) || (owner && owner.isLeashed));
+  const nowSec = (dog && dog.nowSec != null)
+    ? dog.nowSec
+    : ((typeof performance !== 'undefined' && performance.now)
+      ? performance.now() / 1000
+      : Date.now() / 1000);
+
+  // Inputs [0..63]
+  buf[0] = dt;
+  buf[1] = nowSec;
+  buf[2] = owner && Number.isFinite(owner.x) ? owner.x : 0;
+  buf[3] = owner && Number.isFinite(owner.y) ? owner.y : 0;
+  buf[4] = owner && Number.isFinite(owner.vx) ? owner.vx : 0;
+  buf[5] = owner && Number.isFinite(owner.vy) ? owner.vy : 0;
+  buf[6] = owner && Number.isFinite(owner.heading) ? owner.heading : 0;
+  buf[7] = owner && Number.isFinite(owner.halfWidth) ? owner.halfWidth : 0;
+  const ownerGait = owner ? (owner.gait ?? owner.gaitId) : 0;
+  buf[8] = Number.isFinite(ownerGait) ? ownerGait : 0;
+  buf[9] = owner && owner.isMoving ? 1 : 0;
+  buf[10] = isOnLeash ? 1 : 0;
+  buf[11] = (dog && dog.preferredSide === 'right') ? 1 : -1;
+  const store = (dog && dog.dogStateStore) ? dog.dogStateStore : null;
+  const isHungry = store && store.isHungry != null ? store.isHungry : (dog && dog.isHungry);
+  const needsGrooming = store && store.needsGrooming != null ? store.needsGrooming : (dog && dog.needsGrooming);
+  const isTired = store && store.isTired != null ? store.isTired : (dog && dog.isTired);
+  buf[12] = isHungry ? 1 : 0;
+  buf[13] = needsGrooming ? 1 : 0;
+  buf[14] = isTired ? 1 : 0;
+  const ball = (activeBall != null) ? activeBall : (dog && dog.activeBall ? dog.activeBall : null);
+  buf[15] = ball && ball.active ? 1 : 0;
+  buf[16] = ball && ball.isThrown ? 1 : 0;
+  buf[17] = ball && Number.isFinite(ball.x) ? ball.x : 0;
+  buf[18] = ball && Number.isFinite(ball.y) ? ball.y : 0;
+  const cam = (field && field.camera) ? field.camera : ((dog && dog.camera) ? dog.camera : null);
+  buf[19] = cam && cam.active ? 1 : 0;
+  buf[20] = cam && Number.isFinite(cam.left) ? cam.left : 0;
+  buf[21] = cam && Number.isFinite(cam.top) ? cam.top : 0;
+  buf[22] = cam && Number.isFinite(cam.right) ? cam.right : 0;
+  buf[23] = cam && Number.isFinite(cam.bottom) ? cam.bottom : 0;
+  const isSunny = field
+    ? (field.isSunny ?? field.zoneConfig?.sunny ?? field.zoneIsSunny)
+    : false;
+  buf[24] = isSunny ? 1 : 0;
+  const personality = (dog && dog.personality) ? dog.personality : {};
+  buf[25] = normalizeTrait(personality.curiosity ?? 3);
+  buf[26] = normalizeTrait(personality.energy ?? 3);
+  buf[27] = normalizeTrait(personality.stubbornness ?? 2);
+  buf[28] = normalizeTrait(personality.loyalty ?? 4);
+  const cmds = (dog && dog.pendingCommands) ? dog.pendingCommands : null;
+  buf[29] = cmds && cmds.whistleRecall ? 1 : 0;
+  buf[30] = cmds && cmds.pet ? 1 : 0;
+  buf[31] = cmds && cmds.praise ? 1 : 0;
+  buf[32] = cmds && cmds.bark ? 1 : 0;
+  buf[33] = cmds && cmds.triggerZoomies ? 1 : 0;
+  buf[34] = cmds && cmds.fetchBall ? 1 : 0;
+
+  // Peers [38..45], NPCs [46..53], scents [54..61]
+  const peers = Array.isArray(otherDogs) ? otherDogs : [];
+  const peerCount = Math.min(4, peers.length);
+  buf[35] = peerCount;
+  for (let i = 0; i < 4; i++) {
+    const p = i < peerCount ? peers[i] : null;
+    writePoint(buf, 38 + i * 2, p ? p.x : NaN, p ? p.y : NaN);
+  }
+
+  const npcList = Array.isArray(npcs) ? npcs : [];
+  const npcCount = Math.min(4, npcList.length);
+  buf[36] = npcCount;
+  for (let i = 0; i < 4; i++) {
+    const n = i < npcCount ? npcList[i] : null;
+    writePoint(buf, 46 + i * 2, n ? n.x : NaN, n ? n.y : NaN);
+  }
+
+  const scents = (dog && Array.isArray(dog.scents)) ? dog.scents : [];
+  const scentCount = Math.min(4, scents.length);
+  buf[37] = scentCount;
+  for (let i = 0; i < 4; i++) {
+    const s = i < scentCount ? scents[i] : null;
+    writePoint(buf, 54 + i * 2, s ? s.x : NaN, s ? s.y : NaN);
+  }
+
+  // Seed persistent dog state slots [64..69] so the sim continues from the JS state.
+  buf[64] = Number.isFinite(dog.x) ? dog.x : 0;
+  buf[65] = Number.isFinite(dog.y) ? dog.y : 0;
+  buf[66] = Number.isFinite(dog.vx) ? dog.vx : 0;
+  buf[67] = Number.isFinite(dog.vy) ? dog.vy : 0;
+  buf[68] = Number.isFinite(dog.angle) ? dog.angle : 0;
+  buf[69] = dogStateToId(dog.state);
+
+  // Step the authoritative simulation.
+  wasmSimInstance.step_dog_buffer();
+
+  // Re-acquire the view in case memory.grow detached the previous buffer.
+  const outBuf = getDogBufferView();
+
+  // Clear pending commands only after a successful step.
+  if (cmds) {
+    cmds.whistleRecall = false;
+    cmds.pet = false;
+    cmds.praise = false;
+    cmds.bark = false;
+    cmds.triggerZoomies = false;
+    cmds.fetchBall = false;
+  }
+
+  // Outputs [64..127]
+  dog.x = outBuf[64];
+  dog.y = outBuf[65];
+  dog.vx = outBuf[66];
+  dog.vy = outBuf[67];
+  dog.angle = outBuf[68];
+  dog.state = dogStateIdToState(outBuf[69], isOnLeash);
+  dog.roamSubMode = roamSubModeIdToSubMode(outBuf[70]);
+  const zoomiePathId = outBuf[71] | 0;
+  if (zoomiePathId !== 0) {
+    dog.zoomiesPath = zoomiePathIdToPath(zoomiePathId);
+  } else if (!dog.zoomiesPath) {
+    dog.zoomiesPath = 'FIGURE_EIGHT';
+  }
+  dog.gaitMode = gaitModeIdToMode(outBuf[72]);
+  dog.gaitPhase = outBuf[73];
+
+  dog.leftEar = dog.leftEar || {};
+  dog.leftEar.angle = outBuf[108];
+  dog.leftEar.vel = outBuf[109];
+  dog.rightEar = dog.rightEar || {};
+  dog.rightEar.angle = outBuf[110];
+  dog.rightEar.vel = outBuf[111];
+  dog.wagSpeed = outBuf[112];
+  dog.tailAngle = outBuf[113];
+  dog.noseTwitch = outBuf[114];
+  dog.targetSlot = isOnLeash
+    ? { x: outBuf[115], y: outBuf[116] }
+    : null;
+
+  const leashFlags = outBuf[117] | 0;
+  dog.isPullingLeash = (leashFlags & 1) !== 0;
+  dog.leashTension = outBuf[118];
+  dog.leashSagPx = outBuf[119];
+  dog.leashVibrationPx = outBuf[120];
+  dog.ownerClampedX = outBuf[121];
+  dog.ownerClampedY = outBuf[122];
+  const ownerFlags = outBuf[123] | 0;
+  dog.ownerWasClamped = (ownerFlags & 1) !== 0;
+  dog.ownerFrozen = (ownerFlags & 2) !== 0;
+
+  return outBuf[127] | 0;
 }
 
 export function stepEarSprings(leftEar, rightEar, dogVx, dogVy, dogAngle, dt) {

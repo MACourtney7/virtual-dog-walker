@@ -12,6 +12,14 @@ export class WasmWorldSim {
         wasm.__wbg_wasmworldsim_free(ptr, 0);
     }
     /**
+     * Pointer to the persistent zeroed dog simulation buffer (128 f32 slots).
+     * @returns {number}
+     */
+    dog_buffer_ptr() {
+        const ret = wasm.wasmworldsim_dog_buffer_ptr(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
      * @param {number} world_width
      * @param {number} world_height
      */
@@ -147,6 +155,16 @@ export class WasmWorldSim {
         } finally {
             wasm.__wbindgen_add_to_stack_pointer(16);
         }
+    }
+    /**
+     * Advance the persistent dog simulation buffer by one tick.
+     *
+     * Orchestrates need resolution, leash slot, utility AI, movement
+     * integration, and leash/owner constraints. The buffer is mutated in
+     * place; this path never returns a `Vec<f64>`.
+     */
+    step_dog_buffer() {
+        wasm.wasmworldsim_step_dog_buffer(this.__wbg_ptr);
     }
     /**
      * Ear spring integration towards JS-computed targets. Returns [lAngle, lVel, rAngle, rVel].

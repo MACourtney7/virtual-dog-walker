@@ -4,6 +4,10 @@
 export class WasmWorldSim {
     free(): void;
     [Symbol.dispose](): void;
+    /**
+     * Pointer to the persistent zeroed dog simulation buffer (128 f32 slots).
+     */
+    dog_buffer_ptr(): number;
     constructor(world_width: number, world_height: number);
     resolve_collision(x: number, y: number, radius: number): Float64Array;
     /**
@@ -25,6 +29,14 @@ export class WasmWorldSim {
     set_world_obstacles(obstacles_json: string): boolean;
     step_ball(dt: number): Float64Array;
     /**
+     * Advance the persistent dog simulation buffer by one tick.
+     *
+     * Orchestrates need resolution, leash slot, utility AI, movement
+     * integration, and leash/owner constraints. The buffer is mutated in
+     * place; this path never returns a `Vec<f64>`.
+     */
+    step_dog_buffer(): void;
+    /**
      * Ear spring integration towards JS-computed targets. Returns [lAngle, lVel, rAngle, rVel].
      */
     step_ear_targets(left_angle: number, left_v: number, right_angle: number, right_v: number, target_left: number, target_right: number, spring_k: number, spring_damp: number, dt: number): Float64Array;
@@ -43,6 +55,7 @@ export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembl
 export interface InitOutput {
     readonly memory: WebAssembly.Memory;
     readonly __wbg_wasmworldsim_free: (a: number, b: number) => void;
+    readonly wasmworldsim_dog_buffer_ptr: (a: number) => number;
     readonly wasmworldsim_new: (a: number, b: number) => number;
     readonly wasmworldsim_resolve_collision: (a: number, b: number, c: number, d: number, e: number) => void;
     readonly wasmworldsim_resolve_field_collision: (a: number, b: number, c: number, d: number, e: number) => void;
@@ -51,6 +64,7 @@ export interface InitOutput {
     readonly wasmworldsim_set_colliders: (a: number, b: number, c: number) => void;
     readonly wasmworldsim_set_world_obstacles: (a: number, b: number, c: number) => number;
     readonly wasmworldsim_step_ball: (a: number, b: number, c: number) => void;
+    readonly wasmworldsim_step_dog_buffer: (a: number) => void;
     readonly wasmworldsim_step_ear_targets: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number) => void;
     readonly wasmworldsim_step_ears: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number) => void;
     readonly wasmworldsim_step_leash: (a: number, b: number, c: number, d: number, e: number, f: number, g: number, h: number, i: number, j: number, k: number, l: number) => void;

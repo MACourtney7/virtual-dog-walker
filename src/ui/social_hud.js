@@ -6,6 +6,30 @@ import { NetStatus } from '../net/network.js';
 import { PUBLIC_ZONE_IDS, isPublicZoneId } from '../world/zones.js';
 import { resolveCoatPresetByName } from '../entities/companion_dog.js';
 
+// Canonical 4-trait personality model (single source of truth).
+export const CANONICAL_TRAITS = ['curiosity', 'energy', 'stubbornness', 'loyalty'];
+export const DEFAULT_PERSONALITY = { curiosity: 3, energy: 3, stubbornness: 2, loyalty: 4 };
+
+// Clamp an arbitrary value to an integer in 1..=5, falling back to `def`.
+function normalizeTraitValue(value, def) {
+  const n = typeof value === 'number' ? value : parseInt(value, 10);
+  if (!Number.isFinite(n)) return def;
+  return Math.min(5, Math.max(1, Math.round(n)));
+}
+
+// Normalize any personality object (legacy or partial) to the canonical shape.
+export function normalizePersonality(raw) {
+  const out = { ...DEFAULT_PERSONALITY };
+  if (raw && typeof raw === 'object') {
+    for (const trait of CANONICAL_TRAITS) {
+      if (raw[trait] !== undefined && raw[trait] !== null) {
+        out[trait] = normalizeTraitValue(raw[trait], DEFAULT_PERSONALITY[trait]);
+      }
+    }
+  }
+  return out;
+}
+
 export class SocialHUD {
   constructor(networkManager, localOwner, localDog, coatPresets) {
     this.net = networkManager;
@@ -408,7 +432,7 @@ export class SocialHUD {
     if (this.dogSlot) {
       // Occupied: read-only card. Build with DOM APIs so a malicious dog name
       // or collar color can never inject HTML.
-      const p = this.dogSlot.personality || { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
+      const p = normalizePersonality(this.dogSlot.personality);
       container.innerHTML = '';
 
       const card = document.createElement('div');
@@ -443,10 +467,10 @@ export class SocialHUD {
       const traitsEl = document.createElement('div');
       traitsEl.className = 'dog-slot-traits';
       const traitRows = [
-        ['🎾 Playfulness', p.playfulness],
-        ['🙈 Shyness', p.shyness],
-        ['🗣️ Barkyness', p.barkyness],
-        ['🎓 Obedience', p.obedience]
+        ['🔍 Curiosity', p.curiosity],
+        ['⚡ Energy', p.energy],
+        ['🪨 Stubbornness', p.stubbornness],
+        ['💛 Loyalty', p.loyalty]
       ];
       for (const [label, value] of traitRows) {
         const row = document.createElement('div');
@@ -505,34 +529,34 @@ export class SocialHUD {
 
             <div class="cust-trait-row">
               <div class="cust-trait-header">
-                <label class="cust-trait-label" for="cust-personality-playfulness">🎾 Playfulness</label>
-                <span class="cust-trait-badge" id="val-personality-playfulness">3</span>
+                <label class="cust-trait-label" for="cust-personality-curiosity">🔍 Curiosity</label>
+                <span class="cust-trait-badge" id="val-personality-curiosity">3</span>
               </div>
-              <input type="range" min="1" max="5" step="1" value="3" class="cust-range" id="cust-personality-playfulness" />
+              <input type="range" min="1" max="5" step="1" value="3" class="cust-range" id="cust-personality-curiosity" />
             </div>
 
             <div class="cust-trait-row">
               <div class="cust-trait-header">
-                <label class="cust-trait-label" for="cust-personality-shyness">🙈 Shyness</label>
-                <span class="cust-trait-badge" id="val-personality-shyness">2</span>
+                <label class="cust-trait-label" for="cust-personality-energy">⚡ Energy</label>
+                <span class="cust-trait-badge" id="val-personality-energy">3</span>
               </div>
-              <input type="range" min="1" max="5" step="1" value="2" class="cust-range" id="cust-personality-shyness" />
+              <input type="range" min="1" max="5" step="1" value="3" class="cust-range" id="cust-personality-energy" />
             </div>
 
             <div class="cust-trait-row">
               <div class="cust-trait-header">
-                <label class="cust-trait-label" for="cust-personality-barkyness">🗣️ Barkyness</label>
-                <span class="cust-trait-badge" id="val-personality-barkyness">2</span>
+                <label class="cust-trait-label" for="cust-personality-stubbornness">🪨 Stubbornness</label>
+                <span class="cust-trait-badge" id="val-personality-stubbornness">2</span>
               </div>
-              <input type="range" min="1" max="5" step="1" value="2" class="cust-range" id="cust-personality-barkyness" />
+              <input type="range" min="1" max="5" step="1" value="2" class="cust-range" id="cust-personality-stubbornness" />
             </div>
 
             <div class="cust-trait-row">
               <div class="cust-trait-header">
-                <label class="cust-trait-label" for="cust-personality-obedience">🎓 Obedience</label>
-                <span class="cust-trait-badge" id="val-personality-obedience">4</span>
+                <label class="cust-trait-label" for="cust-personality-loyalty">💛 Loyalty</label>
+                <span class="cust-trait-badge" id="val-personality-loyalty">4</span>
               </div>
-              <input type="range" min="1" max="5" step="1" value="4" class="cust-range" id="cust-personality-obedience" />
+              <input type="range" min="1" max="5" step="1" value="4" class="cust-range" id="cust-personality-loyalty" />
             </div>
           </div>
 
@@ -555,7 +579,7 @@ export class SocialHUD {
       });
 
       // Wire personality sliders
-      ['playfulness', 'shyness', 'barkyness', 'obedience'].forEach(trait => {
+      CANONICAL_TRAITS.forEach(trait => {
         const slider = document.getElementById(`cust-personality-${trait}`);
         const badge = document.getElementById(`val-personality-${trait}`);
         if (slider) {
@@ -608,7 +632,7 @@ export class SocialHUD {
         dogName: '',
         hasDog: false,
         collarColor: '#0d9488',
-        personality: { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 }
+        personality: { ...DEFAULT_PERSONALITY }
       });
       if (typeof this.net.broadcast === 'function' && this.net.peerId) {
         this.net.broadcast(Protocol.createHello(
@@ -635,12 +659,12 @@ export class SocialHUD {
     const name = (nameInput && nameInput.value.trim()) || 'Ziggy';
     const coatKey = (coatSelect && coatSelect.value) || 'CHOCOLATE_TAN';
     const collarColor = (activeCollar && activeCollar.getAttribute('data-color')) || '#0d9488';
-    const personality = {
-      playfulness: parseInt(document.getElementById('cust-personality-playfulness')?.value || '3', 10),
-      shyness: parseInt(document.getElementById('cust-personality-shyness')?.value || '2', 10),
-      barkyness: parseInt(document.getElementById('cust-personality-barkyness')?.value || '2', 10),
-      obedience: parseInt(document.getElementById('cust-personality-obedience')?.value || '4', 10)
-    };
+    const personality = normalizePersonality({
+      curiosity: document.getElementById('cust-personality-curiosity')?.value,
+      energy: document.getElementById('cust-personality-energy')?.value,
+      stubbornness: document.getElementById('cust-personality-stubbornness')?.value,
+      loyalty: document.getElementById('cust-personality-loyalty')?.value
+    });
 
     this.dogSlot = { name, coatKey, collarColor, personality };
     // Adopting a dog always releases the Home lock so the player is never
@@ -707,21 +731,20 @@ export class SocialHUD {
     const nameInput = document.getElementById('cust-dog-name');
     const coatSelect = document.getElementById('cust-dog-coat');
     const activeCollar = document.querySelector('#collar-palette .color-swatch.active');
-    const readTrait = (trait, def) => {
+    const readTrait = (trait) => {
       const el = document.getElementById(`cust-personality-${trait}`);
-      const v = el ? parseInt(el.value, 10) : NaN;
-      return isNaN(v) ? def : v;
+      return el ? el.value : undefined;
     };
     return {
       name: (nameInput && nameInput.value.trim()) || 'Ziggy',
       coatKey: (coatSelect && coatSelect.value) || 'CHOCOLATE_TAN',
       collarColor: (activeCollar && activeCollar.getAttribute('data-color')) || '#0d9488',
-      personality: {
-        playfulness: readTrait('playfulness', 3),
-        shyness: readTrait('shyness', 2),
-        barkyness: readTrait('barkyness', 2),
-        obedience: readTrait('obedience', 4)
-      }
+      personality: normalizePersonality({
+        curiosity: readTrait('curiosity'),
+        energy: readTrait('energy'),
+        stubbornness: readTrait('stubbornness'),
+        loyalty: readTrait('loyalty')
+      })
     };
   }
 
@@ -879,7 +902,7 @@ export class SocialHUD {
         collarColor: this.dogSlot ? this.dogSlot.collarColor : '#0d9488',
         dogName: this.dogSlot ? this.dogSlot.name : 'Ziggy',
         dogSlot: this.dogSlot,
-        personality: this.dogSlot ? this.dogSlot.personality : { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 }
+        personality: this.dogSlot ? normalizePersonality(this.dogSlot.personality) : { ...DEFAULT_PERSONALITY }
       };
       localStorage.setItem('clifton_walker_profile', JSON.stringify(profileToSave));
     } catch (e) {
@@ -889,7 +912,7 @@ export class SocialHUD {
 
   broadcastProfile() {
     if (!this.net || typeof this.net.setLocalMeta !== 'function') return;
-    const personality = this.dogSlot ? this.dogSlot.personality : { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
+    const personality = this.dogSlot ? normalizePersonality(this.dogSlot.personality) : { ...DEFAULT_PERSONALITY };
     const extraMeta = {
       hairStyle: this.owner.hairStyle,
       hairColor: this.owner.hairColor,
@@ -925,7 +948,7 @@ export class SocialHUD {
         // First-time launch: no dog yet, lock the Home modal open
         if (this.dog) {
           if (!this.dog.personality) {
-            this.dog.personality = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
+            this.dog.personality = { ...DEFAULT_PERSONALITY };
           }
           this.dog.name = '';
         }
@@ -941,10 +964,15 @@ export class SocialHUD {
         this.renderHomeStage();
         return;
       }
-      const saved = JSON.parse(savedStr);
+      let saved;
+      try {
+        saved = JSON.parse(savedStr);
+      } catch (parseErr) {
+        saved = null;
+      }
       if (!saved || typeof saved !== 'object') {
         if (this.dog && !this.dog.personality) {
-          this.dog.personality = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
+          this.dog.personality = { ...DEFAULT_PERSONALITY };
         }
         if (this.dog) {
           this.dog.name = '';
@@ -986,15 +1014,10 @@ export class SocialHUD {
       this.owner.accessory = saved.accessory || 'NONE';
 
       // 2. Dog companion attributes (with fallback defaults)
-      const personalityDefaults = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
-      const loadedPersonality = saved.personality && typeof saved.personality === 'object'
-        ? {
-            playfulness: parseInt(saved.personality.playfulness, 10) || personalityDefaults.playfulness,
-            shyness: parseInt(saved.personality.shyness, 10) || personalityDefaults.shyness,
-            barkyness: parseInt(saved.personality.barkyness, 10) || personalityDefaults.barkyness,
-            obedience: parseInt(saved.personality.obedience, 10) || personalityDefaults.obedience
-          }
-        : { ...personalityDefaults };
+      const personalityDefaults = { ...DEFAULT_PERSONALITY };
+      // Normalize legacy/partial/malformed personality data to the canonical
+      // 4-trait shape (drops legacy keys, clamps out-of-range values).
+      const loadedPersonality = normalizePersonality(saved.personality);
 
       // Honor an explicitly saved empty slot: never auto-create a dog.
       if (saved.dogSlot === null) {
@@ -1082,7 +1105,7 @@ export class SocialHUD {
     } catch (e) {
       console.warn('Could not load saved walker profile from localStorage:', e);
       if (this.dog && !this.dog.personality) {
-        this.dog.personality = { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 };
+        this.dog.personality = { ...DEFAULT_PERSONALITY };
       }
       this.updateModalActiveSelections();
     }
@@ -1138,15 +1161,16 @@ export class SocialHUD {
     }
 
     // Update personality sliders and badges (only present in empty-slot form)
-    const personality = (this.dogSlot && this.dogSlot.personality)
-      ? this.dogSlot.personality
-      : ((this.dog && this.dog.personality) ? this.dog.personality : { playfulness: 3, shyness: 2, barkyness: 2, obedience: 4 });
+    const personality = normalizePersonality(
+      (this.dogSlot && this.dogSlot.personality)
+        ? this.dogSlot.personality
+        : ((this.dog && this.dog.personality) ? this.dog.personality : DEFAULT_PERSONALITY)
+    );
 
-    const traits = ['playfulness', 'shyness', 'barkyness', 'obedience'];
-    traits.forEach(trait => {
+    CANONICAL_TRAITS.forEach(trait => {
       const slider = document.getElementById(`cust-personality-${trait}`);
       const badge = document.getElementById(`val-personality-${trait}`);
-      const val = personality[trait] !== undefined ? personality[trait] : 3;
+      const val = personality[trait];
       if (slider) slider.value = val;
       if (badge) badge.textContent = val;
     });
@@ -1367,6 +1391,27 @@ export class SocialHUD {
         else if (palette === 'jacketColor') this.owner.jacketColor = color;
         else if (palette === 'pantsColor') this.owner.pantsColor = color;
         else if (palette === 'collarColor') this.dog.collarColor = color;
+      });
+    });
+
+    // Personality sliders: persist only the 4 canonical keys and emit the
+    // existing HUD change event on every change.
+    CANONICAL_TRAITS.forEach(trait => {
+      const slider = document.getElementById(`cust-personality-${trait}`);
+      if (!slider) return;
+      slider.addEventListener('change', () => {
+        const current = normalizePersonality(
+          (this.dogSlot && this.dogSlot.personality)
+            ? this.dogSlot.personality
+            : ((this.dog && this.dog.personality) ? this.dog.personality : DEFAULT_PERSONALITY)
+        );
+        current[trait] = normalizeTraitValue(slider.value, DEFAULT_PERSONALITY[trait]);
+        if (this.dogSlot) this.dogSlot.personality = current;
+        if (this.dog) this.dog.personality = current;
+        this.persistProfile();
+        if (typeof window !== 'undefined' && typeof window.dispatchEvent === 'function' && typeof CustomEvent !== 'undefined') {
+          window.dispatchEvent(new CustomEvent('hud:personality-change', { detail: { ...current } }));
+        }
       });
     });
 

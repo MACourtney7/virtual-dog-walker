@@ -83,7 +83,7 @@ class TestWasmCoreSim(unittest.TestCase):
         with open(bridge_path) as f:
             content = f.read()
             self.assertIn("export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0)", content)
-            self.assertIn("new WasmWorldSim(worldWidth, worldHeight)", content)
+            self.assertIn("new mod.WasmWorldSim(worldWidth, worldHeight)", content)
             self.assertIn("export function stepEarSprings", content)
             self.assertIn("wasmSimInstance.step_ears", content)
             self.assertIn("export function stepLeashConstraint", content)

@@ -74,6 +74,10 @@ class TestCompanionDogPhase3Mechanics(unittest.TestCase):
         self.base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         with open(os.path.join(self.base_dir, "src", "entities", "companion_dog.js"), "r", encoding="utf-8") as f:
             self.dog_code = f.read()
+        with open(os.path.join(self.base_dir, "src", "engine", "wasm_sim_bridge.js"), "r", encoding="utf-8") as f:
+            self.bridge_code = f.read()
+        with open(os.path.join(self.base_dir, "crates", "dog_walker_core", "src", "dog_utility_ai.rs"), "r", encoding="utf-8") as f:
+            self.utility_ai_code = f.read()
 
     def test_dog_state_enums(self):
         """DogState must include ZOOMIES and SNIFFING_TRAIL."""
@@ -81,24 +85,30 @@ class TestCompanionDogPhase3Mechanics(unittest.TestCase):
         self.assertIn("SNIFFING_TRAIL: 'SNIFFING_TRAIL'", self.dog_code)
 
     def test_scent_trail_tracking_and_sniffing(self):
-        """CompanionDog must deposit scent trails, detect scents, and animate sniffing."""
-        self.assertIn("this.scentDropTimer", self.dog_code)
-        self.assertIn("this.targetScent", self.dog_code)
+        """Scent detection/nose-twitch lives in the Rust core; JS executes SCENT_DEPOSITED."""
+        # Rust core: scent proximity drives nose twitch and the SCENT_DEPOSITED event.
+        self.assertIn("fn nearest_scent_distance", self.utility_ai_code)
+        self.assertIn("DOG_EVENT_SCENT_DEPOSITED", self.utility_ai_code)
+        self.assertIn("DOG_BUF_NOSE_TWITCH", self.utility_ai_code)
+        # Bridge hydrates the nose twitch output slot onto the dog.
+        self.assertIn("dog.noseTwitch = outBuf[114]", self.bridge_code)
+        # JS executes the SCENT_DEPOSITED event by depositing a scent trail.
+        self.assertIn("DogEventBit.SCENT_DEPOSITED", self.dog_code)
+        self.assertIn("field?.addScent?.(this.x, this.y, 'dog', this)", self.dog_code)
         self.assertIn("this.noseTwitch", self.dog_code)
-        self.assertIn("updateSniffingTrail(dt, field)", self.dog_code)
-        self.assertIn("field.particleSystem.emitSniffParticles", self.dog_code)
-        self.assertIn("field.addScent(this.x, this.y, 'dog', this)", self.dog_code)
 
     def test_zoomies_burst_and_figure_eight(self):
-        """CompanionDog must trigger zoomies burst at 100% happiness and follow figure-eight path."""
+        """Zoomies path selection/steering lives in the Rust core; JS triggers the burst."""
+        # Rust core: figure-eight parametric motion uses sin(phase) and sin(phase * 2).
+        self.assertIn("ZoomiePathId::FigureEight", self.utility_ai_code)
+        self.assertIn("(phase * core::f32::consts::TAU).sin() * 60.0", self.utility_ai_code)
+        self.assertIn("(phase * core::f32::consts::TAU * 2.0).sin() * 30.0", self.utility_ai_code)
+        self.assertIn("fn zoomie_path_for", self.utility_ai_code)
+        # Bridge hydrates the zoomie path output slot onto the dog.
+        self.assertIn("dog.zoomiesPath = zoomiePathIdToPath(zoomiePathId)", self.bridge_code)
+        # JS still owns the burst trigger and the 100% happiness gate.
         self.assertIn("triggerZoomies()", self.dog_code)
         self.assertIn("this.zoomiesTimer", self.dog_code)
-        self.assertIn("this.zoomiesPhase", self.dog_code)
-        self.assertIn("updateZoomies(dt, field)", self.dog_code)
-        # Figure-eight parametric motion: sin(phase) and sin(phase * 2)
-        self.assertIn("Math.sin(this.zoomiesPhase)", self.dog_code)
-        self.assertIn("Math.sin(this.zoomiesPhase * 2)", self.dog_code)
-        # Happiness trigger in pet()
         self.assertIn("this.happiness >= 100", self.dog_code)
 
     def test_woodland_stick_pickup_and_carrying(self):
@@ -113,16 +123,24 @@ class TestCompanionDogPhase3Mechanics(unittest.TestCase):
         self.assertIn("this.dropStick();\n    if (this.hasBall", self.dog_code)
 
     def test_dynamic_gait_transitions(self):
-        """CompanionDog must visually transition between WALK, rhythmic Spaniel TROT, and GALLOP."""
+        """Gait selection lives in the Rust core; JS renders TROT/GALLOP and emits GALLOP_PUFF."""
+        # Rust core: gait derived from speed with IDLE/WALK/TROT/GALLOP bands.
+        self.assertIn("fn gait_from_speed", self.utility_ai_code)
+        self.assertIn("GaitModeId::Gallop", self.utility_ai_code)
+        self.assertIn("GaitModeId::Trot", self.utility_ai_code)
+        self.assertIn("GaitModeId::Walk", self.utility_ai_code)
+        self.assertIn("DOG_EVENT_GALLOP_PUFF", self.utility_ai_code)
+        # Bridge hydrates gait mode/phase output slots onto the dog.
+        self.assertIn("dog.gaitMode = gaitModeIdToMode(outBuf[72])", self.bridge_code)
+        self.assertIn("dog.gaitPhase = outBuf[73]", self.bridge_code)
+        # JS renders the gait and executes the GALLOP_PUFF event.
         self.assertIn("this.gaitMode", self.dog_code)
         self.assertIn("this.gaitPhase", self.dog_code)
-        self.assertIn("this.gaitMode = 'GALLOP'", self.dog_code)
-        self.assertIn("this.gaitMode = 'TROT'", self.dog_code)
-        self.assertIn("this.gaitMode = 'WALK'", self.dog_code)
         # Spaniel trot vertical bob
         self.assertIn("trotBob", self.dog_code)
         # Gallop torso stretch and streamlined ear sweep
         self.assertIn("gallopSweep", self.dog_code)
+        self.assertIn("DogEventBit.GALLOP_PUFF", self.dog_code)
         self.assertIn("emitGallopPuff", self.dog_code)
 
 

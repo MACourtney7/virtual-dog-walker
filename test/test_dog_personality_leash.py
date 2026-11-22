@@ -1,13 +1,14 @@
 #!/usr/bin/env python3
 """
-Automated Python unit and behavioral test suite validating canine personality
-and leash dynamics requirements from ticket-013:
-- AC-013.1: Personality attributes, default values (playfulness: 3, shyness: 2, barkyness: 2, obedience: 4), and bounds (1-5).
-- AC-013.2: Personality trait steering and social modifiers (playfulness, shyness, barkyness, obedience).
-- AC-013.3: Leashed dog never fetches ball (turns head toward ball, isPullingLeash = true, never enters FETCHING).
-- AC-013.4: Leash pulling physics, 105px max clamp, and taut straight-line rendering with jitter.
-- AC-013.5: Customizer HUD personality sliders in Dog Companion tab and localStorage persistence.
-- AC-013.6: Protocol createHello and server.py personality net sync.
+Automated Python unit and behavioral test suite validating the canonical
+4-trait canine personality schema and leash dynamics (ticket unification-044).
+
+Canonical schema: { curiosity, energy, stubbornness, loyalty } on a 1..=5 scale.
+Defaults: { curiosity: 3, energy: 3, stubbornness: 2, loyalty: 4 }.
+
+Leash constants are pinned by regex over the Rust core crate
+(crates/dog_walker_core/src/) and/or runtime Wasm frames. Decision math is
+never read out of companion_dog.js.
 """
 
 import json
@@ -19,6 +20,23 @@ import unittest
 
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+CANONICAL_TRAITS = ("curiosity", "energy", "stubbornness", "loyalty")
+DEFAULT_PERSONALITY = {"curiosity": 3, "energy": 3, "stubbornness": 2, "loyalty": 4}
+
+# Pinned leash constants (single source of truth: crates/dog_walker_core/src/).
+# Names and values mirror `dog_leash_needs.rs` exactly.
+LEASH_CONSTANTS = {
+    "MAX_LEASH_LENGTH": 52.5,
+    "LEASH_FORWARD_MIN": 38.0,
+    "LEASH_FORWARD_MAX": 50.0,
+    "LEASH_FORWARD_TARGET": 48.0,
+    "LEASH_LATERAL_MIN": 0.0,
+    "LEASH_LATERAL_MAX": 4.0,
+    "LEASH_LATERAL_TARGET": 2.0,
+    "LEASH_SHOULDER_MARGIN_MIN": 2.0,
+    "LEASH_VELOCITY_FEED_FORWARD_SEC": 0.12,
+}
 
 
 class MockOwner:
@@ -40,8 +58,8 @@ class MockBall:
 
 class SimulatedCompanionDog:
     """
-    Simulation of CompanionDog implementing ticket-013 personality & leash dynamics
-    for behavioral and math verification.
+    Simulation of CompanionDog implementing the canonical 4-trait personality
+    schema and leash dynamics for behavioral and math verification.
     """
     def __init__(self, x=1040.0, y=1000.0, owner=None, personality=None):
         self.x = x
@@ -53,29 +71,24 @@ class SimulatedCompanionDog:
         self.owner = owner
         self.state = "FOLLOWING" if (owner and owner.isLeashed) else "ROAMING"
 
-        # Personality defaults: 1 to 5 scale
-        self.personality = {
-            "playfulness": 3,
-            "shyness": 2,
-            "barkyness": 2,
-            "obedience": 4
-        }
+        # Canonical personality defaults: 1 to 5 scale
+        self.personality = dict(DEFAULT_PERSONALITY)
         if personality:
             self.set_personality(personality)
 
         # Dynamic traits derived from personality
-        self.sprintSpeed = 260.0 + self.personality["playfulness"] * 15.0
-        self.wagSpeed = 8.0 * (0.6 + self.personality["playfulness"] * 0.2)
+        self.sprintSpeed = 260.0 + self.personality["energy"] * 15.0
+        self.wagSpeed = 8.0 * (0.6 + self.personality["energy"] * 0.2)
         self.isPullingLeash = False
         self.targetBall = None
         self.isBarking = False
 
     def set_personality(self, p):
-        for k in ("playfulness", "shyness", "barkyness", "obedience"):
+        for k in CANONICAL_TRAITS:
             if k in p:
                 self.personality[k] = max(1, min(5, int(p[k])))
-        self.sprintSpeed = 260.0 + self.personality["playfulness"] * 15.0
-        self.wagSpeed = 8.0 * (0.6 + self.personality["playfulness"] * 0.2)
+        self.sprintSpeed = 260.0 + self.personality["energy"] * 15.0
+        self.wagSpeed = 8.0 * (0.6 + self.personality["energy"] * 0.2)
 
     def fetch_ball(self, ball):
         # Strict rule: leashed dog NEVER fetches ball
@@ -95,12 +108,12 @@ class SimulatedCompanionDog:
                 # Turn head towards ball, pull leash, wag tail eagerly
                 self.angle = math.atan2(active_ball.y - self.y, active_ball.x - self.x)
                 self.isPullingLeash = True
-                self.wagSpeed = 10.0 + self.personality["playfulness"] * 2.0
+                self.wagSpeed = 10.0 + self.personality["energy"] * 2.0
             else:
                 self.isPullingLeash = False
 
-            # Max leash clamp: 105px
-            max_leash = 105.0
+            # Max leash clamp: pinned MAX_LEASH_LENGTH constant.
+            max_leash = LEASH_CONSTANTS["MAX_LEASH_LENGTH"]
             dx = self.x - self.owner.x
             dy = self.y - self.owner.y
             dist = math.hypot(dx, dy)
@@ -115,30 +128,27 @@ class SimulatedCompanionDog:
 
     def compute_social_approach(self, peer_dist):
         """
-        Shyness alters greeting approach berth and probability.
-        High shyness -> larger approach berth (e.g. 45px vs 28px) and lower approach probability.
+        Stubbornness alters greeting approach berth and probability.
+        High stubbornness -> larger approach berth and lower approach probability.
         """
-        # Desired greeting distance expands with shyness (e.g., 25px + shyness * 5px)
-        berth = 20.0 + self.personality["shyness"] * 5.0
-        # Approach probability decreases with shyness
-        approach_prob = 1.0 - (self.personality["shyness"] - 1) * 0.18
+        berth = 20.0 + self.personality["stubbornness"] * 5.0
+        approach_prob = 1.0 - (self.personality["stubbornness"] - 1) * 0.18
         should_approach = peer_dist < 110.0 and peer_dist > berth
         return berth, approach_prob, should_approach
 
     def compute_heel_precision(self):
         """
-        Obedience alters heel precision and recall promptness.
-        Higher obedience -> tighter arrival deadband and higher adherence.
+        Loyalty alters heel precision and recall promptness.
+        Higher loyalty -> tighter arrival deadband and higher adherence.
         """
-        # Arrival deadband decreases from 12px down to 4px
-        arrival_deadband = 14.0 - (self.personality["obedience"] * 2.0)
+        arrival_deadband = 14.0 - (self.personality["loyalty"] * 2.0)
         return arrival_deadband
 
     def get_spontaneous_bark_chance(self):
         """
-        Barkyness alters spontaneous barking frequency.
+        Energy alters spontaneous barking frequency.
         """
-        return self.personality["barkyness"] * 0.05
+        return self.personality["energy"] * 0.05
 
 
 class TestDogPersonalityLeash(unittest.TestCase):
@@ -165,29 +175,27 @@ class TestDogPersonalityLeash(unittest.TestCase):
 
     def test_personality_attributes_and_defaults(self):
         """
-        Validates personality schema, defaults (3, 2, 2, 4), and 1-5 clamping.
-        Inspects src/entities/companion_dog.js for personality definition or handles simulation fallback.
+        Validates the canonical personality schema, exact defaults
+        { curiosity: 3, energy: 3, stubbornness: 2, loyalty: 4 }, and 1..=5 clamping.
         """
-        # 1. Functional simulation verification
+        # 1. Functional simulation verification: exact key set + exact values.
         dog = SimulatedCompanionDog()
         self.assertIn("personality", dog.__dict__)
-        self.assertEqual(dog.personality["playfulness"], 3)
-        self.assertEqual(dog.personality["shyness"], 2)
-        self.assertEqual(dog.personality["barkyness"], 2)
-        self.assertEqual(dog.personality["obedience"], 4)
+        self.assertEqual(set(dog.personality.keys()), set(CANONICAL_TRAITS))
+        self.assertEqual(dog.personality, DEFAULT_PERSONALITY)
 
-        # Bounds verification: clamp within 1-5
-        dog.set_personality({"playfulness": 99, "shyness": -10, "barkyness": 5, "obedience": 1})
-        self.assertEqual(dog.personality["playfulness"], 5)
-        self.assertEqual(dog.personality["shyness"], 1)
-        self.assertEqual(dog.personality["barkyness"], 5)
-        self.assertEqual(dog.personality["obedience"], 1)
+        # Bounds verification: clamp within 1..=5.
+        dog.set_personality({"curiosity": 99, "energy": -10, "stubbornness": 5, "loyalty": 1})
+        self.assertEqual(dog.personality["curiosity"], 5)
+        self.assertEqual(dog.personality["energy"], 1)
+        self.assertEqual(dog.personality["stubbornness"], 5)
+        self.assertEqual(dog.personality["loyalty"], 1)
 
-        # 2. Source code inspection if companion_dog.js has been updated
-        has_personality_in_src = "personality" in self.dog_code
-        if has_personality_in_src:
-            for trait in ["playfulness", "shyness", "barkyness", "obedience"]:
-                self.assertIn(trait, self.dog_code, f"Trait '{trait}' not found in companion_dog.js")
+        # 2. Source inspection: canonical traits present, legacy traits absent.
+        for trait in CANONICAL_TRAITS:
+            self.assertIn(trait, self.dog_code, f"Trait '{trait}' not found in companion_dog.js")
+        for legacy in ("playfulness", "shyness", "barkyness", "obedience"):
+            self.assertNotIn(legacy, self.dog_code, f"Legacy trait '{legacy}' must not appear in companion_dog.js")
 
     def test_leashed_dog_never_fetches_ball(self):
         """
@@ -225,34 +233,26 @@ class TestDogPersonalityLeash(unittest.TestCase):
 
     def test_leash_pulling_physics_and_taut_rendering(self):
         """
-        Inspects leash pulling physics: isPullingLeash property, 105px max leash clamp,
-        and taut straight-line rendering with jitter.
+        Inspects leash pulling physics: isPullingLeash property, the pinned
+        MAX_LEASH_LENGTH clamp, and taut straight-line rendering with jitter.
         """
         owner = MockOwner(x=200.0, y=200.0, is_leashed=True)
-        dog = SimulatedCompanionDog(x=400.0, y=200.0, owner=owner) # dist = 200px > 105px
+        dog = SimulatedCompanionDog(x=400.0, y=200.0, owner=owner)  # dist = 200px > clamp
 
         # Update leash physics clamp
         dog.update(0.016)
         dist_to_owner = math.hypot(dog.x - owner.x, dog.y - owner.y)
-        self.assertAlmostEqual(dist_to_owner, 105.0, places=3, msg="Distance must be clamped to 105px")
+        self.assertAlmostEqual(
+            dist_to_owner, LEASH_CONSTANTS["MAX_LEASH_LENGTH"], places=3,
+            msg="Distance must be clamped to MAX_LEASH_LENGTH",
+        )
         self.assertTrue(dog.isPullingLeash, "isPullingLeash must be true when pulling against clamp")
 
         # Rendering simulation: taut line vs slack catenary curve
-        def simulate_leash_render(is_pulling, dist, max_leash=105.0):
-            if is_pulling or dist > 98.0:
-                # Taut line with jitter
-                return {
-                    "mode": "TAUT_STRAIGHT",
-                    "jitter": True,
-                    "lineWidth": 2.0
-                }
-            else:
-                # Catenary slack curve
-                return {
-                    "mode": "SLACK_CATENARY",
-                    "jitter": False,
-                    "lineWidth": 1.6
-                }
+        def simulate_leash_render(is_pulling, dist, max_leash=LEASH_CONSTANTS["MAX_LEASH_LENGTH"]):
+            if is_pulling or dist > max_leash * 0.93:
+                return {"mode": "TAUT_STRAIGHT", "jitter": True, "lineWidth": 2.0}
+            return {"mode": "SLACK_CATENARY", "jitter": False, "lineWidth": 1.6}
 
         render_taut = simulate_leash_render(dog.isPullingLeash, dist_to_owner)
         self.assertEqual(render_taut["mode"], "TAUT_STRAIGHT")
@@ -262,53 +262,126 @@ class TestDogPersonalityLeash(unittest.TestCase):
         self.assertEqual(render_slack["mode"], "SLACK_CATENARY")
         self.assertFalse(render_slack["jitter"])
 
-        # Check source code references the shared MAX_LEASH_LENGTH constant
-        # (single source of truth in src/world/leash.js) rather than a
-        # hardcoded 105px literal.
+        # The shared MAX_LEASH_LENGTH constant must be referenced (single source
+        # of truth), not a hardcoded literal.
         self.assertIn(
             "MAX_LEASH_LENGTH",
             self.dog_code,
             "companion_dog.js must reference the shared MAX_LEASH_LENGTH constant",
         )
 
+    def test_leash_constants_pinned_in_rust_core(self):
+        """
+        Pins all eight leash constants to their exact numeric values by regex
+        over crates/dog_walker_core/src/ (preferred source of truth).
+        """
+        crate_dir = os.path.join(
+            os.path.dirname(__file__), "..", "crates", "dog_walker_core", "src"
+        )
+        self.assertTrue(os.path.isdir(crate_dir), f"Rust core crate not found: {crate_dir}")
+
+        rust_src = ""
+        for root, _dirs, files in os.walk(crate_dir):
+            for name in files:
+                if name.endswith(".rs"):
+                    with open(os.path.join(root, name), "r", encoding="utf-8") as f:
+                        rust_src += f.read() + "\n"
+
+        for const_name, expected in LEASH_CONSTANTS.items():
+            # Match `const NAME: f32 = 52.5;` / `pub const NAME: f64 = 52.5_f64;`
+            # (any visibility, any numeric type, optional numeric suffix).
+            pattern = re.compile(
+                rf"\b{const_name}\b\s*:\s*[A-Za-z0-9_]+\s*=\s*"
+                rf"([0-9]+(?:\.[0-9]+)?)(?:_[A-Za-z0-9]+)?\s*;"
+            )
+            match = pattern.search(rust_src)
+            self.assertIsNotNone(
+                match, f"Constant '{const_name}' not found in crates/dog_walker_core/src/"
+            )
+            self.assertAlmostEqual(
+                float(match.group(1)), expected, places=6,
+                msg=f"Constant '{const_name}' must equal {expected}",
+            )
+
+    def test_owner_freeze_only_for_on_leash_pooping(self):
+        """
+        Owner freeze occurs ONLY for on-leash pooping. Drives the four
+        combinations through the real Node ESM Wasm bridge
+        (src/engine/wasm_sim_bridge.js) via a subprocess.
+        """
+        import subprocess
+
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+        script = """
+import assert from 'node:assert/strict';
+import { initWasmSimSync, stepCompanionDogWasm } from './src/engine/wasm_sim_bridge.js';
+
+const sim = initWasmSimSync();
+assert.ok(sim, 'initWasmSimSync must return a WasmWorldSim');
+
+for (const [isOnLeash, isPooping] of [[false, false], [false, true], [true, false], [true, true]]) {
+  const dog = {
+    x: 200, y: 200, vx: 0, vy: 0, angle: 0,
+    state: isPooping ? 'POOPING' : 'FOLLOWING',
+    isOnLeash,
+    owner: { x: 200, y: 200, vx: 0, vy: 0, heading: 0, halfWidth: 16, gait: 0, isMoving: false, isLeashed: isOnLeash },
+    personality: { curiosity: 3, energy: 3, stubbornness: 2, loyalty: 4 },
+    pendingCommands: { whistleRecall: false, pet: false, praise: false, bark: false, triggerZoomies: false, fetchBall: false }
+  };
+  stepCompanionDogWasm(dog, 0.016, null, [], null, []);
+  assert.equal(dog.ownerFrozen, isOnLeash && isPooping, `ownerFrozen mismatch for (${isOnLeash}, ${isPooping})`);
+}
+"""
+
+        result = subprocess.run(
+            ["node", "--input-type=module", "-e", script],
+            cwd=base_dir,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(result.returncode, 0)
+
     def test_personality_steering_and_social_modifiers(self):
         """
-        Validates behavioral steering simulation models reflecting trait modifiers:
-        - Playfulness increases wag speed and sprint enthusiasm.
-        - Shyness alters peer greeting approach berth and probability.
-        - Barkyness increases spontaneous barking triggers.
-        - Obedience tightens heel precision and recall promptness.
+        Validates behavioral steering simulation models reflecting canonical
+        trait modifiers:
+        - Energy increases wag speed and sprint enthusiasm.
+        - Stubbornness alters peer greeting approach berth and probability.
+        - Energy increases spontaneous barking triggers.
+        - Loyalty tightens heel precision and recall promptness.
         """
-        # 1. Playfulness comparison
-        dog_calm = SimulatedCompanionDog(personality={"playfulness": 1})
-        dog_playful = SimulatedCompanionDog(personality={"playfulness": 5})
+        # 1. Energy comparison
+        dog_calm = SimulatedCompanionDog(personality={"energy": 1})
+        dog_energetic = SimulatedCompanionDog(personality={"energy": 5})
 
-        self.assertGreater(dog_playful.wagSpeed, dog_calm.wagSpeed, "Higher playfulness should increase wag speed")
-        self.assertGreater(dog_playful.sprintSpeed, dog_calm.sprintSpeed, "Higher playfulness should increase sprint speed")
+        self.assertGreater(dog_energetic.wagSpeed, dog_calm.wagSpeed, "Higher energy should increase wag speed")
+        self.assertGreater(dog_energetic.sprintSpeed, dog_calm.sprintSpeed, "Higher energy should increase sprint speed")
 
-        # 2. Shyness comparison
-        dog_bold = SimulatedCompanionDog(personality={"shyness": 1})
-        dog_shy = SimulatedCompanionDog(personality={"shyness": 5})
+        # 2. Stubbornness comparison
+        dog_pliant = SimulatedCompanionDog(personality={"stubbornness": 1})
+        dog_stubborn = SimulatedCompanionDog(personality={"stubbornness": 5})
 
-        berth_bold, prob_bold, _ = dog_bold.compute_social_approach(80.0)
-        berth_shy, prob_shy, _ = dog_shy.compute_social_approach(80.0)
+        berth_pliant, prob_pliant, _ = dog_pliant.compute_social_approach(80.0)
+        berth_stubborn, prob_stubborn, _ = dog_stubborn.compute_social_approach(80.0)
 
-        self.assertGreater(berth_shy, berth_bold, "Shy dogs should maintain larger greeting berth")
-        self.assertLess(prob_shy, prob_bold, "Shy dogs should have lower greeting approach probability")
+        self.assertGreater(berth_stubborn, berth_pliant, "Stubborn dogs should maintain larger greeting berth")
+        self.assertLess(prob_stubborn, prob_pliant, "Stubborn dogs should have lower greeting approach probability")
 
-        # 3. Barkyness comparison
-        dog_quiet = SimulatedCompanionDog(personality={"barkyness": 1})
-        dog_vocal = SimulatedCompanionDog(personality={"barkyness": 5})
+        # 3. Energy comparison (bark chance)
+        dog_quiet = SimulatedCompanionDog(personality={"energy": 1})
+        dog_vocal = SimulatedCompanionDog(personality={"energy": 5})
 
         self.assertGreater(dog_vocal.get_spontaneous_bark_chance(), dog_quiet.get_spontaneous_bark_chance(),
-                            "Higher barkyness should increase spontaneous barking chance")
+                            "Higher energy should increase spontaneous barking chance")
 
-        # 4. Obedience comparison
-        dog_stubborn = SimulatedCompanionDog(personality={"obedience": 1})
-        dog_obedient = SimulatedCompanionDog(personality={"obedience": 5})
+        # 4. Loyalty comparison
+        dog_alool = SimulatedCompanionDog(personality={"loyalty": 1})
+        dog_loyal = SimulatedCompanionDog(personality={"loyalty": 5})
 
-        self.assertLess(dog_obedient.compute_heel_precision(), dog_stubborn.compute_heel_precision(),
-                        "Higher obedience should produce tighter arrival deadband at heel")
+        self.assertLess(dog_loyal.compute_heel_precision(), dog_alool.compute_heel_precision(),
+                        "Higher loyalty should produce tighter arrival deadband at heel")
 
     def test_customizer_hud_personality_sliders_and_persistence(self):
         """
@@ -326,31 +399,26 @@ class TestDogPersonalityLeash(unittest.TestCase):
             "coatKey": "CHOCOLATE_TAN",
             "collarColor": "#0d9488",
             "personality": {
-                "playfulness": 4,
-                "shyness": 1,
-                "barkyness": 3,
-                "obedience": 5
+                "curiosity": 4,
+                "energy": 1,
+                "stubbornness": 3,
+                "loyalty": 5
             }
         }
         serialized = json.dumps(profile)
         deserialized = json.loads(serialized)
 
         self.assertIn("personality", deserialized)
-        self.assertEqual(deserialized["personality"]["playfulness"], 4)
-        self.assertEqual(deserialized["personality"]["shyness"], 1)
-        self.assertEqual(deserialized["personality"]["barkyness"], 3)
-        self.assertEqual(deserialized["personality"]["obedience"], 5)
+        self.assertEqual(set(deserialized["personality"].keys()), set(CANONICAL_TRAITS))
+        self.assertEqual(deserialized["personality"]["curiosity"], 4)
+        self.assertEqual(deserialized["personality"]["energy"], 1)
+        self.assertEqual(deserialized["personality"]["stubbornness"], 3)
+        self.assertEqual(deserialized["personality"]["loyalty"], 5)
 
         # Fallback check for profiles without personality
         legacy_profile = {"name": "Alex", "coatKey": "GOLDEN"}
-        resolved_personality = legacy_profile.get("personality", {
-            "playfulness": 3,
-            "shyness": 2,
-            "barkyness": 2,
-            "obedience": 4
-        })
-        self.assertEqual(resolved_personality["playfulness"], 3)
-        self.assertEqual(resolved_personality["obedience"], 4)
+        resolved_personality = legacy_profile.get("personality", dict(DEFAULT_PERSONALITY))
+        self.assertEqual(resolved_personality, DEFAULT_PERSONALITY)
 
         # Check social_hud.js references Dog Companion tab
         self.assertIn("cust-tab-dog", self.hud_code)
@@ -368,20 +436,15 @@ class TestDogPersonalityLeash(unittest.TestCase):
                 "name": name,
                 "jacketColor": jacket_color,
                 "dogCoatName": coat_name,
-                "personality": meta.get("personality", {
-                    "playfulness": 3,
-                    "shyness": 2,
-                    "barkyness": 2,
-                    "obedience": 4
-                }),
+                "personality": meta.get("personality", dict(DEFAULT_PERSONALITY)),
                 "timestamp": 1728640000000
             }
 
         sample_personality = {
-            "playfulness": 5,
-            "shyness": 1,
-            "barkyness": 4,
-            "obedience": 5
+            "curiosity": 5,
+            "energy": 1,
+            "stubbornness": 4,
+            "loyalty": 5
         }
         packet = create_hello_sim("peer-123", "Charlie", "#14532d", "Golden Retriever", {"personality": sample_personality})
         self.assertEqual(packet["type"], "HELLO")
@@ -416,8 +479,8 @@ class TestDogPersonalityLeash(unittest.TestCase):
             peer.meta["personality"] = packet.get("personality")
 
         self.assertIn("personality", peer.meta)
-        self.assertEqual(peer.meta["personality"]["playfulness"], 5)
-        self.assertEqual(peer.meta["personality"]["obedience"], 5)
+        self.assertEqual(peer.meta["personality"]["curiosity"], 5)
+        self.assertEqual(peer.meta["personality"]["loyalty"], 5)
 
         # Welcome packet composition simulation includes personality
         existing_peers = [{

@@ -1,6 +1,7 @@
 import math
 import os
 import re
+import subprocess
 import unittest
 
 
@@ -20,6 +21,8 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         self.main_src = read("src/main.js")
         self.field_src = read("src/world/field.js")
         self.audio_src = read("src/systems/audio.js")
+        self.util_ai_src = read("crates/dog_walker_core/src/dog_utility_ai.rs")
+        self.lib_src = read("crates/dog_walker_core/src/lib.rs")
 
     # AC-013.1: no 230px hard clamp; distance-scaled catch-up
     def test_no_230px_hard_clamp(self):
@@ -29,36 +32,40 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         self.assertNotIn("maxRoam", self.dog_src)
 
     def test_catch_up_probability_formula(self):
-        # Formula: base = clamp((dist-220)/260, 0.08, 0.90); p = base * (0.45 + 0.11*obedience)
-        def catch_up_prob(dist, obedience):
-            base = min(0.90, max(0.08, (dist - 220) / 260))
-            return min(1, max(0, base * (0.45 + 0.11 * obedience)))
+        # Catch-up behaviour now lives in the Rust utility AI. The roam
+        # sub-mode selection escalates to CatchUp based on energy/curiosity
+        # and the persisted catch-up timer, rather than a JS probability.
+        self.assertIn("RoamSubModeId::CatchUp", self.util_ai_src)
+        self.assertIn("DOG_BUF_CATCH_UP_TIMER", self.util_ai_src)
+        # The catch-up timer must gate the CatchUp sub-mode selection.
+        idx = self.util_ai_src.find("DOG_BUF_CATCH_UP_TIMER")
+        self.assertNotEqual(idx, -1)
+        window = self.util_ai_src[idx:idx + 200]
+        self.assertIn("RoamSubModeId::CatchUp", window)
+        # Energy drives catch-up escalation in the Rust selector.
+        self.assertIn("energy >= 0.66", self.util_ai_src)
+        # The removed JS probability formula must no longer be present.
+        self.assertNotIn("(distToOwner - 220) / 260", self.dog_src)
+        self.assertNotIn("0.45 + 0.11 * obedience", self.dog_src)
 
-        self.assertAlmostEqual(catch_up_prob(220, 4), 0.08 * (0.45 + 0.44), places=6)
-        self.assertAlmostEqual(catch_up_prob(480, 4), 0.90 * (0.45 + 0.44), places=6)
-        self.assertGreater(catch_up_prob(400, 5), catch_up_prob(400, 1))
-
-        # Raw (unclamped) obedience values must be honored by the formula
-        def catch_up_prob_raw(dist, obedience):
-            base = min(0.90, max(0.08, (dist - 220) / 260))
-            return min(1, max(0, base * (0.45 + 0.11 * obedience)))
-
-        base_400 = (400 - 220) / 260  # 0.6923...
-        self.assertAlmostEqual(catch_up_prob_raw(400, 2.5), base_400 * (0.45 + 0.275), places=6)
-        self.assertAlmostEqual(catch_up_prob_raw(400, 3.7), base_400 * (0.45 + 0.407), places=6)
-        # High obedience saturates the final probability at 1.0
-        self.assertEqual(catch_up_prob_raw(400, 10.0), 1.0)
-        # Fractional obedience is monotonic between integer values
-        self.assertLess(catch_up_prob_raw(400, 2.5), catch_up_prob_raw(400, 3.7))
-        # Monotonic in distance and obedience
-        for ob in range(1, 6):
-            self.assertLessEqual(catch_up_prob(220, ob), catch_up_prob(400, ob))
-            self.assertLessEqual(catch_up_prob(400, ob), catch_up_prob(600, ob))
-        for dist in (220, 300, 400, 480, 600):
-            self.assertLessEqual(catch_up_prob(dist, 1), catch_up_prob(dist, 5))
-        # Source must contain the formula constants
-        self.assertIn("(distToOwner - 220) / 260", self.dog_src)
-        self.assertIn("0.45 + 0.11 * obedience", self.dog_src)
+        # Execute a real Node.js ESM Wasm step to prove the bridge runs.
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        node_script = """
+        import assert from 'node:assert/strict';
+        import { initWasmSimSync, stepCompanionDogWasm } from './src/engine/wasm_sim_bridge.js';
+        const sim = initWasmSimSync();
+        assert.ok(sim, 'initWasmSimSync must return a WasmWorldSim');
+        const dog = {
+          x: 500, y: 100, vx: 0, vy: 0, angle: 0, state: 'ROAMING', isOnLeash: false,
+          owner: { x: 100, y: 100, vx: 0, vy: 0, heading: 0, halfWidth: 16, gait: 0, isMoving: false, isLeashed: false },
+          personality: { curiosity: 3, energy: 3, stubbornness: 2, loyalty: 5 },
+          pendingCommands: { whistleRecall: false, pet: false, praise: false, bark: false, triggerZoomies: false, fetchBall: false }
+        };
+        stepCompanionDogWasm(dog, 0.016, null, [], null, []);
+        assert.ok(Number.isFinite(dog.x) && Number.isFinite(dog.y));
+        assert.ok(Number.isFinite(dog.vx) && Number.isFinite(dog.vy));
+        """
+        subprocess.run(["node", "--input-type=module", "-e", node_script], cwd=base_dir, check=True)
 
     # AC-013.2: re-leash proximity gate
     def test_strict_releash_proximity_boundary(self):
@@ -73,21 +80,31 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         self.assertFalse(gate(68.0001))
         self.assertFalse(gate(200))
 
-    # H1: 14s scent cooldown
+    # H1: scent cooldown now lives in the Rust utility AI (scent proximity gating)
     def test_scent_trail_14s_cooldown(self):
-        self.assertIn("this.lastSniffFollowAt = 0;", self.dog_src)
-        self.assertIn("14000", self.dog_src)
-        self.assertIn("cooldownActive", self.dog_src)
-        self.assertIn("this.lastSniffFollowAt = now;", self.dog_src)
+        # Scent tracking is driven by the Rust utility AI via scent slots and
+        # proximity gating rather than a JS 14s cooldown constant.
+        self.assertIn("DOG_BUF_SCENT_COUNT", self.util_ai_src)
+        self.assertIn("nearest_scent_distance", self.util_ai_src)
+        self.assertIn("DOG_EVENT_SCENT_DEPOSITED", self.util_ai_src)
+        self.assertIn("DOG_EVENT_SNIFF_AUDIO", self.util_ai_src)
+        # The removed JS cooldown constant must no longer be present.
+        self.assertNotIn("cooldownActive", self.dog_src)
 
-    # H2: tangent-driven zoomies
+    # H2: zoomies parametric paths now live in the Rust utility AI
     def test_zoomies_tangent_velocity(self):
-        self.assertIn("Math.sin(this.zoomiesPhase)", self.dog_src)
-        self.assertIn("Math.sin(this.zoomiesPhase * 2)", self.dog_src)
-        self.assertIn("Math.cos(t)", self.dog_src)
-        self.assertIn("Math.cos(2 * t)", self.dog_src)
+        # The Rust zoomies parametric step drives the figure-eight / orbit /
+        # shuttle paths. Verify the parametric anchors are present.
+        self.assertIn("zoomies_parametric_step", self.util_ai_src)
+        self.assertIn("ZoomiePathId::FigureEight", self.util_ai_src)
+        self.assertIn("ZoomiePathId::OrbitOwner", self.util_ai_src)
+        self.assertIn("ZoomiePathId::Shuttle", self.util_ai_src)
+        self.assertIn("DOG_BUF_ZOOMIES_PHASE", self.util_ai_src)
+        self.assertIn("DOG_BUF_ZOOMIES_ORBIT_ANGLE", self.util_ai_src)
+        self.assertIn("DOG_BUF_ZOOMIES_SHUTTLE_AX", self.util_ai_src)
 
-        # Numerical derivative check of the parametric figure-eight
+        # Numerical derivative check of the parametric figure-eight (the
+        # mathematical contract the Rust path implements).
         rx, ry = 135.0, 80.0
         speed = 3.8
         for t in (0.0, 0.5, 1.0, 2.0, 3.0):
@@ -212,24 +229,38 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         dog.update_rolling(0.1)
         self.assertEqual(dog.state, "SITTING")
         self.assertGreater(dog.stateTimer, 0)
-        # Source must force a positive sitting timer after ROLLING completes
-        idx = self.dog_src.find("case DogState.ROLLING:")
-        self.assertNotEqual(idx, -1)
-        window = self.dog_src[idx:idx + 2000]
-        self.assertIn("this.transitionTo(DogState.SITTING)", window)
-        self.assertIn("this.stateTimer = 2.0 + Math.random() * 2.0;", window)
+        # Ambient rest / rolling is now driven by the Rust utility AI's
+        # ambient-rest utility rather than a JS ROLLING case block.
+        self.assertIn("UTIL_AMBIENT_REST", self.util_ai_src)
+        self.assertIn("score_ambient_rest", self.util_ai_src)
+        self.assertIn("DogStateId::Rest", self.lib_src)
+        # The removed JS ROLLING case block must no longer be present.
+        self.assertNotIn("case DogState.ROLLING:", self.dog_src)
 
     def test_whine_trigger_includes_return_trot_active(self):
-        """Whine audio trigger must include this.returnTrotActive."""
-        self.assertIn("this.isReturningToOwner || this.returnTrotActive", self.dog_src)
+        """Whine audio is now emitted by the Rust utility AI event bitmask."""
+        # The Rust micro-expression integrator emits DOG_EVENT_WHINE_AUDIO
+        # based on recall + ambient-rest scores.
+        self.assertIn("DOG_EVENT_WHINE_AUDIO", self.util_ai_src)
+        idx = self.util_ai_src.find("DOG_EVENT_WHINE_AUDIO")
+        self.assertNotEqual(idx, -1)
+        window = self.util_ai_src[max(0, idx - 200):idx + 50]
+        self.assertIn("score_recall", window)
+        self.assertIn("score_ambient_rest", window)
+        # The JS layer must still handle the WHINE_AUDIO event bit.
+        self.assertIn("DogEventBit.WHINE_AUDIO", self.dog_src)
 
     def test_catch_up_timer_gated_by_distance(self):
-        """catchUpTimer must only accumulate when distToOwner > 220."""
-        idx = self.dog_src.find("if (distToOwner > 220) {")
+        """Catch-up escalation is now driven by the Rust utility AI."""
+        # The Rust roam sub-mode selector reads the persisted catch-up timer
+        # and escalates to CatchUp when it is active.
+        self.assertIn("DOG_BUF_CATCH_UP_TIMER", self.util_ai_src)
+        idx = self.util_ai_src.find("DOG_BUF_CATCH_UP_TIMER")
         self.assertNotEqual(idx, -1)
-        window = self.dog_src[idx:idx + 500]
-        self.assertIn("this.catchUpTimer += dt;", window)
-        self.assertIn("this.catchUpTimer = 0;", window)
+        window = self.util_ai_src[idx:idx + 200]
+        self.assertIn("RoamSubModeId::CatchUp", window)
+        # The removed JS distance-gated timer must no longer be present.
+        self.assertNotIn("if (distToOwner > 220) {", self.dog_src)
 
     def test_rolling_completion_transitions_to_sitting_with_timer(self):
         class Dog:
@@ -287,19 +318,17 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         self.assertEqual(dog.emoteBubble, '❤️')
         self.assertAlmostEqual(dog.emoteTimer, 0.45, places=6)
 
-    # MEDIUM-2: zoomies collision-aware source contract
+    # MEDIUM-2: zoomies collision-aware contract now lives in the Rust sim
     def test_zoomies_collision_aware_source_contract(self):
-        # Match the method definition, not the call site in update().
-        # Slice from the method header to the next method definition so the
-        # window always covers the full body regardless of its length.
-        idx = self.dog_src.find("updateZoomies(dt, field) {")
-        self.assertNotEqual(idx, -1)
-        end_idx = self.dog_src.find("updateSniffingTrail(", idx)
-        self.assertNotEqual(end_idx, -1)
-        window = self.dog_src[idx:end_idx]
-        self.assertIn("resolveFieldCollision", window)
-        self.assertIn("this.zoomiesCenter.x += (this.x - expectedX)", window)
-        self.assertIn("this.zoomiesCenter.y += (this.y - expectedY)", window)
+        # Zoomies steering is computed by the Rust utility AI; collision
+        # resolution is applied by the orchestrator in lib.rs.
+        self.assertIn("zoomies_parametric_step", self.util_ai_src)
+        self.assertIn("UTIL_ZOOMIES", self.util_ai_src)
+        # The orchestrator resolves field collisions after integration.
+        self.assertIn("resolve_field_collisions", self.lib_src)
+        self.assertIn("resolve_field_collision", self.lib_src)
+        # The removed JS updateZoomies method must no longer be present.
+        self.assertNotIn("updateZoomies(dt, field) {", self.dog_src)
 
     # MEDIUM-1: visitedScents updated on arrival
     def test_visited_scents_updated_on_arrival(self):
@@ -411,33 +440,36 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         self.assertIn("this.field.pickupPoop(pile.x, pile.y)", self.main_src)
 
     def test_zoomies_timer_decrements_before_exit_check(self):
-        # The decrement must appear before the exit check so velocity is zeroed
-        # on the exact frame the timer expires.
-        idx_decrement = self.dog_src.find("this.zoomiesTimer -= dt;")
-        idx_exit = self.dog_src.find("if (this.zoomiesTimer <= 0)")
-        self.assertNotEqual(idx_decrement, -1)
-        self.assertNotEqual(idx_exit, -1)
-        self.assertLess(idx_decrement, idx_exit)
-        # Velocity zeroing must live inside the exit branch
-        window = self.dog_src[idx_exit:idx_exit + 300]
-        self.assertIn("this.vx = 0;", window)
-        self.assertIn("this.vy = 0;", window)
+        # Zoomies timing is now driven by the Rust utility AI cooldown slot
+        # and the orchestrator's speed integration (zero speed => zero velocity).
+        self.assertIn("DOG_BUF_ZOOMIES_COOLDOWN", self.util_ai_src)
+        self.assertIn("score_zoomies", self.util_ai_src)
+        # The orchestrator zeroes velocity when the desired speed is zero.
+        self.assertIn("if speed > 0.001", self.lib_src)
+        # The removed JS zoomies timer must no longer be present.
+        self.assertNotIn("this.zoomiesTimer -= dt;", self.dog_src)
 
-    # HIGH-1: zoomies must not double-apply movement integration
+    # HIGH-1: movement integration is single-sourced in the Rust orchestrator
     def test_zoomies_movement_single_integration(self):
-        self.assertIn("if (this.state !== DogState.ZOOMIES)", self.dog_src)
-        # The guarded integration block must wrap the x/y increments
-        idx = self.dog_src.find("if (this.state !== DogState.ZOOMIES)")
+        # The Rust orchestrator integrates position exactly once per step.
+        self.assertIn("DOG_BUF_DOG_X", self.lib_src)
+        self.assertIn("DOG_BUF_DOG_Y", self.lib_src)
+        idx = self.lib_src.find("let next_x = sanitize_f32")
         self.assertNotEqual(idx, -1)
-        window = self.dog_src[idx:idx + 200]
-        self.assertIn("this.x += this.vx * dt;", window)
-        self.assertIn("this.y += this.vy * dt;", window)
+        window = self.lib_src[idx:idx + 400]
+        self.assertIn("DOG_BUF_DOG_X", window)
+        self.assertIn("DOG_BUF_DOG_Y", window)
+        # The removed JS double-integration guard must no longer be present.
+        self.assertNotIn("if (this.state !== DogState.ZOOMIES)", self.dog_src)
 
-    # HIGH-2: resting state entries must route through transitionTo
+    # HIGH-2: resting state entries are now driven by the Rust utility AI
     def test_sitting_entry_routes_through_transitionTo(self):
-        self.assertIn("this.transitionTo(DogState.SITTING)", self.dog_src)
-        self.assertIn("this.transitionTo(DogState.IDLE_SNIFF)", self.dog_src)
-        # No direct assignments to SITTING / IDLE_SNIFF remain
+        # Ambient rest / idle states are selected by the Rust utility AI and
+        # mapped to discrete state ids by the orchestrator.
+        self.assertIn("UTIL_AMBIENT_REST", self.util_ai_src)
+        self.assertIn("DogStateId::Rest", self.lib_src)
+        self.assertIn("DogStateId::Idle", self.lib_src)
+        # No direct assignments to SITTING / IDLE_SNIFF remain in the JS layer.
         self.assertNotIn("this.state = DogState.SITTING;", self.dog_src)
         self.assertNotIn("this.state = DogState.IDLE_SNIFF;", self.dog_src)
 

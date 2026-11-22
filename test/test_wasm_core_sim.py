@@ -97,13 +97,22 @@ class TestWasmCoreSim(unittest.TestCase):
                 src = f.read()
                 self.assertIn("wasm_sim_bridge", src, f"Expected wasm_sim_bridge import in {rel_file}")
 
-        # Verify CompanionDog invokes stepLeashConstraint, resolveFieldCollision and stepEarSpringsToTargets
+        # Verify CompanionDog invokes stepLeashConstraint and stepCompanionDogWasm.
+        # Field collision resolution moved from companion_dog.js into the Rust
+        # step_dog_buffer() path, so it is asserted against lib.rs below.
         dog_path = os.path.join(PROJECT_ROOT, "src", "entities", "companion_dog.js")
         with open(dog_path) as f:
             dog_src = f.read()
             self.assertIn("stepLeashConstraint(this, this.owner, Math.round(MAX_LEASH_LENGTH * 0.75), 4.0, 5.0, dt)", dog_src)
-            self.assertIn("resolveFieldCollision", dog_src)
-            self.assertIn("stepEarSpringsToTargets", dog_src)
+            self.assertIn("stepCompanionDogWasm", dog_src)
+
+        # Verify the Rust core resolves field collisions inside step_dog_buffer().
+        lib_path = os.path.join(PROJECT_ROOT, "crates", "dog_walker_core", "src", "lib.rs")
+        self.assertTrue(os.path.exists(lib_path), f"Missing {lib_path}")
+        with open(lib_path) as f:
+            lib_src = f.read()
+            self.assertIn("resolve_field_collisions", lib_src)
+            self.assertIn("step_dog_buffer", lib_src)
 
         # Verify Owner invokes resolveFieldCollision
         owner_path = os.path.join(PROJECT_ROOT, "src", "entities", "owner.js")

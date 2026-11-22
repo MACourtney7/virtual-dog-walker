@@ -17,6 +17,7 @@ Verifies:
 
 import os
 import re
+import subprocess
 import sys
 import unittest
 
@@ -30,6 +31,9 @@ class TestTicket023Refinements(unittest.TestCase):
         cls.touch_controls_js_path = os.path.join(cls.root_dir, "src", "ui", "touch_controls.js")
         cls.proximity_chat_js_path = os.path.join(cls.root_dir, "src", "ui", "proximity_chat.js")
         cls.companion_dog_js_path = os.path.join(cls.root_dir, "src", "entities", "companion_dog.js")
+        cls.dog_utility_ai_rs_path = os.path.join(
+            cls.root_dir, "crates", "dog_walker_core", "src", "dog_utility_ai.rs"
+        )
         cls.style_css_path = os.path.join(cls.root_dir, "src", "style.css")
         cls.run_tests_py_path = os.path.join(cls.root_dir, "test", "run_tests.py")
 
@@ -43,6 +47,8 @@ class TestTicket023Refinements(unittest.TestCase):
             cls.proximity_chat_js = f.read()
         with open(cls.companion_dog_js_path, "r", encoding="utf-8") as f:
             cls.companion_dog_js = f.read()
+        with open(cls.dog_utility_ai_rs_path, "r", encoding="utf-8") as f:
+            cls.dog_utility_ai_rs = f.read()
         with open(cls.style_css_path, "r", encoding="utf-8") as f:
             cls.style_css = f.read()
         with open(cls.run_tests_py_path, "r", encoding="utf-8") as f:
@@ -101,12 +107,50 @@ class TestTicket023Refinements(unittest.TestCase):
         - spontaneous and reaction-based barking routines are present
         """
         self.assertIn("bark(audioEngine = null)", self.companion_dog_js, "CompanionDog.bark method must exist")
-        self.assertIn("this.personality.barkyness", self.companion_dog_js, "barkyness personality trait must be used")
+        # Autonomous barking is driven by the canonical `energy` trait (the
+        # legacy `barkyness` trait was retired by the 4-trait personality schema).
+        self.assertIn("this.personality.energy", self.companion_dog_js, "energy personality trait must drive autonomous barking")
         self.assertIn("this.barkWaveRadius", self.companion_dog_js, "Bark wave visual representation must be preserved")
-        # Reaction to joggers preserved
-        self.assertIn("npc.isJogger", self.companion_dog_js, "Jogger reaction barking logic must be preserved")
-        # Bark response to remote dogs preserved
-        self.assertIn("dist < 260", self.companion_dog_js, "Remote dog response barking must be preserved")
+        # Autonomous barking decisions (jogger reactions, remote-dog responses)
+        # now live in the Wasm simulation core and are surfaced to JS via the
+        # BARK_TRIGGERED event bit, which the JS layer executes.
+        self.assertIn("BARK_TRIGGERED", self.companion_dog_js, "BARK_TRIGGERED event bit must be handled")
+        self.assertIn("DogEventBit.BARK_TRIGGERED", self.companion_dog_js, "BARK_TRIGGERED must be dispatched via DogEventBit")
+        self.assertIn("executeDogEventBitmask", self.companion_dog_js, "Event bitmask dispatcher must be present")
+
+        # Rust scoring core must retain the bark impulse utility.
+        self.assertIn(
+            "UTIL_BARK_IMPULSE",
+            self.dog_utility_ai_rs,
+            "UTIL_BARK_IMPULSE must exist in dog_utility_ai.rs",
+        )
+
+        # Real Node.js ESM Wasm execution: the Wasm sim must emit the
+        # BARK_TRIGGERED event bit (bit 1) for a barking command.
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        node_script = """
+        import assert from 'node:assert/strict';
+        import { initWasmSimSync, stepCompanionDogWasm } from './src/engine/wasm_sim_bridge.js';
+        const sim = initWasmSimSync();
+        assert.ok(sim, 'initWasmSimSync must return a WasmWorldSim');
+        const dog = {
+          x: 200, y: 200, vx: 0, vy: 0, angle: 0, state: 'ROAMING', isOnLeash: false,
+          owner: { x: 200, y: 200, vx: 0, vy: 0, heading: 0, halfWidth: 16, gait: 0, isMoving: false, isLeashed: false },
+          personality: { curiosity: 3, energy: 3, stubbornness: 5, loyalty: 4 },
+          pendingCommands: { whistleRecall: false, pet: false, praise: false, bark: true, triggerZoomies: false, fetchBall: false }
+        };
+        // A nearby ball raises the Rust bark-impulse proximity term so the
+        // score clears the > 0.85 emission gate. It must be passed as the
+        // `activeBall` argument (5th positional), not `field`.
+        const ball = { x: 200, y: 200, vx: 0, vy: 0, active: true };
+        const mask = stepCompanionDogWasm(dog, 0.016, null, [], ball, []);
+        assert.ok((mask & 2) !== 0, 'Expected DogEventBit.BARK_TRIGGERED (bit 1) to be emitted');
+        """
+        subprocess.run(
+            ["node", "--input-type=module", "-e", node_script],
+            cwd=base_dir,
+            check=True,
+        )
 
     # =========================================================================
     # AC-023.3: Bottom Toolbar Controls Hint Removed

@@ -315,23 +315,28 @@ class TestFetchingMechanics(unittest.TestCase):
             self.main_source = f.read()
         with open(os.path.join(self.base_dir, "src", "ui", "touch_controls.js"), "r", encoding="utf-8") as f:
             self.touch_source = f.read()
+        with open(os.path.join(self.base_dir, "crates", "dog_walker_core", "src", "dog_utility_ai.rs"), "r", encoding="utf-8") as f:
+            self.utility_ai_source = f.read()
 
     def test_source_code_contract_ac035_1_perimeter_exemption(self):
         """Assert companion_dog.js no longer hard-clamps off-leash roaming at 230px (AC-013.1).
 
         The old 230px perimeter clamp was removed in favour of a distance-scaled
-        probabilistic catch-up return-trot. Fetching dogs are naturally exempt
-        because there is no clamp at all.
+        probabilistic catch-up return-trot. That roaming/catch-up logic now lives
+        in the Rust core (dog_utility_ai.rs), so companion_dog.js has no clamp at
+        all and fetching dogs are naturally exempt.
         """
         self.assertNotIn("const maxRoam = 230;", self.dog_source,
                          "230px hard clamp must be removed (AC-013.1)")
         self.assertNotIn("maxRoam", self.dog_source,
                          "No maxRoam clamp should remain in companion_dog.js")
-        # Distance-scaled catch-up formula must be present instead
-        self.assertIn("(distToOwner - 220) / 260", self.dog_source,
-                      "Distance-scaled catch-up formula must be present")
-        self.assertIn("0.45 + 0.11 * obedience", self.dog_source,
-                      "Obedience-scaled catch-up probability must be present")
+        # Roaming/catch-up steering now lives in the Rust core.
+        self.assertIn("fn score_roam_explore", self.utility_ai_source,
+                      "Roam utility scoring must live in the Rust core")
+        self.assertIn("UTIL_ROAM_EXPLORE", self.utility_ai_source,
+                      "Roam utility id must be defined in the Rust core")
+        self.assertIn("fn compute_steering", self.utility_ai_source,
+                      "Roam steering must live in the Rust core")
 
     def test_source_code_contract_ac035_2_retrieve_by_owner(self):
         """Assert companion_dog.js and toy.js implement retrieveByOwner hand-off and render suppression."""

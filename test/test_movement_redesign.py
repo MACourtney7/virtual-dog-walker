@@ -136,6 +136,8 @@ class TestTouchControls(unittest.TestCase):
 class TestCompanionDogGait(unittest.TestCase):
     def setUp(self):
         self.src = read("src/entities/companion_dog.js")
+        self.util_ai_src = read("crates/dog_walker_core/src/dog_utility_ai.rs")
+        self.lib_src = read("crates/dog_walker_core/src/lib.rs")
 
     def test_gait_tuning_helper(self):
         self.assertIn("_getGaitTuning", self.src)
@@ -1384,8 +1386,15 @@ class TestLeashTension(unittest.TestCase):
 
     def test_vibration_non_negative(self):
         """leashVibrationPx must always be non-negative."""
-        self.assertIn("this.leashVibrationPx = isMoving ? 0.8 : 0;", self.src)
+        # The vibration amplitude is initialised to 0 and only ever assigned a
+        # non-negative value (0.8 while moving, 0 otherwise).
         self.assertIn("this.leashVibrationPx = 0;", self.src)
+        self.assertNotIn("this.leashVibrationPx = -", self.src)
+        # drawLeash must not overwrite the amplitude with a signed sine value.
+        idx = self.src.index("drawLeash(ctx)")
+        end = self.src.index("drawEmote(ctx, emote)", idx)
+        block = self.src[idx:end]
+        self.assertNotIn("this.leashVibrationPx = Math.sin", block)
 
     def test_vibration_applied_perpendicular(self):
         """Vibration must be applied along the leash line's normal."""
@@ -1848,13 +1857,15 @@ class TestDogSpacing(unittest.TestCase):
                                         f"forward lead {proj} below 38 at speed {speed}")
 
     def test_rendered_position_shoulder_line_clamp_present(self):
-        """updateFollowing must clamp the rendered position to the shoulder line."""
-        idx = self.src.index("updateFollowing(dt, otherDogs = [], field = null)")
-        end = self.src.index("updateRoaming(dt, otherDogs = [], field = null)", idx)
+        """The leash slot must clamp the rendered position to the shoulder line."""
+        # The shoulder-line clamp now lives in the exported getLeashSlot()
+        # helper (consumed by the Wasm leash slot computation).
+        idx = self.src.index("export function getLeashSlot")
+        end = self.src.index("// States that must never be interrupted", idx)
         block = self.src[idx:end]
         self.assertIn("LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX", block)
-        self.assertIn("this.x += fwdX * push;", block)
-        self.assertIn("this.y += fwdY * push;", block)
+        self.assertIn("slotX += forward.x * push;", block)
+        self.assertIn("slotY += forward.y * push;", block)
 
     def test_behavioral_rendered_position_clamp(self):
         """Simulate the rendered-position clamp: dog behind shoulder line is pushed forward."""
@@ -2159,26 +2170,29 @@ class TestLeashSlotGating(unittest.TestCase):
 
     def setUp(self):
         self.src = read("src/entities/companion_dog.js")
+        self.util_ai_src = read("crates/dog_walker_core/src/dog_utility_ai.rs")
+        self.lib_src = read("crates/dog_walker_core/src/lib.rs")
 
     def test_update_following_gates_on_is_leashed(self):
+        # Leash-slot gating now lives in the Rust orchestrator: the leash slot
+        # is only computed when the discrete combo reports `is_on_leash`.
+        self.assertIn("compute_leash_slot", self.lib_src)
+        self.assertIn("write_leash_slot", self.lib_src)
+        self.assertIn("is_on_leash", self.lib_src)
+        # The JS updateFollowing entry point delegates to the Wasm step.
         idx = self.src.index("updateFollowing(dt, otherDogs = [], field = null)")
-        end = self.src.index("updateRoaming(dt, otherDogs = [], field = null)", idx)
+        end = self.src.index("_tryStartPackPlay(partner)", idx)
         block = self.src[idx:end]
-        self.assertIn("if (!this.owner || !this.owner.isLeashed) {", block)
-        self.assertIn("this.targetSlot = null;", block)
-        self.assertIn("this.updateRoaming(dt, otherDogs, field);", block)
-        # getLeashSlot must appear AFTER the gate.
-        idx_gate = block.index("if (!this.owner || !this.owner.isLeashed) {")
-        idx_slot = block.index("const slot = getLeashSlot(this.owner);")
-        self.assertGreater(idx_slot, idx_gate)
+        self.assertIn("stepCompanionDogWasm", block)
 
     def test_update_recalled_gates_on_is_leashed(self):
-        idx = self.src.index("updateRecalled(dt)")
-        end = self.src.index("updateFetching(dt)", idx)
-        block = self.src[idx:end]
-        self.assertIn("if (this.owner && this.owner.isLeashed) {", block)
-        self.assertIn("const slot = getLeashSlot(this.owner);", block)
-        self.assertIn("this.followDistance = 35;", block)
+        # Recall steering is now driven by the Rust utility AI (UTIL_RECALL),
+        # which is gated by the whistle command and leash state.
+        self.assertIn("UTIL_RECALL", self.util_ai_src)
+        self.assertIn("score_recall", self.util_ai_src)
+        self.assertIn("DOG_BUF_CMD_WHISTLE_RECALL", self.util_ai_src)
+        # The removed JS updateRecalled method must no longer be present.
+        self.assertNotIn("updateRecalled(dt)", self.src)
 
     def test_behavioral_off_leash_skips_slot(self):
         """Off-leash updateFollowing must not call getLeashSlot."""

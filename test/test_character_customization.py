@@ -13,11 +13,91 @@ Unit and Integration Tests for Character Customization & Styling:
 import json
 import os
 import re
+import shutil
+import subprocess
 import sys
 import unittest
 
 # Ensure project root is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+CANONICAL_TRAITS = ("curiosity", "energy", "stubbornness", "loyalty")
+LEGACY_TRAITS = ("playfulness", "shyness", "barkyness", "obedience")
+DEFAULT_PERSONALITY = {"curiosity": 3, "energy": 3, "stubbornness": 2, "loyalty": 4}
+
+
+def run_js_personality_validation(cases):
+    """
+    Execute the REAL src/net/protocol.js validatePersonality via Node.js ESM.
+
+    `cases` is a list of (label, personality) tuples. Returns a dict mapping
+    label -> True (accepted) / False (rejected). Raises unittest.SkipTest if
+    Node.js is unavailable, and RuntimeError if the JS module cannot be loaded.
+    """
+    node = shutil.which("node")
+    if node is None:
+        raise unittest.SkipTest("Node.js not available; cannot exercise real protocol.js validator")
+
+    protocol_path = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "..", "src", "net", "protocol.js")
+    )
+    if not os.path.isfile(protocol_path):
+        raise RuntimeError(f"protocol.js not found at {protocol_path}")
+
+    # Build a small ESM driver that imports the real validator and reports
+    # accept/reject for each case as JSON on stdout. Cases are passed via an
+    # environment variable because `node -e` does not expose extra CLI args
+    # through process.argv the way a script file does.
+    driver = """
+import { validatePersonality } from %s;
+
+const cases = JSON.parse(process.env.PERSONALITY_CASES);
+const results = {};
+for (const [label, personality] of cases) {
+  try {
+    const ok = validatePersonality(personality);
+    results[label] = ok === true;
+  } catch (err) {
+    results[label] = false;
+  }
+}
+process.stdout.write(JSON.stringify(results));
+""" % json.dumps("file://" + protocol_path)
+
+    env = dict(os.environ)
+    env["PERSONALITY_CASES"] = json.dumps(cases)
+
+    proc = subprocess.run(
+        [node, "--input-type=module", "-e", driver],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        env=env,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(
+            "Node.js failed to run protocol.js validator:\n"
+            f"stdout: {proc.stdout}\nstderr: {proc.stderr}"
+        )
+    return json.loads(proc.stdout)
+
+
+def validate_personality(personality):
+    """
+    Mirror of Protocol.validatePersonality: strict canonical schema.
+    Raises ValueError on any deviation (missing/extra/legacy/non-integer/out-of-range).
+    """
+    if personality is None or not isinstance(personality, dict):
+        raise ValueError("invalid personality: expected a plain object")
+    if set(personality.keys()) != set(CANONICAL_TRAITS):
+        raise ValueError("invalid personality: expected exactly the 4 canonical keys")
+    for key in CANONICAL_TRAITS:
+        value = personality[key]
+        if isinstance(value, bool) or not isinstance(value, int):
+            raise ValueError(f'invalid personality: "{key}" must be an integer')
+        if value < 1 or value > 5:
+            raise ValueError(f'invalid personality: "{key}" out of range (1..5)')
+    return True
 
 
 class TestCharacterCustomization(unittest.TestCase):
@@ -251,9 +331,154 @@ class TestCharacterCustomization(unittest.TestCase):
         self.assertEqual(packet_base["name"], "Sam")
         self.assertEqual(packet_base["hairStyle"], "SHORT")
 
-    def test_ws_network_propagates_extended_styling_in_hello_and_welcome(self):
-        """Superseded by P2P ZeroMesh."""
-        pass
+    def test_canonical_trait_names_only(self):
+        """
+        UI and protocol code must reference only the canonical trait names.
+        Fails if any legacy trait key appears.
+        """
+        for legacy in LEGACY_TRAITS:
+            self.assertNotIn(
+                legacy, self.hud_code,
+                f"Legacy trait '{legacy}' must not appear in src/ui/social_hud.js",
+            )
+            self.assertNotIn(
+                legacy, self.protocol_code,
+                f"Legacy trait '{legacy}' must not appear in src/net/protocol.js",
+            )
+        for trait in CANONICAL_TRAITS:
+            self.assertIn(
+                trait, self.hud_code,
+                f"Canonical trait '{trait}' missing from src/ui/social_hud.js",
+            )
+            self.assertIn(
+                trait, self.protocol_code,
+                f"Canonical trait '{trait}' missing from src/net/protocol.js",
+            )
+
+    def test_slider_ranges_and_defaults(self):
+        """
+        Personality sliders must be min=1, max=5, and default to the canonical
+        { curiosity: 3, energy: 3, stubbornness: 2, loyalty: 4 }.
+        """
+        # Every canonical slider input must declare min="1" max="5".
+        # Match the FULL <input ...> tag that contains the slider id, since the
+        # id attribute may appear anywhere within the tag.
+        for trait in CANONICAL_TRAITS:
+            slider_pattern = re.compile(
+                rf'<input\b[^>]*\bid="cust-personality-{trait}"[^>]*>', re.DOTALL
+            )
+            match = slider_pattern.search(self.hud_code)
+            self.assertIsNotNone(
+                match, f"Slider for '{trait}' not found in src/ui/social_hud.js"
+            )
+            tag = match.group(0)
+            self.assertIn('min="1"', tag, f"Slider '{trait}' must have min=1")
+            self.assertIn('max="5"', tag, f"Slider '{trait}' must have max=5")
+
+        # Defaults: each slider's value attribute matches DEFAULT_PERSONALITY.
+        for trait, expected in DEFAULT_PERSONALITY.items():
+            slider_pattern = re.compile(
+                rf'<input\b[^>]*\bid="cust-personality-{trait}"[^>]*>', re.DOTALL
+            )
+            match = slider_pattern.search(self.hud_code)
+            self.assertIsNotNone(match, f"Slider for '{trait}' not found")
+            self.assertIn(
+                f'value="{expected}"', match.group(0),
+                f"Slider '{trait}' default must be {expected}",
+            )
+
+    def test_invalid_network_personality_shapes_raise(self):
+        """
+        Invalid network personality shapes must raise. Each case is its own
+        sub-assertion with an explicit expected exception type.
+
+        Primary check: execute the REAL src/net/protocol.js validatePersonality
+        via Node.js ESM. Secondary check: the Python mirror below.
+        """
+        # --- Primary: real JS validator via Node.js ESM ---
+        js_cases = [
+            ("valid", dict(DEFAULT_PERSONALITY)),
+            ("missing_key", {"curiosity": 3, "energy": 3, "stubbornness": 2}),
+            ("extra_key", {
+                "curiosity": 3, "energy": 3, "stubbornness": 2, "loyalty": 4,
+                "extra": 1,
+            }),
+            ("legacy_playfulness", {
+                "curiosity": 3, "energy": 3, "stubbornness": 2, "loyalty": 4,
+                "playfulness": 3,
+            }),
+            ("legacy_shyness", {
+                "curiosity": 3, "energy": 3, "stubbornness": 2, "loyalty": 4,
+                "shyness": 3,
+            }),
+            ("legacy_barkyness", {
+                "curiosity": 3, "energy": 3, "stubbornness": 2, "loyalty": 4,
+                "barkyness": 3,
+            }),
+            ("legacy_obedience", {
+                "curiosity": 3, "energy": 3, "stubbornness": 2, "loyalty": 4,
+                "obedience": 3,
+            }),
+            ("non_integer", {
+                "curiosity": 2.5, "energy": 3, "stubbornness": 2, "loyalty": 4,
+            }),
+            ("out_of_range_low", {
+                "curiosity": 0, "energy": 3, "stubbornness": 2, "loyalty": 4,
+            }),
+            ("out_of_range_high", {
+                "curiosity": 6, "energy": 3, "stubbornness": 2, "loyalty": 4,
+            }),
+        ]
+        js_results = run_js_personality_validation(js_cases)
+        self.assertTrue(js_results["valid"], "Real protocol.js validator rejected a valid personality")
+        for label, _ in js_cases:
+            if label == "valid":
+                continue
+            self.assertFalse(
+                js_results[label],
+                f"Real protocol.js validator accepted invalid personality case '{label}'",
+            )
+
+        # --- Secondary: Python mirror of the same schema ---
+        # Valid baseline passes.
+        self.assertTrue(validate_personality(dict(DEFAULT_PERSONALITY)))
+
+        # Missing a required key.
+        with self.assertRaises(ValueError):
+            validate_personality({"curiosity": 3, "energy": 3, "stubbornness": 2})
+
+        # Extra (non-legacy) key.
+        with self.assertRaises(ValueError):
+            validate_personality({
+                "curiosity": 3, "energy": 3, "stubbornness": 2, "loyalty": 4,
+                "extra": 1,
+            })
+
+        # Legacy key present.
+        with self.assertRaises(ValueError):
+            validate_personality({
+                "curiosity": 3, "energy": 3, "stubbornness": 2, "loyalty": 4,
+                "playfulness": 3,
+            })
+
+        # Non-integer value.
+        with self.assertRaises(ValueError):
+            validate_personality({
+                "curiosity": 3.5, "energy": 3, "stubbornness": 2, "loyalty": 4,
+            })
+
+        # Out-of-range value (too high).
+        with self.assertRaises(ValueError):
+            validate_personality({
+                "curiosity": 6, "energy": 3, "stubbornness": 2, "loyalty": 4,
+            })
+
+        # Out-of-range value (too low).
+        with self.assertRaises(ValueError):
+            validate_personality({
+                "curiosity": 0, "energy": 3, "stubbornness": 2, "loyalty": 4,
+            })
+
     def test_network_propagates_extended_styling_in_hello(self):
         """
         Verifies network.js includes this.localMeta in createHello and parses

@@ -404,6 +404,10 @@ class TestCareLoopUI(unittest.TestCase):
     def test_emote_timer_decrements_on_camera(self):
         script = DOM_SHIM + """
         const careLoopTimerModule = await import(%s);
+        // CompanionDog.update() delegates to stepCompanionDogWasm() and returns
+        // early when Wasm is not initialized, so bring up the real Wasm core.
+        const careLoopTimerBridge = await import(%s);
+        careLoopTimerBridge.initWasmSimSync();
         const careLoopTimerDog = careLoopTimerModule.buildDogEntity
           ? careLoopTimerModule.buildDogEntity()
           : new careLoopTimerModule.CompanionDog();
@@ -415,7 +419,8 @@ class TestCareLoopUI(unittest.TestCase):
           careLoopTimerDog.updateDog(200);
         }
         console.log(JSON.stringify({ emoteTimer: careLoopTimerDog.emoteTimer }));
-        """ % file_url("src/entities/companion_dog.js")
+        """ % (file_url("src/entities/companion_dog.js"),
+               file_url("src/engine/wasm_sim_bridge.js"))
         payload = run_node(script)
         self.assertEqual(payload["emoteTimer"], 300)
 

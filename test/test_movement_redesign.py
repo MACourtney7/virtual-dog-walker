@@ -2578,6 +2578,35 @@ class TestLeashArmPose(unittest.TestCase):
         self.assertIn("let elbowY = (ay + handY) / 2;", self.src)
         self.assertIn("if (local.hasElbowBend) {", self.src)
 
+    def test_pose_selection_condition_source(self):
+        """Normal turns stay forward_heel; only anchoring/behind dogs tuck."""
+        idx = self.src.index("computeLeashHandLocal()")
+        end = self.src.index("getLeashHandAnchor(preferredSide", idx)
+        block = self.src[idx:end]
+        self.assertIn("const dogAnchoring = Boolean(", block)
+        self.assertIn("dog.isPooping || dog.isHungry || dog.needsGrooming || dog.isTired", block)
+        self.assertIn(
+            "if (hasDog && (dogLocalX < -2 || (dogAnchoring && (dogLocalX < 18 || (dogLocalY * sideSign) < 0)))) {",
+            block,
+        )
+
+    def test_behavioral_pose_selection_condition(self):
+        """Simulate the pose-selection predicate across representative cases."""
+        def pose(dog_local_x, dog_local_y, side_sign, anchoring):
+            if dog_local_x < -2 or (
+                anchoring and (dog_local_x < 18 or (dog_local_y * side_sign) < 0)
+            ):
+                return 'straight_behind'
+            return 'forward_heel'
+
+        # Normal 90°+ turn: dog ahead but crossed to the opposite side.
+        self.assertEqual(pose(5, 10, -1, False), 'forward_heel')
+        # Needy/pooping dog slightly ahead: tucks to the hip.
+        self.assertEqual(pose(10, 10, -1, True), 'straight_behind')
+        # Dog behind the shoulder line: always tucks.
+        self.assertEqual(pose(-10, 10, -1, False), 'straight_behind')
+        self.assertEqual(pose(-10, 10, -1, True), 'straight_behind')
+
     def test_behavioral_pose_selection(self):
         """Execute Owner.computeLeashHandLocal() in Node across representative headings."""
         import json

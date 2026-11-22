@@ -223,7 +223,13 @@ export class Owner {
       dogLocalY = -dxW * s + dyW * c; // -left, +right
     }
 
-    if (hasDog && (dogLocalX < 18 || (dogLocalY * sideSign) < 0)) {
+    // A needy/pooping dog anchors the owner (hold-up), so the arm may tuck to
+    // the hip. During normal movement the dog is kept ahead of the shoulder
+    // line, so a 90°+ turn must never snap the arm behind the back.
+    const dogAnchoring = Boolean(
+      dog && (dog.isPooping || dog.isHungry || dog.needsGrooming || dog.isTired)
+    );
+    if (hasDog && (dogLocalX < -2 || (dogAnchoring && (dogLocalX < 18 || (dogLocalY * sideSign) < 0)))) {
       // "tucked_hip": the dog lags behind the forward heel slot OR has crossed
       // to the opposite lateral side of the owner's heading. Compute the hand
       // directly in the 2.5D screen space of the leash-holding shoulder so it

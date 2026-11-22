@@ -3,6 +3,7 @@ pub mod collision;
 pub mod dog_contract;
 pub mod dog_leash_needs;
 pub mod dog_physics;
+pub mod dog_utility_ai;
 pub mod math;
 pub mod npc_sim;
 

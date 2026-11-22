@@ -1044,6 +1044,11 @@ export class CompanionDog {
       this.currentZone = field.zoneConfig;
     }
 
+    // NPC proximity reactions (jogger bark trigger). Kept in the JS layer so
+    // the Wasm step stays focused on steering/needs; the actual bark is still
+    // emitted through the event bitmask path below.
+    this.checkNPCInteractions(npcs);
+
     // Delegate all decision, steering, leash, and need math to the Wasm
     // simulation step. The bridge returns an event bitmask describing the
     // discrete side-effects the JS layer must execute this frame.
@@ -1191,6 +1196,29 @@ export class CompanionDog {
       });
     }
 
+  }
+
+  // NPC proximity reactions. Currently only the jogger bark trigger: a dog
+  // with high energy/stubbornness may bark at a passing jogger. The bark is
+  // routed through bark() so it uses the same wave/emote/audio path as the
+  // Wasm-emitted BARK_TRIGGERED event.
+  checkNPCInteractions(npcs) {
+    if (!npcs || !Array.isArray(npcs) || npcs.length === 0) return;
+    if (this.isBarking || this.state === DogState.FETCHING || this.state === DogState.POOPING) return;
+
+    for (const npc of npcs) {
+      if (!npc) continue;
+      const dist = Math.hypot(this.x - npc.x, this.y - npc.y);
+      if (dist >= 80) continue;
+
+      // Jogger reaction: energetic/stubborn dogs bark at passing joggers.
+      if ((npc.isJogger || npc.type === 'jogger') && this.personality.energy >= 3) {
+        if (Math.random() < 0.015 * (this.personality.energy - 2)) {
+          this.bark();
+          break;
+        }
+      }
+    }
   }
 
   // Public helper: compute the leash target slot for the given owner.

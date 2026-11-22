@@ -1,6 +1,6 @@
 // Companion Dog Entity - Canine Steering AI, Floppy Ear Springs, Leash Mechanics & Ball Fetching
 import { PoopPile } from './waste.js';
-import { stepCompanionDogWasm, getWasmSim } from '../engine/wasm_sim_bridge.js';
+import { stepCompanionDogWasm, getWasmSim, stepLeashConstraint } from '../engine/wasm_sim_bridge.js';
 import { MAX_LEASH_LENGTH } from '../world/leash.js';
 
 export const DogState = {
@@ -1094,6 +1094,11 @@ export class CompanionDog {
     // discrete side-effects the JS layer must execute this frame.
     const bitmask = stepCompanionDogWasm(this, dt, field, otherDogs, activeBall, npcs);
     this.executeDogEventBitmask(bitmask, field, activeBall);
+
+    // Enforce the leash constraint through the Wasm bridge when available.
+    if (this.owner && this.owner.isLeashed && typeof stepLeashConstraint === 'function') {
+      stepLeashConstraint(this, this.owner, Math.round(MAX_LEASH_LENGTH * 0.75), 4.0, 5.0, dt);
+    }
 
     // Hydrate owner from Wasm-side clamp/freeze flags.
     if (this.owner && this.ownerWasClamped) {

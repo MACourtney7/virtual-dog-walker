@@ -438,19 +438,27 @@ mod tests {
     fn dog_contract_step_buffer_preserves_angle_when_speed_is_zero() {
         let mut sim = WasmWorldSim::new(2000.0, 2000.0);
         sim.dog_buffer.slots[DOG_BUF_DT] = 0.016;
-        let sentinel_angle = 1.234_f32;
+        // Force the Poop state so the discrete combo yields zero speed.
+        sim.dog_buffer.slots[DOG_BUF_DOG_STATE_ID] = DogStateId::Poop as u32 as f32;
+        sim.dog_buffer.slots[DOG_BUF_IS_ON_LEASH] = 1.0;
+        let sentinel_angle = 1.2345_f32;
         sim.dog_buffer.slots[DOG_BUF_DOG_ANGLE] = sentinel_angle;
 
         sim.step_dog_buffer();
 
-        let speed = sim.dog_buffer.slots[DOG_BUF_DOG_VX].hypot(sim.dog_buffer.slots[DOG_BUF_DOG_VY]);
-        if speed <= 0.001 {
-            assert_eq!(
-                sim.dog_buffer.slots[DOG_BUF_DOG_ANGLE].to_bits(),
-                sentinel_angle.to_bits(),
-                "angle must be preserved when speed <= 0.001"
-            );
-        }
+        let vx = sim.dog_buffer.slots[DOG_BUF_DOG_VX];
+        let vy = sim.dog_buffer.slots[DOG_BUF_DOG_VY];
+        assert!(
+            (vx * vx + vy * vy).sqrt() <= 0.001,
+            "speed must be zero in the Poop state, got vx={}, vy={}",
+            vx,
+            vy
+        );
+        assert_eq!(
+            sim.dog_buffer.slots[DOG_BUF_DOG_ANGLE].to_bits(),
+            sentinel_angle.to_bits(),
+            "angle must be preserved when speed <= 0.001"
+        );
     }
 
     #[test]

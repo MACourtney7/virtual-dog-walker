@@ -1,10 +1,12 @@
 pub mod ball_physics;
 pub mod collision;
+pub mod dog_contract;
 pub mod dog_physics;
 pub mod math;
 pub mod npc_sim;
 
 use ball_physics::{step_toy_ball, BallSim};
+use dog_contract::{DogSimBuffer, DOG_SIM_BUFFER_LEN};
 use collision::{resolve_entity_collisions, resolve_field_collisions, Collider, WorldObstacle};
 use dog_physics::{step_ear_springs, step_ear_springs_to_targets, step_leash_constraint};
 use npc_sim::{sample_npc_state, sample_path_exact};
@@ -17,6 +19,7 @@ pub struct WasmWorldSim {
     obstacles: Vec<WorldObstacle>,
     world_width: f64,
     world_height: f64,
+    dog_buffer: DogSimBuffer,
 }
 
 #[wasm_bindgen]
@@ -29,8 +32,17 @@ impl WasmWorldSim {
             obstacles: Vec::new(),
             world_width,
             world_height,
+            dog_buffer: DogSimBuffer { slots: [0.0; DOG_SIM_BUFFER_LEN] },
         }
     }
+
+    /// Pointer to the persistent zeroed dog simulation buffer (128 f32 slots).
+    pub fn dog_buffer_ptr(&mut self) -> *mut f32 {
+        self.dog_buffer.slots.as_mut_ptr()
+    }
+
+    /// No-op step for the dog simulation buffer (contract placeholder).
+    pub fn step_dog_buffer(&mut self) {}
 
     pub fn set_colliders(&mut self, colliders_json: &str) {
         if let Ok(c) = serde_json::from_str::<Vec<Collider>>(colliders_json) {
@@ -225,5 +237,31 @@ mod tests {
         let ball_out = sim.step_ball(0.016);
         assert_eq!(ball_out.len(), 9);
         assert_eq!(ball_out[6], 1.0); // is_moving == true
+    }
+
+    #[test]
+    fn dog_contract_buffer_ptr_is_non_null() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        assert!(!sim.dog_buffer_ptr().is_null());
+    }
+
+    #[test]
+    fn dog_contract_buffer_ptr_is_stable() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        let first = sim.dog_buffer_ptr();
+        let second = sim.dog_buffer_ptr();
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn dog_contract_step_buffer_is_noop() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        let before = sim.dog_buffer.slots;
+        sim.step_dog_buffer();
+        let after = sim.dog_buffer.slots;
+        assert_eq!(before.len(), 128);
+        for (a, b) in before.iter().zip(after.iter()) {
+            assert_eq!(a.to_bits(), b.to_bits());
+        }
     }
 }

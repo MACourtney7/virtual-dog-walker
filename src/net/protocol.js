@@ -1,5 +1,49 @@
 // Pure In-Browser WebRTC Multiplayer Protocol & Packet Definitions
 
+export const PERSONALITY_KEYS = ['curiosity', 'energy', 'stubbornness', 'loyalty'];
+
+export const DEFAULT_PERSONALITY = {
+  curiosity: 3,
+  energy: 3,
+  stubbornness: 2,
+  loyalty: 4
+};
+
+// Validate a canonical personality object. Throws on any deviation from the
+// strict schema: exactly the four canonical keys, each an integer in 1..5.
+// Never mutates the input and never coerces/defaults network values.
+export function validatePersonality(personality) {
+  if (personality === null || typeof personality !== 'object' || Array.isArray(personality)) {
+    throw new Error('invalid personality: expected a plain object');
+  }
+  const proto = Object.getPrototypeOf(personality);
+  if (proto !== Object.prototype && proto !== null) {
+    throw new Error('invalid personality: expected plain object');
+  }
+  if (Object.getOwnPropertyNames(personality).length !== 4 || Object.getOwnPropertySymbols(personality).length !== 0) {
+    throw new Error('invalid personality: expected exactly 4 keys');
+  }
+  const keys = Object.keys(personality);
+  for (const key of keys) {
+    if (!PERSONALITY_KEYS.includes(key)) {
+      throw new Error(`invalid personality: unexpected key "${key}"`);
+    }
+  }
+  for (const key of PERSONALITY_KEYS) {
+    if (!Object.prototype.hasOwnProperty.call(personality, key)) {
+      throw new Error(`invalid personality: missing key "${key}"`);
+    }
+    const value = personality[key];
+    if (typeof value !== 'number' || !Number.isInteger(value) || Number.isNaN(value)) {
+      throw new Error(`invalid personality: "${key}" must be an integer`);
+    }
+    if (value < 1 || value > 5) {
+      throw new Error(`invalid personality: "${key}" out of range (1..5)`);
+    }
+  }
+  return true;
+}
+
 export const PacketType = {
   HELLO: 'HELLO',
   WELCOME: 'WELCOME',
@@ -21,17 +65,21 @@ export const PacketType = {
 };
 
 export class Protocol {
-  static createHello(peerId, name, jacketColor, dogCoatName, extraMeta = {}) {
-    const meta = extraMeta || {};
+  static createHello(peerId, name, jacketColor, dogCoatName, meta = {}) {
+    const extraMeta = (meta && typeof meta === 'object') ? meta : {};
     // Honor an explicitly provided dogName verbatim (including the empty string).
     // Only fall back to the default 'Ziggy' when no dogName key is supplied at all.
-    const resolvedDogName = (typeof meta.dogName === 'string')
-      ? meta.dogName
+    const resolvedDogName = (typeof extraMeta.dogName === 'string')
+      ? extraMeta.dogName
       : 'Ziggy';
     // Honor an explicit hasDog boolean; otherwise derive it from the dog name/coat.
-    const resolvedHasDog = (typeof meta.hasDog === 'boolean')
-      ? meta.hasDog
+    const resolvedHasDog = (typeof extraMeta.hasDog === 'boolean')
+      ? extraMeta.hasDog
       : ((typeof resolvedDogName === 'string' && resolvedDogName.length > 0) || Boolean(dogCoatName));
+    const personality = (extraMeta.personality === undefined)
+      ? DEFAULT_PERSONALITY
+      : extraMeta.personality;
+    validatePersonality(personality);
     return {
       type: PacketType.HELLO,
       senderId: peerId,
@@ -46,7 +94,12 @@ export class Protocol {
       accessory: extraMeta.accessory || 'NONE',
       skinTone: extraMeta.skinTone,
       collarColor: extraMeta.collarColor,
-      personality: extraMeta.personality || null,
+      personality: {
+        curiosity: personality.curiosity,
+        energy: personality.energy,
+        stubbornness: personality.stubbornness,
+        loyalty: personality.loyalty
+      },
       timestamp: Date.now()
     };
   }

@@ -137,6 +137,84 @@ function getDogBufferView() {
   return dogBufferView;
 }
 
+// --- Enum mapping helpers (mirror dog_contract.rs) -------------------------------------------
+
+/** Maps a DogStateId numeric id to the JS dog state string. */
+export function dogStateIdToState(id, isOnLeash = false) {
+  switch (id | 0) {
+    case 0: return isOnLeash ? 'FOLLOWING' : 'IDLE_SNIFF';
+    case 1: return 'FOLLOWING';
+    case 2: return 'ROAMING';
+    case 3: return 'POOPING';
+    case 4: return 'FETCHING';
+    case 5: return 'SOCIAL_GREET';
+    case 6: return 'ZOOMIES';
+    case 7: return 'LYING_DOWN';
+    case 8: return 'LOST';
+    case 9: return 'RECALLED';
+    case 10: return 'BARKING';
+    default: return 'IDLE_SNIFF';
+  }
+}
+
+/** Maps a JS dog state string to its DogStateId numeric id. */
+export function dogStateToId(state) {
+  switch (state) {
+    case 'FOLLOWING': return 1;
+    case 'ROAMING': return 2;
+    case 'POOPING': return 3;
+    case 'FETCHING': return 4;
+    case 'SOCIAL_GREET': return 5;
+    case 'PACK_PLAY': return 5;
+    case 'ZOOMIES': return 6;
+    case 'LYING_DOWN': return 7;
+    case 'SITTING': return 7;
+    case 'ROLLING': return 7;
+    case 'LOST': return 8;
+    case 'RECALLED': return 9;
+    case 'BARKING': return 10;
+    case 'IDLE_SNIFF': return 0;
+    default: return 0;
+  }
+}
+
+/** Maps a RoamSubModeId numeric id to the JS roam sub-mode string. */
+export function roamSubModeIdToSubMode(id) {
+  switch (id | 0) {
+    case 0: return 'FREE_EXPLORE';
+    case 1: return 'FREE_EXPLORE';
+    case 2: return 'SCOUT_AHEAD';
+    case 3: return 'LAG_AND_SNIFF';
+    case 4: return 'CHECK_IN';
+    case 5: return 'FLANK_PACE';
+    case 6: return 'FLANK_PACE';
+    case 7: return 'FLANK_PACE';
+    default: return 'FREE_EXPLORE';
+  }
+}
+
+/** Maps a ZoomiePathId numeric id to the JS zoomie path string (null for None). */
+export function zoomiePathIdToPath(id) {
+  switch (id | 0) {
+    case 0: return null;
+    case 1: return 'FIGURE_EIGHT';
+    case 2: return 'ORBIT_OWNER';
+    case 3: return 'SHUTTLE';
+    default: return null;
+  }
+}
+
+/** Maps a GaitModeId numeric id to the JS gait mode string. */
+export function gaitModeIdToMode(id) {
+  switch (id | 0) {
+    case 0: return 'IDLE';
+    case 1: return 'WALK';
+    case 2: return 'TROT';
+    case 3: return 'GALLOP';
+    default: return 'IDLE';
+  }
+}
+
 function normalizeTrait(v) {
   const n = (Number(v) - 1) / 4;
   if (!Number.isFinite(n)) return 0;
@@ -239,8 +317,19 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
     writePoint(buf, 54 + i * 2, s ? s.x : NaN, s ? s.y : NaN);
   }
 
+  // Seed persistent dog state slots [64..69] so the sim continues from the JS state.
+  buf[64] = Number.isFinite(dog.x) ? dog.x : 0;
+  buf[65] = Number.isFinite(dog.y) ? dog.y : 0;
+  buf[66] = Number.isFinite(dog.vx) ? dog.vx : 0;
+  buf[67] = Number.isFinite(dog.vy) ? dog.vy : 0;
+  buf[68] = Number.isFinite(dog.angle) ? dog.angle : 0;
+  buf[69] = dogStateToId(dog.state);
+
   // Step the authoritative simulation.
   wasmSimInstance.step_dog_buffer();
+
+  // Re-acquire the view in case memory.grow detached the previous buffer.
+  const outBuf = getDogBufferView();
 
   // Clear pending commands only after a successful step.
   if (cmds) {
@@ -253,40 +342,47 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   }
 
   // Outputs [64..127]
-  dog.x = buf[64];
-  dog.y = buf[65];
-  dog.vx = buf[66];
-  dog.vy = buf[67];
-  dog.angle = buf[68];
-  dog.state = buf[69];
-  dog.roamSubMode = buf[70];
-  dog.zoomiesPath = buf[71];
-  dog.gaitMode = buf[72];
-  dog.gaitPhase = buf[73];
+  dog.x = outBuf[64];
+  dog.y = outBuf[65];
+  dog.vx = outBuf[66];
+  dog.vy = outBuf[67];
+  dog.angle = outBuf[68];
+  dog.state = dogStateIdToState(outBuf[69], !!(dog && dog.isOnLeash));
+  dog.roamSubMode = roamSubModeIdToSubMode(outBuf[70]);
+  const zoomiePathId = outBuf[71] | 0;
+  if (zoomiePathId !== 0) {
+    dog.zoomiesPath = zoomiePathIdToPath(zoomiePathId);
+  } else if (!dog.zoomiesPath) {
+    dog.zoomiesPath = 'FIGURE_EIGHT';
+  }
+  dog.gaitMode = gaitModeIdToMode(outBuf[72]);
+  dog.gaitPhase = outBuf[73];
 
   dog.leftEar = dog.leftEar || {};
-  dog.leftEar.angle = buf[108];
-  dog.leftEar.vel = buf[109];
+  dog.leftEar.angle = outBuf[108];
+  dog.leftEar.vel = outBuf[109];
   dog.rightEar = dog.rightEar || {};
-  dog.rightEar.angle = buf[110];
-  dog.rightEar.vel = buf[111];
-  dog.wagSpeed = buf[112];
-  dog.tailAngle = buf[113];
-  dog.noseTwitch = buf[114];
-  dog.targetSlot = { x: buf[115], y: buf[116] };
+  dog.rightEar.angle = outBuf[110];
+  dog.rightEar.vel = outBuf[111];
+  dog.wagSpeed = outBuf[112];
+  dog.tailAngle = outBuf[113];
+  dog.noseTwitch = outBuf[114];
+  dog.targetSlot = (dog && dog.isOnLeash)
+    ? { x: outBuf[115], y: outBuf[116] }
+    : null;
 
-  const leashFlags = buf[117] | 0;
+  const leashFlags = outBuf[117] | 0;
   dog.isPullingLeash = (leashFlags & 1) !== 0;
-  dog.leashTension = buf[118];
-  dog.leashSagPx = buf[119];
-  dog.leashVibrationPx = buf[120];
-  dog.ownerClampedX = buf[121];
-  dog.ownerClampedY = buf[122];
-  const ownerFlags = buf[123] | 0;
+  dog.leashTension = outBuf[118];
+  dog.leashSagPx = outBuf[119];
+  dog.leashVibrationPx = outBuf[120];
+  dog.ownerClampedX = outBuf[121];
+  dog.ownerClampedY = outBuf[122];
+  const ownerFlags = outBuf[123] | 0;
   dog.ownerWasClamped = (ownerFlags & 1) !== 0;
   dog.ownerFrozen = (ownerFlags & 2) !== 0;
 
-  return buf[127] | 0;
+  return outBuf[127] | 0;
 }
 
 export function stepEarSprings(leftEar, rightEar, dogVx, dogVy, dogAngle, dt) {

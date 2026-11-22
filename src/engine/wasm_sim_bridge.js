@@ -1,7 +1,7 @@
 // src/engine/wasm_sim_bridge.js
 // Strangler-Fig Simulation Bridge: Rust/Wasm accelerated simulation with transparent JS fallback.
 
-import initWasmDefault, { initSync, WasmWorldSim } from '../wasm_core/dog_walker_core.js';
+import { initSync, WasmWorldSim } from '../wasm_core/dog_walker_core.js';
 
 let wasmSimInstance = null;
 let initPromise = null;
@@ -238,6 +238,7 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   const buf = getDogBufferView();
 
   const owner = dog && dog.owner ? dog.owner : null;
+  const isOnLeash = Boolean((dog && dog.isOnLeash) || (owner && owner.isLeashed));
   const nowSec = (dog && dog.nowSec != null)
     ? dog.nowSec
     : ((typeof performance !== 'undefined' && performance.now)
@@ -256,7 +257,7 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   const ownerGait = owner ? (owner.gait ?? owner.gaitId) : 0;
   buf[8] = Number.isFinite(ownerGait) ? ownerGait : 0;
   buf[9] = owner && owner.isMoving ? 1 : 0;
-  buf[10] = dog && dog.isOnLeash ? 1 : 0;
+  buf[10] = isOnLeash ? 1 : 0;
   buf[11] = (dog && dog.preferredSide === 'right') ? 1 : -1;
   const store = (dog && dog.dogStateStore) ? dog.dogStateStore : null;
   const isHungry = store && store.isHungry != null ? store.isHungry : (dog && dog.isHungry);
@@ -348,7 +349,7 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   dog.vx = outBuf[66];
   dog.vy = outBuf[67];
   dog.angle = outBuf[68];
-  dog.state = dogStateIdToState(outBuf[69], !!(dog && dog.isOnLeash));
+  dog.state = dogStateIdToState(outBuf[69], isOnLeash);
   dog.roamSubMode = roamSubModeIdToSubMode(outBuf[70]);
   const zoomiePathId = outBuf[71] | 0;
   if (zoomiePathId !== 0) {
@@ -368,7 +369,7 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   dog.wagSpeed = outBuf[112];
   dog.tailAngle = outBuf[113];
   dog.noseTwitch = outBuf[114];
-  dog.targetSlot = (dog && dog.isOnLeash)
+  dog.targetSlot = isOnLeash
     ? { x: outBuf[115], y: outBuf[116] }
     : null;
 

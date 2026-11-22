@@ -6,6 +6,7 @@ pub mod dog_physics;
 pub mod dog_utility_ai;
 pub mod math;
 pub mod npc_sim;
+pub mod world_contract;
 
 use ball_physics::{step_toy_ball, BallSim};
 
@@ -14,6 +15,7 @@ use dog_contract::*;
 use dog_physics::{step_ear_springs, step_ear_springs_to_targets, step_leash_constraint};
 use npc_sim::{sample_npc_state, sample_path_exact};
 use wasm_bindgen::prelude::*;
+use world_contract::*;
 
 /// Clamp an incoming dt to `[0.0, 0.1]`, mapping NaN/inf to `0.0`.
 fn sanitize_dt(raw: f32) -> f32 {
@@ -71,6 +73,10 @@ pub struct WasmWorldSim {
     world_width: f64,
     world_height: f64,
     dog_buffer: DogSimBuffer,
+    owner_buffer: OwnerSimBuffer,
+    care_buffer: CareSimBuffer,
+    ball_buffer: BallSimBuffer,
+    npc_buffers: [NpcSimBuffer; MAX_PARK_NPCS],
 }
 
 #[wasm_bindgen]
@@ -84,6 +90,10 @@ impl WasmWorldSim {
             world_width,
             world_height,
             dog_buffer: DogSimBuffer { slots: [0.0; DOG_SIM_BUFFER_LEN] },
+            owner_buffer: OwnerSimBuffer::default(),
+            care_buffer: CareSimBuffer::default(),
+            ball_buffer: BallSimBuffer::default(),
+            npc_buffers: std::array::from_fn(|_| NpcSimBuffer::default()),
         }
     }
 
@@ -179,6 +189,51 @@ impl WasmWorldSim {
         // 10. RNG policy: `step_utility_ai` already advances DOG_BUF_RNG_SEED
         // only when it requests randomness, so the orchestrator must not
         // advance it here.
+    }
+
+    /// Pointer to the persistent zeroed owner simulation buffer.
+    pub fn owner_buffer_ptr(&mut self) -> *mut f32 {
+        self.owner_buffer.data.as_mut_ptr()
+    }
+
+    /// Pointer to the persistent zeroed care simulation buffer.
+    pub fn care_buffer_ptr(&mut self) -> *mut f32 {
+        self.care_buffer.data.as_mut_ptr()
+    }
+
+    /// Pointer to the persistent zeroed ball simulation buffer.
+    pub fn ball_buffer_ptr(&mut self) -> *mut f32 {
+        self.ball_buffer.data.as_mut_ptr()
+    }
+
+    /// Pointer to the persistent zeroed NPC simulation buffer for `slot`.
+    /// Returns null when `slot` is out of range.
+    pub fn npc_buffer_ptr(&mut self, slot: u32) -> *mut f32 {
+        if slot as usize >= MAX_PARK_NPCS {
+            std::ptr::null_mut()
+        } else {
+            self.npc_buffers[slot as usize].data.as_mut_ptr()
+        }
+    }
+
+    /// Contract stub: advance the owner buffer by one tick. Returns 0.
+    pub fn step_owner_buffer(&mut self, _dt_s: f32) -> u32 {
+        0
+    }
+
+    /// Contract stub: advance the care buffer by one tick. Returns 0.
+    pub fn step_care_buffer(&mut self, _dt_ms: f32) -> u32 {
+        0
+    }
+
+    /// Contract stub: advance the ball buffer by one tick. Returns 0.
+    pub fn step_ball_buffer(&mut self, _dt_s: f32) -> u32 {
+        0
+    }
+
+    /// Contract stub: advance the NPC buffer for `slot` by one tick. Returns 0.
+    pub fn step_npc_buffer(&mut self, _slot: u32, _dt_s: f32) -> u32 {
+        0
     }
 
     pub fn set_colliders(&mut self, colliders_json: &str) {
@@ -374,6 +429,37 @@ mod tests {
         let ball_out = sim.step_ball(0.016);
         assert_eq!(ball_out.len(), 9);
         assert_eq!(ball_out[6], 1.0); // is_moving == true
+    }
+
+    #[test]
+    fn world_core_contract_world_sim_pointers_and_stubs() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+
+        assert!(!sim.owner_buffer_ptr().is_null(), "owner buffer ptr must be non-null");
+        assert!(!sim.care_buffer_ptr().is_null(), "care buffer ptr must be non-null");
+        assert!(!sim.ball_buffer_ptr().is_null(), "ball buffer ptr must be non-null");
+        assert!(!sim.npc_buffer_ptr(0).is_null(), "npc 0 buffer ptr must be non-null");
+        assert!(!sim.npc_buffer_ptr(7).is_null(), "npc 7 buffer ptr must be non-null");
+        assert!(
+            sim.npc_buffer_ptr(MAX_PARK_NPCS as u32).is_null(),
+            "npc buffer ptr must be null when slot is out of range"
+        );
+
+        // Snapshot bytes before invoking stubs.
+        let owner_before = sim.owner_buffer.data;
+        let care_before = sim.care_buffer.data;
+        let ball_before = sim.ball_buffer.data;
+        let npc_before = sim.npc_buffers[0].data;
+
+        assert_eq!(sim.step_owner_buffer(0.016), 0);
+        assert_eq!(sim.step_care_buffer(16.0), 0);
+        assert_eq!(sim.step_ball_buffer(0.016), 0);
+        assert_eq!(sim.step_npc_buffer(0, 0.016), 0);
+
+        assert_eq!(sim.owner_buffer.data, owner_before, "owner buffer must not mutate");
+        assert_eq!(sim.care_buffer.data, care_before, "care buffer must not mutate");
+        assert_eq!(sim.ball_buffer.data, ball_before, "ball buffer must not mutate");
+        assert_eq!(sim.npc_buffers[0].data, npc_before, "npc buffer must not mutate");
     }
 
     #[test]

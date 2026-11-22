@@ -97,6 +97,11 @@ pub const DOG_BUF_SCENT3_Y: usize = 61;
 pub const DOG_BUF_RESERVED_INPUT_0: usize = 62;
 pub const DOG_BUF_RESERVED_INPUT_1: usize = 63;
 
+// Extension aliases: reuse the reserved input slots without colliding with
+// the stable `0..=127` layout.
+pub const DOG_BUF_EXTENSION_COMMAND_FLAGS: usize = DOG_BUF_RESERVED_INPUT_0;
+pub const DOG_BUF_EXTENSION_SUNNY_ZONE: usize = DOG_BUF_RESERVED_INPUT_1;
+
 // ---------------------------------------------------------------------------
 // Output slots (64..=127)
 // ---------------------------------------------------------------------------
@@ -409,6 +414,12 @@ mod tests {
             core::mem::size_of::<DogSimBuffer>(),
             DOG_SIM_BUFFER_LEN * core::mem::size_of::<f32>()
         );
+    }
+
+    #[test]
+    fn world_core_contract_dog_buffer_size() {
+        assert_eq!(core::mem::size_of::<DogSimBuffer>(), 512);
+        assert_eq!(DOG_SIM_BUFFER_LEN, 128);
     }
 
     #[test]

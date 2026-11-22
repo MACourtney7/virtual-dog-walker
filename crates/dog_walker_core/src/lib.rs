@@ -1,11 +1,14 @@
 pub mod ball_physics;
 pub mod collision;
+pub mod dog_contract;
 pub mod dog_physics;
 pub mod math;
 pub mod npc_sim;
 
 use ball_physics::{step_toy_ball, BallSim};
+
 use collision::{resolve_entity_collisions, resolve_field_collisions, Collider, WorldObstacle};
+use dog_contract::{DogSimBuffer, DOG_SIM_BUFFER_LEN};
 use dog_physics::{step_ear_springs, step_ear_springs_to_targets, step_leash_constraint};
 use npc_sim::{sample_npc_state, sample_path_exact};
 use wasm_bindgen::prelude::*;
@@ -17,6 +20,7 @@ pub struct WasmWorldSim {
     obstacles: Vec<WorldObstacle>,
     world_width: f64,
     world_height: f64,
+    dog_buffer: DogSimBuffer,
 }
 
 #[wasm_bindgen]
@@ -29,8 +33,17 @@ impl WasmWorldSim {
             obstacles: Vec::new(),
             world_width,
             world_height,
+            dog_buffer: DogSimBuffer { slots: [0.0; DOG_SIM_BUFFER_LEN] },
         }
     }
+
+    /// Pointer to the persistent zeroed dog simulation buffer (128 f32 slots).
+    pub fn dog_buffer_ptr(&mut self) -> *mut f32 {
+        self.dog_buffer.slots.as_mut_ptr()
+    }
+
+    /// No-op step for the dog simulation buffer (contract placeholder).
+    pub fn step_dog_buffer(&mut self) {}
 
     pub fn set_colliders(&mut self, colliders_json: &str) {
         if let Ok(c) = serde_json::from_str::<Vec<Collider>>(colliders_json) {
@@ -225,5 +238,58 @@ mod tests {
         let ball_out = sim.step_ball(0.016);
         assert_eq!(ball_out.len(), 9);
         assert_eq!(ball_out[6], 1.0); // is_moving == true
+    }
+
+    #[test]
+    fn dog_contract_buffer_ptr_is_non_null() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        assert!(!sim.dog_buffer_ptr().is_null());
+    }
+
+    #[test]
+    fn dog_contract_new_zero_initializes_all_slots() {
+        let sim = WasmWorldSim::new(2000.0, 2000.0);
+        assert_eq!(sim.dog_buffer.slots.len(), DOG_SIM_BUFFER_LEN);
+        for (index, slot) in sim.dog_buffer.slots.iter().enumerate() {
+            assert_eq!(slot.to_bits(), 0, "slot {} must start zeroed", index);
+        }
+    }
+
+    #[test]
+    fn dog_contract_buffer_ptr_is_stable_across_calls() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        let first = sim.dog_buffer_ptr();
+        let second = sim.dog_buffer_ptr();
+        assert_eq!(first, second);
+
+        sim.step_dog_buffer();
+        let after_step = sim.dog_buffer_ptr();
+        assert_eq!(first, after_step);
+
+        let _ = sim.resolve_collision(10.0, 10.0, 16.0);
+        let after_collision = sim.dog_buffer_ptr();
+        assert_eq!(first, after_collision);
+    }
+
+    #[test]
+    fn dog_contract_step_buffer_preserves_slot_bits() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        for (index, slot) in sim.dog_buffer.slots.iter_mut().enumerate() {
+            *slot = if index % 2 == 0 {
+                f32::from_bits(0x7fc0_0001 + index as u32)
+            } else {
+                -1.0 * (index as f32 + 1.0)
+            };
+        }
+
+        let before: Vec<u32> = sim.dog_buffer.slots.iter().map(|s| s.to_bits()).collect();
+        assert_eq!(before.len(), DOG_SIM_BUFFER_LEN);
+        assert!(before.iter().any(|bits| f32::from_bits(*bits).is_nan()));
+        assert!(before.iter().any(|bits| !f32::from_bits(*bits).is_nan()));
+
+        sim.step_dog_buffer();
+
+        let after: Vec<u32> = sim.dog_buffer.slots.iter().map(|s| s.to_bits()).collect();
+        assert_eq!(before, after);
     }
 }

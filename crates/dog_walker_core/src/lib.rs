@@ -10,10 +10,49 @@ pub mod npc_sim;
 use ball_physics::{step_toy_ball, BallSim};
 
 use collision::{resolve_entity_collisions, resolve_field_collisions, Collider, WorldObstacle};
-use dog_contract::{DogSimBuffer, DOG_SIM_BUFFER_LEN};
+use dog_contract::*;
 use dog_physics::{step_ear_springs, step_ear_springs_to_targets, step_leash_constraint};
 use npc_sim::{sample_npc_state, sample_path_exact};
 use wasm_bindgen::prelude::*;
+
+/// Clamp an incoming dt to `[0.0, 0.1]`, mapping NaN/inf to `0.0`.
+fn sanitize_dt(raw: f32) -> f32 {
+    if raw.is_finite() {
+        raw.clamp(0.0, 0.1)
+    } else {
+        0.0
+    }
+}
+
+fn slot_f32(buf: &DogSimBuffer, index: usize) -> f32 {
+    buf.slots[index]
+}
+
+fn slot_bool(buf: &DogSimBuffer, index: usize) -> bool {
+    slot_f32(buf, index) > 0.5
+}
+
+fn current_state_id(buf: &DogSimBuffer) -> u32 {
+    slot_f32(buf, DOG_BUF_DOG_STATE_ID).round() as u32
+}
+
+/// Locked mapping from active utility id to the dog's discrete state id.
+fn dog_state_for_utility(utility_id: u32) -> DogStateId {
+    match utility_id {
+        dog_utility_ai::UTIL_HEEL_FOLLOW => DogStateId::Heel,
+        dog_utility_ai::UTIL_FETCH_BALL => DogStateId::Fetch,
+        dog_utility_ai::UTIL_RECALL => DogStateId::Recall,
+        dog_utility_ai::UTIL_ROAM_EXPLORE
+        | dog_utility_ai::UTIL_SCOUT_AHEAD
+        | dog_utility_ai::UTIL_LAG_AND_SNIFF
+        | dog_utility_ai::UTIL_CHECK_IN => DogStateId::Roam,
+        dog_utility_ai::UTIL_SOCIAL_GREET | dog_utility_ai::UTIL_PACK_PLAY => DogStateId::Social,
+        dog_utility_ai::UTIL_ZOOMIES => DogStateId::Zoomies,
+        dog_utility_ai::UTIL_AMBIENT_REST => DogStateId::Rest,
+        dog_utility_ai::UTIL_BARK_IMPULSE => DogStateId::Bark,
+        _ => DogStateId::Idle,
+    }
+}
 
 #[wasm_bindgen]
 pub struct WasmWorldSim {
@@ -44,8 +83,79 @@ impl WasmWorldSim {
         self.dog_buffer.slots.as_mut_ptr()
     }
 
-    /// No-op step for the dog simulation buffer (contract placeholder).
-    pub fn step_dog_buffer(&mut self) {}
+    /// Advance the persistent dog simulation buffer by one tick.
+    ///
+    /// Orchestrates need resolution, leash slot, utility AI, movement
+    /// integration, and leash/owner constraints. The buffer is mutated in
+    /// place; this path never returns a `Vec<f64>`.
+    pub fn step_dog_buffer(&mut self) {
+        // 1. Read and sanitize dt to [0.0, 0.1].
+        let dt = sanitize_dt(slot_f32(&self.dog_buffer, DOG_BUF_DT));
+
+        // 2. Build the discrete combo from buffer inputs.
+        let combo = DiscreteCombo {
+            is_on_leash: slot_bool(&self.dog_buffer, DOG_BUF_IS_ON_LEASH),
+            is_pooping: current_state_id(&self.dog_buffer) == DogStateId::Poop as u32,
+            has_need: slot_bool(&self.dog_buffer, DOG_BUF_IS_HUNGRY)
+                || slot_bool(&self.dog_buffer, DOG_BUF_NEEDS_GROOMING)
+                || slot_bool(&self.dog_buffer, DOG_BUF_IS_TIRED),
+            has_ball: slot_bool(&self.dog_buffer, DOG_BUF_BALL_ACTIVE),
+        };
+
+        // 3. Resolve discrete leash/need transitions.
+        let decision = dog_leash_needs::resolve_discrete_combo(combo);
+
+        // 4. Compute and write the leash slot from owner inputs.
+        let leash_slot = dog_leash_needs::compute_leash_slot(
+            slot_f32(&self.dog_buffer, DOG_BUF_OWNER_X),
+            slot_f32(&self.dog_buffer, DOG_BUF_OWNER_Y),
+            slot_f32(&self.dog_buffer, DOG_BUF_OWNER_VX),
+            slot_f32(&self.dog_buffer, DOG_BUF_OWNER_VY),
+            slot_f32(&self.dog_buffer, DOG_BUF_OWNER_HEADING),
+            slot_f32(&self.dog_buffer, DOG_BUF_OWNER_HALF_WIDTH),
+            slot_f32(&self.dog_buffer, DOG_BUF_PREFERRED_SIDE_SIGN),
+        );
+        dog_leash_needs::write_leash_slot(&mut self.dog_buffer, &leash_slot);
+
+        // 5. Run the utility AI. It persists its own outputs (active utility,
+        // submodes, gait, micro-expressions, events) and advances
+        // DOG_BUF_RNG_SEED internally only when it consumes randomness.
+        let util = dog_utility_ai::step_utility_ai(&mut self.dog_buffer, &self.obstacles, combo, dt);
+
+        // 6. Resolve target state: forced states win, otherwise map utility -> state.
+        let next_state = match decision.force_state {
+            Some(state) => state,
+            None => dog_state_for_utility(util.active_utility_id),
+        };
+        self.dog_buffer.slots[DOG_BUF_DOG_STATE_ID] = next_state as u32 as f32;
+
+        // 7. Integrate movement from desired speed, multiplier, and steer.
+        let speed = (util.desired_speed * decision.speed_multiplier).max(0.0);
+        let vx = util.steer_x * speed;
+        let vy = util.steer_y * speed;
+
+        let next_x = slot_f32(&self.dog_buffer, DOG_BUF_DOG_X) + vx * dt;
+        let next_y = slot_f32(&self.dog_buffer, DOG_BUF_DOG_Y) + vy * dt;
+
+        self.dog_buffer.slots[DOG_BUF_DOG_X] = next_x;
+        self.dog_buffer.slots[DOG_BUF_DOG_Y] = next_y;
+        self.dog_buffer.slots[DOG_BUF_DOG_VX] = vx;
+        self.dog_buffer.slots[DOG_BUF_DOG_VY] = vy;
+
+        if vx != 0.0 || vy != 0.0 {
+            self.dog_buffer.slots[DOG_BUF_DOG_ANGLE] = vy.atan2(vx);
+        }
+
+        // 8. Clamp final dog/owner positions against the leash constraint.
+        dog_leash_needs::constrain_leash_and_owner(&mut self.dog_buffer, &decision);
+
+        // 9. Persist the event bitmask from utility events only.
+        self.dog_buffer.slots[DOG_BUF_EVENT_BITMASK] = util.events as f32;
+
+        // 10. RNG policy: `step_utility_ai` already advances DOG_BUF_RNG_SEED
+        // only when it requests randomness, so the orchestrator must not
+        // advance it here.
+    }
 
     pub fn set_colliders(&mut self, colliders_json: &str) {
         if let Ok(c) = serde_json::from_str::<Vec<Collider>>(colliders_json) {
@@ -274,7 +384,7 @@ mod tests {
     }
 
     #[test]
-    fn dog_contract_step_buffer_preserves_slot_bits() {
+    fn dog_contract_step_buffer_runs_and_keeps_outputs_finite() {
         let mut sim = WasmWorldSim::new(2000.0, 2000.0);
         for (index, slot) in sim.dog_buffer.slots.iter_mut().enumerate() {
             *slot = if index % 2 == 0 {
@@ -284,14 +394,27 @@ mod tests {
             };
         }
 
-        let before: Vec<u32> = sim.dog_buffer.slots.iter().map(|s| s.to_bits()).collect();
-        assert_eq!(before.len(), DOG_SIM_BUFFER_LEN);
-        assert!(before.iter().any(|bits| f32::from_bits(*bits).is_nan()));
-        assert!(before.iter().any(|bits| !f32::from_bits(*bits).is_nan()));
-
+        let ptr_before = sim.dog_buffer_ptr();
         sim.step_dog_buffer();
+        let ptr_after = sim.dog_buffer_ptr();
+        assert_eq!(ptr_before, ptr_after);
+        assert_eq!(sim.dog_buffer.slots.len(), DOG_SIM_BUFFER_LEN);
 
-        let after: Vec<u32> = sim.dog_buffer.slots.iter().map(|s| s.to_bits()).collect();
-        assert_eq!(before, after);
+        for index in [
+            DOG_BUF_DOG_X,
+            DOG_BUF_DOG_Y,
+            DOG_BUF_DOG_VX,
+            DOG_BUF_DOG_VY,
+            DOG_BUF_DOG_STATE_ID,
+            DOG_BUF_ACTIVE_UTILITY_ID,
+            DOG_BUF_ACTIVE_UTILITY_SCORE,
+            DOG_BUF_EVENT_BITMASK,
+        ] {
+            assert!(
+                sim.dog_buffer.slots[index].is_finite(),
+                "output slot {} must remain finite",
+                index
+            );
+        }
     }
 }

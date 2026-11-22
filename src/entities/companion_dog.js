@@ -308,17 +308,11 @@ export class CompanionDog {
 
     // Canine Personality Model (1-5 scale).
     // Canonical traits: curiosity, energy, stubbornness, loyalty.
-    // Legacy/alias traits (playfulness, shyness, barkyness, obedience) are
-    // kept in sync so older profiles and tooling keep working.
     this.personality = {
       curiosity: 3,
       energy: 3,
       stubbornness: 2,
       loyalty: 4,
-      playfulness: 3,
-      shyness: 2,
-      barkyness: 2,
-      obedience: 4,
       ...(personality || {})
     };
     this.setPersonality(this.personality);
@@ -700,19 +694,6 @@ export class CompanionDog {
     }
     if (p.loyalty !== undefined) {
       this.personality.loyalty = clampTrait(p.loyalty, this.personality.loyalty || 4);
-    }
-    // Legacy/alias traits (kept in sync with the canonical four).
-    if (p.playfulness !== undefined) {
-      this.personality.playfulness = clampTrait(p.playfulness, this.personality.playfulness || 3);
-    }
-    if (p.shyness !== undefined) {
-      this.personality.shyness = clampTrait(p.shyness, this.personality.shyness || 2);
-    }
-    if (p.barkyness !== undefined) {
-      this.personality.barkyness = clampTrait(p.barkyness, this.personality.barkyness || 2);
-    }
-    if (p.obedience !== undefined) {
-      this.personality.obedience = clampTrait(p.obedience, this.personality.obedience || 4);
     }
     // Increases enthusiasm and speed during ball fetch sprint
     this.sprintSpeed = 260 + this.personality.energy * 15;
@@ -1119,14 +1100,6 @@ export class CompanionDog {
       this.carriedStick.y = this.y;
     }
 
-    // Autonomous reaction barking: joggers passing nearby and remote dogs
-    // within earshot can trigger a spontaneous bark (barkyness-gated).
-    this._updateReactionBarking(dt, otherDogs, npcs);
-
-    // Distance-scaled catch-up: when off-leash and roaming far from the owner,
-    // bias velocity back toward the owner so the dog never strands itself.
-    this._applyDistanceScaledCatchUp(dt);
-
     // Post-step bookkeeping: depth sort, bark wave decay, emote timer, hearts.
     this.depthY = this.y + 6;
 
@@ -1157,81 +1130,6 @@ export class CompanionDog {
       h.y += h.vy * dt;
       h.alpha -= dt * 0.7;
       if (h.alpha <= 0) this.hearts.splice(i, 1);
-    }
-  }
-
-  // Distance-scaled catch-up tether (AC-013.1 / AC-035.1).
-  // Off-leash roaming is never hard-clamped at a fixed radius; instead the
-  // return bias ramps smoothly from 0 at 220px to 1.0 at 480px from the owner.
-  _applyDistanceScaledCatchUp(dt) {
-    if (!this.owner) return;
-    if (this.owner.isLeashed) return;
-    if (this.state === DogState.FETCHING || this.state === DogState.RECALLED) return;
-    if (this.state === DogState.LOST || this.state === DogState.POOPING) return;
-
-    const dx = this.owner.x - this.x;
-    const dy = this.owner.y - this.y;
-    const distToOwner = Math.hypot(dx, dy);
-    if (distToOwner <= 220) return;
-
-    // Smooth 0..1 ramp: 0 at 220px, 1.0 at 480px.
-    const bias = Math.min(1.0, (distToOwner - 220) / 260);
-    if (bias <= 0) return;
-
-    // Obedience-scaled catch-up probability: a more obedient dog is more
-    // likely to break off and trot back toward the owner. Normalised 1..5
-    // obedience maps to a 0.45..0.89 probability band.
-    const obedience = ((this.personality?.obedience || 3) - 1) / 4; // 0..1
-    const catchUpChance = 0.45 + 0.11 * obedience;
-
-    const toOwnerX = dx / (distToOwner || 1);
-    const toOwnerY = dy / (distToOwner || 1);
-    const speed = Math.hypot(this.vx, this.vy) || this.speed;
-    const blend = Math.min(1.0, bias * catchUpChance * Math.min(1, dt * 6));
-
-    this.vx = this.vx * (1.0 - blend) + toOwnerX * speed * blend;
-    this.vy = this.vy * (1.0 - blend) + toOwnerY * speed * blend;
-  }
-
-  // Autonomous reaction barking driven by nearby joggers and remote dogs.
-  // Gated by the energy personality trait and a short cooldown so the dog
-  // never spams barks. Never interrupts FETCHING or an active bark.
-  _updateReactionBarking(dt, otherDogs = [], npcs = []) {
-    if (this.isBarking || this.state === DogState.FETCHING) return;
-
-    this._reactionBarkCooldown = Math.max(0, (this._reactionBarkCooldown || 0) - dt);
-    if (this._reactionBarkCooldown > 0) return;
-
-    const energy = this.personality?.energy || 3;
-
-    // Jogger reaction: a passing jogger within ~120px can provoke a bark.
-    if (Array.isArray(npcs)) {
-      for (const npc of npcs) {
-        if (!npc || !npc.isJogger) continue;
-        const dx = (npc.x || 0) - this.x;
-        const dy = (npc.y || 0) - this.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist < 120 && Math.random() < 0.02 * energy) {
-          this.bark();
-          this._reactionBarkCooldown = 3.0;
-          return;
-        }
-      }
-    }
-
-    // Remote dog response: another dog within earshot may provoke a reply.
-    if (Array.isArray(otherDogs)) {
-      for (const other of otherDogs) {
-        if (!other || other === this) continue;
-        const dx = (other.x || 0) - this.x;
-        const dy = (other.y || 0) - this.y;
-        const dist = Math.hypot(dx, dy);
-        if (dist < 260 && other.isBarking && Math.random() < 0.01 * energy) {
-          this.bark();
-          this._reactionBarkCooldown = 3.0;
-          return;
-        }
-      }
     }
   }
 

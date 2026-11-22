@@ -306,12 +306,19 @@ export class CompanionDog {
     this.radius = 14;
     this.depthY = this.y + 6;
 
-    // Canine Personality Model (1-5 scale, canonical 4 traits only)
+    // Canine Personality Model (1-5 scale).
+    // Canonical traits: curiosity, energy, stubbornness, loyalty.
+    // Legacy/alias traits (playfulness, shyness, barkyness, obedience) are
+    // kept in sync so older profiles and tooling keep working.
     this.personality = {
       curiosity: 3,
       energy: 3,
       stubbornness: 2,
       loyalty: 4,
+      playfulness: 3,
+      shyness: 2,
+      barkyness: 2,
+      obedience: 4,
       ...(personality || {})
     };
     this.setPersonality(this.personality);
@@ -693,6 +700,19 @@ export class CompanionDog {
     }
     if (p.loyalty !== undefined) {
       this.personality.loyalty = clampTrait(p.loyalty, this.personality.loyalty || 4);
+    }
+    // Legacy/alias traits (kept in sync with the canonical four).
+    if (p.playfulness !== undefined) {
+      this.personality.playfulness = clampTrait(p.playfulness, this.personality.playfulness || 3);
+    }
+    if (p.shyness !== undefined) {
+      this.personality.shyness = clampTrait(p.shyness, this.personality.shyness || 2);
+    }
+    if (p.barkyness !== undefined) {
+      this.personality.barkyness = clampTrait(p.barkyness, this.personality.barkyness || 2);
+    }
+    if (p.obedience !== undefined) {
+      this.personality.obedience = clampTrait(p.obedience, this.personality.obedience || 4);
     }
     // Increases enthusiasm and speed during ball fetch sprint
     this.sprintSpeed = 260 + this.personality.energy * 15;

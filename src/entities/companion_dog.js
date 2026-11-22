@@ -1073,6 +1073,14 @@ export class CompanionDog {
   }
 
   update(dt, field, otherDogs = [], activeBall = null, npcs = []) {
+    // Keep the owner's leash hand on the dog's flank side and expose the
+    // leash-taut signal for rendering/tests. This runs before the Wasm guard
+    // so the leash state stays correct even while the sim is still loading.
+    if (this.owner) {
+      this.owner.leashHandSide = this.preferredSide;
+    }
+    this.leashTaut = Boolean(this.owner && this.owner.isLeashed);
+
     // Safe no-op while the browser async Wasm init hasn't finished yet.
     if (!getWasmSim()) return;
 
@@ -1086,13 +1094,6 @@ export class CompanionDog {
     // discrete side-effects the JS layer must execute this frame.
     const bitmask = stepCompanionDogWasm(this, dt, field, otherDogs, activeBall, npcs);
     this.executeDogEventBitmask(bitmask, field, activeBall);
-
-    // Keep the owner's leash hand on the dog's flank side and expose the
-    // leash-taut signal for rendering/tests.
-    if (this.owner) {
-      this.owner.leashHandSide = this.preferredSide;
-    }
-    this.leashTaut = Boolean(this.owner && this.owner.isLeashed);
 
     // Hydrate owner from Wasm-side clamp/freeze flags.
     if (this.owner && this.ownerWasClamped) {
@@ -1188,7 +1189,7 @@ export class CompanionDog {
   }
 
   // Autonomous reaction barking driven by nearby joggers and remote dogs.
-  // Gated by the barkyness personality trait and a short cooldown so the dog
+  // Gated by the energy personality trait and a short cooldown so the dog
   // never spams barks. Never interrupts FETCHING or an active bark.
   _updateReactionBarking(dt, otherDogs = [], npcs = []) {
     if (this.isBarking || this.state === DogState.FETCHING) return;

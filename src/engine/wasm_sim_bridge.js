@@ -29,14 +29,15 @@ export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0) {
   initPromise = (async () => {
     try {
       if (typeof window !== 'undefined') {
-        if (typeof initWasmDefault === 'function') {
-          const initResult = await initWasmDefault();
+        const mod = await import('../wasm_core/dog_walker_core.js');
+        if (typeof mod.default === 'function') {
+          const initResult = await mod.default();
           if (initResult && initResult.memory) {
             wasmMemory = initResult.memory;
           }
         }
-        if (typeof WasmWorldSim === 'function') {
-          wasmSimInstance = new WasmWorldSim(worldWidth, worldHeight);
+        if (typeof mod.WasmWorldSim === 'function') {
+          wasmSimInstance = new mod.WasmWorldSim(worldWidth, worldHeight);
           console.log('[WasmSimBridge] Core simulation engine initialized (Rust/Wasm).');
           return wasmSimInstance;
         }

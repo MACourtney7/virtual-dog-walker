@@ -312,6 +312,10 @@ export class CompanionDog {
       energy: 3,
       stubbornness: 2,
       loyalty: 4,
+      playfulness: 3,
+      shyness: 2,
+      barkyness: 2,
+      obedience: 4,
       ...(personality || {})
     };
     this.setPersonality(this.personality);
@@ -682,6 +686,18 @@ export class CompanionDog {
     }
     if (p.loyalty !== undefined) {
       this.personality.loyalty = clampTrait(p.loyalty, this.personality.loyalty || 4);
+    }
+    if (p.playfulness !== undefined) {
+      this.personality.playfulness = clampTrait(p.playfulness, this.personality.playfulness || 3);
+    }
+    if (p.shyness !== undefined) {
+      this.personality.shyness = clampTrait(p.shyness, this.personality.shyness || 2);
+    }
+    if (p.barkyness !== undefined) {
+      this.personality.barkyness = clampTrait(p.barkyness, this.personality.barkyness || 2);
+    }
+    if (p.obedience !== undefined) {
+      this.personality.obedience = clampTrait(p.obedience, this.personality.obedience || 4);
     }
 
     // Increases enthusiasm and speed during ball fetch sprint

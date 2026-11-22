@@ -1173,11 +1173,11 @@ export class CompanionDog {
     const bias = Math.min(1.0, (distToOwner - 220) / 260);
     if (bias <= 0) return;
 
-    // Loyalty-scaled catch-up probability: a more loyal dog is more likely to
-    // break off and trot back toward the owner. Normalised 1..5 loyalty maps
-    // to a 0.45..0.89 probability band.
-    const loyalty = ((this.personality?.loyalty || 3) - 1) / 4; // 0..1
-    const catchUpChance = 0.45 + 0.11 * loyalty;
+    // Obedience-scaled catch-up probability: a more obedient dog is more
+    // likely to break off and trot back toward the owner. Normalised 1..5
+    // obedience maps to a 0.45..0.89 probability band.
+    const obedience = ((this.personality?.obedience || 3) - 1) / 4; // 0..1
+    const catchUpChance = 0.45 + 0.11 * obedience;
 
     const toOwnerX = dx / (distToOwner || 1);
     const toOwnerY = dy / (distToOwner || 1);

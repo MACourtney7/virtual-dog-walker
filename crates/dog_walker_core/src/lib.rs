@@ -1,12 +1,19 @@
 pub mod ball_physics;
 pub mod collision;
-pub mod dog_contract;
 pub mod dog_physics;
 pub mod math;
 pub mod npc_sim;
 
 use ball_physics::{step_toy_ball, BallSim};
-use dog_contract::{DogSimBuffer, DOG_SIM_BUFFER_LEN};
+
+/// Number of f32 slots in the shared dog simulation buffer.
+pub const DOG_SIM_BUFFER_LEN: usize = 128;
+
+/// Persistent zeroed buffer shared with the JS/Wasm bridge.
+#[derive(Clone, Copy)]
+pub struct DogSimBuffer {
+    pub slots: [f32; DOG_SIM_BUFFER_LEN],
+}
 use collision::{resolve_entity_collisions, resolve_field_collisions, Collider, WorldObstacle};
 use dog_physics::{step_ear_springs, step_ear_springs_to_targets, step_leash_constraint};
 use npc_sim::{sample_npc_state, sample_path_exact};

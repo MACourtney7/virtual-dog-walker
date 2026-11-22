@@ -1388,718 +1388,6 @@ export class CompanionDog {
     this.executeDogEventBitmask(bitmask, field, null);
   }
 
-  _removedLegacyFollowing(dt, otherDogs = [], field = null) {
-    if (!this.owner) return;
-
-    if (!this.owner.isLeashed) {
-      this.state = DogState.ROAMING;
-      this.updateRoaming(dt, otherDogs, field);
-      return;
-    }
-
-    const tuning = this._getGaitTuning();
-    this.followDistance = tuning.followDistance;
-
-    // Desired position: leash slot in the owner's local frame (forward flank,
-    // forward of the shoulder line, with velocity feed-forward).
-    // Only resolve the leash slot while actually leashed; off-leash callers
-    // are routed to updateRoaming() above.
-    if (!this.owner || !this.owner.isLeashed) {
-      this.targetSlot = null;
-      this.state = DogState.ROAMING;
-      this.updateRoaming(dt, otherDogs, field);
-      return;
-    }
-    const slot = getLeashSlot(this.owner);
-    this.targetSlot = slot;
-    const targetX = slot.x;
-    const targetY = slot.y;
-
-    const dx = targetX - this.x;
-    const dy = targetY - this.y;
-    const dist = Math.hypot(dx, dy);
-
-    // If owner stopped for a while, transition to idle sniff or sit
-    // High obedience dogs stay attentive at heel longer with smaller stray chance
-    const idleTransitionChance = Math.max(0.001, 0.009 - this.personality.obedience * 0.0015);
-    if (!this.owner.isMoving && dist < 8) {
-      this.vx *= 0.8;
-      this.vy *= 0.8;
-      this.wagSpeed = 6;
-      // Smoothly align with owner heading while standing still (or hold a
-      // brief social gaze toward a nearby dog).
-      const ownerHeading = this.socialGazeTimer > 0 ? this.socialGazeAngle : resolveOwnerHeading(this.owner);
-      this.angle = lerpAngle(this.angle, ownerHeading, Math.min(1, dt * 10));
-      if (Math.random() < idleTransitionChance) {
-        this.transitionTo(Math.random() < 0.5 ? DogState.IDLE_SNIFF : DogState.SITTING);
-        if (this.state !== DogState.ROLLING) {
-          this.stateTimer = 2.0 + Math.random() * 3.0;
-        }
-      }
-      return;
-    }
-
-    // Arrival steering calculation matching owner's pace.
-    // When any need is active, never let a >1 gait speedScale (e.g. JOG)
-    // boost the dog above its base speed: the needy dog stays at a very slow
-    // fixed pace.
-    const slowingRadius = 40;
-    const hasActiveNeed = this.isHungry || this.needsGrooming || this.isTired;
-    const effectiveSpeedScale = hasActiveNeed
-      ? Math.min(1.0, tuning.speedScale)
-      : tuning.speedScale;
-    const baseSpeed = this.speed * effectiveSpeedScale;
-    let targetSpeed = baseSpeed;
-    if (dist < slowingRadius) {
-      targetSpeed = baseSpeed * (dist / slowingRadius);
-    }
-
-    // Higher obedience adheres strictly to heel follow offset with smaller arrival deadband
-    const arrivalDeadband = Math.max(3, 11 - this.personality.obedience * 1.5);
-    if (dist > arrivalDeadband) {
-      this.vx = (dx / dist) * targetSpeed;
-      this.vy = (dy / dist) * targetSpeed;
-      // When owner is moving, face travel direction; when owner stops, align to owner's heading
-      const targetAngle = (!this.owner.isMoving) ? resolveOwnerHeading(this.owner) : Math.atan2(this.vy, this.vx);
-      this.angle = lerpAngle(this.angle, targetAngle, Math.min(1, dt * 12));
-      this.wagSpeed = 10;
-    } else {
-      this.vx = 0;
-      this.vy = 0;
-      this.wagSpeed = 6;
-      const ownerHeading = this.socialGazeTimer > 0 ? this.socialGazeAngle : resolveOwnerHeading(this.owner);
-      this.angle = lerpAngle(this.angle, ownerHeading, Math.min(1, dt * 10));
-    }
-
-    // Rendered-position shoulder-line clamp: after arrival damping, the dog's
-    // actual position must never lag behind the owner's transverse shoulder
-    // line during sharp turns while on leash.
-    const heading = resolveOwnerHeading(this.owner);
-    const fwdX = Math.cos(heading);
-    const fwdY = Math.sin(heading);
-    const proj = (this.x - this.owner.x) * fwdX + (this.y - this.owner.y) * fwdY;
-    if (proj < LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX && !(this.isHungry || this.needsGrooming || this.isTired)) {
-      const push = LEASH_SHOULDER_LINE_FORWARD_MARGIN_PX - proj;
-      this.x += fwdX * push;
-      this.y += fwdY * push;
-    }
-  }
-
-  updateRoaming(dt, otherDogs = [], field = null) {
-    // Legacy entry point retained for compatibility. All steering is now
-    // delegated to the Wasm simulation step via update().
-    if (!this.owner) return;
-    const bitmask = stepCompanionDogWasm(this, dt, field, otherDogs, null, []);
-    this.executeDogEventBitmask(bitmask, field, null);
-  }
-
-  _legacyUpdateRoamingRemoved(dt, otherDogs = [], field = null) {
-    if (!this.owner) return;
-
-    if (this.owner.isLeashed) {
-      this.state = DogState.FOLLOWING;
-      this.followDistance = 42;
-      return;
-    }
-
-    const tuning = this._getGaitTuning();
-
-    if (this.checkSocialInteractions(otherDogs, dt, field)) {
-      return;
-    }
-
-    // Baseline-first interlacing: spend the baseline window in smooth
-    // FREE_EXPLORE wander before any episodic sub-mode can interrupt.
-    if (this.roamBaselineTimer > 0) {
-      this.roamBaselineTimer = Math.max(0, this.roamBaselineTimer - dt);
-      this.roamSubMode = RoamSubMode.FREE_EXPLORE;
-    }
-
-    // Off-leash roaming sub-mode selection with personality weighting.
-    if (this.roamBaselineTimer <= 0) {
-      this.roamSubModeTimer -= dt;
-      if (this.roamSubModeTimer <= 0) {
-        // Episodic sub-mode timeout: interlace back to baseline FREE_EXPLORE
-        // instead of chaining another episode back-to-back.
-        if (this.roamSubMode !== RoamSubMode.FREE_EXPLORE) {
-          this.roamSubMode = RoamSubMode.FREE_EXPLORE;
-          this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
-          this.roamWaypoint = null;
-          this.roamTargetSpeed = 125 + Math.random() * 50;
-          this.roamSubModeTimer = 0;
-          this.roamLookBackDone = false;
-        } else {
-        this.roamSubModeTimer = 3.0 + Math.random() * 3.0;
-        const energy = Number(this.personality?.energy ?? 3);
-        const curiosity = Number(this.personality?.curiosity ?? 3);
-        const obedience = Number(this.personality?.obedience ?? 4);
-        // Weighted mode selection: energetic dogs scout/dart more, curious dogs
-        // lag-and-sniff more, obedient dogs check in more.
-        const weights = [
-          [RoamSubMode.SCOUT_AHEAD, 1.0 + energy * 0.4],
-          [RoamSubMode.FLANK_PACE, 1.0 + obedience * 0.2],
-          [RoamSubMode.LAG_AND_SNIFF, 1.0 + curiosity * 0.5],
-          [RoamSubMode.CHECK_IN, 0.5 + obedience * 0.4],
-          [RoamSubMode.FREE_EXPLORE, 1.0]
-        ];
-        const total = weights.reduce((s, w) => s + w[1], 0);
-        let roll = Math.random() * total;
-        let chosen = RoamSubMode.FREE_EXPLORE;
-        for (const [mode, w] of weights) {
-          roll -= w;
-          if (roll <= 0) { chosen = mode; break; }
-        }
-
-        // Stationary/slow owner guard: never hover at a stationary offset.
-        const ownerSpeed = Math.hypot(this.owner.vx || 0, this.owner.vy || 0);
-        if ((!this.owner.isMoving || ownerSpeed < 20) &&
-            (chosen === RoamSubMode.SCOUT_AHEAD || chosen === RoamSubMode.FLANK_PACE)) {
-          chosen = RoamSubMode.FREE_EXPLORE;
-        }
-
-        this.roamSubMode = chosen;
-        this.roamLookBackDone = false;
-        this.roamWaypoint = null;
-
-        // Set the persistent target speed once per sub-mode selection.
-        switch (chosen) {
-          case RoamSubMode.LAG_AND_SNIFF:
-            this.roamTargetSpeed = 48 + Math.random() * 28; // 48-76 px/s
-            break;
-          case RoamSubMode.SCOUT_AHEAD:
-            this.roamTargetSpeed = 185 + Math.random() * 55; // 185-240 px/s
-            break;
-          case RoamSubMode.CHECK_IN:
-            this.roamTargetSpeed = 235 + Math.random() * 40; // 235-275 px/s
-            break;
-          case RoamSubMode.FLANK_PACE:
-          case RoamSubMode.FREE_EXPLORE:
-          default:
-            this.roamTargetSpeed = 125 + Math.random() * 50; // 125-175 px/s
-            break;
-        }
-
-        // Once-per-episode waypoint computation (no per-frame Math.random()).
-        const headingSel = resolveOwnerHeading(this.owner);
-        const fwdSelX = Math.cos(headingSel);
-        const fwdSelY = Math.sin(headingSel);
-        const rightSelX = -Math.sin(headingSel);
-        const rightSelY = Math.cos(headingSel);
-        const sideSel = this.preferredSide === 'left' ? -1 : 1;
-
-        if (chosen === RoamSubMode.SCOUT_AHEAD) {
-          this.roamSubModeOptionLead = 120 + Math.random() * 40;
-          const lead = this.roamSubModeOptionLead;
-          this.roamWaypoint = {
-            x: this.owner.x + fwdSelX * lead + rightSelX * sideSel * 20,
-            y: this.owner.y + fwdSelY * lead + rightSelY * sideSel * 20
-          };
-        } else if (chosen === RoamSubMode.FLANK_PACE) {
-          this.roamSubModeOptionLateral = 55 + Math.random() * 15;
-          this.roamSubModeOptionForward = 10 + Math.random() * 20;
-          const lateral = this.roamSubModeOptionLateral;
-          const forward = this.roamSubModeOptionForward;
-          this.roamWaypoint = {
-            x: this.owner.x + fwdSelX * forward + rightSelX * sideSel * lateral,
-            y: this.owner.y + fwdSelY * forward + rightSelY * sideSel * lateral
-          };
-        } else if (chosen === RoamSubMode.LAG_AND_SNIFF) {
-          const obstaclesSel = this._getFieldObstacles(field);
-          let landmark = null;
-          if (obstaclesSel.length > 0) {
-            const candidates = obstaclesSel.filter(o => {
-              const dOwner = Math.hypot(o.x - this.owner.x, o.y - this.owner.y);
-              return dOwner >= 80 && dOwner <= 320;
-            });
-            if (candidates.length > 0) {
-              landmark = candidates[Math.floor(Math.random() * candidates.length)];
-            }
-          }
-          if (landmark) {
-            const dxL = landmark.x - this.x;
-            const dyL = landmark.y - this.y;
-            const dL = Math.hypot(dxL, dyL) || 1;
-            const skirt = (landmark.r || 20) + 22;
-            this.roamWaypoint = {
-              x: landmark.x - (dxL / dL) * skirt,
-              y: landmark.y - (dyL / dL) * skirt
-            };
-          } else {
-            this.roamSubModeOptionLag = 70 + Math.random() * 40;
-            const lag = this.roamSubModeOptionLag;
-            this.roamWaypoint = {
-              x: this.owner.x - fwdSelX * lag + rightSelX * sideSel * 15,
-              y: this.owner.y - fwdSelY * lag + rightSelY * sideSel * 15
-            };
-          }
-        } else if (chosen === RoamSubMode.FREE_EXPLORE) {
-          const obstaclesSel = this._getFieldObstacles(field);
-          if (obstaclesSel.length > 0) {
-            const candidates = obstaclesSel.filter(o => {
-              const dOwner = Math.hypot(o.x - this.owner.x, o.y - this.owner.y);
-              return dOwner >= 80 && dOwner <= 320;
-            });
-            if (candidates.length > 0) {
-              const landmark = candidates[Math.floor(Math.random() * candidates.length)];
-              const dxL = landmark.x - this.x;
-              const dyL = landmark.y - this.y;
-              const dL = Math.hypot(dxL, dyL) || 1;
-              const skirt = (landmark.r || 20) + 22;
-              this.roamWaypoint = {
-                x: landmark.x - (dxL / dL) * skirt,
-                y: landmark.y - (dyL / dL) * skirt
-              };
-            }
-          }
-        }
-        }
-      }
-    }
-
-    // Look-back wait moment: during SCOUT_AHEAD, once the dog is far enough
-    // ahead it pauses briefly, faces the owner, then continues.
-    if (this.roamLookBackActive) {
-      this.roamLookBackTimer -= dt;
-      this.vx *= 0.6;
-      this.vy *= 0.6;
-      this.wagSpeed = 6;
-      if (this.owner) {
-        this.angle = lerpAngle(
-          this.angle,
-          Math.atan2(this.owner.y - this.y, this.owner.x - this.x),
-          Math.min(1, dt * 8)
-        );
-      }
-      if (this.roamLookBackTimer <= 0) {
-        this.roamLookBackActive = false;
-      }
-      return;
-    }
-
-    // 1. Woodland stick pickup check (trotting near fallen oak/chestnut grove sticks)
-    if (!this.hasStick && !this.hasBall && field && Array.isArray(field.sticks)) {
-      for (const stick of field.sticks) {
-        if (!stick.isCarried && Math.hypot(this.x - stick.x, this.y - stick.y) < 28) {
-          if (Math.random() < 0.35) {
-            this.pickupStick(stick);
-            break;
-          }
-        }
-      }
-    }
-
-    // 2. Scent trail detection (investigating squirrel or canine scent trails)
-    if (!this.hasStick && !this.hasBall && field && typeof field.getNearbyScents === 'function') {
-      if (Math.random() < tuning.sniffChance) {
-        const nearbyScents = field.getNearbyScents(this.x, this.y, 85);
-        if (nearbyScents.length > 0) {
-          const chosen = nearbyScents[Math.floor(Math.random() * nearbyScents.length)];
-          this.targetScent = chosen;
-          this.state = DogState.SNIFFING_TRAIL;
-          this.stateTimer = 2.8 + Math.random() * 2.0;
-          this.emoteBubble = '👃';
-          this.emoteTimer = 1.8;
-          return;
-        }
-      }
-    }
-
-    // 3. Rare zoomies burst when happiness reaches 100% (cooldown-gated)
-    if (this.zoomiesCooldown <= 0 && this.happiness >= 100 && !this.owner.isLeashed && Math.random() < 0.015 * dt) {
-      this.triggerZoomies();
-      return;
-    }
-
-    const fromOwnerX = this.x - this.owner.x;
-    const fromOwnerY = this.y - this.owner.y;
-    const distToOwner = Math.hypot(fromOwnerX, fromOwnerY);
-
-    // Resolve the visible screen perimeter once for catch-up + tether logic.
-    const screen = this._getScreenPerimeter(field);
-
-    // Trailing-edge catch-up: engage return trot near any screen edge.
-    if (screen && (this.x < screen.left + 55 || this.x > screen.right - 55 ||
-        this.y < screen.top + 55 || this.y > screen.bottom - 55)) {
-      this.returnTrotActive = true;
-    }
-
-    // Distance-scaled catch-up: probabilistic return-trot when the dog drifts far from owner
-    if (distToOwner > 220) {
-      this.catchUpTimer += dt;
-      if (this.catchUpTimer >= 1.2) {
-        const base = Math.min(0.90, Math.max(0.08, (distToOwner - 220) / 260));
-        const obedience = Number(this.personality?.obedience ?? 4);
-        const p = Math.min(1, Math.max(0, base * (0.45 + 0.11 * obedience)));
-        if (Math.random() < p) {
-          this.returnTrotActive = true;
-        }
-        this.catchUpTimer = 0;
-      }
-    } else {
-      this.catchUpTimer = 0;
-    }
-
-    if (this.returnTrotActive) {
-      const insideScreenSafe = screen
-        ? (this.x > screen.left + 120 && this.x < screen.right - 120 &&
-           this.y > screen.top + 120 && this.y < screen.bottom - 120)
-        : false;
-      if ((screen && insideScreenSafe) || (!screen && distToOwner <= 110)) {
-        this.returnTrotActive = false;
-      } else {
-        const targetX = screen ? screen.centerX : this.owner.x;
-        const targetY = screen ? screen.centerY : this.owner.y;
-        const toTargetX = targetX - this.x;
-        const toTargetY = targetY - this.y;
-        const dirDist = Math.hypot(toTargetX, toTargetY) || 1;
-        const catchUpSpeed = screen ? Math.max(this.speed, 195) : this.speed;
-        this.vx = (toTargetX / dirDist) * catchUpSpeed;
-        this.vy = (toTargetY / dirDist) * catchUpSpeed;
-        this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 12));
-        this.wagSpeed = 10;
-        return;
-      }
-    }
-
-    // Maintain exploratory wander target (only ticked during FREE_EXPLORE so
-    // episodic sub-modes interlace cleanly into baseline movement).
-    if (this.roamSubMode === RoamSubMode.FREE_EXPLORE) {
-      this.wanderTimer -= dt;
-      if (this.wanderTimer <= 0) {
-        this.wanderTimer = 2.0 + Math.random() * 2.0;
-
-        // Periodically pauses for 2-3s to sniff a spot (IDLE_SNIFF)
-        if (Math.random() < 0.25) {
-          this.transitionTo(DogState.IDLE_SNIFF);
-          if (this.state !== DogState.ROLLING) {
-            this.stateTimer = 2.0 + Math.random() * 1.0;
-          }
-          this.vx = 0;
-          this.vy = 0;
-          return;
-        }
-
-        // Trotting ahead or to the sides of walking path
-        if (this.owner.isMoving) {
-          const spread = (Math.random() - 0.5) * (Math.PI * 0.75);
-          this.wanderAngle = this.owner.angle + spread;
-        } else {
-          this.wanderAngle = Math.random() * Math.PI * 2;
-        }
-      }
-    }
-
-    // Smoothly interpolate the current roam speed toward the persistent target.
-    this.roamCurrentSpeed += (this.roamTargetSpeed - this.roamCurrentSpeed) * Math.min(1, dt * 5);
-
-    // Mode-specific waypoint steering & decoupled speed selection.
-    const heading = resolveOwnerHeading(this.owner);
-    const fwdX = Math.cos(heading);
-    const fwdY = Math.sin(heading);
-    const rightX = -Math.sin(heading);
-    const rightY = Math.cos(heading);
-    const sideSign = this.preferredSide === 'left' ? -1 : 1;
-
-    let desiredX = this.x + Math.cos(this.wanderAngle);
-    let desiredY = this.y + Math.sin(this.wanderAngle);
-    let modeSpeed = this.roamCurrentSpeed;
-
-    switch (this.roamSubMode) {
-      case RoamSubMode.SCOUT_AHEAD: {
-        // Run ahead of the owner along their heading (stored lead, no jitter).
-        // Prefer the stored waypoint when present so the target is stable.
-        if (this.roamWaypoint) {
-          desiredX = this.roamWaypoint.x;
-          desiredY = this.roamWaypoint.y;
-        } else {
-          const lead = this.roamSubModeOptionLead || (120 + Math.random() * 40);
-          desiredX = this.owner.x + fwdX * lead + rightX * sideSign * 20;
-          desiredY = this.owner.y + fwdY * lead + rightY * sideSign * 20;
-        }
-        // Look-back wait moment when far enough ahead.
-        if (distToOwner > 175 && !this.roamLookBackDone && !this.roamLookBackActive) {
-          this.roamLookBackActive = true;
-          this.roamLookBackTimer = 0.7 + Math.random() * 0.5;
-          this.roamLookBackDone = true;
-          return;
-        }
-        // Arrival: hand off back to baseline free exploration.
-        if (Math.hypot(desiredX - this.x, desiredY - this.y) < 24) {
-          this.roamSubMode = RoamSubMode.FREE_EXPLORE;
-          this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
-          this.roamSubModeTimer = 0;
-          this.roamTargetSpeed = 125 + Math.random() * 50;
-          this.roamLookBackDone = false;
-          this.roamWaypoint = null;
-          desiredX = this.x + Math.cos(this.wanderAngle) * 100;
-          desiredY = this.y + Math.sin(this.wanderAngle) * 100;
-        }
-        break;
-      }
-      case RoamSubMode.FLANK_PACE: {
-        // Pace alongside the owner on the preferred flank (stored offsets).
-        // Prefer the stored waypoint when present so the target is stable.
-        if (this.roamWaypoint) {
-          desiredX = this.roamWaypoint.x;
-          desiredY = this.roamWaypoint.y;
-        } else {
-          const lateral = this.roamSubModeOptionLateral || (55 + Math.random() * 15);
-          const forward = this.roamSubModeOptionForward || (10 + Math.random() * 20);
-          desiredX = this.owner.x + fwdX * forward + rightX * sideSign * lateral;
-          desiredY = this.owner.y + fwdY * forward + rightY * sideSign * lateral;
-        }
-        // Arrival or stationary owner: hand off back to baseline.
-        if (!this.owner.isMoving || Math.hypot(desiredX - this.x, desiredY - this.y) < 24) {
-          this.roamSubMode = RoamSubMode.FREE_EXPLORE;
-          this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
-          this.roamSubModeTimer = 0;
-          this.roamTargetSpeed = 125 + Math.random() * 50;
-          this.roamLookBackDone = false;
-          this.roamWaypoint = null;
-          desiredX = this.x + Math.cos(this.wanderAngle) * 100;
-          desiredY = this.y + Math.sin(this.wanderAngle) * 100;
-        }
-        break;
-      }
-      case RoamSubMode.LAG_AND_SNIFF: {
-        // Trail behind the owner, ambling slowly toward the stored waypoint.
-        if (this.roamWaypoint) {
-          desiredX = this.roamWaypoint.x;
-          desiredY = this.roamWaypoint.y;
-        } else {
-          const lag = this.roamSubModeOptionLag || (70 + Math.random() * 40);
-          desiredX = this.owner.x - fwdX * lag + rightX * sideSign * 15;
-          desiredY = this.owner.y - fwdY * lag + rightY * sideSign * 15;
-        }
-        // Arrival: sniff the spot, then hand off back to baseline.
-        if (Math.hypot(desiredX - this.x, desiredY - this.y) < 24) {
-          this.transitionTo(DogState.IDLE_SNIFF);
-          if (this.state !== DogState.ROLLING) {
-            this.stateTimer = 2.0 + Math.random() * 1.0;
-          }
-          this.roamSubMode = RoamSubMode.FREE_EXPLORE;
-          this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
-          this.roamSubModeTimer = 0;
-          this.roamTargetSpeed = 125 + Math.random() * 50;
-          this.roamLookBackDone = false;
-          this.roamWaypoint = null;
-          return;
-        }
-        break;
-      }
-      case RoamSubMode.CHECK_IN: {
-        // Dart back toward the owner for a check-in.
-        desiredX = this.owner.x + rightX * sideSign * 30;
-        desiredY = this.owner.y + rightY * sideSign * 30;
-        // Arrival: hand off to baseline free exploration immediately.
-        if (distToOwner < 48) {
-          this.wagSpeed = 16;
-          this.roamSubMode = RoamSubMode.FREE_EXPLORE;
-          this.roamBaselineTimer = 4.5 + Math.random() * 3.5;
-          this.roamSubModeTimer = 0;
-          this.roamTargetSpeed = 125 + Math.random() * 50;
-          this.roamLookBackDone = false;
-          this.roamWaypoint = null;
-        }
-        break;
-      }
-      case RoamSubMode.FREE_EXPLORE:
-      default: {
-        // Baseline free wander, biased toward a stored landmark when available.
-        if (this.roamWaypoint) {
-          desiredX = this.roamWaypoint.x;
-          desiredY = this.roamWaypoint.y;
-          if (Math.hypot(desiredX - this.x, desiredY - this.y) < 24) {
-            this.roamWaypoint = null;
-          }
-        } else {
-          desiredX = this.x + Math.cos(this.wanderAngle) * 100;
-          desiredY = this.y + Math.sin(this.wanderAngle) * 100;
-        }
-        break;
-      }
-    }
-
-    // Micro-pause: occasionally freeze in place for 0.8-1.6s.
-    if (this.roamMicroPauseTimer > 0) {
-      this.roamMicroPauseTimer -= dt;
-      this.vx = 0;
-      this.vy = 0;
-      this.wagSpeed = 5;
-      return;
-    }
-    if (Math.random() < 0.004) {
-      this.roamMicroPauseTimer = 0.8 + Math.random() * 0.8;
-      this.vx = 0;
-      this.vy = 0;
-      return;
-    }
-
-    let dirX = desiredX - this.x;
-    let dirY = desiredY - this.y;
-    const dirLen = Math.hypot(dirX, dirY) || 1;
-    dirX /= dirLen;
-    dirY /= dirLen;
-
-    let wanderVx = dirX * modeSpeed;
-    let wanderVy = dirY * modeSpeed;
-
-    // Obstacle avoidance: skirt around trunks/props with a smooth tangent push.
-    const roamObstacles = this._getFieldObstacles(field);
-    if (roamObstacles.length > 0) {
-      for (const obs of roamObstacles) {
-        const odx = this.x - obs.x;
-        const ody = this.y - obs.y;
-        const odist = Math.hypot(odx, ody);
-        const avoidRadius = (obs.r || 18) + this.radius + 18;
-        if (odist < avoidRadius && odist > 0.001) {
-          const nx = odx / odist;
-          const ny = ody / odist;
-          const strength = (avoidRadius - odist) / avoidRadius;
-          // Repulsive normal + tangential slide so the dog skirts the trunk.
-          const tangentX = -ny;
-          const tangentY = nx;
-          wanderVx += (nx * 0.7 + tangentX * 0.6) * modeSpeed * strength;
-          wanderVy += (ny * 0.7 + tangentY * 0.6) * modeSpeed * strength;
-        }
-      }
-    }
-
-    // Screen-space perimeter steering (physical viewport) with headless fallback.
-    if (screen) {
-      const softMargin = 85;
-      let inwardX = 0;
-      let inwardY = 0;
-      if (this.x < screen.left + softMargin) inwardX += 1;
-      if (this.x > screen.right - softMargin) inwardX -= 1;
-      if (this.y < screen.top + softMargin) inwardY += 1;
-      if (this.y > screen.bottom - softMargin) inwardY -= 1;
-
-      if (inwardX !== 0 || inwardY !== 0) {
-        const toCenterX = screen.centerX - this.x;
-        const toCenterY = screen.centerY - this.y;
-        const toCenterLen = Math.hypot(toCenterX, toCenterY) || 1;
-        const blend = 0.55;
-        wanderVx = wanderVx * (1 - blend) + (toCenterX / toCenterLen) * modeSpeed * blend;
-        wanderVy = wanderVy * (1 - blend) + (toCenterY / toCenterLen) * modeSpeed * blend;
-        // Rotate wanderAngle toward the screen center so the dog turns back in.
-        const centerAngle = Math.atan2(toCenterY, toCenterX);
-        this.wanderAngle = lerpAngle(this.wanderAngle, centerAngle, Math.min(1, dt * 3));
-      }
-
-    }
-
-    // Wide soft tether at 300px (headless fallback when no camera is present):
-    // only bias back toward the owner once the dog has drifted far.
-    if (!screen) {
-      if (distToOwner > 300) {
-        const bias = Math.min(1.0, (distToOwner - 300) / 80); // 0 at 300, 1 at 380
-        const toOwnerX = (this.owner.x - this.x) / (distToOwner || 1);
-        const toOwnerY = (this.owner.y - this.y) / (distToOwner || 1);
-        this.vx = wanderVx * (1.0 - bias) + toOwnerX * modeSpeed * bias;
-        this.vy = wanderVy * (1.0 - bias) + toOwnerY * modeSpeed * bias;
-      } else {
-        this.vx = wanderVx;
-        this.vy = wanderVy;
-      }
-    } else {
-      this.vx = wanderVx;
-      this.vy = wanderVy;
-    }
-
-    if (this.roamSubMode === RoamSubMode.CHECK_IN && distToOwner < 48) {
-      this.wagSpeed = 16;
-    } else if (Math.hypot(this.vx, this.vy) > 8) {
-      this.angle = lerpAngle(this.angle, Math.atan2(this.vy, this.vx), Math.min(1, dt * 12));
-      this.wagSpeed = 9;
-    } else {
-      this.wagSpeed = 6;
-    }
-
-    // Spontaneous barking influenced by barkyness
-    if (Math.random() < (this.personality.barkyness * 0.0006) && !this.isBarking) {
-      this.bark();
-    }
-  }
-
-  _legacyUpdateSocialGreetRemoved(dt, otherDogs = []) {
-    return;
-  }
-
-  _unusedSocialGreetBody(dt, otherDogs = []) {
-    if (!this.socialTargetDog || this.socialTargetDog.state === DogState.FETCHING) {
-      this.socialTargetDog = null;
-      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
-      return;
-    }
-
-    if (this.owner && this.owner.isLeashed) {
-      const distToOwner = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
-      if (distToOwner > 95) {
-        this.socialTargetDog = null;
-        this.state = DogState.FOLLOWING;
-        return;
-      }
-    }
-
-    const dx = this.socialTargetDog.x - this.x;
-    const dy = this.socialTargetDog.y - this.y;
-    const dist = Math.hypot(dx, dy);
-
-    if (dist > 160) {
-      this.socialTargetDog = null;
-      this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
-      return;
-    }
-
-    // Shyness modifies social berth: low shyness dogs approach to ~28px, high shyness dogs keep a wider berth (~45px)
-    const minBerth = 24 + this.personality.shyness * 4.2;
-    const maxBerth = minBerth + 8;
-
-    if (dist > maxBerth) {
-      const approachSpeed = this.speed * 0.75;
-      this.vx = (dx / dist) * approachSpeed;
-      this.vy = (dy / dist) * approachSpeed;
-      this.angle = Math.atan2(this.vy, this.vx);
-    } else if (dist < minBerth) {
-      const backSpeed = this.speed * 0.25;
-      this.vx = -(dx / (dist || 1)) * backSpeed;
-      this.vy = -(dy / (dist || 1)) * backSpeed;
-      this.angle = Math.atan2(dy, dx);
-    } else {
-      const tangentX = -dy / dist;
-      const tangentY = dx / dist;
-      const circleSpeed = (!this.owner?.isLeashed && !this.socialTargetDog?.owner?.isLeashed) ? 65 : 30;
-      this.vx = tangentX * circleSpeed;
-      this.vy = tangentY * circleSpeed;
-      this.angle = Math.atan2(dy, dx);
-    }
-
-    this.wagSpeed = 12 + this.personality.playfulness * 2;
-    this.stateTimer -= dt;
-
-    if (this.stateTimer <= 0) {
-      const wasBothOffLeash = Boolean(!this.owner?.isLeashed && this.socialTargetDog && !this.socialTargetDog.owner?.isLeashed);
-      const partner = this.socialTargetDog;
-      this.socialTargetDog = null;
-      // Playfulness modifies play-bow transition chance
-      const playBowChance = 0.15 + (this.personality.playfulness / 5) * 0.45;
-      if (wasBothOffLeash && this._tryStartPackPlay(partner)) {
-        return;
-      }
-      if (Math.random() < playBowChance) {
-        this.state = DogState.PLAY_BOW;
-        this.stateTimer = 2.2;
-        this.emoteBubble = '🐾';
-        this.emoteTimer = 2.0;
-        this.wagSpeed = 14 + this.personality.playfulness * 2;
-      } else if (wasBothOffLeash && this.zoomiesCooldown <= 0 && Math.random() < 0.25) {
-        this.triggerZoomies();
-      } else {
-        this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
-      }
-    }
-  }
 
   // Attempt to pair up with a partner dog for sustained pack play.
   // Returns true when the pack-play bond was established.
@@ -2181,6 +1469,10 @@ export class CompanionDog {
   }
 
   _legacyUpdatePackPlayRemoved(dt, field = null) {
+    return;
+  }
+
+  _unusedPackPlayBody(dt, field = null) {
     const partner = this.packPlayPartner;
 
     // Safety: break the bond if the partner vanished, left pack play, or either
@@ -2411,6 +1703,10 @@ export class CompanionDog {
   }
 
   _legacyUpdateRecalledRemoved(dt) {
+    return;
+  }
+
+  _unusedRecalledBody(dt) {
     if (!this.owner) {
       this.state = DogState.ROAMING;
       return;
@@ -2489,6 +1785,10 @@ export class CompanionDog {
   }
 
   _legacyUpdateFetchingRemoved(dt) {
+    return;
+  }
+
+  _unusedFetchingBody(dt) {
     if (!this.targetBall) {
       this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
       return;
@@ -2551,6 +1851,10 @@ export class CompanionDog {
   }
 
   _legacyUpdatePlayBowRemoved(dt) {
+    return;
+  }
+
+  _unusedPlayBowBody(dt) {
     this.vx *= 0.5;
     this.vy *= 0.5;
     this.stateTimer -= dt;
@@ -2568,6 +1872,10 @@ export class CompanionDog {
   }
 
   _legacyUpdateSniffRemoved(dt) {
+    return;
+  }
+
+  _unusedSniffBody(dt) {
     this.vx *= 0.4;
     this.vy *= 0.4;
     this.stateTimer -= dt;
@@ -2584,6 +1892,10 @@ export class CompanionDog {
   }
 
   _legacyUpdateSittingRemoved(dt) {
+    return;
+  }
+
+  _unusedSittingBody(dt) {
     this.vx = 0;
     this.vy = 0;
     this.stateTimer -= dt;
@@ -2600,6 +1912,10 @@ export class CompanionDog {
   }
 
   _legacyUpdateZoomiesRemoved(dt, field) {
+    return;
+  }
+
+  _unusedZoomiesBody(dt, field) {
     if (this.owner && this.owner.isLeashed) {
       this.state = DogState.FOLLOWING;
       return;
@@ -2759,6 +2075,10 @@ export class CompanionDog {
   }
 
   _legacyUpdateSniffingTrailRemoved(dt, field) {
+    return;
+  }
+
+  _unusedSniffingTrailBody(dt, field) {
     this.stateTimer -= dt;
     this.sniffTime += dt;
     this.noseTwitch = Math.sin(this.sniffTime * 25) * 1.6;

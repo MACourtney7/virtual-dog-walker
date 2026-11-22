@@ -464,6 +464,35 @@ mod tests {
         assert_eq!(GaitModeId::Gallop as u32, 3);
     }
 
+    fn assert_bool(_: bool) {}
+
+    fn assert_f32(_: f32) {}
+
+    #[test]
+    fn grouped_struct_fields_have_expected_types() {
+        let combo = DiscreteCombo {
+            is_on_leash: false,
+            is_pooping: true,
+            has_need: false,
+            has_ball: true,
+        };
+        assert_bool(combo.is_on_leash);
+        assert_bool(combo.is_pooping);
+        assert_bool(combo.has_need);
+        assert_bool(combo.has_ball);
+
+        let traits = PersonalityTraits {
+            curiosity: 0.5,
+            energy: 0.25,
+            stubbornness: 0.0,
+            loyalty: 1.0,
+        };
+        assert_f32(traits.curiosity);
+        assert_f32(traits.energy);
+        assert_f32(traits.stubbornness);
+        assert_f32(traits.loyalty);
+    }
+
     #[test]
     fn event_bits_match_contract() {
         assert_eq!(DOG_EVENT_NONE, 0);

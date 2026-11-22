@@ -247,22 +247,49 @@ mod tests {
     }
 
     #[test]
-    fn dog_contract_buffer_ptr_is_stable() {
+    fn dog_contract_new_zero_initializes_all_slots() {
+        let sim = WasmWorldSim::new(2000.0, 2000.0);
+        assert_eq!(sim.dog_buffer.slots.len(), DOG_SIM_BUFFER_LEN);
+        for (index, slot) in sim.dog_buffer.slots.iter().enumerate() {
+            assert_eq!(slot.to_bits(), 0, "slot {} must start zeroed", index);
+        }
+    }
+
+    #[test]
+    fn dog_contract_buffer_ptr_is_stable_across_calls() {
         let mut sim = WasmWorldSim::new(2000.0, 2000.0);
         let first = sim.dog_buffer_ptr();
         let second = sim.dog_buffer_ptr();
         assert_eq!(first, second);
+
+        sim.step_dog_buffer();
+        let after_step = sim.dog_buffer_ptr();
+        assert_eq!(first, after_step);
+
+        let _ = sim.resolve_collision(10.0, 10.0, 16.0);
+        let after_collision = sim.dog_buffer_ptr();
+        assert_eq!(first, after_collision);
     }
 
     #[test]
-    fn dog_contract_step_buffer_is_noop() {
+    fn dog_contract_step_buffer_preserves_slot_bits() {
         let mut sim = WasmWorldSim::new(2000.0, 2000.0);
-        let before = sim.dog_buffer.slots;
-        sim.step_dog_buffer();
-        let after = sim.dog_buffer.slots;
-        assert_eq!(before.len(), 128);
-        for (a, b) in before.iter().zip(after.iter()) {
-            assert_eq!(a.to_bits(), b.to_bits());
+        for (index, slot) in sim.dog_buffer.slots.iter_mut().enumerate() {
+            *slot = if index % 2 == 0 {
+                f32::from_bits(0x7fc0_0001 + index as u32)
+            } else {
+                -1.0 * (index as f32 + 1.0)
+            };
         }
+
+        let before: Vec<u32> = sim.dog_buffer.slots.iter().map(|s| s.to_bits()).collect();
+        assert_eq!(before.len(), DOG_SIM_BUFFER_LEN);
+        assert!(before.iter().any(|bits| f32::from_bits(*bits).is_nan()));
+        assert!(before.iter().any(|bits| !f32::from_bits(*bits).is_nan()));
+
+        sim.step_dog_buffer();
+
+        let after: Vec<u32> = sim.dog_buffer.slots.iter().map(|s| s.to_bits()).collect();
+        assert_eq!(before, after);
     }
 }

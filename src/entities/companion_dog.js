@@ -1124,10 +1124,16 @@ export class CompanionDog {
     const bias = Math.min(1.0, (distToOwner - 220) / 260);
     if (bias <= 0) return;
 
+    // Obedience-scaled catch-up probability: a more obedient dog is more
+    // likely to break off and trot back toward the owner. Normalised 1..5
+    // obedience maps to a 0.45..0.89 probability band.
+    const obedience = ((this.personality?.obedience || 3) - 1) / 4; // 0..1
+    const catchUpChance = 0.45 + 0.11 * obedience;
+
     const toOwnerX = dx / (distToOwner || 1);
     const toOwnerY = dy / (distToOwner || 1);
     const speed = Math.hypot(this.vx, this.vy) || this.speed;
-    const blend = Math.min(1.0, bias * Math.min(1, dt * 6));
+    const blend = Math.min(1.0, bias * catchUpChance * Math.min(1, dt * 6));
 
     this.vx = this.vx * (1.0 - blend) + toOwnerX * speed * blend;
     this.vy = this.vy * (1.0 - blend) + toOwnerY * speed * blend;

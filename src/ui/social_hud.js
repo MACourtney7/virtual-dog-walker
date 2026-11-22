@@ -12,7 +12,7 @@ export const DEFAULT_PERSONALITY = { curiosity: 3, energy: 3, stubbornness: 2, l
 
 // Clamp an arbitrary value to an integer in 1..=5, falling back to `def`.
 function normalizeTraitValue(value, def) {
-  const n = typeof value === 'number' ? value : parseInt(value, 10);
+  const n = typeof value === 'number' ? value : Number(value);
   if (!Number.isFinite(n)) return def;
   return Math.min(5, Math.max(1, Math.round(n)));
 }
@@ -902,7 +902,11 @@ export class SocialHUD {
         collarColor: this.dogSlot ? this.dogSlot.collarColor : '#0d9488',
         dogName: this.dogSlot ? this.dogSlot.name : 'Ziggy',
         dogSlot: this.dogSlot,
-        personality: this.dogSlot ? normalizePersonality(this.dogSlot.personality) : { ...DEFAULT_PERSONALITY }
+        personality: this.dogSlot
+          ? normalizePersonality(this.dogSlot.personality)
+          : (this.dog && this.dog.personality
+            ? normalizePersonality(this.dog.personality)
+            : { ...DEFAULT_PERSONALITY })
       };
       localStorage.setItem('clifton_walker_profile', JSON.stringify(profileToSave));
     } catch (e) {
@@ -912,7 +916,11 @@ export class SocialHUD {
 
   broadcastProfile() {
     if (!this.net || typeof this.net.setLocalMeta !== 'function') return;
-    const personality = this.dogSlot ? normalizePersonality(this.dogSlot.personality) : { ...DEFAULT_PERSONALITY };
+    const personality = this.dogSlot
+      ? normalizePersonality(this.dogSlot.personality)
+      : (this.dog && this.dog.personality
+        ? normalizePersonality(this.dog.personality)
+        : { ...DEFAULT_PERSONALITY });
     const extraMeta = {
       hairStyle: this.owner.hairStyle,
       hairColor: this.owner.hairColor,

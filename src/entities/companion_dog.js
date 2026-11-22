@@ -1295,7 +1295,14 @@ export class CompanionDog {
 
     if (bitmask & DogEventBit.BALL_HANDOFF) {
       run(() => {
-        activeBall?.retrieveByOwner?.();
+        // Hand the ball back to the owner. Prefer the dog's tracked target ball
+        // so the retrieveByOwner contract is honoured, then fall back to the
+        // active ball passed into the step.
+        if (this.targetBall && typeof this.targetBall.retrieveByOwner === 'function') {
+          this.targetBall.retrieveByOwner();
+        } else {
+          activeBall?.retrieveByOwner?.();
+        }
         this.hasBall = false;
         this.targetBall = null;
         this.setEmote('❤️', 2.0);

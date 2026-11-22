@@ -306,16 +306,12 @@ export class CompanionDog {
     this.radius = 14;
     this.depthY = this.y + 6;
 
-    // Canine Personality Model (1-5 scale, canonical traits)
+    // Canine Personality Model (1-5 scale, canonical 4 traits only)
     this.personality = {
       curiosity: 3,
       energy: 3,
       stubbornness: 2,
       loyalty: 4,
-      playfulness: 3,
-      shyness: 2,
-      barkyness: 2,
-      obedience: 4,
       ...(personality || {})
     };
     this.setPersonality(this.personality);
@@ -698,19 +694,6 @@ export class CompanionDog {
     if (p.loyalty !== undefined) {
       this.personality.loyalty = clampTrait(p.loyalty, this.personality.loyalty || 4);
     }
-    if (p.playfulness !== undefined) {
-      this.personality.playfulness = clampTrait(p.playfulness, this.personality.playfulness || 3);
-    }
-    if (p.shyness !== undefined) {
-      this.personality.shyness = clampTrait(p.shyness, this.personality.shyness || 2);
-    }
-    if (p.barkyness !== undefined) {
-      this.personality.barkyness = clampTrait(p.barkyness, this.personality.barkyness || 2);
-    }
-    if (p.obedience !== undefined) {
-      this.personality.obedience = clampTrait(p.obedience, this.personality.obedience || 4);
-    }
-
     // Increases enthusiasm and speed during ball fetch sprint
     this.sprintSpeed = 260 + this.personality.energy * 15;
   }
@@ -1084,6 +1067,13 @@ export class CompanionDog {
     const bitmask = stepCompanionDogWasm(this, dt, field, otherDogs, activeBall, npcs);
     this.executeDogEventBitmask(bitmask, field, activeBall);
 
+    // Keep the owner's leash hand on the dog's flank side and expose the
+    // leash-taut signal for rendering/tests.
+    if (this.owner) {
+      this.owner.leashHandSide = this.preferredSide;
+    }
+    this.leashTaut = Boolean(this.owner && this.owner.isLeashed);
+
     // Hydrate owner from Wasm-side clamp/freeze flags.
     if (this.owner && this.ownerWasClamped) {
       this.owner.x = this.ownerClampedX;
@@ -1162,11 +1152,11 @@ export class CompanionDog {
     const bias = Math.min(1.0, (distToOwner - 220) / 260);
     if (bias <= 0) return;
 
-    // Obedience-scaled catch-up probability: a more obedient dog is more
-    // likely to break off and trot back toward the owner. Normalised 1..5
-    // obedience maps to a 0.45..0.89 probability band.
-    const obedience = ((this.personality?.obedience || 3) - 1) / 4; // 0..1
-    const catchUpChance = 0.45 + 0.11 * obedience;
+    // Loyalty-scaled catch-up probability: a more loyal dog is more likely to
+    // break off and trot back toward the owner. Normalised 1..5 loyalty maps
+    // to a 0.45..0.89 probability band.
+    const loyalty = ((this.personality?.loyalty || 3) - 1) / 4; // 0..1
+    const catchUpChance = 0.45 + 0.11 * loyalty;
 
     const toOwnerX = dx / (distToOwner || 1);
     const toOwnerY = dy / (distToOwner || 1);
@@ -1186,7 +1176,7 @@ export class CompanionDog {
     this._reactionBarkCooldown = Math.max(0, (this._reactionBarkCooldown || 0) - dt);
     if (this._reactionBarkCooldown > 0) return;
 
-    const barkyness = this.personality?.barkyness || 2;
+    const energy = this.personality?.energy || 3;
 
     // Jogger reaction: a passing jogger within ~120px can provoke a bark.
     if (Array.isArray(npcs)) {
@@ -1195,7 +1185,7 @@ export class CompanionDog {
         const dx = (npc.x || 0) - this.x;
         const dy = (npc.y || 0) - this.y;
         const dist = Math.hypot(dx, dy);
-        if (dist < 120 && Math.random() < 0.02 * barkyness) {
+        if (dist < 120 && Math.random() < 0.02 * energy) {
           this.bark();
           this._reactionBarkCooldown = 3.0;
           return;
@@ -1210,7 +1200,7 @@ export class CompanionDog {
         const dx = (other.x || 0) - this.x;
         const dy = (other.y || 0) - this.y;
         const dist = Math.hypot(dx, dy);
-        if (dist < 260 && other.isBarking && Math.random() < 0.01 * barkyness) {
+        if (dist < 260 && other.isBarking && Math.random() < 0.01 * energy) {
           this.bark();
           this._reactionBarkCooldown = 3.0;
           return;
@@ -1311,7 +1301,7 @@ export class CompanionDog {
 
     if (bitmask & DogEventBit.STICK_PICKED_UP) {
       run(() => {
-        // Attach the nearest uncarried stick within range if not already held.
+        // Attach the nearest uncarried stick within 28px if not already held.
         if (!this.carriedStick && field && Array.isArray(field.sticks)) {
           let nearest = null;
           let nearestDist = Infinity;
@@ -1319,7 +1309,7 @@ export class CompanionDog {
             if (!stick || stick.isCarried) continue;
             if (typeof stick.x !== 'number' || typeof stick.y !== 'number') continue;
             const d = Math.hypot(stick.x - this.x, stick.y - this.y);
-            if (d < nearestDist) {
+            if (d < 28 && d < nearestDist) {
               nearestDist = d;
               nearest = stick;
             }
@@ -1330,8 +1320,11 @@ export class CompanionDog {
             nearest.carrier = this;
           }
         }
-        this.hasStick = true;
-        this.setEmote('🪵', 2.5);
+        // Only flag the stick as held when one is actually attached.
+        if (this.carriedStick) {
+          this.hasStick = true;
+          this.setEmote('🪵', 2.5);
+        }
       });
     }
 

@@ -1069,6 +1069,10 @@ export class CompanionDog {
     // within earshot can trigger a spontaneous bark (barkyness-gated).
     this._updateReactionBarking(dt, otherDogs, npcs);
 
+    // Distance-scaled catch-up: when off-leash and roaming far from the owner,
+    // bias velocity back toward the owner so the dog never strands itself.
+    this._applyDistanceScaledCatchUp(dt);
+
     // Post-step bookkeeping: depth sort, bark wave decay, emote timer, hearts.
     this.depthY = this.y + 6;
 
@@ -1100,6 +1104,33 @@ export class CompanionDog {
       h.alpha -= dt * 0.7;
       if (h.alpha <= 0) this.hearts.splice(i, 1);
     }
+  }
+
+  // Distance-scaled catch-up tether (AC-013.1 / AC-035.1).
+  // Off-leash roaming is never hard-clamped at a fixed radius; instead the
+  // return bias ramps smoothly from 0 at 220px to 1.0 at 480px from the owner.
+  _applyDistanceScaledCatchUp(dt) {
+    if (!this.owner) return;
+    if (this.owner.isLeashed) return;
+    if (this.state === DogState.FETCHING || this.state === DogState.RECALLED) return;
+    if (this.state === DogState.LOST || this.state === DogState.POOPING) return;
+
+    const dx = this.owner.x - this.x;
+    const dy = this.owner.y - this.y;
+    const distToOwner = Math.hypot(dx, dy);
+    if (distToOwner <= 220) return;
+
+    // Smooth 0..1 ramp: 0 at 220px, 1.0 at 480px.
+    const bias = Math.min(1.0, (distToOwner - 220) / 260);
+    if (bias <= 0) return;
+
+    const toOwnerX = dx / (distToOwner || 1);
+    const toOwnerY = dy / (distToOwner || 1);
+    const speed = Math.hypot(this.vx, this.vy) || this.speed;
+    const blend = Math.min(1.0, bias * Math.min(1, dt * 6));
+
+    this.vx = this.vx * (1.0 - blend) + toOwnerX * speed * blend;
+    this.vy = this.vy * (1.0 - blend) + toOwnerY * speed * blend;
   }
 
   // Autonomous reaction barking driven by nearby joggers and remote dogs.

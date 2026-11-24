@@ -1,6 +1,65 @@
 // Human Owner Player Avatar - Cruise-and-Helm Player Locomotion, Continuous Heading Steering, Ground Halo & Directional 2.5D Silhouette
-import { resolveFieldCollision } from '../engine/wasm_sim_bridge.js';
+import { resolveFieldCollision, getWasmSim, getBufferView } from '../engine/wasm_sim_bridge.js';
 import { MAX_LEASH_LENGTH, clampOwnerToLeash } from '../world/leash.js';
+
+// --- Wasm OwnerSimBuffer contract (mirror crates/dog_walker_core/src/owner_sim.rs) -----------
+// Slot indices within the 64-float owner buffer.
+const OWNER_SLOT_X = 0;
+const OWNER_SLOT_Y = 1;
+const OWNER_SLOT_VX = 2;
+const OWNER_SLOT_VY = 3;
+const OWNER_SLOT_ANGLE = 4;
+const OWNER_SLOT_SPEED = 5;
+const OWNER_SLOT_GAIT = 6;
+const OWNER_SLOT_WALK_PHASE = 7;
+const OWNER_SLOT_INPUT_X = 8;
+const OWNER_SLOT_INPUT_Y = 9;
+const OWNER_SLOT_CMD_FLAGS = 10;
+const OWNER_SLOT_EVENT_BITMASK = 11;
+const OWNER_SLOT_STEP_OFF_TIMER = 12;
+const OWNER_SLOT_JOG_TIMER = 13;
+const OWNER_SLOT_JOG_COOLDOWN = 14;
+const OWNER_SLOT_WANDER_HEADING = 15;
+const OWNER_SLOT_WANDER_TIMER = 16;
+const OWNER_SLOT_LEASH_TENSION = 21;
+const OWNER_SLOT_LEASH_TAUT = 22;
+const OWNER_SLOT_HAND_LOCAL_X = 23;
+const OWNER_SLOT_HAND_LOCAL_Y = 24;
+const OWNER_SLOT_WARP_GATE_ID = 25;
+const OWNER_SLOT_WANDER_BLOCKED = 31;
+const OWNER_SLOT_DESIRED_GAIT = 34;
+const OWNER_SLOT_SPEED_MULTIPLIER = 35;
+
+// Gait ids.
+const OWNER_GAIT_STAND = 0;
+const OWNER_GAIT_STROLL = 1;
+const OWNER_GAIT_WALK = 2;
+const OWNER_GAIT_JOG = 3;
+const OWNER_GAIT_WANDER = 4;
+
+// Command flags.
+const OWNER_CMD_RESET = 1 << 0;
+const OWNER_CMD_STOP = 1 << 1;
+const OWNER_CMD_JOG = 1 << 2;
+const OWNER_CMD_WALK = 1 << 3;
+const OWNER_CMD_STROLL = 1 << 4;
+const OWNER_CMD_WANDER = 1 << 5;
+const OWNER_CMD_CLEAR_WANDER = 1 << 6;
+const OWNER_CMD_FACE_DOG = 1 << 7;
+
+// Event bits.
+const OWNER_EVENT_GAIT_CHANGED = 1 << 1;
+const OWNER_EVENT_STEP_OFF_STARTED = 1 << 3;
+const OWNER_EVENT_STEP_OFF_FINISHED = 1 << 4;
+const OWNER_EVENT_WANDER_STARTED = 1 << 5;
+const OWNER_EVENT_WANDER_BLOCKED = 1 << 6;
+const OWNER_EVENT_BOUNDARY_BLOCKED = 1 << 7;
+const OWNER_EVENT_OBSTACLE_DEFLECTED = 1 << 8;
+const OWNER_EVENT_LEASH_FORCED_STAND = 1 << 12;
+const OWNER_EVENT_JOG_STARTED = 1 << 15;
+
+// Number of Float32 slots in the owner buffer contract.
+const OWNER_BUFFER_SLOTS = 64;
 
 // Gait model constants
 export const Gait = Object.freeze({
@@ -10,6 +69,33 @@ export const Gait = Object.freeze({
   JOG: 'JOG',
   WANDER: 'WANDER'
 });
+
+// JS gait string <-> Wasm gait id mapping.
+const GAIT_TO_ID = Object.freeze({
+  [Gait.STAND]: OWNER_GAIT_STAND,
+  [Gait.STROLL]: OWNER_GAIT_STROLL,
+  [Gait.WALK]: OWNER_GAIT_WALK,
+  [Gait.JOG]: OWNER_GAIT_JOG,
+  [Gait.WANDER]: OWNER_GAIT_WANDER
+});
+
+const ID_TO_GAIT = Object.freeze({
+  [OWNER_GAIT_STAND]: Gait.STAND,
+  [OWNER_GAIT_STROLL]: Gait.STROLL,
+  [OWNER_GAIT_WALK]: Gait.WALK,
+  [OWNER_GAIT_JOG]: Gait.JOG,
+  [OWNER_GAIT_WANDER]: Gait.WANDER
+});
+
+function gaitToId(gait) {
+  const id = GAIT_TO_ID[gait];
+  return typeof id === 'number' ? id : OWNER_GAIT_STAND;
+}
+
+function idToGait(id) {
+  const gait = ID_TO_GAIT[id | 0];
+  return gait || Gait.STAND;
+}
 
 // NOTE: Gait.WANDER is intentionally excluded from GAIT_ORDER. GAIT_ORDER
 // drives the manual click-to-cycle pace progression (STAND -> STROLL -> WALK
@@ -158,6 +244,145 @@ export class Owner {
     // Gait-change event hook (wired by main.js to spawn speed badges).
     // Signature: (prevGait, nextGait) => void
     this.onGaitChange = null;
+
+    // --- Wasm OwnerSimBuffer state -----------------------------------------------------------
+    // Cached Float32Array view over the Wasm owner buffer (64 slots). Resolved lazily on the
+    // first step; null when Wasm is unavailable (JS fallback path is used instead).
+    this._ownerBuffer = null;
+    // Pointer the cached view was created from (0 = not yet resolved).
+    this._ownerBufferPtr = 0;
+    // True once the persistent buffer has been seeded from the JS state.
+    this._ownerBufferSeeded = false;
+    // Pending command flags to OR into the buffer on the next step.
+    this._pendingCmdFlags = 0;
+    // Pending input steering vector (world-space direction).
+    this._inputX = 0;
+    this._inputY = 0;
+    // Wander heading mirrored from the Wasm buffer for external readers.
+    this.wanderHeading = this.angle;
+  }
+
+  /**
+   * Resolves (and caches) the Float32Array view over the Wasm owner buffer. Returns null when
+   * the Wasm sim is unavailable so callers fall back to the JS implementation.
+   */
+  _getOwnerBuffer() {
+    let sim = null;
+    try {
+      sim = getWasmSim();
+    } catch (e) {
+      return null;
+    }
+    if (!sim || typeof sim.owner_buffer_ptr !== 'function' || typeof sim.step_owner_buffer !== 'function') {
+      return null;
+    }
+    let ptr = 0;
+    try {
+      ptr = sim.owner_buffer_ptr();
+    } catch (e) {
+      return null;
+    }
+    if (!ptr) return null;
+    // Reuse the cached view only while it still points at the same live memory buffer AND
+    // the underlying ArrayBuffer has not been detached by memory.grow() (byteLength === 0).
+    if (
+      this._ownerBuffer &&
+      this._ownerBufferPtr === ptr &&
+      this._ownerBuffer.buffer &&
+      this._ownerBuffer.buffer.byteLength > 0
+    ) {
+      return this._ownerBuffer;
+    }
+    // Build the view over the Wasm linear memory via the bridge helper. The view is recreated
+    // whenever the underlying memory buffer has grown (buffer identity changed) or the pointer
+    // moved, so a stale view is never reused after memory.grow().
+    try {
+      const len = (typeof sim.owner_buffer_len === 'function')
+        ? (sim.owner_buffer_len() | 0)
+        : OWNER_BUFFER_SLOTS;
+      const view = getBufferView(ptr, len > 0 ? len : OWNER_BUFFER_SLOTS);
+      if (!view || view.length !== OWNER_BUFFER_SLOTS) return null;
+      if (!view.buffer || view.buffer.byteLength === 0) return null;
+      this._ownerBuffer = view;
+      this._ownerBufferPtr = ptr;
+      return view;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  /**
+   * Seeds the persistent Wasm owner buffer from the current JS state (once). Subsequent steps
+   * continue from the Wasm-authoritative state.
+   */
+  _seedOwnerBuffer(buf) {
+    if (this._ownerBufferSeeded) return;
+    buf[OWNER_SLOT_X] = Number.isFinite(this.x) ? this.x : 0;
+    buf[OWNER_SLOT_Y] = Number.isFinite(this.y) ? this.y : 0;
+    buf[OWNER_SLOT_VX] = Number.isFinite(this.vx) ? this.vx : 0;
+    buf[OWNER_SLOT_VY] = Number.isFinite(this.vy) ? this.vy : 0;
+    buf[OWNER_SLOT_ANGLE] = Number.isFinite(this.angle) ? this.angle : 0;
+    buf[OWNER_SLOT_SPEED] = 0;
+    buf[OWNER_SLOT_GAIT] = gaitToId(this.gait);
+    buf[OWNER_SLOT_WALK_PHASE] = Number.isFinite(this.walkPhase) ? this.walkPhase : 0;
+    buf[OWNER_SLOT_WANDER_HEADING] = Number.isFinite(this.wanderBaseHeading) ? this.wanderBaseHeading : this.angle;
+    buf[OWNER_SLOT_SPEED_MULTIPLIER] = 1.0;
+    this._ownerBufferSeeded = true;
+  }
+
+  /**
+   * Hydrates the JS-visible owner state from the Wasm owner buffer after a step.
+   */
+  _hydrateFromOwnerBuffer(buf, events) {
+    this.x = buf[OWNER_SLOT_X];
+    this.y = buf[OWNER_SLOT_Y];
+    this.vx = buf[OWNER_SLOT_VX];
+    this.vy = buf[OWNER_SLOT_VY];
+    this.angle = buf[OWNER_SLOT_ANGLE];
+    this.speed = buf[OWNER_SLOT_SPEED];
+    this.walkPhase = buf[OWNER_SLOT_WALK_PHASE];
+    this.wanderHeading = buf[OWNER_SLOT_WANDER_HEADING];
+
+    const nextGait = idToGait(buf[OWNER_SLOT_GAIT]);
+    if (nextGait !== this.gait) {
+      const prevGait = this.gait;
+      this.gait = nextGait;
+      if (typeof this.onGaitChange === 'function') {
+        this.onGaitChange(prevGait, nextGait);
+      }
+    }
+
+    // Mirror timers so external readers (and the JS fallback) stay consistent.
+    this.stepOffTimer = buf[OWNER_SLOT_STEP_OFF_TIMER];
+    this.stepOffActive = this.stepOffTimer > 0;
+    this.jogTimer = buf[OWNER_SLOT_JOG_TIMER];
+    this.jogCooldown = buf[OWNER_SLOT_JOG_COOLDOWN];
+
+    // Leash arm pose state.
+    this.leashArmTension = buf[OWNER_SLOT_LEASH_TENSION];
+    this.leashDistance = this.dog ? Math.hypot(this.dog.x - this.x, this.dog.y - this.y) : 0;
+
+    // Motion flags.
+    this.isMoving = this.gait !== Gait.STAND;
+    if (!this.isMoving) {
+      this.vx = 0;
+      this.vy = 0;
+    }
+
+    // Wander mode mirrors the Wasm gait.
+    if (this.gait === Gait.WANDER) {
+      this.wanderMode = true;
+      this.wanderBaseHeading = this.wanderHeading;
+    } else if (this.wanderMode && (events & OWNER_EVENT_WANDER_STARTED) === 0) {
+      // Leaving WANDER via a non-wander command clears the autopilot flag.
+      this.wanderMode = false;
+    }
+
+    // Boundary stop: the Wasm sim zeroes speed but keeps the gait; mirror the
+    // legacy JS behaviour of forcing STAND on a boundary block.
+    if (events & OWNER_EVENT_BOUNDARY_BLOCKED) {
+      this.setGait(Gait.STAND);
+    }
   }
 
   triggerBrakeLight(now = (typeof performance !== 'undefined' ? performance.now() : Date.now())) {
@@ -324,6 +549,9 @@ export class Owner {
     // Heading-only update. Gait transitions are the caller's responsibility
     // (e.g. main.js explicitly promotes STAND -> STROLL on a field press).
     this.targetHeading = radians;
+    // Record the world-space steering direction for the Wasm input vector.
+    this._inputX = Math.cos(radians);
+    this._inputY = Math.sin(radians);
     // Turn-on-the-spot: while STAND, snap the facing angle immediately.
     if (this.gait === Gait.STAND) {
       this.angle = radians;
@@ -335,6 +563,13 @@ export class Owner {
     // manual GAIT_ORDER cycle.
     if (nextGait !== Gait.WANDER && !GAIT_ORDER.includes(nextGait)) return;
     if (nextGait === this.gait) return;
+
+    // When the Wasm owner buffer is active, route the gait change through the
+    // command flags so the authoritative sim applies it on the next step.
+    if (this._ownerBuffer) {
+      this._queueGaitCommand(nextGait);
+      return;
+    }
 
     const prevGait = this.gait;
 
@@ -399,6 +634,63 @@ export class Owner {
     const nextIdx = Math.max(0, Math.min(GAIT_ORDER.length - 1, idx + dir));
     if (nextIdx === idx) return;
     this.setGait(GAIT_ORDER[nextIdx]);
+  }
+
+  /**
+   * Queues a gait command flag for the next Wasm owner step. Mirrors the
+   * command priority in owner_sim.rs (STOP > JOG > WALK > STROLL > WANDER).
+   */
+  _queueGaitCommand(nextGait) {
+    switch (nextGait) {
+      case Gait.STAND:
+        this._pendingCmdFlags |= OWNER_CMD_STOP;
+        break;
+      case Gait.JOG:
+        this._pendingCmdFlags |= OWNER_CMD_JOG;
+        break;
+      case Gait.WALK:
+        this._pendingCmdFlags |= OWNER_CMD_WALK;
+        break;
+      case Gait.STROLL:
+        this._pendingCmdFlags |= OWNER_CMD_STROLL;
+        break;
+      case Gait.WANDER:
+        this._pendingCmdFlags |= OWNER_CMD_WANDER;
+        break;
+      default:
+        break;
+    }
+  }
+
+  /**
+   * Steps the owner through the Wasm OwnerSimBuffer authority. Writes inputs,
+   * calls step_owner_buffer(), hydrates outputs, and returns the event bitmask.
+   * Returns null when the Wasm buffer is unavailable (caller uses JS fallback).
+   */
+  _stepOwnerWasm(dt, field) {
+    const buf = this._getOwnerBuffer();
+    if (!buf) return null;
+    this._seedOwnerBuffer(buf);
+
+    // Inputs: steering vector + queued command flags (consumed this step).
+    buf[OWNER_SLOT_INPUT_X] = this._inputX;
+    buf[OWNER_SLOT_INPUT_Y] = this._inputY;
+    buf[OWNER_SLOT_CMD_FLAGS] = this._pendingCmdFlags >>> 0;
+    this._pendingCmdFlags = 0;
+
+    // Step the authoritative sim with the exact generated signature: step_owner_buffer(dt_s).
+    let events = 0;
+    try {
+      events = getWasmSim().step_owner_buffer(dt) >>> 0;
+    } catch (e) {
+      return null;
+    }
+
+    // Re-acquire the view in case memory.grow() detached the previous buffer.
+    const outBuf = this._getOwnerBuffer() || buf;
+
+    this._hydrateFromOwnerBuffer(outBuf, events);
+    return events;
   }
 
   // --- Wander mode (autopilot stroll) ---
@@ -615,6 +907,14 @@ export class Owner {
   updateWander(dt, world) {
     if (!this.wanderMode) return;
 
+    // When the Wasm owner buffer is active, the authoritative sim drives the
+    // wander autopilot. Queue the WANDER command and let step_owner_buffer()
+    // steer; the JS fallback below is skipped.
+    if (this._ownerBuffer) {
+      this._pendingCmdFlags |= OWNER_CMD_WANDER;
+      return;
+    }
+
     // Advance drift phase
     this.wanderPhase += WANDER_DRIFT_FREQUENCY * Math.PI * 2 * dt;
 
@@ -801,6 +1101,47 @@ export class Owner {
       return;
     }
 
+    // --- Wasm authority path -------------------------------------------------------------
+    // When the Wasm owner buffer is available, delegate locomotion/gait/wander/leash
+    // stepping to step_owner_buffer() and hydrate the JS state from the result.
+    if (this._getOwnerBuffer()) {
+      const events = this._stepOwnerWasm(dt, field);
+      if (events !== null) {
+        // Advance the leash arm pose state from the hydrated values.
+        if (this.isLeashed) {
+          this.leashArmExtensionPx = lerpNum(
+            LEASH_ARM_BASE_REACH_PX,
+            LEASH_ARM_MAX_REACH_PX,
+            this.leashArmTension
+          );
+        } else {
+          this.leashArmTension = 0;
+          this.leashArmExtensionPx = LEASH_ARM_BASE_REACH_PX;
+        }
+
+        this.depthY = this.y + 12;
+
+        // Update timers (petting, bending, chat, emote) — these are JS-only.
+        if (this.petTimer > 0) {
+          this.petTimer -= dt;
+          if (this.petTimer <= 0) this.isPetting = false;
+        }
+        if (this.bendTimer > 0) {
+          this.bendTimer -= dt;
+          if (this.bendTimer <= 0) this.isBending = false;
+        }
+        if (this.chatTimer > 0) {
+          this.chatTimer -= dt;
+          if (this.chatTimer <= 0) this.chatText = null;
+        }
+        if (this.emoteTimer > 0) {
+          this.emoteTimer -= dt;
+          if (this.emoteTimer <= 0) this.emote = null;
+        }
+        return;
+      }
+    }
+
     // 0. Leash state: while the dog is pooping on-leash the owner may still
     //    walk inside the MAX_LEASH_LENGTH radius. The owner is only stopped
     //    once the leash goes taut at the limit (handled after integration).
@@ -837,6 +1178,8 @@ export class Owner {
     } else {
       this._updateHeading(dt);
     }
+    // Keep the wander heading mirror in sync for external readers.
+    this.wanderHeading = this.wanderMode ? this.wanderBaseHeading : this.angle;
 
     // 4. Compute velocity from gait speed and current angle
     const speed = this.getCurrentSpeed();
@@ -1850,3 +2193,26 @@ Owner.WANDER_MAX_TURN_RATE = WANDER_MAX_TURN_RATE;
 Owner.WANDER_DRIFT_AMPLITUDE = WANDER_DRIFT_AMPLITUDE;
 Owner.WANDER_DRIFT_FREQUENCY = WANDER_DRIFT_FREQUENCY;
 Owner.WANDER_LOOKAHEAD_PX = WANDER_LOOKAHEAD_PX;
+Owner.OWNER_BUFFER_SLOTS = OWNER_BUFFER_SLOTS;
+Owner.OWNER_GAIT_STAND = OWNER_GAIT_STAND;
+Owner.OWNER_GAIT_STROLL = OWNER_GAIT_STROLL;
+Owner.OWNER_GAIT_WALK = OWNER_GAIT_WALK;
+Owner.OWNER_GAIT_JOG = OWNER_GAIT_JOG;
+Owner.OWNER_GAIT_WANDER = OWNER_GAIT_WANDER;
+Owner.OWNER_CMD_RESET = OWNER_CMD_RESET;
+Owner.OWNER_CMD_STOP = OWNER_CMD_STOP;
+Owner.OWNER_CMD_JOG = OWNER_CMD_JOG;
+Owner.OWNER_CMD_WALK = OWNER_CMD_WALK;
+Owner.OWNER_CMD_STROLL = OWNER_CMD_STROLL;
+Owner.OWNER_CMD_WANDER = OWNER_CMD_WANDER;
+Owner.OWNER_CMD_CLEAR_WANDER = OWNER_CMD_CLEAR_WANDER;
+Owner.OWNER_CMD_FACE_DOG = OWNER_CMD_FACE_DOG;
+Owner.OWNER_EVENT_GAIT_CHANGED = OWNER_EVENT_GAIT_CHANGED;
+Owner.OWNER_EVENT_STEP_OFF_STARTED = OWNER_EVENT_STEP_OFF_STARTED;
+Owner.OWNER_EVENT_STEP_OFF_FINISHED = OWNER_EVENT_STEP_OFF_FINISHED;
+Owner.OWNER_EVENT_WANDER_STARTED = OWNER_EVENT_WANDER_STARTED;
+Owner.OWNER_EVENT_WANDER_BLOCKED = OWNER_EVENT_WANDER_BLOCKED;
+Owner.OWNER_EVENT_BOUNDARY_BLOCKED = OWNER_EVENT_BOUNDARY_BLOCKED;
+Owner.OWNER_EVENT_OBSTACLE_DEFLECTED = OWNER_EVENT_OBSTACLE_DEFLECTED;
+Owner.OWNER_EVENT_LEASH_FORCED_STAND = OWNER_EVENT_LEASH_FORCED_STAND;
+Owner.OWNER_EVENT_JOG_STARTED = OWNER_EVENT_JOG_STARTED;

@@ -52,7 +52,64 @@ export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0) {
 }
 
 export function getWasmSim() {
+  if (!wasmSimInstance) {
+    throw new Error('Wasm sim not initialized');
+  }
   return wasmSimInstance;
+}
+
+/**
+ * Non-throwing Wasm availability check. Returns true only when the Wasm sim
+ * singleton has been initialized. Safe to call from hot paths and headless
+ * environments where Wasm may never load.
+ */
+export function isWasmSimReady() {
+  return Boolean(wasmSimInstance);
+}
+
+/**
+ * Returns a Float32Array view over the Wasm linear memory at `ptr` for `lengthFloats` slots.
+ * Throws `Error("Wasm buffer pointer unavailable")` when the pointer or memory is unavailable.
+ */
+export function getBufferView(ptr, lengthFloats) {
+  if (!wasmMemory || !wasmMemory.buffer) {
+    throw new Error('Wasm buffer pointer unavailable');
+  }
+  if (!ptr || !Number.isFinite(ptr) || ptr <= 0) {
+    throw new Error('Wasm buffer pointer unavailable');
+  }
+  const len = Math.max(0, lengthFloats | 0);
+  const byteOffset = ptr >>> 0;
+  // Always build a fresh view over the *current* buffer: memory.grow detaches the old
+  // ArrayBuffer (byteLength becomes 0), so any cached view would be stale.
+  const buffer = wasmMemory.buffer;
+  if (!buffer || buffer.byteLength === 0) {
+    throw new Error('Wasm buffer pointer unavailable');
+  }
+  if (byteOffset + len * 4 > buffer.byteLength) {
+    throw new Error('Wasm buffer pointer unavailable');
+  }
+  return new Float32Array(buffer, byteOffset, len);
+}
+
+/**
+ * ORs `bit` (a command mask) into the Float32 slot at `offset`, preserving existing bits.
+ * The slot is coerced to an unsigned 32-bit integer before the OR and written back as a float.
+ */
+export function writeCommandFlag(bufferView, offset, bit) {
+  if (!bufferView) return;
+  const idx = offset | 0;
+  const current = bufferView[idx] >>> 0;
+  const mask = bit >>> 0;
+  bufferView[idx] = (current | mask) >>> 0;
+}
+
+/**
+ * Reads the Float32 slot at `offset` coerced to an unsigned 32-bit integer (event bitmask).
+ */
+export function readEventBitmask(bufferView, offset) {
+  if (!bufferView) return 0;
+  return bufferView[offset | 0] >>> 0;
 }
 
 function isNodeRuntime() {
@@ -67,9 +124,9 @@ function isNodeRuntime() {
 export function initWasmSimSync(worldWidth = 3200.0, worldHeight = 2400.0) {
   simWorldWidth = worldWidth;
   simWorldHeight = worldHeight;
-  if (wasmSimInstance) return wasmSimInstance;
+  if (wasmSimInstance) return true;
   if (!isNodeRuntime()) {
-    throw new Error('initWasmSimSync is only supported in Node.js; use initWasmSim() in the browser.');
+    throw new Error('Wasm sim not initialized');
   }
 
   // Resolve the wasm path relative to this module, not the process cwd.
@@ -108,7 +165,7 @@ export function initWasmSimSync(worldWidth = 3200.0, worldHeight = 2400.0) {
   }
 
   console.log('[WasmSimBridge] Core simulation engine initialized synchronously (Rust/Wasm).');
-  return wasmSimInstance;
+  return true;
 }
 
 /**
@@ -136,6 +193,352 @@ function getDogBufferView() {
   dogBufferView = view;
   dogBufferPtr = ptr;
   return dogBufferView;
+}
+
+// --- NPC simulation buffer bridge (mirror npc_sim.rs) ----------------------------------------
+
+// NpcSimBuffer slot indices (0..63).
+export const NPC_SLOT_STATE = 0;
+export const NPC_SLOT_X = 1;
+export const NPC_SLOT_Y = 2;
+export const NPC_SLOT_HEADING_RAD = 3;
+export const NPC_SLOT_SPEED_SCALE = 4;
+export const NPC_SLOT_SEGMENT_INDEX = 5;
+export const NPC_SLOT_SEGMENT_T = 6;
+export const NPC_SLOT_ELAPSED_S = 7;
+export const NPC_SLOT_OPACITY = 8;
+export const NPC_SLOT_OPACITY_TARGET = 9;
+export const NPC_SLOT_DONE = 10;
+export const NPC_SLOT_IS_FINISHED_STATE = 11;
+export const NPC_SLOT_FINISH_TIME_S = 12;
+export const NPC_SLOT_FADE_START_S = 13;
+export const NPC_SLOT_FADE_ELAPSED_S = 14;
+export const NPC_SLOT_PAUSE_REMAINING_S = 15;
+export const NPC_SLOT_SPEECH_VISIBLE = 16;
+export const NPC_SLOT_SPEECH_PHRASE_ID = 17;
+export const NPC_SLOT_SPEECH_TIMER_S = 18;
+export const NPC_SLOT_SPEECH_WINDOW_S = 19;
+export const NPC_SLOT_PHRASE_TIMER_S = 20;
+export const NPC_SLOT_NEXT_SPEECH_DELAY_S = 21;
+export const NPC_SLOT_RNG_STATE = 22;
+export const NPC_SLOT_SEED = 23;
+export const NPC_SLOT_PATH_POINT_COUNT = 24;
+export const NPC_SLOT_PATH_TOTAL_LENGTH_PX = 25;
+export const NPC_SLOT_PATH_HASH = 26;
+export const NPC_SLOT_CMD_FLAGS = 27;
+export const NPC_SLOT_FADE_COMPLETED = 28;
+
+// Command flags (stored in NPC_SLOT_CMD_FLAGS).
+export const NPC_CMD_RESET = 1 << 0;
+export const NPC_CMD_PAUSE = 1 << 1;
+export const NPC_CMD_RESUME = 1 << 2;
+export const NPC_CMD_SET_WALKING = 1 << 3;
+export const NPC_CMD_SET_RUNNING = 1 << 4;
+export const NPC_CMD_FORCE_SPEECH = 1 << 5;
+
+// Event bitmask constants returned from stepNpcBuffer.
+export const NPC_EVENT_RESET = 1 << 0;
+export const NPC_EVENT_PAUSED = 1 << 1;
+export const NPC_EVENT_RESUMED = 1 << 2;
+export const NPC_EVENT_STATE_CHANGED = 1 << 3;
+export const NPC_EVENT_SPEECH_TRIGGERED = 1 << 4;
+export const NPC_EVENT_SPEECH_HIDDEN = 1 << 5;
+export const NPC_EVENT_PATH_FINISHED = 1 << 6;
+export const NPC_EVENT_FADE_STARTED = 1 << 7;
+export const NPC_EVENT_FADE_COMPLETED = 1 << 8;
+export const NPC_EVENT_CMD_REJECTED = 1 << 9;
+
+// NpcSimBuffer contract constants (mirror npc_sim.rs).
+export const NPC_BUFFER_SLOTS = 64;
+export const NPC_FADE_DURATION_S = 0.5;
+export const NPC_SPEECH_WINDOW_S = 4.0;
+export const NPC_SPEECH_BASE_DELAY_S = 4.0;
+export const NPC_SPEECH_DELAY_JITTER_S = 4.0;
+export const NPC_WALK_SPEED_PX_S = 40.0;
+export const NPC_RUN_SPEED_PX_S = 95.0;
+export const NPC_STATE_WALKING = 0;
+export const NPC_STATE_RUNNING = 1;
+export const NPC_STATE_PAUSED = 2;
+
+function npcSlotGetU32(buf, index) {
+  const v = buf[index];
+  return (Number.isFinite(v) && v > 0) ? (Math.round(v) >>> 0) : 0;
+}
+
+function npcSlotSetU32(buf, index, value) {
+  buf[index] = value >>> 0;
+}
+
+function npcSlotGetBits(buf, index) {
+  const f32 = new Float32Array(1);
+  const u32 = new Uint32Array(f32.buffer);
+  f32[0] = buf[index];
+  return u32[0];
+}
+
+function npcSlotSetBits(buf, index, value) {
+  const f32 = new Float32Array(1);
+  const u32 = new Uint32Array(f32.buffer);
+  u32[0] = value >>> 0;
+  buf[index] = f32[0];
+}
+
+function npcMulberry32Next(state) {
+  // Mirror crate::math::Mulberry32 (single draw) and advance the state.
+  let t = (state + 0x6D2B79F5) >>> 0;
+  const nextState = t;
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  const value = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  return { value, nextState };
+}
+
+function npcComputePathTotalLength(flat) {
+  const n = Math.floor(flat.length / 2);
+  let total = 0;
+  for (let i = 0; i < n - 1; i++) {
+    const dx = flat[2 * i + 2] - flat[2 * i];
+    const dy = flat[2 * i + 3] - flat[2 * i + 1];
+    total += Math.max(0.001, Math.hypot(dx, dy));
+  }
+  return total;
+}
+
+/**
+ * JS fallback for `step_npc_buffer` (exact port of crates/dog_walker_core/src/npc_sim.rs).
+ * Mutates `buf` (Float32Array of NPC_BUFFER_SLOTS) and returns the event bitmask.
+ */
+function stepNpcBufferJs(buf, flat, phraseCount, dt) {
+  if (!(dt > 0) || !Number.isFinite(dt)) return NPC_EVENT_CMD_REJECTED;
+
+  let events = 0;
+  const n = Math.floor(flat.length / 2);
+  const pathTotalLength = npcComputePathTotalLength(flat);
+  npcSlotSetU32(buf, NPC_SLOT_PATH_POINT_COUNT, n);
+  buf[NPC_SLOT_PATH_TOTAL_LENGTH_PX] = pathTotalLength;
+  const pathTooShort = n < 2;
+
+  const cmdFlags = npcSlotGetU32(buf, NPC_SLOT_CMD_FLAGS);
+  let didReset = false;
+  if (cmdFlags & NPC_CMD_RESET) {
+    const x0 = n >= 1 ? flat[0] : 0;
+    const y0 = n >= 1 ? flat[1] : 0;
+    buf[NPC_SLOT_X] = x0;
+    buf[NPC_SLOT_Y] = y0;
+    buf[NPC_SLOT_STATE] = NPC_STATE_WALKING;
+    buf[NPC_SLOT_OPACITY] = 1.0;
+    buf[NPC_SLOT_OPACITY_TARGET] = 1.0;
+    buf[NPC_SLOT_DONE] = 0.0;
+    buf[NPC_SLOT_IS_FINISHED_STATE] = 0.0;
+    buf[NPC_SLOT_ELAPSED_S] = 0.0;
+    buf[NPC_SLOT_SEGMENT_INDEX] = 0.0;
+    buf[NPC_SLOT_SEGMENT_T] = 0.0;
+    buf[NPC_SLOT_FADE_ELAPSED_S] = 0.0;
+    buf[NPC_SLOT_FINISH_TIME_S] = 0.0;
+    buf[NPC_SLOT_FADE_START_S] = 0.0;
+    buf[NPC_SLOT_FADE_COMPLETED] = 0.0;
+    buf[NPC_SLOT_PAUSE_REMAINING_S] = 0.0;
+    buf[NPC_SLOT_SPEECH_VISIBLE] = 0.0;
+    buf[NPC_SLOT_SPEECH_PHRASE_ID] = 0.0;
+    buf[NPC_SLOT_SPEECH_TIMER_S] = 0.0;
+    buf[NPC_SLOT_SPEECH_WINDOW_S] = 0.0;
+    buf[NPC_SLOT_PHRASE_TIMER_S] = 0.0;
+    buf[NPC_SLOT_NEXT_SPEECH_DELAY_S] = NPC_SPEECH_BASE_DELAY_S;
+    buf[NPC_SLOT_SPEED_SCALE] = 1.0;
+    const seed = npcSlotGetBits(buf, NPC_SLOT_SEED);
+    npcSlotSetBits(buf, NPC_SLOT_RNG_STATE, seed);
+    didReset = true;
+    events |= NPC_EVENT_RESET;
+  } else if (cmdFlags & NPC_CMD_PAUSE) {
+    buf[NPC_SLOT_STATE] = NPC_STATE_PAUSED;
+    buf[NPC_SLOT_PAUSE_REMAINING_S] = Infinity;
+    events |= NPC_EVENT_PAUSED;
+  } else if (cmdFlags & NPC_CMD_RESUME) {
+    buf[NPC_SLOT_STATE] = NPC_STATE_WALKING;
+    buf[NPC_SLOT_PAUSE_REMAINING_S] = 0.0;
+    events |= NPC_EVENT_RESUMED;
+  } else if (cmdFlags & NPC_CMD_SET_WALKING) {
+    buf[NPC_SLOT_STATE] = NPC_STATE_WALKING;
+    events |= NPC_EVENT_STATE_CHANGED;
+  } else if (cmdFlags & NPC_CMD_SET_RUNNING) {
+    buf[NPC_SLOT_STATE] = NPC_STATE_RUNNING;
+    events |= NPC_EVENT_STATE_CHANGED;
+  } else if (cmdFlags & NPC_CMD_FORCE_SPEECH) {
+    if (phraseCount === 0) {
+      events |= NPC_EVENT_CMD_REJECTED;
+    } else {
+      let rng = npcSlotGetBits(buf, NPC_SLOT_RNG_STATE);
+      const draw = npcMulberry32Next(rng);
+      rng = draw.nextState;
+      npcSlotSetBits(buf, NPC_SLOT_RNG_STATE, rng);
+      const phraseId = (Math.floor(draw.value * 4294967296) >>> 0) % phraseCount;
+      buf[NPC_SLOT_SPEECH_VISIBLE] = 1.0;
+      npcSlotSetU32(buf, NPC_SLOT_SPEECH_PHRASE_ID, phraseId);
+      buf[NPC_SLOT_SPEECH_TIMER_S] = 0.0;
+      buf[NPC_SLOT_SPEECH_WINDOW_S] = NPC_SPEECH_WINDOW_S;
+      buf[NPC_SLOT_PHRASE_TIMER_S] = 0.0;
+      events |= NPC_EVENT_SPEECH_TRIGGERED;
+    }
+  }
+  npcSlotSetU32(buf, NPC_SLOT_CMD_FLAGS, 0);
+
+  if (pathTooShort) {
+    buf[NPC_SLOT_DONE] = 1.0;
+    buf[NPC_SLOT_OPACITY_TARGET] = 0.0;
+    events |= NPC_EVENT_PATH_FINISHED;
+    return events;
+  }
+
+  let state = buf[NPC_SLOT_STATE];
+  if (state === NPC_STATE_PAUSED) {
+    const remaining = buf[NPC_SLOT_PAUSE_REMAINING_S];
+    if (Number.isFinite(remaining)) {
+      const next = remaining - dt;
+      if (next <= 0) {
+        buf[NPC_SLOT_PAUSE_REMAINING_S] = 0.0;
+        buf[NPC_SLOT_STATE] = NPC_STATE_WALKING;
+        state = NPC_STATE_WALKING;
+        events |= NPC_EVENT_RESUMED;
+      } else {
+        buf[NPC_SLOT_PAUSE_REMAINING_S] = next;
+      }
+    }
+  }
+
+  const done = buf[NPC_SLOT_DONE] > 0.5;
+  let finishedThisTick = false;
+  if (!done && !didReset && state !== NPC_STATE_PAUSED) {
+    const speedScale = buf[NPC_SLOT_SPEED_SCALE];
+    const baseSpeed = state === NPC_STATE_RUNNING ? NPC_RUN_SPEED_PX_S : NPC_WALK_SPEED_PX_S;
+    const speed = baseSpeed * speedScale;
+    const distance = speed * dt;
+
+    let segIndex = buf[NPC_SLOT_SEGMENT_INDEX] | 0;
+    let segT = buf[NPC_SLOT_SEGMENT_T];
+    const lastSegIndex = n - 2;
+    if (segIndex > lastSegIndex) segIndex = lastSegIndex;
+
+    let segLen = Math.max(0.001, Math.hypot(
+      flat[2 * (segIndex + 1)] - flat[2 * segIndex],
+      flat[2 * (segIndex + 1) + 1] - flat[2 * segIndex + 1]
+    ));
+    segT += distance / segLen;
+
+    while (segT >= 1.0 && segIndex < lastSegIndex) {
+      const oldLen = segLen;
+      segIndex += 1;
+      segLen = Math.max(0.001, Math.hypot(
+        flat[2 * (segIndex + 1)] - flat[2 * segIndex],
+        flat[2 * (segIndex + 1) + 1] - flat[2 * segIndex + 1]
+      ));
+      segT = (segT - 1.0) * oldLen / segLen;
+    }
+
+    const prevX = flat[2 * segIndex];
+    const prevY = flat[2 * segIndex + 1];
+    const nextX = flat[2 * (segIndex + 1)];
+    const nextY = flat[2 * (segIndex + 1) + 1];
+
+    if (segIndex === lastSegIndex && segT >= 1.0) {
+      buf[NPC_SLOT_X] = nextX;
+      buf[NPC_SLOT_Y] = nextY;
+      buf[NPC_SLOT_SEGMENT_INDEX] = segIndex;
+      buf[NPC_SLOT_SEGMENT_T] = 1.0;
+      buf[NPC_SLOT_HEADING_RAD] = Math.atan2(nextY - prevY, nextX - prevX);
+      const elapsed = buf[NPC_SLOT_ELAPSED_S] + dt;
+      buf[NPC_SLOT_ELAPSED_S] = elapsed;
+      buf[NPC_SLOT_DONE] = 1.0;
+      buf[NPC_SLOT_IS_FINISHED_STATE] = 1.0;
+      buf[NPC_SLOT_FINISH_TIME_S] = elapsed;
+      buf[NPC_SLOT_FADE_START_S] = elapsed;
+      buf[NPC_SLOT_FADE_ELAPSED_S] = 0.0;
+      buf[NPC_SLOT_FADE_COMPLETED] = 0.0;
+      buf[NPC_SLOT_OPACITY_TARGET] = 0.0;
+      finishedThisTick = true;
+      events |= NPC_EVENT_PATH_FINISHED | NPC_EVENT_FADE_STARTED;
+    } else {
+      const t = Math.max(0, Math.min(1, segT));
+      buf[NPC_SLOT_X] = prevX + (nextX - prevX) * t;
+      buf[NPC_SLOT_Y] = prevY + (nextY - prevY) * t;
+      buf[NPC_SLOT_SEGMENT_INDEX] = segIndex;
+      buf[NPC_SLOT_SEGMENT_T] = segT;
+      buf[NPC_SLOT_HEADING_RAD] = Math.atan2(nextY - prevY, nextX - prevX);
+      buf[NPC_SLOT_ELAPSED_S] = buf[NPC_SLOT_ELAPSED_S] + dt;
+    }
+  }
+
+  if (buf[NPC_SLOT_IS_FINISHED_STATE] > 0.5 && !finishedThisTick) {
+    const fadeElapsed = buf[NPC_SLOT_FADE_ELAPSED_S] + dt;
+    buf[NPC_SLOT_FADE_ELAPSED_S] = fadeElapsed;
+    const opacity = Math.max(0, Math.min(1, 1.0 - fadeElapsed / NPC_FADE_DURATION_S));
+    buf[NPC_SLOT_OPACITY] = opacity;
+    if (opacity <= 0 && buf[NPC_SLOT_FADE_COMPLETED] <= 0.5) {
+      buf[NPC_SLOT_FADE_COMPLETED] = 1.0;
+      buf[NPC_SLOT_DONE] = 1.0;
+      events |= NPC_EVENT_FADE_COMPLETED;
+    }
+  }
+
+  const speechVisible = buf[NPC_SLOT_SPEECH_VISIBLE] > 0.5;
+  if (speechVisible) {
+    const phraseTimer = buf[NPC_SLOT_PHRASE_TIMER_S] + dt;
+    buf[NPC_SLOT_PHRASE_TIMER_S] = phraseTimer;
+    if (phraseTimer >= NPC_SPEECH_WINDOW_S) {
+      buf[NPC_SLOT_SPEECH_VISIBLE] = 0.0;
+      buf[NPC_SLOT_PHRASE_TIMER_S] = 0.0;
+      buf[NPC_SLOT_SPEECH_TIMER_S] = 0.0;
+      let rng = npcSlotGetBits(buf, NPC_SLOT_RNG_STATE);
+      const draw = npcMulberry32Next(rng);
+      rng = draw.nextState;
+      npcSlotSetBits(buf, NPC_SLOT_RNG_STATE, rng);
+      buf[NPC_SLOT_NEXT_SPEECH_DELAY_S] = NPC_SPEECH_BASE_DELAY_S + draw.value * NPC_SPEECH_DELAY_JITTER_S;
+      events |= NPC_EVENT_SPEECH_HIDDEN;
+    }
+  } else {
+    const speechTimer = buf[NPC_SLOT_SPEECH_TIMER_S] + dt;
+    buf[NPC_SLOT_SPEECH_TIMER_S] = speechTimer;
+    const nextDelay = buf[NPC_SLOT_NEXT_SPEECH_DELAY_S];
+    if (speechTimer >= nextDelay) {
+      if (phraseCount === 0) {
+        buf[NPC_SLOT_SPEECH_TIMER_S] = 0.0;
+        buf[NPC_SLOT_NEXT_SPEECH_DELAY_S] = NPC_SPEECH_BASE_DELAY_S;
+        events |= NPC_EVENT_CMD_REJECTED;
+      } else {
+        let rng = npcSlotGetBits(buf, NPC_SLOT_RNG_STATE);
+        const draw = npcMulberry32Next(rng);
+        rng = draw.nextState;
+        npcSlotSetBits(buf, NPC_SLOT_RNG_STATE, rng);
+        const phraseId = (Math.floor(draw.value * 4294967296) >>> 0) % phraseCount;
+        buf[NPC_SLOT_SPEECH_VISIBLE] = 1.0;
+        npcSlotSetU32(buf, NPC_SLOT_SPEECH_PHRASE_ID, phraseId);
+        buf[NPC_SLOT_SPEECH_TIMER_S] = 0.0;
+        buf[NPC_SLOT_SPEECH_WINDOW_S] = NPC_SPEECH_WINDOW_S;
+        buf[NPC_SLOT_PHRASE_TIMER_S] = 0.0;
+        events |= NPC_EVENT_SPEECH_TRIGGERED;
+      }
+    }
+  }
+
+  return events;
+}
+
+/**
+ * Advances an NPC simulation buffer by one tick. Delegates to the Wasm `step_npc_buffer`
+ * authority when available, otherwise runs the exact JS fallback. `buf` is a Float32Array of
+ * NPC_BUFFER_SLOTS; `flat` is the path as [x0,y0,x1,y1,...]. Returns the event bitmask.
+ */
+export function stepNpcBuffer(buf, flat, phraseCount, dt, slot = 0) {
+  if (wasmSimInstance && typeof wasmSimInstance.step_npc_buffer === 'function') {
+    try {
+      // Wasm authority uses the 2-arg signature: step_npc_buffer(slot, dt).
+      // `slot` is the NPC buffer slot index; `dt` is the tick delta in seconds.
+      const resolvedSlot = Number.isFinite(slot) ? (slot | 0) : 0;
+      return wasmSimInstance.step_npc_buffer(resolvedSlot, dt) >>> 0;
+    } catch (e) {
+      // Fall through to the JS fallback on any Wasm-side error.
+    }
+  }
+  return stepNpcBufferJs(buf, flat, phraseCount | 0, dt) >>> 0;
 }
 
 // --- Enum mapping helpers (mirror dog_contract.rs) -------------------------------------------

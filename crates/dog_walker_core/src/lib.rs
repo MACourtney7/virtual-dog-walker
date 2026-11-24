@@ -10,12 +10,16 @@ pub mod npc_sim;
 pub mod owner_sim;
 pub mod world_contract;
 
-use ball_physics::{step_toy_ball, BallSim};
+use ball_physics::{step_ball_buffer, step_toy_ball, BallSim, BallStepContext};
+use care_sim::step_care_buffer as care_step;
+use dog_utility_ai::{step_dog_utility_ai as dog_ai_step, DogAiContext};
+use owner_sim::{step_owner_buffer as owner_step, OwnerStepInput};
 
 use collision::{resolve_entity_collisions, resolve_field_collisions, Collider, WorldObstacle};
 use dog_contract::*;
+use dog_leash_needs::{step_dog_leash_needs as dog_leash_step, DogLeashNeedsContext};
 use dog_physics::{step_ear_springs, step_ear_springs_to_targets, step_leash_constraint};
-use npc_sim::{sample_npc_state, sample_path_exact};
+use npc_sim::{sample_npc_state, sample_path_exact, step_npc_buffer as npc_step, NpcPathPoint, NpcStepContext};
 use wasm_bindgen::prelude::*;
 use world_contract::*;
 
@@ -79,6 +83,16 @@ pub struct WasmWorldSim {
     care_buffer: CareSimBuffer,
     ball_buffer: BallSimBuffer,
     npc_buffers: [NpcSimBuffer; MAX_PARK_NPCS],
+    // Per-domain event bitmasks from the most recent step of each domain.
+    last_owner_events: u32,
+    last_care_events: u32,
+    last_ball_events: u32,
+    last_npc_events: [u32; MAX_PARK_NPCS],
+    last_dog_events: u32,
+    // Per-slot NPC path storage (no per-frame heap allocation).
+    npc_paths: [[(f32, f32); 32]; MAX_PARK_NPCS],
+    npc_path_lens: [usize; MAX_PARK_NPCS],
+    npc_phrase_counts: [u32; MAX_PARK_NPCS],
 }
 
 #[wasm_bindgen]
@@ -96,6 +110,14 @@ impl WasmWorldSim {
             care_buffer: CareSimBuffer::default(),
             ball_buffer: BallSimBuffer::default(),
             npc_buffers: std::array::from_fn(|_| NpcSimBuffer::default()),
+            last_owner_events: 0,
+            last_care_events: 0,
+            last_ball_events: 0,
+            last_npc_events: [0; MAX_PARK_NPCS],
+            last_dog_events: 0,
+            npc_paths: [[(0.0, 0.0); 32]; MAX_PARK_NPCS],
+            npc_path_lens: [0; MAX_PARK_NPCS],
+            npc_phrase_counts: [0; MAX_PARK_NPCS],
         }
     }
 
@@ -218,24 +240,263 @@ impl WasmWorldSim {
         }
     }
 
-    /// Contract stub: advance the owner buffer by one tick. Returns 0.
-    pub fn step_owner_buffer(&mut self, _dt_s: f32) -> u32 {
-        0
+    /// Advance the owner buffer by one tick. Returns the owner event bitmask.
+    pub fn step_owner_buffer(&mut self, dt_s: f32) -> u32 {
+        let dog_x = slot_f32(&self.dog_buffer, DOG_BUF_DOG_X);
+        let dog_y = slot_f32(&self.dog_buffer, DOG_BUF_DOG_Y);
+        let dog_heading = slot_f32(&self.dog_buffer, DOG_BUF_DOG_ANGLE);
+        let dog_is_pooping =
+            current_state_id(&self.dog_buffer) == DogStateId::Poop as u32;
+
+        let input = OwnerStepInput {
+            dt_s,
+            dog_pos_x: dog_x,
+            dog_pos_y: dog_y,
+            dog_heading_rad: dog_heading,
+            field_min_x: 0.0,
+            field_min_y: 0.0,
+            field_max_x: self.world_width as f32,
+            field_max_y: self.world_height as f32,
+            dog_is_pooping,
+            warp_gates: &[],
+            obstacles: &self.obstacles,
+        };
+        let events = owner_step(&mut self.owner_buffer, &input);
+        self.last_owner_events = events;
+        events
     }
 
-    /// Contract stub: advance the care buffer by one tick. Returns 0.
-    pub fn step_care_buffer(&mut self, _dt_ms: f32) -> u32 {
-        0
+    /// Advance the care buffer by one tick. Returns the care event bitmask.
+    pub fn step_care_buffer(&mut self, dt_ms: f32) -> u32 {
+        let events = care_step(&mut self.care_buffer, dt_ms);
+        self.last_care_events = events;
+        events
     }
 
-    /// Contract stub: advance the ball buffer by one tick. Returns 0.
-    pub fn step_ball_buffer(&mut self, _dt_s: f32) -> u32 {
-        0
+    /// Advance the ball buffer by one tick. Returns the ball event bitmask.
+    pub fn step_ball_buffer(&mut self, dt_s: f32) -> u32 {
+        // Owner position/heading come from the authoritative owner buffer.
+        let ctx = BallStepContext {
+            dog_pos_x: slot_f32(&self.dog_buffer, DOG_BUF_DOG_X),
+            dog_pos_y: slot_f32(&self.dog_buffer, DOG_BUF_DOG_Y),
+            dog_heading_rad: slot_f32(&self.dog_buffer, DOG_BUF_DOG_ANGLE),
+            owner_pos_x: self.owner_buffer.data[owner_sim::OWNER_SLOT_X],
+            owner_pos_y: self.owner_buffer.data[owner_sim::OWNER_SLOT_Y],
+            owner_heading_rad: self.owner_buffer.data[owner_sim::OWNER_SLOT_ANGLE],
+        };
+        let events = step_ball_buffer(&mut self.ball_buffer, &ctx, dt_s);
+        self.last_ball_events = events;
+        events
     }
 
-    /// Contract stub: advance the NPC buffer for `slot` by one tick. Returns 0.
-    pub fn step_npc_buffer(&mut self, _slot: u32, _dt_s: f32) -> u32 {
-        0
+    /// Register an NPC path for `slot`. Copies up to 32 `(x, y)` pairs from
+    /// `flat_xy` (interleaved x, y) and stores the phrase count. Out-of-range
+    /// slots are ignored without mutating state.
+    pub fn set_npc_path(&mut self, slot: usize, flat_xy: &[f32], phrase_count: u32) {
+        if slot >= MAX_PARK_NPCS {
+            return;
+        }
+        let pair_count = (flat_xy.len() / 2).min(32);
+        for i in 0..pair_count {
+            self.npc_paths[slot][i] = (flat_xy[i * 2], flat_xy[i * 2 + 1]);
+        }
+        self.npc_path_lens[slot] = pair_count;
+        self.npc_phrase_counts[slot] = phrase_count;
+    }
+
+    /// Length of the owner simulation buffer in f32 slots.
+    pub fn owner_buffer_len(&self) -> usize {
+        OWNER_SIM_BUFFER_LEN
+    }
+
+    /// Length of the care simulation buffer in f32 slots.
+    pub fn care_buffer_len(&self) -> usize {
+        CARE_SIM_BUFFER_LEN
+    }
+
+    /// Length of the ball simulation buffer in f32 slots.
+    pub fn ball_buffer_len(&self) -> usize {
+        BALL_SIM_BUFFER_LEN
+    }
+
+    /// Length of each NPC simulation buffer in f32 slots.
+    pub fn npc_buffer_len(&self) -> usize {
+        NPC_SIM_BUFFER_LEN
+    }
+
+    /// Length of the dog simulation buffer in f32 slots.
+    pub fn dog_buffer_len(&self) -> usize {
+        DOG_SIM_BUFFER_LEN
+    }
+
+    /// Advance the NPC buffer for `slot` by one tick. Returns the NPC event
+    /// bitmask, or `0` when `slot` is out of range.
+    pub fn step_npc_buffer(&mut self, slot: u32, dt_s: f32) -> u32 {
+        let index = slot as usize;
+        if index >= MAX_PARK_NPCS {
+            return 0;
+        }
+        // Owner position comes from the authoritative owner buffer.
+        let ctx = NpcStepContext {
+            owner_x: self.owner_buffer.data[owner_sim::OWNER_SLOT_X],
+            owner_y: self.owner_buffer.data[owner_sim::OWNER_SLOT_Y],
+            phrase_count: self.npc_phrase_counts[index].min(u16::MAX as u32) as u16,
+        };
+        // Build the path view from the fixed-size per-slot storage (no heap).
+        let len = self.npc_path_lens[index].min(32);
+        let mut path = [NpcPathPoint { x: 0.0, y: 0.0 }; 32];
+        for i in 0..len {
+            let (x, y) = self.npc_paths[index][i];
+            path[i] = NpcPathPoint { x, y };
+        }
+        let events = npc_step(
+            &mut self.npc_buffers[index],
+            &path[..len],
+            &ctx,
+            dt_s,
+        );
+        self.last_npc_events[index] = events;
+        events
+    }
+
+    /// Advance the dog utility AI by one tick. Returns the dog event bitmask.
+    pub fn step_dog_utility_ai(&mut self, dt_s: f32) -> u32 {
+        // Reset the combined dog event accumulator so utility-AI events are
+        // never overwritten by leash-needs events.
+        self.last_dog_events = 0;
+
+        // Ball state comes from the authoritative ball buffer.
+        let ball_state = self.ball_buffer.data[ball_physics::BALL_SLOT_STATE_ID];
+        let ball_thrown = self.ball_buffer.data[ball_physics::BALL_SLOT_IS_THROWN] > 0.5;
+        let ball_carried = self.ball_buffer.data[ball_physics::BALL_SLOT_IS_CARRIED] > 0.5;
+        let ball_attached = self.ball_buffer.data[ball_physics::BALL_SLOT_ATTACHED_TO_DOG] > 0.5;
+        let ball_available = ball_thrown
+            || ball_state == ball_physics::BALL_STATE_THROWN
+            || ball_state == ball_physics::BALL_STATE_IDLE;
+        let ball_held_by_dog = ball_carried || ball_attached;
+
+        let ctx = DogAiContext {
+            owner_x: self.owner_buffer.data[owner_sim::OWNER_SLOT_X],
+            owner_y: self.owner_buffer.data[owner_sim::OWNER_SLOT_Y],
+            ball_available,
+            ball_held_by_dog,
+            sunny_zone_contains_dog: false,
+            pack_partner_available: false,
+            pack_partner_id: 0.0,
+            pack_partner_x: 0.0,
+            pack_partner_y: 0.0,
+            care_is_hungry: self.care_buffer.data[care_sim::CARE_SLOT_IS_HUNGRY] > 0.5,
+            care_needs_grooming: self.care_buffer.data[care_sim::CARE_SLOT_NEEDS_GROOMING] > 0.5,
+            care_is_tired: self.care_buffer.data[care_sim::CARE_SLOT_IS_TIRED] > 0.5,
+            obstacles: &self.obstacles,
+        };
+        let events = dog_ai_step(&mut self.dog_buffer, &ctx, dt_s);
+        self.last_dog_events |= events;
+        events
+    }
+
+    /// Advance the dog leash/needs pipeline by one tick. Returns the leash
+    /// event bitmask.
+    pub fn step_dog_leash_needs(&mut self, dt_s: f32) -> u32 {
+        // Owner position comes from the authoritative owner buffer.
+        let ctx = DogLeashNeedsContext {
+            owner_x: self.owner_buffer.data[owner_sim::OWNER_SLOT_X],
+            owner_y: self.owner_buffer.data[owner_sim::OWNER_SLOT_Y],
+            leash_max_length: dog_leash_needs::MAX_LEASH_LENGTH,
+            field_min_x: 0.0,
+            field_min_y: 0.0,
+            field_max_x: self.world_width as f32,
+            field_max_y: self.world_height as f32,
+        };
+        let events = dog_leash_step(&mut self.dog_buffer, &ctx, dt_s);
+        self.last_dog_events |= events;
+        events
+    }
+
+    /// Advance every domain buffer in the locked order: care, owner, ball,
+    /// NPC slots `0..MAX_PARK_NPCS`, dog utility AI, dog leash needs.
+    ///
+    /// Returns a summary bitset:
+    /// - bit 0: owner event
+    /// - bit 1: care event
+    /// - bit 2: ball event
+    /// - bit 3: any NPC event
+    /// - bit 4: dog event (utility AI or leash needs)
+    /// - bits 5..63: zero
+    pub fn step_all_buffers(&mut self, dt_s: f32) -> u64 {
+        let mut summary: u64 = 0;
+
+        // Reset the combined dog event accumulator before the dog steps so
+        // utility-AI events are never overwritten by leash-needs events.
+        self.last_dog_events = 0;
+
+        let care_events = self.step_care_buffer(dt_s * 1000.0);
+        if care_events != 0 {
+            summary |= 1 << 1;
+        }
+
+        let owner_events = self.step_owner_buffer(dt_s);
+        if owner_events != 0 {
+            summary |= 1 << 0;
+        }
+
+        let ball_events = self.step_ball_buffer(dt_s);
+        if ball_events != 0 {
+            summary |= 1 << 2;
+        }
+
+        let mut any_npc = false;
+        for slot in 0..MAX_PARK_NPCS {
+            // Skip uninitialized/empty NPC slots so a fresh sim does not emit
+            // PATH_FINISHED for slots that were never given a path.
+            if self.npc_path_lens[slot] < 2 {
+                continue;
+            }
+            if self.step_npc_buffer(slot as u32, dt_s) != 0 {
+                any_npc = true;
+            }
+        }
+        if any_npc {
+            summary |= 1 << 3;
+        }
+
+        let mut dog_events = self.step_dog_utility_ai(dt_s);
+        dog_events |= self.step_dog_leash_needs(dt_s);
+        if dog_events != 0 {
+            summary |= 1 << 4;
+        }
+
+        summary
+    }
+
+    /// Owner event bitmask from the last owner step.
+    pub fn owner_event_bitmask(&self) -> u32 {
+        self.last_owner_events
+    }
+
+    /// Care event bitmask from the last care step.
+    pub fn care_event_bitmask(&self) -> u32 {
+        self.last_care_events
+    }
+
+    /// Ball event bitmask from the last ball step.
+    pub fn ball_event_bitmask(&self) -> u32 {
+        self.last_ball_events
+    }
+
+    /// NPC event bitmask for `slot`, or `0` when `slot` is out of range.
+    pub fn npc_event_bitmask(&self, slot: u32) -> u32 {
+        let index = slot as usize;
+        if index >= MAX_PARK_NPCS {
+            return 0;
+        }
+        self.last_npc_events[index]
+    }
+
+    /// Dog event bitmask from the last dog step (combined utility-AI and
+    /// leash-needs events).
+    pub fn dog_event_bitmask(&self) -> u32 {
+        self.last_dog_events
     }
 
     pub fn set_colliders(&mut self, colliders_json: &str) {
@@ -447,21 +708,158 @@ mod tests {
             "npc buffer ptr must be null when slot is out of range"
         );
 
-        // Snapshot bytes before invoking stubs.
-        let owner_before = sim.owner_buffer.data;
-        let care_before = sim.care_buffer.data;
-        let ball_before = sim.ball_buffer.data;
-        let npc_before = sim.npc_buffers[0].data;
+        // Out-of-range NPC slots must not panic and must report no events.
+        assert_eq!(sim.step_npc_buffer(MAX_PARK_NPCS as u32, 0.016), 0);
+        assert_eq!(sim.npc_event_bitmask(MAX_PARK_NPCS as u32), 0);
 
-        assert_eq!(sim.step_owner_buffer(0.016), 0);
-        assert_eq!(sim.step_care_buffer(16.0), 0);
-        assert_eq!(sim.step_ball_buffer(0.016), 0);
-        assert_eq!(sim.step_npc_buffer(0, 0.016), 0);
+        // Real steps run without panicking and keep buffers finite.
+        let _ = sim.step_owner_buffer(0.016);
+        let _ = sim.step_care_buffer(16.0);
+        let _ = sim.step_ball_buffer(0.016);
+        let _ = sim.step_npc_buffer(0, 0.016);
+        let _ = sim.step_dog_utility_ai(0.016);
+        let _ = sim.step_dog_leash_needs(0.016);
+        let _ = sim.step_all_buffers(0.016);
 
-        assert_eq!(sim.owner_buffer.data, owner_before, "owner buffer must not mutate");
-        assert_eq!(sim.care_buffer.data, care_before, "care buffer must not mutate");
-        assert_eq!(sim.ball_buffer.data, ball_before, "ball buffer must not mutate");
-        assert_eq!(sim.npc_buffers[0].data, npc_before, "npc buffer must not mutate");
+        for slot in sim.owner_buffer.data.iter() {
+            assert!(slot.is_finite(), "owner buffer must stay finite");
+        }
+        for slot in sim.care_buffer.data.iter() {
+            assert!(slot.is_finite(), "care buffer must stay finite");
+        }
+        for slot in sim.ball_buffer.data.iter() {
+            assert!(slot.is_finite(), "ball buffer must stay finite");
+        }
+        for slot in sim.npc_buffers[0].data.iter() {
+            assert!(slot.is_finite(), "npc buffer must stay finite");
+        }
+    }
+
+    #[test]
+    fn step_all_buffers_summary_bit_positions() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        // A fresh sim with no commands should produce no summary bits.
+        let summary = sim.step_all_buffers(0.016);
+        assert_eq!(summary & !0x1F, 0, "only bits 0..4 may be set");
+        // Bits 5..63 must always be zero.
+        assert_eq!(summary >> 5, 0);
+        // No NPC paths registered: the NPC summary bit (bit 3) must be clear.
+        assert_eq!(summary & (1 << 3), 0, "empty NPC slots must not set bit 3");
+    }
+
+    #[test]
+    fn set_npc_path_advances_npc_along_two_point_path() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        sim.set_npc_path(0, &[100.0, 100.0, 200.0, 100.0], 3);
+        assert_eq!(sim.npc_path_lens[0], 2);
+        assert_eq!(sim.npc_phrase_counts[0], 3);
+
+        let events = sim.step_npc_buffer(0, 0.016);
+        // A real 2-point path should not immediately finish.
+        assert_eq!(events & npc_sim::NPC_EVENT_PATH_FINISHED, 0);
+        assert_eq!(sim.npc_event_bitmask(0), events);
+
+        // Out-of-range slot must be a no-op.
+        let before = sim.npc_path_lens[0];
+        sim.set_npc_path(MAX_PARK_NPCS, &[0.0, 0.0, 1.0, 1.0], 1);
+        assert_eq!(sim.npc_path_lens[0], before);
+    }
+
+    #[test]
+    fn buffer_length_accessors_match_constants() {
+        let sim = WasmWorldSim::new(2000.0, 2000.0);
+        assert_eq!(sim.owner_buffer_len(), OWNER_SIM_BUFFER_LEN);
+        assert_eq!(sim.care_buffer_len(), CARE_SIM_BUFFER_LEN);
+        assert_eq!(sim.ball_buffer_len(), BALL_SIM_BUFFER_LEN);
+        assert_eq!(sim.npc_buffer_len(), NPC_SIM_BUFFER_LEN);
+        assert_eq!(sim.dog_buffer_len(), DOG_SIM_BUFFER_LEN);
+    }
+
+    #[test]
+    fn step_all_buffers_ordering_and_dog_events_combined() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        // Force a dog utility-AI event (bark). The dog summary bit must be set
+        // even though the leash-needs step may emit nothing.
+        sim.dog_buffer.slots[DOG_BUF_CMD_BARK] = 1.0;
+
+        let summary = sim.step_all_buffers(0.016);
+
+        // Dog events (bit 4) must be set because the utility-AI bark fired.
+        assert_ne!(summary & (1 << 4), 0, "dog summary bit must be set");
+        let dog_events = sim.dog_event_bitmask();
+        assert_ne!(dog_events & DOG_EVENT_BARK, 0, "bark event must be preserved");
+    }
+
+    #[test]
+    fn dog_event_bitmask_combines_utility_and_leash_events() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        // Utility-AI bark event.
+        sim.dog_buffer.slots[DOG_BUF_CMD_BARK] = 1.0;
+        let util_events = sim.step_dog_utility_ai(0.016);
+        assert_ne!(util_events & DOG_EVENT_BARK, 0);
+
+        // Place the dog well beyond the leash length so the leash-needs step
+        // emits LEASH_TAUT, and verify the utility event is not overwritten.
+        sim.dog_buffer.slots[DOG_BUF_DOG_X] = 500.0;
+        sim.dog_buffer.slots[DOG_BUF_DOG_Y] = 0.0;
+        sim.owner_buffer.data[owner_sim::OWNER_SLOT_X] = 0.0;
+        sim.owner_buffer.data[owner_sim::OWNER_SLOT_Y] = 0.0;
+        let leash_events = sim.step_dog_leash_needs(0.016);
+        assert_ne!(leash_events & DOG_EVENT_LEASH_TAUT, 0);
+
+        let combined = sim.dog_event_bitmask();
+        assert_ne!(combined & DOG_EVENT_BARK, 0, "utility event must survive");
+        assert_ne!(combined & DOG_EVENT_LEASH_TAUT, 0, "leash event must be added");
+    }
+
+    #[test]
+    fn invalid_npc_slot_is_noop_and_returns_zero() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        let before = sim.npc_buffers[0].data;
+        let events = sim.step_npc_buffer(MAX_PARK_NPCS as u32, 0.016);
+        assert_eq!(events, 0);
+        assert_eq!(sim.npc_event_bitmask(MAX_PARK_NPCS as u32), 0);
+        // No mutation of any valid NPC buffer.
+        assert_eq!(sim.npc_buffers[0].data, before);
+    }
+
+    #[test]
+    fn npc_event_bitmask_returns_stored_events_not_cmd_flags() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        // A short path (single point) finishes immediately, emitting
+        // PATH_FINISHED. CMD_FLAGS is cleared by the step, so the getter must
+        // read the stored event bitmask, not CMD_FLAGS.
+        sim.npc_path_lens[0] = 1;
+        sim.npc_paths[0][0] = (10.0, 10.0);
+        let events = sim.step_npc_buffer(0, 0.016);
+        assert_ne!(events & npc_sim::NPC_EVENT_PATH_FINISHED, 0);
+        assert_eq!(sim.npc_event_bitmask(0), events);
+        // CMD_FLAGS is cleared after the step; the getter must not read it.
+        assert_eq!(
+            sim.npc_buffers[0].data[npc_sim::NPC_SLOT_CMD_FLAGS],
+            0.0
+        );
+    }
+
+    #[test]
+    fn dog_event_bitmask_preserves_combined_events() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        // Utility-AI bark event.
+        sim.dog_buffer.slots[DOG_BUF_CMD_BARK] = 1.0;
+        let util_events = sim.step_dog_utility_ai(0.016);
+        assert_ne!(util_events & DOG_EVENT_BARK, 0);
+        assert_eq!(sim.dog_event_bitmask(), util_events);
+
+        // Leash-needs event must be OR-ed into the combined mask, not replace it.
+        sim.dog_buffer.slots[DOG_BUF_DOG_X] = 500.0;
+        sim.dog_buffer.slots[DOG_BUF_DOG_Y] = 0.0;
+        sim.owner_buffer.data[owner_sim::OWNER_SLOT_X] = 0.0;
+        sim.owner_buffer.data[owner_sim::OWNER_SLOT_Y] = 0.0;
+        let leash_events = sim.step_dog_leash_needs(0.016);
+        assert_ne!(leash_events & DOG_EVENT_LEASH_TAUT, 0);
+        let combined = sim.dog_event_bitmask();
+        assert_ne!(combined & DOG_EVENT_BARK, 0, "utility event must survive");
+        assert_ne!(combined & DOG_EVENT_LEASH_TAUT, 0, "leash event must be added");
     }
 
     #[test]

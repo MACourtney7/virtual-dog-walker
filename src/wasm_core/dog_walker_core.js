@@ -12,11 +12,76 @@ export class WasmWorldSim {
         wasm.__wbg_wasmworldsim_free(ptr, 0);
     }
     /**
+     * Length of the ball simulation buffer in f32 slots.
+     * @returns {number}
+     */
+    ball_buffer_len() {
+        const ret = wasm.wasmworldsim_ball_buffer_len(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Pointer to the persistent zeroed ball simulation buffer.
+     * @returns {number}
+     */
+    ball_buffer_ptr() {
+        const ret = wasm.wasmworldsim_ball_buffer_ptr(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Ball event bitmask from the last ball step.
+     * @returns {number}
+     */
+    ball_event_bitmask() {
+        const ret = wasm.wasmworldsim_ball_event_bitmask(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Length of the care simulation buffer in f32 slots.
+     * @returns {number}
+     */
+    care_buffer_len() {
+        const ret = wasm.wasmworldsim_care_buffer_len(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Pointer to the persistent zeroed care simulation buffer.
+     * @returns {number}
+     */
+    care_buffer_ptr() {
+        const ret = wasm.wasmworldsim_care_buffer_ptr(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Care event bitmask from the last care step.
+     * @returns {number}
+     */
+    care_event_bitmask() {
+        const ret = wasm.wasmworldsim_care_event_bitmask(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Length of the dog simulation buffer in f32 slots.
+     * @returns {number}
+     */
+    dog_buffer_len() {
+        const ret = wasm.wasmworldsim_dog_buffer_len(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
      * Pointer to the persistent zeroed dog simulation buffer (128 f32 slots).
      * @returns {number}
      */
     dog_buffer_ptr() {
         const ret = wasm.wasmworldsim_dog_buffer_ptr(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Dog event bitmask from the last dog step (combined utility-AI and
+     * leash-needs events).
+     * @returns {number}
+     */
+    dog_event_bitmask() {
+        const ret = wasm.wasmworldsim_dog_event_bitmask(this.__wbg_ptr);
         return ret >>> 0;
     }
     /**
@@ -28,6 +93,57 @@ export class WasmWorldSim {
         this.__wbg_ptr = ret;
         WasmWorldSimFinalization.register(this, this.__wbg_ptr, this);
         return this;
+    }
+    /**
+     * Length of each NPC simulation buffer in f32 slots.
+     * @returns {number}
+     */
+    npc_buffer_len() {
+        const ret = wasm.wasmworldsim_npc_buffer_len(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Pointer to the persistent zeroed NPC simulation buffer for `slot`.
+     * Returns null when `slot` is out of range.
+     * @param {number} slot
+     * @returns {number}
+     */
+    npc_buffer_ptr(slot) {
+        const ret = wasm.wasmworldsim_npc_buffer_ptr(this.__wbg_ptr, slot);
+        return ret >>> 0;
+    }
+    /**
+     * NPC event bitmask for `slot`, or `0` when `slot` is out of range.
+     * @param {number} slot
+     * @returns {number}
+     */
+    npc_event_bitmask(slot) {
+        const ret = wasm.wasmworldsim_npc_event_bitmask(this.__wbg_ptr, slot);
+        return ret >>> 0;
+    }
+    /**
+     * Length of the owner simulation buffer in f32 slots.
+     * @returns {number}
+     */
+    owner_buffer_len() {
+        const ret = wasm.wasmworldsim_owner_buffer_len(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Pointer to the persistent zeroed owner simulation buffer.
+     * @returns {number}
+     */
+    owner_buffer_ptr() {
+        const ret = wasm.wasmworldsim_owner_buffer_ptr(this.__wbg_ptr);
+        return ret >>> 0;
+    }
+    /**
+     * Owner event bitmask from the last owner step.
+     * @returns {number}
+     */
+    owner_event_bitmask() {
+        const ret = wasm.wasmworldsim_owner_event_bitmask(this.__wbg_ptr);
+        return ret >>> 0;
     }
     /**
      * @param {number} x
@@ -127,6 +243,21 @@ export class WasmWorldSim {
         wasm.wasmworldsim_set_colliders(this.__wbg_ptr, ptr0, len0);
     }
     /**
+     * Register an NPC path for `slot`. Copies up to 32 `(x, y)` pairs from
+     * `flat_xy` (interleaved x, y) and stores the phrase count. Out-of-range
+     * slots are ignored without mutating state.
+     * @param {number} slot
+     * @param {Float32Array | number[]} flat_xy
+     * @param {number} phrase_count
+     */
+    set_npc_path(slot, flat_xy, phrase_count) {
+        const val2 = +slot;
+        const val3 = +phrase_count;
+        const ptr0 = passArrayF32ToWasm0(flat_xy, wasm.__wbindgen_export2);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.wasmworldsim_set_npc_path(this.__wbg_ptr, val2, ptr0, len0, val3);
+    }
+    /**
      * Replace the exact field obstacle set (JSON array of
      * `{"kind":"circle","x","y","r"}` / `{"kind":"rect","x","y","hw","hh"}`), in the same order as
      * `Field.resolveCircleCollision` applies them.
@@ -138,6 +269,24 @@ export class WasmWorldSim {
         const len0 = WASM_VECTOR_LEN;
         const ret = wasm.wasmworldsim_set_world_obstacles(this.__wbg_ptr, ptr0, len0);
         return ret !== 0;
+    }
+    /**
+     * Advance every domain buffer in the locked order: care, owner, ball,
+     * NPC slots `0..MAX_PARK_NPCS`, dog utility AI, dog leash needs.
+     *
+     * Returns a summary bitset:
+     * - bit 0: owner event
+     * - bit 1: care event
+     * - bit 2: ball event
+     * - bit 3: any NPC event
+     * - bit 4: dog event (utility AI or leash needs)
+     * - bits 5..63: zero
+     * @param {number} dt_s
+     * @returns {bigint}
+     */
+    step_all_buffers(dt_s) {
+        const ret = wasm.wasmworldsim_step_all_buffers(this.__wbg_ptr, dt_s);
+        return BigInt.asUintN(64, ret);
     }
     /**
      * @param {number} dt
@@ -157,6 +306,24 @@ export class WasmWorldSim {
         }
     }
     /**
+     * Advance the ball buffer by one tick. Returns the ball event bitmask.
+     * @param {number} dt_s
+     * @returns {number}
+     */
+    step_ball_buffer(dt_s) {
+        const ret = wasm.wasmworldsim_step_ball_buffer(this.__wbg_ptr, dt_s);
+        return ret >>> 0;
+    }
+    /**
+     * Advance the care buffer by one tick. Returns the care event bitmask.
+     * @param {number} dt_ms
+     * @returns {number}
+     */
+    step_care_buffer(dt_ms) {
+        const ret = wasm.wasmworldsim_step_care_buffer(this.__wbg_ptr, dt_ms);
+        return ret >>> 0;
+    }
+    /**
      * Advance the persistent dog simulation buffer by one tick.
      *
      * Orchestrates need resolution, leash slot, utility AI, movement
@@ -165,6 +332,25 @@ export class WasmWorldSim {
      */
     step_dog_buffer() {
         wasm.wasmworldsim_step_dog_buffer(this.__wbg_ptr);
+    }
+    /**
+     * Advance the dog leash/needs pipeline by one tick. Returns the leash
+     * event bitmask.
+     * @param {number} dt_s
+     * @returns {number}
+     */
+    step_dog_leash_needs(dt_s) {
+        const ret = wasm.wasmworldsim_step_dog_leash_needs(this.__wbg_ptr, dt_s);
+        return ret >>> 0;
+    }
+    /**
+     * Advance the dog utility AI by one tick. Returns the dog event bitmask.
+     * @param {number} dt_s
+     * @returns {number}
+     */
+    step_dog_utility_ai(dt_s) {
+        const ret = wasm.wasmworldsim_step_dog_utility_ai(this.__wbg_ptr, dt_s);
+        return ret >>> 0;
     }
     /**
      * Ear spring integration towards JS-computed targets. Returns [lAngle, lVel, rAngle, rVel].
@@ -243,6 +429,26 @@ export class WasmWorldSim {
         }
     }
     /**
+     * Advance the NPC buffer for `slot` by one tick. Returns the NPC event
+     * bitmask, or `0` when `slot` is out of range.
+     * @param {number} slot
+     * @param {number} dt_s
+     * @returns {number}
+     */
+    step_npc_buffer(slot, dt_s) {
+        const ret = wasm.wasmworldsim_step_npc_buffer(this.__wbg_ptr, slot, dt_s);
+        return ret >>> 0;
+    }
+    /**
+     * Advance the owner buffer by one tick. Returns the owner event bitmask.
+     * @param {number} dt_s
+     * @returns {number}
+     */
+    step_owner_buffer(dt_s) {
+        const ret = wasm.wasmworldsim_step_owner_buffer(this.__wbg_ptr, dt_s);
+        return ret >>> 0;
+    }
+    /**
      * Stateless TennisBall step (matches `toy.js`). `state` = [x, y, z, vx, vy, vz].
      * Returns [x, y, z, vx, vy, vz]. Independent of the single internal `ball`.
      * @param {number} x
@@ -319,6 +525,14 @@ function getDataViewMemory0() {
     return cachedDataViewMemory0;
 }
 
+let cachedFloat32ArrayMemory0 = null;
+function getFloat32ArrayMemory0() {
+    if (cachedFloat32ArrayMemory0 === null || cachedFloat32ArrayMemory0.byteLength === 0) {
+        cachedFloat32ArrayMemory0 = new Float32Array(wasm.memory.buffer);
+    }
+    return cachedFloat32ArrayMemory0;
+}
+
 let cachedFloat64ArrayMemory0 = null;
 function getFloat64ArrayMemory0() {
     if (cachedFloat64ArrayMemory0 === null || cachedFloat64ArrayMemory0.byteLength === 0) {
@@ -338,6 +552,13 @@ function getUint8ArrayMemory0() {
         cachedUint8ArrayMemory0 = new Uint8Array(wasm.memory.buffer);
     }
     return cachedUint8ArrayMemory0;
+}
+
+function passArrayF32ToWasm0(arg, malloc) {
+    const ptr = malloc(arg.length * 4, 4) >>> 0;
+    getFloat32ArrayMemory0().set(arg, ptr / 4);
+    WASM_VECTOR_LEN = arg.length;
+    return ptr;
 }
 
 function passArrayF64ToWasm0(arg, malloc) {
@@ -419,6 +640,7 @@ function __wbg_finalize_init(instance, module) {
     wasm = instance.exports;
     wasmModule = module;
     cachedDataViewMemory0 = null;
+    cachedFloat32ArrayMemory0 = null;
     cachedFloat64ArrayMemory0 = null;
     cachedUint8ArrayMemory0 = null;
     wasm.__wbindgen_start();

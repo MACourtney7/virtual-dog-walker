@@ -12,7 +12,71 @@ import {
   ODD_PHRASES
 } from './npc_content.js';
 import { getNpcPath, NPC_PATHS } from '../world/npc_paths.js';
-import { sampleNpcPath } from '../engine/wasm_sim_bridge.js';
+import {
+  getBufferView,
+  getWasmSim,
+  sampleNpcPath,
+  NPC_SLOT_STATE,
+  NPC_SLOT_X,
+  NPC_SLOT_Y,
+  NPC_SLOT_HEADING_RAD,
+  NPC_SLOT_SPEED_SCALE,
+  NPC_SLOT_OPACITY,
+  NPC_SLOT_DONE,
+  NPC_SLOT_IS_FINISHED_STATE,
+  NPC_SLOT_SPEECH_VISIBLE,
+  NPC_SLOT_SPEECH_PHRASE_ID,
+  NPC_SLOT_CMD_FLAGS,
+  NPC_SLOT_SEED,
+  NPC_SLOT_RNG_STATE,
+  NPC_SLOT_NEXT_SPEECH_DELAY_S,
+  NPC_SLOT_FADE_COMPLETED,
+  NPC_CMD_RESET,
+  NPC_CMD_PAUSE,
+  NPC_CMD_RESUME,
+  NPC_CMD_SET_WALKING,
+  NPC_CMD_SET_RUNNING,
+  NPC_CMD_FORCE_SPEECH,
+  NPC_EVENT_RESET,
+  NPC_EVENT_PAUSED,
+  NPC_EVENT_RESUMED,
+  NPC_EVENT_STATE_CHANGED,
+  NPC_EVENT_SPEECH_TRIGGERED,
+  NPC_EVENT_SPEECH_HIDDEN,
+  NPC_EVENT_PATH_FINISHED,
+  NPC_EVENT_FADE_STARTED,
+  NPC_EVENT_FADE_COMPLETED,
+  NPC_EVENT_CMD_REJECTED,
+  NPC_BUFFER_SLOTS,
+  NPC_SPEECH_BASE_DELAY_S,
+  NPC_STATE_WALKING,
+  NPC_STATE_RUNNING,
+  NPC_STATE_PAUSED
+} from '../engine/wasm_sim_bridge.js';
+
+// Number of Rust-owned NPC simulation slots exposed by the Wasm core (MAX_PARK_NPCS = 8).
+const NPC_SLOT_COUNT = 8;
+// Valid explicit slot range is [0, 7] inclusive (8 slots).
+const NPC_SLOT_MAX_EXCLUSIVE = 8;
+// Bitmask of every event bit the JS side understands (used to warn on unknown bits).
+const NPC_KNOWN_EVENT_BITS =
+  NPC_EVENT_RESET |
+  NPC_EVENT_PAUSED |
+  NPC_EVENT_RESUMED |
+  NPC_EVENT_STATE_CHANGED |
+  NPC_EVENT_SPEECH_TRIGGERED |
+  NPC_EVENT_SPEECH_HIDDEN |
+  NPC_EVENT_PATH_FINISHED |
+  NPC_EVENT_FADE_STARTED |
+  NPC_EVENT_FADE_COMPLETED |
+  NPC_EVENT_CMD_REJECTED;
+// Round-robin allocator so each live NPC owns a distinct Rust-side slot.
+let _nextNpcSlot = 0;
+function allocateNpcSlot() {
+  const slot = _nextNpcSlot % NPC_SLOT_COUNT;
+  _nextNpcSlot = (_nextNpcSlot + 1) % NPC_SLOT_COUNT;
+  return slot;
+}
 
 export const NPCState = {
   WALKING: 'WALKING',
@@ -100,12 +164,12 @@ export class ParkNPC {
       this.flatWaypoints[2 * i + 1] = this.waypoints[i].y;
     }
 
-    // Precompute finish time
+    // Precompute finish time (kept for legacy API compatibility; Wasm is authoritative).
     this.finishTime = (this.totalLength > 0 && this.speed > 0)
       ? (this.spawnTime + this.totalLength / this.speed)
       : this.spawnTime;
 
-    // Deterministic speech timeline
+    // Deterministic speech timeline (legacy API surface; Wasm drives live speech).
     this.speechTimeline = [];
     const speechRng = mulberry32(this.seed);
     let speechTime = this.spawnTime + nextSpeechDelay(speechRng);
@@ -121,6 +185,23 @@ export class ParkNPC {
       });
       speechTime += 4.0 + nextSpeechDelay(speechRng);
     }
+
+    // --- Wasm NpcSimBuffer (authoritative simulation state) ---
+    // The Rust core owns the buffer; we only hold a slot index and a zero-copy view.
+    if (opts.npcSlot !== undefined && opts.npcSlot !== null) {
+      const requestedSlot = Math.floor(Number(opts.npcSlot));
+      if (!Number.isFinite(requestedSlot) || requestedSlot < 0 || requestedSlot >= NPC_SLOT_MAX_EXCLUSIVE) {
+        throw new RangeError('NPC slot out of range');
+      }
+      this.npcSlot = requestedSlot;
+    } else {
+      this.npcSlot = allocateNpcSlot();
+    }
+    this.npcBuffer = null; // resolved lazily from the Rust-owned view
+    this._lastStepTime = this.spawnTime;
+    this._speechPhrase = null;
+    this._pendingEvents = 0;
+    this._initRustNpcBuffer();
 
     // Entity state
     if (this.waypoints.length > 0) {
@@ -155,60 +236,199 @@ export class ParkNPC {
     this.setClock(this.spawnTime);
   }
 
+  /**
+   * Resolves the Rust-owned NPC buffer view for this NPC's slot and seeds the initial
+   * simulation state (seed, speed scale, state, reset command). Safe to call repeatedly;
+   * the view is re-acquired if Wasm memory has grown.
+   */
+  _initRustNpcBuffer() {
+    let sim = null;
+    let view = null;
+    try {
+      sim = getWasmSim();
+      if (sim && typeof sim.npc_buffer_ptr === 'function') {
+        const ptr = sim.npc_buffer_ptr(this.npcSlot);
+        if (ptr) {
+          const len = (typeof sim.npc_buffer_len === 'function')
+            ? (sim.npc_buffer_len() | 0)
+            : NPC_BUFFER_SLOTS;
+          view = getBufferView(ptr, len > 0 ? len : NPC_BUFFER_SLOTS);
+        }
+      }
+    } catch (e) {
+      view = null;
+    }
+    this.npcBuffer = view;
+    if (!view) return;
+
+    // Upload the NPC's polyline path and phrase count so Rust steps the real path
+    // and speech timeline (rather than an empty/default path).
+    if (sim && typeof sim.set_npc_path === 'function') {
+      try {
+        const flatXY = (this.flatWaypoints instanceof Float64Array)
+          ? this.flatWaypoints
+          : new Float64Array(this.flatWaypoints || []);
+        const phrases = (this.seed % 2 === 0) ? COMMON_PHRASES : ODD_PHRASES;
+        const phraseCount = (phrases && phrases.length > 0) ? phrases.length : 0;
+        sim.set_npc_path(this.npcSlot, flatXY, phraseCount);
+      } catch (e) {
+        // Non-fatal: Rust will fall back to its default path handling.
+      }
+    }
+
+    view[NPC_SLOT_SEED] = this.seed >>> 0;
+    view[NPC_SLOT_RNG_STATE] = this.seed >>> 0;
+    view[NPC_SLOT_SPEED_SCALE] = 1.0;
+    view[NPC_SLOT_OPACITY] = 1.0;
+    view[NPC_SLOT_NEXT_SPEECH_DELAY_S] = NPC_SPEECH_BASE_DELAY_S;
+    view[NPC_SLOT_STATE] = this.isJogger ? NPC_STATE_RUNNING : NPC_STATE_WALKING;
+    view[NPC_SLOT_CMD_FLAGS] = NPC_CMD_RESET;
+  }
+
+  /**
+   * Re-acquires the live Rust-owned NPC buffer view for this slot. Always fetches a fresh
+   * view so a `memory.grow()` that detached the previous ArrayBuffer cannot leave us with a
+   * stale view. Returns null when Wasm is unavailable.
+   */
+  _refreshNpcBufferView() {
+    let sim = null;
+    try {
+      sim = getWasmSim();
+    } catch (e) {
+      sim = null;
+    }
+    if (!sim || typeof sim.npc_buffer_ptr !== 'function') {
+      this.npcBuffer = null;
+      return null;
+    }
+    try {
+      const ptr = sim.npc_buffer_ptr(this.npcSlot);
+      if (!ptr) {
+        this.npcBuffer = null;
+        return null;
+      }
+      const len = (typeof sim.npc_buffer_len === 'function')
+        ? (sim.npc_buffer_len() | 0)
+        : NPC_BUFFER_SLOTS;
+      this.npcBuffer = getBufferView(ptr, len > 0 ? len : NPC_BUFFER_SLOTS);
+    } catch (e) {
+      this.npcBuffer = null;
+    }
+    return this.npcBuffer;
+  }
+
+  /** Issues a command bitmask into the Rust-owned NPC buffer (ORed with any pending flags). */
+  _issueCommand(flag) {
+    const buf = this._refreshNpcBufferView();
+    if (!buf) return;
+    buf[NPC_SLOT_CMD_FLAGS] = (buf[NPC_SLOT_CMD_FLAGS] | flag) >>> 0;
+  }
+
+  /** Hydrates public fields from the Rust-owned NPC buffer after a step. */
+  _hydrateFromBuffer() {
+    const buf = this._refreshNpcBufferView();
+    if (!buf) return;
+    this.x = buf[NPC_SLOT_X];
+    this.y = buf[NPC_SLOT_Y];
+    this.depthY = this.y + 12;
+    this.angle = buf[NPC_SLOT_HEADING_RAD];
+    this.opacity = buf[NPC_SLOT_OPACITY];
+    this.done = buf[NPC_SLOT_DONE] > 0.5;
+    this.isFinishedState = buf[NPC_SLOT_IS_FINISHED_STATE] > 0.5;
+
+    const stateId = buf[NPC_SLOT_STATE] | 0;
+    if (stateId === NPC_STATE_PAUSED) {
+      this.state = NPCState.PAUSED;
+    } else if (stateId === NPC_STATE_RUNNING) {
+      this.state = NPCState.RUNNING;
+    } else {
+      this.state = NPCState.WALKING;
+    }
+
+    // Velocity derived from heading + effective speed (Wasm owns position/heading).
+    const speedScale = buf[NPC_SLOT_SPEED_SCALE];
+    const baseSpeed = stateId === NPC_STATE_RUNNING ? 95.0 : 40.0;
+    const effSpeed = baseSpeed * speedScale;
+    if (this.isFinishedState || this.done) {
+      this.vx = 0;
+      this.vy = 0;
+    } else {
+      this.vx = Math.cos(this.angle) * effSpeed;
+      this.vy = Math.sin(this.angle) * effSpeed;
+    }
+
+    // Speech hydration.
+    const visible = buf[NPC_SLOT_SPEECH_VISIBLE] > 0.5;
+    if (visible) {
+      const phraseId = buf[NPC_SLOT_SPEECH_PHRASE_ID] | 0;
+      const phrases = (this.seed % 2 === 0) ? COMMON_PHRASES : ODD_PHRASES;
+      this._speechPhrase = (phrases && phrases.length > 0)
+        ? phrases[phraseId % phrases.length]
+        : null;
+    } else {
+      this._speechPhrase = null;
+    }
+    this.speechBubble = this.done ? null : this._speechPhrase;
+    this.currentSpeech = this.speechBubble;
+  }
+
   setClock(now) {
     if (typeof now !== 'number' || isNaN(now)) return;
     const nowSec = toSeconds(now);
     this.currentTime = nowSec;
-    const elapsed = Math.max(0, nowSec - this.spawnTime);
-    const distance = this.speed * elapsed;
 
-    if (this.totalLength === 0 || distance >= this.totalLength) {
-      if (this.waypoints.length > 0) {
-        const last = this.waypoints[this.waypoints.length - 1];
-        this.x = last.x;
-        this.y = last.y;
-      }
-      this.vx = 0;
-      this.vy = 0;
-      this.depthY = this.y + 12;
-      this.isFinishedState = true;
-
-      // Fade out over 0.5s after finishing path
-      const timeSinceFinish = nowSec - this.finishTime;
-      if (timeSinceFinish >= 0.5) {
-        this.opacity = 0.0;
-        this.done = true;
-      } else if (timeSinceFinish > 0) {
-        this.opacity = Math.max(0, 1.0 - timeSinceFinish / 0.5);
-        this.done = false;
-      } else {
-        this.opacity = 1.0;
-        this.done = false;
-      }
-    } else {
-      // In-progress polyline sampling: dog_walker_core Wasm is the authority
-      // (exact JS fallback lives in the bridge).
-      const sample = sampleNpcPath(this.flatWaypoints, this.speed, distance);
-      this.x = sample.x;
-      this.y = sample.y;
-      this.depthY = this.y + 12;
-      if (sample.hasAngle) {
-        this.angle = sample.angle;
-      }
-      this.vx = sample.vx;
-      this.vy = sample.vy;
-      if (elapsed > 0 && elapsed < 0.5) {
-        this.opacity = 0.25 + 0.75 * (elapsed / 0.5);
-      } else {
-        this.opacity = 1.0;
-      }
-      this.done = false;
-      this.isFinishedState = false;
+    // Advance the Rust-owned NPC buffer by the elapsed wall-clock delta.
+    const dt = Math.max(0, nowSec - this._lastStepTime);
+    this._lastStepTime = nowSec;
+    if (dt > 0) {
+      this._stepRustNpcBuffer(dt);
     }
+    this._hydrateFromBuffer();
+  }
 
-    const speech = this.getSpeech(nowSec);
-    this.speechBubble = this.done ? null : speech;
-    this.currentSpeech = this.speechBubble;
+  /**
+   * Steps the Rust-owned NPC simulation via the exact generated signature
+   * `step_npc_buffer(slot, dt_s)` and records the returned event bitmask.
+   */
+  _stepRustNpcBuffer(dt) {
+    if (!this._refreshNpcBufferView()) {
+      this._initRustNpcBuffer();
+      if (!this.npcBuffer) return;
+    }
+    let sim = null;
+    try {
+      sim = getWasmSim();
+    } catch (e) {
+      sim = null;
+    }
+    if (!sim || typeof sim.step_npc_buffer !== 'function') return;
+    try {
+      const events = sim.step_npc_buffer(this.npcSlot, dt);
+      this._pendingEvents = (events >>> 0);
+      this._processNpcEvents(this._pendingEvents);
+    } catch (e) {
+      // Leave state untouched on Wasm-side failure; JS fallback is not authoritative here.
+      this._pendingEvents = 0;
+    }
+  }
+
+  /** Handles the event bitmask returned by `step_npc_buffer`. */
+  _processNpcEvents(events) {
+    if (!events) return;
+    if (events & NPC_EVENT_PATH_FINISHED) {
+      this.isFinishedState = true;
+    }
+    if (events & NPC_EVENT_FADE_COMPLETED) {
+      this.done = true;
+    }
+    if (events & NPC_EVENT_SPEECH_HIDDEN) {
+      this._speechPhrase = null;
+    }
+    const unknownBits = (events & ~NPC_KNOWN_EVENT_BITS) >>> 0;
+    if (unknownBits !== 0 && !this._warnedUnknownEventBits) {
+      this._warnedUnknownEventBits = true;
+      console.warn(`[ParkNPC] Unrecognized NPC event bits: 0x${unknownBits.toString(16)}`);
+    }
   }
 
   update(dt, now, avoidanceEntities = []) {
@@ -251,17 +471,49 @@ export class ParkNPC {
     return false;
   }
 
+  /** Returns the currently visible speech phrase (Wasm-authoritative), or null. */
   getSpeech(now) {
-    if (typeof now !== 'number') return null;
-    const nowSec = toSeconds(now);
-    if (!Array.isArray(this.speechTimeline)) return null;
-    for (let i = 0; i < this.speechTimeline.length; i++) {
-      const ev = this.speechTimeline[i];
-      if (ev.startTime <= nowSec && nowSec < ev.endTime) {
-        return ev.phrase;
+    if (typeof now === 'number') {
+      const nowSec = toSeconds(now);
+      if (nowSec !== this.currentTime) {
+        this.setClock(nowSec);
       }
     }
-    return null;
+    return this._speechPhrase || null;
+  }
+
+  /**
+   * Legacy path sampler hook. Delegates to the Wasm `sample_npc_path` authority (via
+   * `sampleNpcPath`) for callers that still sample the polyline directly. The live NPC
+   * simulation itself is driven by `stepNpcBuffer`.
+   */
+  samplePathAt(distance) {
+    return sampleNpcPath(this.flatWaypoints, this.speed, distance);
+  }
+
+  /** Issues a pause command to the Rust-owned NPC buffer. */
+  pause() {
+    this._issueCommand(NPC_CMD_PAUSE);
+  }
+
+  /** Issues a resume command to the Rust-owned NPC buffer. */
+  resume() {
+    this._issueCommand(NPC_CMD_RESUME);
+  }
+
+  /** Issues a set-walking command to the Rust-owned NPC buffer. */
+  setWalking() {
+    this._issueCommand(NPC_CMD_SET_WALKING);
+  }
+
+  /** Issues a set-running command to the Rust-owned NPC buffer. */
+  setRunning() {
+    this._issueCommand(NPC_CMD_SET_RUNNING);
+  }
+
+  /** Issues a force-speech command to the Rust-owned NPC buffer. */
+  forceSpeech() {
+    this._issueCommand(NPC_CMD_FORCE_SPEECH);
   }
 
   getShadedColor(color, percent) {
@@ -907,6 +1159,7 @@ export class WalkerNPC extends ParkNPC {
     } else {
       super(x, y, { speed: 85, type: 'walker', isJogger: false, ...options });
     }
+    this._issueCommand(NPC_CMD_SET_WALKING);
   }
 }
 
@@ -922,5 +1175,6 @@ export class JoggerNPC extends ParkNPC {
     } else {
       super(x, y, { speed: 260, type: 'jogger', isJogger: true, ...options });
     }
+    this._issueCommand(NPC_CMD_SET_RUNNING);
   }
 }

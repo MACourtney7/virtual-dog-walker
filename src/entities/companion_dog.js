@@ -1,6 +1,6 @@
 // Companion Dog Entity - Canine Steering AI, Floppy Ear Springs, Leash Mechanics & Ball Fetching
 import { PoopPile } from './waste.js';
-import { stepCompanionDogWasm, getWasmSim, stepLeashConstraint } from '../engine/wasm_sim_bridge.js';
+import { stepCompanionDogWasm, getWasmSim, isWasmSimReady, stepLeashConstraint } from '../engine/wasm_sim_bridge.js';
 import { MAX_LEASH_LENGTH } from '../world/leash.js';
 
 export const DogState = {
@@ -606,50 +606,28 @@ export class CompanionDog {
   }
 
   triggerZoomies(pathType = null) {
-    if (this.pendingCommands) this.pendingCommands.triggerZoomies = true;
+    // Thin wrapper: reject locally when the Wasm authority would reject, then
+    // hand the command to the Wasm step via the pending-command flag. All
+    // state mutation (ZOOMIES entry, path anchors, cooldowns) is owned by the
+    // Wasm DogSimBuffer and hydrated back in update().
     if (this.owner && this.owner.isLeashed) return false;
     if (this.state === DogState.LOST || this.state === DogState.POOPING) return false;
+    if (this.pendingCommands) this.pendingCommands.triggerZoomies = true;
     this.dropStick();
     this.idleRestTimer = 0;
-    this.state = DogState.ZOOMIES;
-    this.zoomiesTimer = 4.2;
-    this.zoomiesPhase = 0;
-    this.zoomiesCenter = { x: this.x, y: this.y };
-    this.zoomiesCooldown = 60 + Math.random() * 30;
-    this.zoomiesOrbitOffset = { x: 0, y: 0 };
 
     // Resolve the zoomies path type (explicit override or random selection).
     const validPath = ZOOMIE_PATH_TYPES.includes(pathType) ? pathType : null;
     this.zoomiesPath = validPath ||
       ZOOMIE_PATH_TYPES[Math.floor(Math.random() * ZOOMIE_PATH_TYPES.length)];
 
-    // Pre-compute path-specific anchors.
-    if (this.zoomiesPath === ZoomiePath.ORBIT_OWNER) {
-      const ownerX = this.owner ? this.owner.x : this.x;
-      const ownerY = this.owner ? this.owner.y : this.y;
-      this.zoomiesCenter = { x: ownerX, y: ownerY };
-      this.zoomiesOrbitRadius = 95 + Math.random() * 30; // 95-125 px
-      this.zoomiesOrbitDir = Math.random() < 0.5 ? 1 : -1;
-      this.zoomiesOrbitAngle = Math.atan2(this.y - ownerY, this.x - ownerX);
-    } else if (this.zoomiesPath === ZoomiePath.SHUTTLE) {
-      const heading = this.owner ? resolveOwnerHeading(this.owner) : this.angle;
-      this.zoomiesShuttleHalfSpan = 115 + Math.random() * 15; // 115-130 px
-      const span = this.zoomiesShuttleHalfSpan;
-      this.zoomiesShuttleA = {
-        x: this.x - Math.cos(heading) * span,
-        y: this.y - Math.sin(heading) * span
-      };
-      this.zoomiesShuttleB = {
-        x: this.x + Math.cos(heading) * span,
-        y: this.y + Math.sin(heading) * span
-      };
-    }
-
+    // Immediate UI feedback; authoritative state arrives from the Wasm step.
     this.emoteBubble = '⚡';
     this.emoteTimer = 2.0;
     this.wagSpeed = 22;
     return true;
   }
+
 
   pickupStick(stick) {
     if (!stick || this.hasBall || this.hasStick) return false;
@@ -907,9 +885,12 @@ export class CompanionDog {
   }
 
   bark(audioEngine = null) {
+    // Thin wrapper: queue the bark command for the Wasm step. The BARKING
+    // state, bark-wave animation and audio are driven by the returned
+    // DOG_EVENT_BARK_TRIGGERED bitmask in executeDogEventBitmask().
     if (this.pendingCommands) this.pendingCommands.bark = true;
-    this.state = DogState.BARKING;
-    this.stateTimer = 0.45;
+
+    // Immediate UI feedback so the bark reads instantly even before the step.
     this.isBarking = true;
     this.barkWaveRadius = 6;
     this.barkWaveAlpha = 1.0;
@@ -923,6 +904,9 @@ export class CompanionDog {
   }
 
   whistleRecall() {
+    // Thin wrapper: queue the recall command for the Wasm step. The RECALLED
+    // state, heel timer and stray resolution are driven by the Wasm
+    // DogSimBuffer and hydrated back in update().
     if (this.pendingCommands) this.pendingCommands.whistleRecall = true;
     const wasLost = this.state === DogState.LOST || this.isLost;
 
@@ -944,15 +928,10 @@ export class CompanionDog {
       this.socialCooldown = Math.max(8.0, Math.min(45.0, cd));
     }
 
-    this.state = DogState.RECALLED;
-    this.isLost = false;
-    this.ownerStillTimer = 0;
-    this.strayCheckTimer = 0;
+    // Immediate UI feedback; authoritative state arrives from the Wasm step.
     this.emoteBubble = wasLost ? '❤️' : '!';
     this.emoteTimer = wasLost ? 2.5 : 2.0;
     this.wagSpeed = 18;
-    this.isRecalledToHeel = false;
-    this.recallHeelTimer = 10.0; // 10 seconds of close heel following
     this.idleRestTimer = 0;
     this.socialTargetDog = null;
     this.isReturningToOwner = false;
@@ -966,18 +945,6 @@ export class CompanionDog {
 
     if (wasLost && typeof this.onStrayResolved === 'function') {
       this.onStrayResolved(this);
-    }
-
-    // Whistle recall promptness: sprint speed immediately engages without delay
-    if (this.owner) {
-      const dx = this.owner.x - this.x;
-      const dy = this.owner.y - this.y;
-      const dist = Math.hypot(dx, dy);
-      if (dist > 10) {
-        this.vx = (dx / dist) * this.sprintSpeed;
-        this.vy = (dy / dist) * this.sprintSpeed;
-        this.angle = Math.atan2(this.vy, this.vx);
-      }
     }
   }
 
@@ -1013,6 +980,9 @@ export class CompanionDog {
   }
 
   pet() {
+    // Thin wrapper: queue the pet command for the Wasm step. Happiness,
+    // resting and zoomies are owned by the Wasm DogSimBuffer; the JS layer
+    // only renders the immediate UI feedback (emote + hearts).
     if (this.pendingCommands) this.pendingCommands.pet = true;
     this.happiness = Math.min(100, this.happiness + 20);
     this.idleRestTimer = 0;
@@ -1031,25 +1001,30 @@ export class CompanionDog {
       });
     }
 
-    // Occasional burst of figure-eight zoomies when happiness reaches 100%
-    if (this.zoomiesCooldown <= 0 && this.happiness >= 100 && this.owner && !this.owner.isLeashed && Math.random() < 0.12) {
+    // Occasional burst of figure-eight zoomies when happiness reaches 100%.
+    // The Wasm authority owns the zoomies decision; this JS-side trigger only
+    // fires when the sim is unavailable (headless/fallback) so the burst still
+    // reads in environments without the Wasm step.
+    if (!isWasmSimReady() && this.zoomiesCooldown <= 0 && this.happiness >= 100 &&
+        this.owner && !this.owner.isLeashed && Math.random() < 0.12) {
       this.triggerZoomies();
     }
   }
 
   fetchBall(ball) {
-    if (this.pendingCommands) this.pendingCommands.fetchBall = true;
-    // If leashed, lost, or pooping, the dog NEVER enters FETCHING state and does not chase balls
+    // Thin wrapper: reject locally when the Wasm authority would reject, then
+    // queue the fetch command. FETCHING state and ball chasing are owned by
+    // the Wasm DogSimBuffer and hydrated back in update().
     if (this.owner && this.owner.isLeashed) {
       return;
     }
     if (this.state === DogState.LOST || this.state === DogState.POOPING) {
       return;
     }
+    if (this.pendingCommands) this.pendingCommands.fetchBall = true;
     this.dropStick();
     this.idleRestTimer = 0;
     this.targetBall = ball;
-    this.state = DogState.FETCHING;
     this.wagSpeed = 15;
   }
 
@@ -1063,7 +1038,7 @@ export class CompanionDog {
     this.leashTaut = Boolean(this.owner && this.owner.isLeashed);
 
     // Safe no-op while the browser async Wasm init hasn't finished yet.
-    if (!getWasmSim()) return;
+    if (!isWasmSimReady()) return;
 
     // Sync current zone reference for sunny-zone rolling evaluation
     if (field && field.zoneConfig) {
@@ -1479,6 +1454,7 @@ export class CompanionDog {
     // Legacy entry point retained for compatibility. All steering is now
     // delegated to the Wasm simulation step via update().
     if (!this.owner) return;
+    if (!isWasmSimReady()) return;
     const bitmask = stepCompanionDogWasm(this, dt, field, otherDogs, null, []);
     this.executeDogEventBitmask(bitmask, field, null);
   }

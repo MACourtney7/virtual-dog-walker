@@ -994,7 +994,7 @@ pub fn integrate_micro_expressions(
     buffer.slots[DOG_BUF_WAG_SPEED] = tail_wag_speed;
     buffer.slots[DOG_BUF_TAIL_ANGLE] = tail_angle;
     buffer.slots[DOG_BUF_NOSE_TWITCH] = nose_twitch;
-    buffer.slots[DOG_BUF_EVENT_BITMASK] = events as f32;
+    write_event_bitmask(buffer, events);
 
     events
 }
@@ -1092,6 +1092,499 @@ pub fn step_utility_ai(
         nose_twitch: finite_or(buffer.slots[DOG_BUF_NOSE_TWITCH], 0.0),
         events,
     }
+}
+
+// ---------------------------------------------------------------------------
+// Command authority / state machine (unification-049)
+// ---------------------------------------------------------------------------
+
+pub const WHISTLE_COOLDOWN_S: f32 = 8.0;
+pub const SOCIAL_COOLDOWN_S: f32 = 3.0;
+pub const PRAISE_COOLDOWN_S: f32 = 2.0;
+pub const PET_TIMER_S: f32 = 1.0;
+pub const PRAISE_TIMER_S: f32 = 1.0;
+pub const BARK_TIMER_S: f32 = 0.6;
+pub const ZOOMIES_TIMER_S: f32 = 3.0;
+pub const SUNNY_ROLL_DURATION_S: f32 = 2.0;
+pub const SUNNY_ROLL_COOLDOWN_S: f32 = 5.0;
+pub const PACK_PLAY_START_DISTANCE_PX: f32 = 40.0;
+pub const PACK_PLAY_BREAK_DISTANCE_PX: f32 = 48.0;
+pub const PACK_PLAY_DURATION_S: f32 = 8.0;
+pub const PACK_PLAY_BREAK_TIME_S: f32 = 0.5;
+pub const RECALL_ARRIVE_DISTANCE_PX: f32 = 24.0;
+
+/// Fetch timeout (seconds) before the fetch transition is abandoned.
+pub const FETCH_TIMER_S: f32 = 10.0;
+
+// Command bits ordered from highest to lowest priority.
+pub const DOG_CMD_CLEAR_PENDING: u32 = 1 << 0;
+pub const DOG_CMD_WHISTLE_RECALL: u32 = 1 << 1;
+pub const DOG_CMD_PET: u32 = 1 << 2;
+pub const DOG_CMD_PRAISE: u32 = 1 << 3;
+pub const DOG_CMD_BARK: u32 = 1 << 4;
+pub const DOG_CMD_ZOOMIES: u32 = 1 << 5;
+pub const DOG_CMD_FETCH_BALL: u32 = 1 << 6;
+pub const DOG_CMD_PACK_PLAY_START: u32 = 1 << 7;
+pub const DOG_CMD_PACK_PLAY_BREAK: u32 = 1 << 8;
+
+// Command input slots (stable contract inputs). Pack-play start/break bits are
+// carried in the packed `DOG_BUF_COMMAND_FLAGS` slot (62), not aliased to 63.
+pub const DOG_BUF_CMD_CLEAR_PENDING: usize = DOG_BUF_RESERVED_INPUT_0;
+
+// Transition-state model (unification-049). Recall and fetch cannot coexist.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransitionStateId {
+    Idle = 0,
+    ToOwner = 1,
+    ToBall = 2,
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SunnyRollStateId {
+    None = 0,
+    Rolling = 1,
+    Finished = 2,
+}
+
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PackPlayStateId {
+    None = 0,
+    Active = 1,
+    Breaking = 2,
+    Broken = 3,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct DogAiContext<'a> {
+    pub owner_x: f32,
+    pub owner_y: f32,
+    pub ball_available: bool,
+    pub ball_held_by_dog: bool,
+    pub sunny_zone_contains_dog: bool,
+    pub pack_partner_available: bool,
+    pub pack_partner_id: f32,
+    pub pack_partner_x: f32,
+    pub pack_partner_y: f32,
+    pub care_is_hungry: bool,
+    pub care_needs_grooming: bool,
+    pub care_is_tired: bool,
+    pub obstacles: &'a [WorldObstacle],
+}
+
+fn slot_value(buf: &DogSimBuffer, index: usize) -> f32 {
+    finite_or(buf.slots[index], 0.0)
+}
+
+fn slot_flag(buf: &DogSimBuffer, index: usize) -> bool {
+    buf.slots[index].is_finite() && buf.slots[index] > 0.5
+}
+
+fn slot_state(buf: &DogSimBuffer, index: usize) -> u32 {
+    let raw = slot_value(buf, index);
+    if raw <= 0.0 {
+        0
+    } else {
+        raw.round() as u32
+    }
+}
+
+fn decrement_slot(buf: &mut DogSimBuffer, index: usize, dt: f32) {
+    let current = finite_or(buf.slots[index], 0.0);
+    buf.slots[index] = (current - dt).max(0.0);
+}
+
+fn increment_accept_count(buf: &mut DogSimBuffer) {
+    let current = finite_or(buf.slots[DOG_BUF_COMMAND_ACCEPT_COUNT], 0.0);
+    buf.slots[DOG_BUF_COMMAND_ACCEPT_COUNT] = current + 1.0;
+}
+
+fn increment_reject_count(buf: &mut DogSimBuffer) {
+    let current = finite_or(buf.slots[DOG_BUF_COMMAND_REJECT_COUNT], 0.0);
+    buf.slots[DOG_BUF_COMMAND_REJECT_COUNT] = current + 1.0;
+}
+
+fn distance_between(ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
+    let dx = finite_or(ax, 0.0) - finite_or(bx, 0.0);
+    let dy = finite_or(ay, 0.0) - finite_or(by, 0.0);
+    let d = (dx * dx + dy * dy).sqrt();
+    if d.is_finite() {
+        d
+    } else {
+        0.0
+    }
+}
+
+fn collect_command_flags(buf: &DogSimBuffer) -> u32 {
+    let mut flags = 0;
+    if slot_flag(buf, DOG_BUF_CMD_WHISTLE_RECALL) {
+        flags |= DOG_CMD_WHISTLE_RECALL;
+    }
+    if slot_flag(buf, DOG_BUF_CMD_PET) {
+        flags |= DOG_CMD_PET;
+    }
+    if slot_flag(buf, DOG_BUF_CMD_PRAISE) {
+        flags |= DOG_CMD_PRAISE;
+    }
+    if slot_flag(buf, DOG_BUF_CMD_BARK) {
+        flags |= DOG_CMD_BARK;
+    }
+    if slot_flag(buf, DOG_BUF_CMD_TRIGGER_ZOOMIES) {
+        flags |= DOG_CMD_ZOOMIES;
+    }
+    if slot_flag(buf, DOG_BUF_CMD_FETCH_BALL) {
+        flags |= DOG_CMD_FETCH_BALL;
+    }
+    let packed = slot_value(buf, DOG_BUF_COMMAND_FLAGS);
+    if packed > 0.0 {
+        flags |= (packed.round() as u32) & 0x1FF;
+    }
+    flags
+}
+
+fn clear_command_flags(buf: &mut DogSimBuffer) {
+    for index in [
+        DOG_BUF_CMD_WHISTLE_RECALL,
+        DOG_BUF_CMD_PET,
+        DOG_BUF_CMD_PRAISE,
+        DOG_BUF_CMD_BARK,
+        DOG_BUF_CMD_TRIGGER_ZOOMIES,
+        DOG_BUF_CMD_FETCH_BALL,
+        DOG_BUF_COMMAND_FLAGS,
+    ] {
+        buf.slots[index] = 0.0;
+    }
+}
+
+fn select_command(flags: u32) -> u32 {
+    for bit in [
+        DOG_CMD_CLEAR_PENDING,
+        DOG_CMD_WHISTLE_RECALL,
+        DOG_CMD_PET,
+        DOG_CMD_PRAISE,
+        DOG_CMD_BARK,
+        DOG_CMD_ZOOMIES,
+        DOG_CMD_FETCH_BALL,
+        DOG_CMD_PACK_PLAY_START,
+        DOG_CMD_PACK_PLAY_BREAK,
+    ] {
+        if flags & bit != 0 {
+            return bit;
+        }
+    }
+    0
+}
+
+fn finish_recall(buf: &mut DogSimBuffer, events: &mut u32) {
+    buf.slots[DOG_BUF_TRANSITION_STATE] = TransitionStateId::Idle as u32 as f32;
+    buf.slots[DOG_BUF_DOG_STATE_ID] = DogStateId::Idle as u32 as f32;
+    buf.slots[DOG_BUF_DOG_VX] = 0.0;
+    buf.slots[DOG_BUF_DOG_VY] = 0.0;
+    *events |= DOG_EVENT_RECALL_ARRIVED;
+}
+
+fn advance_recall(buf: &mut DogSimBuffer, ctx: &DogAiContext<'_>, dt: f32, events: &mut u32) {
+    if slot_state(buf, DOG_BUF_TRANSITION_STATE) != TransitionStateId::ToOwner as u32 {
+        return;
+    }
+    let dog_x = slot_value(buf, DOG_BUF_DOG_X);
+    let dog_y = slot_value(buf, DOG_BUF_DOG_Y);
+    let dx = ctx.owner_x - dog_x;
+    let dy = ctx.owner_y - dog_y;
+    let dist = (dx * dx + dy * dy).sqrt();
+    if !dist.is_finite() {
+        return;
+    }
+    // Arrival is checked even while rolling so the recall can complete.
+    if dist <= RECALL_ARRIVE_DISTANCE_PX {
+        finish_recall(buf, events);
+        return;
+    }
+    // Suppress movement while the dog is rolling in a sunny zone.
+    if slot_state(buf, DOG_BUF_SUNNY_ROLL_STATE) == SunnyRollStateId::Rolling as u32 {
+        return;
+    }
+    let speed = base_desired_speed(UTIL_RECALL);
+    let step = (speed * dt).min(dist);
+    let nx = dog_x + dx / dist * step;
+    let ny = dog_y + dy / dist * step;
+    buf.slots[DOG_BUF_DOG_X] = nx;
+    buf.slots[DOG_BUF_DOG_Y] = ny;
+    buf.slots[DOG_BUF_DOG_VX] = dx / dist * speed;
+    buf.slots[DOG_BUF_DOG_VY] = dy / dist * speed;
+    if distance_between(nx, ny, ctx.owner_x, ctx.owner_y) <= RECALL_ARRIVE_DISTANCE_PX {
+        finish_recall(buf, events);
+    }
+}
+
+fn advance_fetch(buf: &mut DogSimBuffer, ctx: &DogAiContext<'_>, events: &mut u32) {
+    if slot_state(buf, DOG_BUF_TRANSITION_STATE) != TransitionStateId::ToBall as u32 {
+        return;
+    }
+    if ctx.ball_held_by_dog {
+        buf.slots[DOG_BUF_IS_BALL_HELD] = 1.0;
+        buf.slots[DOG_BUF_TRANSITION_STATE] = TransitionStateId::Idle as u32 as f32;
+        buf.slots[DOG_BUF_DOG_STATE_ID] = DogStateId::Idle as u32 as f32;
+        *events |= DOG_EVENT_FETCH_COMPLETED;
+    }
+}
+
+fn advance_sunny_roll(
+    buf: &mut DogSimBuffer,
+    ctx: &DogAiContext<'_>,
+    events: &mut u32,
+    events_hi: &mut u64,
+) {
+    let sunny = ctx.sunny_zone_contains_dog;
+    let mut state = slot_state(buf, DOG_BUF_SUNNY_ROLL_STATE);
+    let timer = slot_value(buf, DOG_BUF_SUNNY_ROLL_TIMER);
+
+    if state == SunnyRollStateId::Rolling as u32 {
+        if timer <= 0.0 {
+            state = SunnyRollStateId::Finished as u32;
+            buf.slots[DOG_BUF_SUNNY_ROLL_TIMER] = SUNNY_ROLL_COOLDOWN_S;
+            *events |= DOG_EVENT_SUNNY_ROLL_FINISHED;
+        }
+    } else if state == SunnyRollStateId::Finished as u32 && timer <= 0.0 {
+        state = SunnyRollStateId::None as u32;
+    }
+
+    // Entry detection also runs in the same step as cooldown expiry.
+    if state == SunnyRollStateId::None as u32 {
+        let was_sunny = (slot_value(buf, DOG_BUF_STATE_FLAGS) as u32) & 1 != 0;
+        let pack_active =
+            slot_state(buf, DOG_BUF_PACK_PLAY_STATE) == PackPlayStateId::Active as u32;
+        let cooldown_ready = slot_value(buf, DOG_BUF_SUNNY_ROLL_TIMER) <= 0.0;
+        if !was_sunny && sunny && !pack_active && cooldown_ready {
+            state = SunnyRollStateId::Rolling as u32;
+            buf.slots[DOG_BUF_SUNNY_ROLL_TIMER] = SUNNY_ROLL_DURATION_S;
+            *events |= DOG_EVENT_SUNNY_ROLL_STARTED;
+            *events_hi |= DOG_EVENT_SUNNY_ZONE_ENTERED;
+        }
+    }
+
+    buf.slots[DOG_BUF_SUNNY_ROLL_STATE] = state as f32;
+    let mut flags = slot_value(buf, DOG_BUF_STATE_FLAGS) as u32;
+    if sunny {
+        flags |= 1;
+    } else {
+        flags &= !1;
+    }
+    buf.slots[DOG_BUF_STATE_FLAGS] = flags as f32;
+}
+
+fn advance_pack_play(buf: &mut DogSimBuffer, ctx: &DogAiContext<'_>, events: &mut u32) {
+    let state = slot_state(buf, DOG_BUF_PACK_PLAY_STATE);
+    let timer = slot_value(buf, DOG_BUF_PACK_PLAY_TIMER);
+    let mut next = state;
+
+    if state == PackPlayStateId::Active as u32 {
+        let distance = distance_between(
+            slot_value(buf, DOG_BUF_DOG_X),
+            slot_value(buf, DOG_BUF_DOG_Y),
+            ctx.pack_partner_x,
+            ctx.pack_partner_y,
+        );
+        if distance > PACK_PLAY_BREAK_DISTANCE_PX || timer <= 0.0 {
+            next = PackPlayStateId::Breaking as u32;
+            buf.slots[DOG_BUF_PACK_PLAY_TIMER] = PACK_PLAY_BREAK_TIME_S;
+        }
+    } else if state == PackPlayStateId::Breaking as u32 && timer <= 0.0 {
+        next = PackPlayStateId::Broken as u32;
+        *events |= DOG_EVENT_PACK_PLAY_BROKEN;
+    }
+
+    buf.slots[DOG_BUF_PACK_PLAY_STATE] = next as f32;
+}
+
+fn advance_needs(buf: &mut DogSimBuffer, ctx: &DogAiContext<'_>, events: &mut u32) {
+    // Compare against the buffer's own need flags directly (no shadow bits in
+    // `DOG_BUF_STATE_FLAGS`, which is reserved for the sunny-zone flag).
+    let was_hungry = slot_flag(buf, DOG_BUF_IS_HUNGRY);
+    let was_grooming = slot_flag(buf, DOG_BUF_NEEDS_GROOMING);
+    let was_tired = slot_flag(buf, DOG_BUF_IS_TIRED);
+
+    if ctx.care_is_hungry && !was_hungry {
+        *events |= DOG_EVENT_NEED_HUNGRY;
+    }
+    if ctx.care_needs_grooming && !was_grooming {
+        *events |= DOG_EVENT_NEED_GROOMING;
+    }
+    if ctx.care_is_tired && !was_tired {
+        *events |= DOG_EVENT_NEED_TIRED;
+    }
+
+    // Hydrate the buffer's need flags from the context.
+    buf.slots[DOG_BUF_IS_HUNGRY] = if ctx.care_is_hungry { 1.0 } else { 0.0 };
+    buf.slots[DOG_BUF_NEEDS_GROOMING] = if ctx.care_needs_grooming { 1.0 } else { 0.0 };
+    buf.slots[DOG_BUF_IS_TIRED] = if ctx.care_is_tired { 1.0 } else { 0.0 };
+}
+
+/// Advance the command-authority state machine by one tick.
+///
+/// Commands are processed exactly once in the locked priority order. Invalid
+/// `dt_s` values are rejected before any timer is advanced. All state is stored
+/// in the fixed-size shared buffer; this path is allocation free.
+pub fn step_dog_utility_ai(buf: &mut DogSimBuffer, ctx: &DogAiContext<'_>, dt_s: f32) -> u32 {
+    if !dt_s.is_finite() || dt_s <= 0.0 {
+        write_event_mask64(buf, DOG_EVENT_COMMAND_REJECTED as u64);
+        return DOG_EVENT_COMMAND_REJECTED;
+    }
+
+    for index in [
+        DOG_BUF_SOCIAL_COOLDOWN,
+        DOG_BUF_WHISTLE_COOLDOWN,
+        DOG_BUF_PET_TIMER,
+        DOG_BUF_PRAISE_TIMER,
+        DOG_BUF_BARK_TIMER,
+        DOG_BUF_ZOOMIES_TIMER,
+        DOG_BUF_SUNNY_ROLL_TIMER,
+        DOG_BUF_PACK_PLAY_TIMER,
+        DOG_BUF_FETCH_TIMER,
+    ] {
+        decrement_slot(buf, index, dt_s);
+    }
+
+    let mut events = 0u32;
+    let mut events_hi = 0u64;
+    let flags = collect_command_flags(buf);
+    if flags != 0 {
+        let selected = select_command(flags);
+        clear_command_flags(buf);
+
+        // Any additional lower-priority command bits in the same step are
+        // rejected: only the highest-priority command is processed.
+        let extra = flags & !selected;
+        if extra != 0 {
+            increment_reject_count(buf);
+            events |= DOG_EVENT_COMMAND_REJECTED;
+        }
+
+        match selected {
+            DOG_CMD_CLEAR_PENDING => {
+                // Only clears pending command flags; no state mutation.
+            }
+            DOG_CMD_WHISTLE_RECALL => {
+                if slot_value(buf, DOG_BUF_SOCIAL_COOLDOWN) > 0.0 {
+                    increment_reject_count(buf);
+                    events |= DOG_EVENT_COMMAND_REJECTED;
+                    events_hi |= DOG_EVENT_SOCIAL_COOLDOWN_REJECT;
+                } else {
+                    increment_accept_count(buf);
+                    buf.slots[DOG_BUF_TRANSITION_STATE] =
+                        TransitionStateId::ToOwner as u32 as f32;
+                    buf.slots[DOG_BUF_SOCIAL_COOLDOWN] = SOCIAL_COOLDOWN_S;
+                    buf.slots[DOG_BUF_WHISTLE_COOLDOWN] = WHISTLE_COOLDOWN_S;
+                    buf.slots[DOG_BUF_DOG_STATE_ID] = DogStateId::Recall as u32 as f32;
+                    events |= DOG_EVENT_WHISTLE_RECALL_STARTED;
+                    // Emitted on every accepted whistle.
+                    events |= DOG_EVENT_TRANSITION_STATE_CHANGED;
+                }
+            }
+            DOG_CMD_PET => {
+                if slot_value(buf, DOG_BUF_SOCIAL_COOLDOWN) > 0.0 {
+                    increment_reject_count(buf);
+                    events |= DOG_EVENT_COMMAND_REJECTED;
+                    events_hi |= DOG_EVENT_SOCIAL_COOLDOWN_REJECT;
+                } else {
+                    increment_accept_count(buf);
+                    buf.slots[DOG_BUF_PET_TIMER] = PET_TIMER_S;
+                    buf.slots[DOG_BUF_SOCIAL_COOLDOWN] = SOCIAL_COOLDOWN_S;
+                    events |= DOG_EVENT_PET_ACCEPTED;
+                }
+            }
+            DOG_CMD_PRAISE => {
+                if slot_value(buf, DOG_BUF_SOCIAL_COOLDOWN) > 0.0 {
+                    increment_reject_count(buf);
+                    events |= DOG_EVENT_COMMAND_REJECTED;
+                    events_hi |= DOG_EVENT_SOCIAL_COOLDOWN_REJECT;
+                } else {
+                    increment_accept_count(buf);
+                    buf.slots[DOG_BUF_PRAISE_TIMER] = PRAISE_TIMER_S;
+                    buf.slots[DOG_BUF_SOCIAL_COOLDOWN] = PRAISE_COOLDOWN_S;
+                    events |= DOG_EVENT_PRAISE_ACCEPTED;
+                }
+            }
+            DOG_CMD_BARK => {
+                increment_accept_count(buf);
+                buf.slots[DOG_BUF_BARK_TIMER] = BARK_TIMER_S;
+                buf.slots[DOG_BUF_DOG_STATE_ID] = DogStateId::Bark as u32 as f32;
+                events |= DOG_EVENT_BARK;
+            }
+            DOG_CMD_ZOOMIES => {
+                increment_accept_count(buf);
+                buf.slots[DOG_BUF_ZOOMIES_TIMER] = ZOOMIES_TIMER_S;
+                buf.slots[DOG_BUF_DOG_STATE_ID] = DogStateId::Zoomies as u32 as f32;
+                events |= DOG_EVENT_ZOOMIES_STARTED;
+            }
+            DOG_CMD_FETCH_BALL => {
+                let already_held = ctx.ball_held_by_dog || slot_flag(buf, DOG_BUF_IS_BALL_HELD);
+                if !ctx.ball_available || already_held {
+                    increment_reject_count(buf);
+                    events |= DOG_EVENT_COMMAND_REJECTED;
+                } else {
+                    increment_accept_count(buf);
+                    buf.slots[DOG_BUF_TRANSITION_STATE] =
+                        TransitionStateId::ToBall as u32 as f32;
+                    buf.slots[DOG_BUF_FETCH_TIMER] = FETCH_TIMER_S;
+                    buf.slots[DOG_BUF_DOG_STATE_ID] = DogStateId::Fetch as u32 as f32;
+                    events |= DOG_EVENT_FETCH_STARTED;
+                }
+            }
+            DOG_CMD_PACK_PLAY_START => {
+                let partner_valid = ctx.pack_partner_available
+                    && ctx.pack_partner_id.is_finite()
+                    && ctx.pack_partner_id > 0.0;
+                let distance = distance_between(
+                    slot_value(buf, DOG_BUF_DOG_X),
+                    slot_value(buf, DOG_BUF_DOG_Y),
+                    ctx.pack_partner_x,
+                    ctx.pack_partner_y,
+                );
+                let sunny_rolling =
+                    slot_state(buf, DOG_BUF_SUNNY_ROLL_STATE) == SunnyRollStateId::Rolling as u32;
+                let fetch_active =
+                    slot_state(buf, DOG_BUF_TRANSITION_STATE) == TransitionStateId::ToBall as u32;
+                if !partner_valid
+                    || distance > PACK_PLAY_START_DISTANCE_PX
+                    || sunny_rolling
+                    || fetch_active
+                {
+                    increment_reject_count(buf);
+                    events |= DOG_EVENT_COMMAND_REJECTED;
+                } else {
+                    increment_accept_count(buf);
+                    buf.slots[DOG_BUF_PACK_PLAY_STATE] = PackPlayStateId::Active as u32 as f32;
+                    buf.slots[DOG_BUF_PACK_PLAY_TIMER] = PACK_PLAY_DURATION_S;
+                    buf.slots[DOG_BUF_PACK_PLAY_PARTNER_ID] = ctx.pack_partner_id;
+                    buf.slots[DOG_BUF_DOG_STATE_ID] = DogStateId::Social as u32 as f32;
+                    events |= DOG_EVENT_PACK_PLAY_STARTED;
+                }
+            }
+            DOG_CMD_PACK_PLAY_BREAK => {
+                // Breaking is only meaningful while pack play is active. When it
+                // is not active this is a silent no-op: no counters, no events,
+                // no state mutation.
+                if slot_state(buf, DOG_BUF_PACK_PLAY_STATE) == PackPlayStateId::Active as u32 {
+                    increment_accept_count(buf);
+                    buf.slots[DOG_BUF_PACK_PLAY_STATE] = PackPlayStateId::Breaking as u32 as f32;
+                    buf.slots[DOG_BUF_PACK_PLAY_TIMER] = PACK_PLAY_BREAK_TIME_S;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    advance_recall(buf, ctx, dt_s, &mut events);
+    advance_fetch(buf, ctx, &mut events);
+    advance_sunny_roll(buf, ctx, &mut events, &mut events_hi);
+    advance_pack_play(buf, ctx, &mut events);
+    advance_needs(buf, ctx, &mut events);
+
+    write_event_mask64(buf, events as u64 | events_hi);
+    events
 }
 
 // ---------------------------------------------------------------------------
@@ -1397,7 +1890,7 @@ mod tests {
 
         let events = integrate_micro_expressions(&mut buffer, &input, 0.1);
         assert_ne!(events & DOG_EVENT_GALLOP_PUFF, 0);
-        assert_eq!(buffer.slots[DOG_BUF_EVENT_BITMASK] as u32, events);
+        assert_eq!(read_event_bitmask(&buffer), events);
         assert_eq!(buffer.slots[DOG_BUF_GAIT_MODE_ID], 3.0);
     }
 
@@ -1457,7 +1950,7 @@ mod tests {
             output.active_utility_id
         );
         assert!(output.active_utility_score.is_finite());
-        assert_eq!(output.events, buffer.slots[DOG_BUF_EVENT_BITMASK] as u32);
+        assert_eq!(output.events, read_event_bitmask(&buffer));
         assert!(output.steer_x.is_finite() && output.steer_y.is_finite());
         assert!(magnitude(output.steer_x, output.steer_y) <= 1.0 + 1e-5);
     }
@@ -2095,5 +2588,544 @@ mod tests {
 
         let mut buffer2 = blank_buffer();
         let _ = step_utility_ai(&mut buffer2, &obstacles, blank_combo(), f32::NAN);
+    }
+
+    fn ai_context<'a>(obstacles: &'a [WorldObstacle]) -> DogAiContext<'a> {
+        DogAiContext {
+            owner_x: 0.0,
+            owner_y: 0.0,
+            ball_available: false,
+            ball_held_by_dog: false,
+            sunny_zone_contains_dog: false,
+            pack_partner_available: false,
+            pack_partner_id: 0.0,
+            pack_partner_x: 0.0,
+            pack_partner_y: 0.0,
+            care_is_hungry: false,
+            care_needs_grooming: false,
+            care_is_tired: false,
+            obstacles,
+        }
+    }
+
+    fn ai_buffer() -> DogSimBuffer {
+        blank_buffer()
+    }
+
+    fn set_flag(buf: &mut DogSimBuffer, index: usize) {
+        buf.slots[index] = 1.0;
+    }
+
+    fn set_command(buf: &mut DogSimBuffer, bit: u32) {
+        let current = buf.slots[DOG_BUF_COMMAND_FLAGS] as u32;
+        buf.slots[DOG_BUF_COMMAND_FLAGS] = (current | bit) as f32;
+    }
+
+    #[test]
+    fn command_constants_match_locked_values() {
+        assert_eq!(WHISTLE_COOLDOWN_S, 8.0);
+        assert_eq!(SOCIAL_COOLDOWN_S, 3.0);
+        assert_eq!(PRAISE_COOLDOWN_S, 2.0);
+        assert_eq!(PET_TIMER_S, 1.0);
+        assert_eq!(PRAISE_TIMER_S, 1.0);
+        assert_eq!(BARK_TIMER_S, 0.6);
+        assert_eq!(ZOOMIES_TIMER_S, 3.0);
+        assert_eq!(SUNNY_ROLL_DURATION_S, 2.0);
+        assert_eq!(SUNNY_ROLL_COOLDOWN_S, 5.0);
+        assert_eq!(PACK_PLAY_START_DISTANCE_PX, 40.0);
+        assert_eq!(PACK_PLAY_BREAK_DISTANCE_PX, 48.0);
+        assert_eq!(PACK_PLAY_DURATION_S, 8.0);
+        assert_eq!(PACK_PLAY_BREAK_TIME_S, 0.5);
+        assert_eq!(RECALL_ARRIVE_DISTANCE_PX, 24.0);
+        assert_eq!(FETCH_TIMER_S, 10.0);
+    }
+
+    #[test]
+    fn event_constants_are_distinct_powers_of_two() {
+        let events = [
+            DOG_EVENT_WHISTLE_RECALL_STARTED,
+            DOG_EVENT_TRANSITION_STATE_CHANGED,
+            DOG_EVENT_PET_ACCEPTED,
+            DOG_EVENT_PRAISE_ACCEPTED,
+            DOG_EVENT_BARK,
+            DOG_EVENT_ZOOMIES_STARTED,
+            DOG_EVENT_FETCH_STARTED,
+            DOG_EVENT_RECALL_ARRIVED,
+            DOG_EVENT_FETCH_COMPLETED,
+            DOG_EVENT_SUNNY_ROLL_STARTED,
+            DOG_EVENT_SUNNY_ROLL_FINISHED,
+            DOG_EVENT_PACK_PLAY_STARTED,
+            DOG_EVENT_PACK_PLAY_BROKEN,
+            DOG_EVENT_NEED_HUNGRY,
+            DOG_EVENT_NEED_GROOMING,
+            DOG_EVENT_COMMAND_REJECTED,
+            DOG_EVENT_NEED_TIRED,
+        ];
+        for (index, event) in events.iter().enumerate() {
+            assert_eq!(event.count_ones(), 1);
+            for other in events.iter().skip(index + 1) {
+                assert_ne!(event, other);
+            }
+        }
+    }
+
+    #[test]
+    fn state_machine_events_distinct_from_legacy_and_leash() {
+        let state_events = [
+            DOG_EVENT_WHISTLE_RECALL_STARTED,
+            DOG_EVENT_TRANSITION_STATE_CHANGED,
+            DOG_EVENT_PET_ACCEPTED,
+            DOG_EVENT_PRAISE_ACCEPTED,
+            DOG_EVENT_BARK,
+            DOG_EVENT_ZOOMIES_STARTED,
+            DOG_EVENT_FETCH_STARTED,
+            DOG_EVENT_RECALL_ARRIVED,
+            DOG_EVENT_FETCH_COMPLETED,
+            DOG_EVENT_SUNNY_ROLL_STARTED,
+            DOG_EVENT_SUNNY_ROLL_FINISHED,
+            DOG_EVENT_PACK_PLAY_STARTED,
+            DOG_EVENT_PACK_PLAY_BROKEN,
+            DOG_EVENT_NEED_HUNGRY,
+            DOG_EVENT_NEED_GROOMING,
+            DOG_EVENT_COMMAND_REJECTED,
+            DOG_EVENT_NEED_TIRED,
+        ];
+        let legacy = [
+            DOG_EVENT_HEARTS_SPAWNED,
+            DOG_EVENT_LEASH_TAUT,
+            DOG_EVENT_LEASH_SLACK,
+        ];
+        for event in state_events.iter() {
+            for other in legacy.iter() {
+                assert_ne!(event, other);
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_dt_rejects_without_advancing_timers() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let ctx = ai_context(&obstacles);
+        let mut buf = ai_buffer();
+        buf.slots[DOG_BUF_SOCIAL_COOLDOWN] = 1.0;
+        buf.slots[DOG_BUF_PET_TIMER] = 0.5;
+
+        for bad_dt in [f32::NAN, 0.0, -1.0] {
+            let events = step_dog_utility_ai(&mut buf, &ctx, bad_dt);
+            assert_ne!(events & DOG_EVENT_COMMAND_REJECTED, 0);
+            assert_eq!(buf.slots[DOG_BUF_SOCIAL_COOLDOWN], 1.0);
+            assert_eq!(buf.slots[DOG_BUF_PET_TIMER], 0.5);
+        }
+    }
+
+    #[test]
+    fn clear_pending_only_clears_flags() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let ctx = ai_context(&obstacles);
+        let mut buf = ai_buffer();
+        set_command(&mut buf, DOG_CMD_CLEAR_PENDING);
+        set_command(&mut buf, DOG_CMD_WHISTLE_RECALL);
+
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+
+        assert_eq!(events & DOG_EVENT_WHISTLE_RECALL_STARTED, 0);
+        assert_eq!(buf.slots[DOG_BUF_TRANSITION_STATE], 0.0);
+        assert_eq!(buf.slots[DOG_BUF_COMMAND_FLAGS], 0.0);
+    }
+
+    #[test]
+    fn whistle_beats_pet_and_sets_cooldowns() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let ctx = ai_context(&obstacles);
+        let mut buf = ai_buffer();
+        buf.slots[DOG_BUF_DOG_X] = 100.0;
+        buf.slots[DOG_BUF_DOG_Y] = 100.0;
+        set_flag(&mut buf, DOG_BUF_CMD_WHISTLE_RECALL);
+        set_flag(&mut buf, DOG_BUF_CMD_PET);
+
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+
+        assert_ne!(events & DOG_EVENT_WHISTLE_RECALL_STARTED, 0);
+        assert_ne!(events & DOG_EVENT_TRANSITION_STATE_CHANGED, 0);
+        assert_eq!(
+            buf.slots[DOG_BUF_TRANSITION_STATE],
+            TransitionStateId::ToOwner as u32 as f32
+        );
+        assert_eq!(buf.slots[DOG_BUF_SOCIAL_COOLDOWN], SOCIAL_COOLDOWN_S);
+        assert_eq!(buf.slots[DOG_BUF_WHISTLE_COOLDOWN], WHISTLE_COOLDOWN_S);
+        assert_eq!(buf.slots[DOG_BUF_PET_TIMER], 0.0);
+    }
+
+    #[test]
+    fn social_cooldown_rejects_whistle_pet_and_praise() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let ctx = ai_context(&obstacles);
+        for command in [
+            DOG_BUF_CMD_WHISTLE_RECALL,
+            DOG_BUF_CMD_PET,
+            DOG_BUF_CMD_PRAISE,
+        ] {
+            let mut buf = ai_buffer();
+            buf.slots[DOG_BUF_SOCIAL_COOLDOWN] = 1.0;
+            set_flag(&mut buf, command);
+            let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+            assert_ne!(events & DOG_EVENT_COMMAND_REJECTED, 0);
+        }
+    }
+
+    #[test]
+    fn pet_praise_bark_and_zoomies_events() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let ctx = ai_context(&obstacles);
+
+        let mut buf = ai_buffer();
+        set_flag(&mut buf, DOG_BUF_CMD_PET);
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+        assert_ne!(events & DOG_EVENT_PET_ACCEPTED, 0);
+        assert_eq!(buf.slots[DOG_BUF_PET_TIMER], PET_TIMER_S);
+
+        let mut buf = ai_buffer();
+        set_flag(&mut buf, DOG_BUF_CMD_PRAISE);
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+        assert_ne!(events & DOG_EVENT_PRAISE_ACCEPTED, 0);
+        assert_eq!(buf.slots[DOG_BUF_PRAISE_TIMER], PRAISE_TIMER_S);
+        assert_eq!(buf.slots[DOG_BUF_SOCIAL_COOLDOWN], PRAISE_COOLDOWN_S);
+
+        let mut buf = ai_buffer();
+        set_flag(&mut buf, DOG_BUF_CMD_BARK);
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+        assert_ne!(events & DOG_EVENT_BARK, 0);
+        assert_eq!(buf.slots[DOG_BUF_BARK_TIMER], BARK_TIMER_S);
+
+        let mut buf = ai_buffer();
+        set_flag(&mut buf, DOG_BUF_CMD_TRIGGER_ZOOMIES);
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+        assert_ne!(events & DOG_EVENT_ZOOMIES_STARTED, 0);
+        assert_eq!(buf.slots[DOG_BUF_ZOOMIES_TIMER], ZOOMIES_TIMER_S);
+    }
+
+    #[test]
+    fn fetch_sets_timer_and_completes_when_held() {
+        let obstacles: [WorldObstacle; 0] = [];
+
+        let mut buf = ai_buffer();
+        let ctx = ai_context(&obstacles);
+        set_flag(&mut buf, DOG_BUF_CMD_FETCH_BALL);
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+        assert_ne!(events & DOG_EVENT_COMMAND_REJECTED, 0);
+
+        let mut buf = ai_buffer();
+        let mut ctx = ai_context(&obstacles);
+        ctx.ball_available = true;
+        set_flag(&mut buf, DOG_BUF_CMD_FETCH_BALL);
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+        assert_ne!(events & DOG_EVENT_FETCH_STARTED, 0);
+        assert_eq!(
+            buf.slots[DOG_BUF_TRANSITION_STATE],
+            TransitionStateId::ToBall as u32 as f32
+        );
+        assert_eq!(buf.slots[DOG_BUF_FETCH_TIMER], FETCH_TIMER_S);
+
+        ctx.ball_held_by_dog = true;
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+        assert_ne!(events & DOG_EVENT_FETCH_COMPLETED, 0);
+        assert_eq!(buf.slots[DOG_BUF_IS_BALL_HELD], 1.0);
+        assert_eq!(
+            buf.slots[DOG_BUF_TRANSITION_STATE],
+            TransitionStateId::Idle as u32 as f32
+        );
+    }
+
+    #[test]
+    fn recall_arrives_within_threshold() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buf = ai_buffer();
+        let mut ctx = ai_context(&obstacles);
+        ctx.owner_x = 20.0;
+        ctx.owner_y = 0.0;
+        set_flag(&mut buf, DOG_BUF_CMD_WHISTLE_RECALL);
+
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+
+        assert_ne!(events & DOG_EVENT_WHISTLE_RECALL_STARTED, 0);
+        assert_ne!(events & DOG_EVENT_RECALL_ARRIVED, 0);
+        assert_eq!(
+            buf.slots[DOG_BUF_TRANSITION_STATE],
+            TransitionStateId::Idle as u32 as f32
+        );
+        assert_eq!(
+            buf.slots[DOG_BUF_DOG_STATE_ID],
+            DogStateId::Idle as u32 as f32
+        );
+    }
+
+    #[test]
+    fn recall_suppressed_while_sunny_rolling() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buf = ai_buffer();
+        buf.slots[DOG_BUF_DOG_X] = 100.0;
+        buf.slots[DOG_BUF_DOG_Y] = 0.0;
+        buf.slots[DOG_BUF_SUNNY_ROLL_STATE] = SunnyRollStateId::Rolling as u32 as f32;
+        buf.slots[DOG_BUF_SUNNY_ROLL_TIMER] = 1.0;
+        buf.slots[DOG_BUF_TRANSITION_STATE] = TransitionStateId::ToOwner as u32 as f32;
+        let ctx = ai_context(&obstacles);
+
+        let _ = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+        assert_eq!(buf.slots[DOG_BUF_DOG_X], 100.0);
+    }
+
+    #[test]
+    fn sunny_roll_progression_and_reentry() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buf = ai_buffer();
+        let mut ctx = ai_context(&obstacles);
+        ctx.sunny_zone_contains_dog = true;
+
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.1);
+        assert_ne!(events & DOG_EVENT_SUNNY_ROLL_STARTED, 0);
+        assert_eq!(
+            buf.slots[DOG_BUF_SUNNY_ROLL_STATE],
+            SunnyRollStateId::Rolling as u32 as f32
+        );
+
+        let events = step_dog_utility_ai(&mut buf, &ctx, SUNNY_ROLL_DURATION_S);
+        assert_ne!(events & DOG_EVENT_SUNNY_ROLL_FINISHED, 0);
+        assert_eq!(
+            buf.slots[DOG_BUF_SUNNY_ROLL_STATE],
+            SunnyRollStateId::Finished as u32 as f32
+        );
+
+        let _ = step_dog_utility_ai(&mut buf, &ctx, SUNNY_ROLL_COOLDOWN_S);
+        assert_eq!(
+            buf.slots[DOG_BUF_SUNNY_ROLL_STATE],
+            SunnyRollStateId::None as u32 as f32
+        );
+
+        ctx.sunny_zone_contains_dog = false;
+        let _ = step_dog_utility_ai(&mut buf, &ctx, 0.1);
+        ctx.sunny_zone_contains_dog = true;
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.1);
+        assert_ne!(events & DOG_EVENT_SUNNY_ROLL_STARTED, 0);
+    }
+
+    #[test]
+    fn pack_play_start_and_break_distances() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buf = ai_buffer();
+        let mut ctx = ai_context(&obstacles);
+        ctx.pack_partner_available = true;
+        ctx.pack_partner_id = 7.0;
+        ctx.pack_partner_x = 30.0;
+        ctx.pack_partner_y = 0.0;
+        set_command(&mut buf, DOG_CMD_PACK_PLAY_START);
+
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+        assert_ne!(events & DOG_EVENT_PACK_PLAY_STARTED, 0);
+        assert_eq!(
+            buf.slots[DOG_BUF_PACK_PLAY_STATE],
+            PackPlayStateId::Active as u32 as f32
+        );
+        assert_eq!(buf.slots[DOG_BUF_PACK_PLAY_PARTNER_ID], 7.0);
+
+        ctx.pack_partner_x = 100.0;
+        let _ = step_dog_utility_ai(&mut buf, &ctx, 0.1);
+        assert_eq!(
+            buf.slots[DOG_BUF_PACK_PLAY_STATE],
+            PackPlayStateId::Breaking as u32 as f32
+        );
+
+        let events = step_dog_utility_ai(&mut buf, &ctx, PACK_PLAY_BREAK_TIME_S);
+        assert_ne!(events & DOG_EVENT_PACK_PLAY_BROKEN, 0);
+        assert_eq!(
+            buf.slots[DOG_BUF_PACK_PLAY_STATE],
+            PackPlayStateId::Broken as u32 as f32
+        );
+    }
+
+    #[test]
+    fn pack_play_start_rejects_invalid_conditions() {
+        let obstacles: [WorldObstacle; 0] = [];
+
+        let mut buf = ai_buffer();
+        let ctx = ai_context(&obstacles);
+        set_command(&mut buf, DOG_CMD_PACK_PLAY_START);
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+        assert_ne!(events & DOG_EVENT_COMMAND_REJECTED, 0);
+        assert_eq!(
+            buf.slots[DOG_BUF_PACK_PLAY_STATE],
+            PackPlayStateId::None as u32 as f32
+        );
+
+        let mut buf = ai_buffer();
+        let mut ctx = ai_context(&obstacles);
+        ctx.pack_partner_available = true;
+        ctx.pack_partner_id = 3.0;
+        ctx.pack_partner_x = 100.0;
+        ctx.pack_partner_y = 0.0;
+        set_command(&mut buf, DOG_CMD_PACK_PLAY_START);
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+        assert_ne!(events & DOG_EVENT_COMMAND_REJECTED, 0);
+    }
+
+    #[test]
+    fn pack_play_break_when_inactive_does_nothing() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let ctx = ai_context(&obstacles);
+        let mut buf = ai_buffer();
+        set_command(&mut buf, DOG_CMD_PACK_PLAY_BREAK);
+
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+
+        assert_eq!(events & DOG_EVENT_PACK_PLAY_STARTED, 0);
+        assert_eq!(
+            buf.slots[DOG_BUF_PACK_PLAY_STATE],
+            PackPlayStateId::None as u32 as f32
+        );
+    }
+
+    #[test]
+    fn need_flags_are_hydrated_from_context() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buf = ai_buffer();
+        let mut ctx = ai_context(&obstacles);
+        ctx.care_is_hungry = true;
+        ctx.care_needs_grooming = true;
+        ctx.care_is_tired = true;
+
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+
+        assert_eq!(buf.slots[DOG_BUF_IS_HUNGRY], 1.0);
+        assert_eq!(buf.slots[DOG_BUF_NEEDS_GROOMING], 1.0);
+        assert_eq!(buf.slots[DOG_BUF_IS_TIRED], 1.0);
+        assert_ne!(events & DOG_EVENT_NEED_HUNGRY, 0);
+        assert_ne!(events & DOG_EVENT_NEED_GROOMING, 0);
+        assert_ne!(events & DOG_EVENT_NEED_TIRED, 0);
+    }
+
+    #[test]
+    fn command_flags_are_cleared_after_processing() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let ctx = ai_context(&obstacles);
+        let mut buf = ai_buffer();
+        let flags = [
+            DOG_BUF_CMD_WHISTLE_RECALL,
+            DOG_BUF_CMD_PET,
+            DOG_BUF_CMD_PRAISE,
+            DOG_BUF_CMD_BARK,
+            DOG_BUF_CMD_TRIGGER_ZOOMIES,
+            DOG_BUF_CMD_FETCH_BALL,
+        ];
+        for index in flags {
+            buf.slots[index] = 1.0;
+        }
+        set_command(&mut buf, DOG_CMD_CLEAR_PENDING);
+
+        let _ = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+
+        for index in flags {
+            assert_eq!(buf.slots[index], 0.0);
+        }
+        assert_eq!(buf.slots[DOG_BUF_COMMAND_FLAGS], 0.0);
+    }
+
+    #[test]
+    fn command_counters_track_accept_and_reject() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let ctx = ai_context(&obstacles);
+
+        let mut buf = ai_buffer();
+        set_flag(&mut buf, DOG_BUF_CMD_BARK);
+        let _ = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+        assert_eq!(buf.slots[DOG_BUF_COMMAND_ACCEPT_COUNT], 1.0);
+        assert_eq!(buf.slots[DOG_BUF_COMMAND_REJECT_COUNT], 0.0);
+
+        let mut buf = ai_buffer();
+        buf.slots[DOG_BUF_SOCIAL_COOLDOWN] = 1.0;
+        set_flag(&mut buf, DOG_BUF_CMD_PET);
+        let _ = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+        assert_eq!(buf.slots[DOG_BUF_COMMAND_ACCEPT_COUNT], 0.0);
+        assert_eq!(buf.slots[DOG_BUF_COMMAND_REJECT_COUNT], 1.0);
+    }
+
+    #[test]
+    fn additional_lower_priority_commands_are_rejected() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let ctx = ai_context(&obstacles);
+        let mut buf = ai_buffer();
+        // BARK (bit 4) outranks ZOOMIES (bit 5); the zoomies bit is rejected.
+        set_flag(&mut buf, DOG_BUF_CMD_BARK);
+        set_flag(&mut buf, DOG_BUF_CMD_TRIGGER_ZOOMIES);
+
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+
+        assert_ne!(events & DOG_EVENT_BARK, 0);
+        assert_ne!(events & DOG_EVENT_COMMAND_REJECTED, 0);
+        assert_eq!(buf.slots[DOG_BUF_COMMAND_ACCEPT_COUNT], 1.0);
+        assert_eq!(buf.slots[DOG_BUF_COMMAND_REJECT_COUNT], 1.0);
+    }
+
+    #[test]
+    fn social_cooldown_reject_event_emitted() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let ctx = ai_context(&obstacles);
+        for command in [
+            DOG_BUF_CMD_WHISTLE_RECALL,
+            DOG_BUF_CMD_PET,
+            DOG_BUF_CMD_PRAISE,
+        ] {
+            let mut buf = ai_buffer();
+            buf.slots[DOG_BUF_SOCIAL_COOLDOWN] = 1.0;
+            set_flag(&mut buf, command);
+            let _ = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+            assert_ne!(
+                read_event_mask64(&buf) & DOG_EVENT_SOCIAL_COOLDOWN_REJECT,
+                0,
+                "social cooldown reject event missing for command slot {}",
+                command
+            );
+        }
+    }
+
+    #[test]
+    fn sunny_zone_entered_event_emitted() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buf = ai_buffer();
+        let mut ctx = ai_context(&obstacles);
+        ctx.sunny_zone_contains_dog = true;
+
+        let _ = step_dog_utility_ai(&mut buf, &ctx, 0.1);
+
+        assert_ne!(read_event_mask64(&buf) & DOG_EVENT_SUNNY_ZONE_ENTERED, 0);
+    }
+
+    #[test]
+    fn pack_play_break_inactive_is_silent() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let ctx = ai_context(&obstacles);
+        let mut buf = ai_buffer();
+        set_command(&mut buf, DOG_CMD_PACK_PLAY_BREAK);
+
+        let events = step_dog_utility_ai(&mut buf, &ctx, 0.016);
+
+        assert_eq!(events & DOG_EVENT_COMMAND_REJECTED, 0);
+        assert_eq!(buf.slots[DOG_BUF_COMMAND_ACCEPT_COUNT], 0.0);
+        assert_eq!(buf.slots[DOG_BUF_COMMAND_REJECT_COUNT], 0.0);
+        assert_eq!(
+            buf.slots[DOG_BUF_PACK_PLAY_STATE],
+            PackPlayStateId::None as u32 as f32
+        );
+    }
+
+    #[test]
+    fn invalid_dt_returns_exact_command_rejected() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let ctx = ai_context(&obstacles);
+        let mut buf = ai_buffer();
+        buf.slots[DOG_BUF_EVENT_BITMASK] = 7.0;
+
+        let events = step_dog_utility_ai(&mut buf, &ctx, f32::NAN);
+
+        assert_eq!(events, DOG_EVENT_COMMAND_REJECTED);
+        assert_eq!(read_event_bitmask(&buf), DOG_EVENT_COMMAND_REJECTED);
     }
 }

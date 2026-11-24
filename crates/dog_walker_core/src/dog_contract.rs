@@ -97,10 +97,10 @@ pub const DOG_BUF_SCENT3_Y: usize = 61;
 pub const DOG_BUF_RESERVED_INPUT_0: usize = 62;
 pub const DOG_BUF_RESERVED_INPUT_1: usize = 63;
 
-// Extension aliases: reuse the reserved input slots without colliding with
-// the stable `0..=127` layout.
-pub const DOG_BUF_EXTENSION_COMMAND_FLAGS: usize = DOG_BUF_RESERVED_INPUT_0;
-pub const DOG_BUF_EXTENSION_SUNNY_ZONE: usize = DOG_BUF_RESERVED_INPUT_1;
+// State-machine extension slots (unification-049). These reuse the reserved
+// input slots; the command-authority state machine owns them.
+pub const DOG_BUF_COMMAND_FLAGS: usize = DOG_BUF_RESERVED_INPUT_0;
+pub const DOG_BUF_STATE_FLAGS: usize = DOG_BUF_RESERVED_INPUT_1;
 
 // ---------------------------------------------------------------------------
 // Output slots (64..=127)
@@ -170,6 +170,30 @@ pub const DOG_BUF_RNG_SEED: usize = 124;
 pub const DOG_BUF_ACTIVE_UTILITY_ID: usize = 125;
 pub const DOG_BUF_ACTIVE_UTILITY_SCORE: usize = 126;
 pub const DOG_BUF_EVENT_BITMASK: usize = 127;
+
+// State-machine extension slots (unification-049). These reuse the roam/zoomies
+// internal timer slots; the command-authority state machine owns them.
+pub const DOG_BUF_TRANSITION_STATE: usize = 84;
+pub const DOG_BUF_FETCH_TIMER: usize = 85;
+pub const DOG_BUF_WHISTLE_COOLDOWN: usize = 86;
+pub const DOG_BUF_PET_TIMER: usize = 87;
+pub const DOG_BUF_PRAISE_TIMER: usize = 88;
+pub const DOG_BUF_BARK_TIMER: usize = 89;
+pub const DOG_BUF_SUNNY_ROLL_STATE: usize = 90;
+pub const DOG_BUF_SUNNY_ROLL_TIMER: usize = 91;
+pub const DOG_BUF_PACK_PLAY_STATE: usize = 92;
+pub const DOG_BUF_PACK_PLAY_TIMER: usize = 93;
+pub const DOG_BUF_PACK_PLAY_PARTNER_ID: usize = 94;
+pub const DOG_BUF_IS_BALL_HELD: usize = 95;
+
+// Event bitmask high half + command counters (unification-049 remediation).
+// These repurpose the zoomies shuttle slots (104-106) so the full 32-bit event
+// mask can be stored bit-preservingly across two f32 slots (a single f32 only
+// has 24 bits of mantissa and would otherwise drop low bits of combined masks).
+pub const DOG_BUF_EVENT_BITMASK_HI: usize = 104;
+pub const DOG_BUF_COMMAND_ACCEPT_COUNT: usize = 105;
+pub const DOG_BUF_COMMAND_REJECT_COUNT: usize = 106;
+pub const DOG_BUF_EVENT_BITMASK_HI2: usize = 107;
 
 // ---------------------------------------------------------------------------
 // Discrete enums (numeric ids written into the buffer)
@@ -260,6 +284,33 @@ pub const DOG_EVENT_STICK_PICKED_UP: u32 = 1 << 9;
 pub const DOG_EVENT_STRAY_TRIGGERED: u32 = 1 << 10;
 pub const DOG_EVENT_STRAY_RESOLVED: u32 = 1 << 11;
 pub const DOG_EVENT_HEARTS_SPAWNED: u32 = 1 << 12;
+pub const DOG_EVENT_LEASH_TAUT: u32 = 1 << 13;
+pub const DOG_EVENT_LEASH_SLACK: u32 = 1 << 14;
+
+// Command-authority / state-machine events (unification-049). These occupy
+// bits 15..=31 so they never collide with the legacy event bits above.
+pub const DOG_EVENT_WHISTLE_RECALL_STARTED: u32 = 1 << 15;
+pub const DOG_EVENT_TRANSITION_STATE_CHANGED: u32 = 1 << 16;
+pub const DOG_EVENT_PET_ACCEPTED: u32 = 1 << 17;
+pub const DOG_EVENT_PRAISE_ACCEPTED: u32 = 1 << 18;
+pub const DOG_EVENT_BARK: u32 = 1 << 19;
+pub const DOG_EVENT_ZOOMIES_STARTED: u32 = 1 << 20;
+pub const DOG_EVENT_FETCH_STARTED: u32 = 1 << 21;
+pub const DOG_EVENT_RECALL_ARRIVED: u32 = 1 << 22;
+pub const DOG_EVENT_FETCH_COMPLETED: u32 = 1 << 23;
+pub const DOG_EVENT_SUNNY_ROLL_STARTED: u32 = 1 << 24;
+pub const DOG_EVENT_SUNNY_ROLL_FINISHED: u32 = 1 << 25;
+pub const DOG_EVENT_PACK_PLAY_STARTED: u32 = 1 << 26;
+pub const DOG_EVENT_PACK_PLAY_BROKEN: u32 = 1 << 27;
+pub const DOG_EVENT_NEED_HUNGRY: u32 = 1 << 28;
+pub const DOG_EVENT_NEED_GROOMING: u32 = 1 << 29;
+pub const DOG_EVENT_COMMAND_REJECTED: u32 = 1 << 30;
+pub const DOG_EVENT_NEED_TIRED: u32 = 1 << 31;
+
+// Extended events (bits 32..=33). These do not fit in the 32-bit legacy mask
+// and are tracked as `u64` bits in the third bitmask slot.
+pub const DOG_EVENT_SOCIAL_COOLDOWN_REJECT: u64 = 1 << 32;
+pub const DOG_EVENT_SUNNY_ZONE_ENTERED: u64 = 1 << 33;
 
 // ---------------------------------------------------------------------------
 // Leash / owner status flags
@@ -270,6 +321,51 @@ pub const DOG_LEASH_FLAG_TAUT: u32 = 1 << 1;
 
 pub const DOG_OWNER_FLAG_WAS_CLAMPED: u32 = 1 << 0;
 pub const DOG_OWNER_FLAG_FROZEN: u32 = 1 << 1;
+
+// ---------------------------------------------------------------------------
+// Event bitmask helpers (bit-preserving across two f32 slots)
+// ---------------------------------------------------------------------------
+
+/// Write a full 32-bit event mask bit-preservingly across two f32 slots.
+///
+/// A single `f32` cannot represent every 32-bit integer exactly (it has only
+/// 24 bits of mantissa), so the mask is split into low and high 16-bit halves.
+pub fn write_event_bitmask(buffer: &mut DogSimBuffer, events: u32) {
+    buffer.slots[DOG_BUF_EVENT_BITMASK] = (events & 0xFFFF) as f32;
+    buffer.slots[DOG_BUF_EVENT_BITMASK_HI] = (events >> 16) as f32;
+}
+
+/// Read the full 32-bit event mask from the two f32 slots.
+pub fn read_event_bitmask(buffer: &DogSimBuffer) -> u32 {
+    let lo = buffer.slots[DOG_BUF_EVENT_BITMASK];
+    let hi = buffer.slots[DOG_BUF_EVENT_BITMASK_HI];
+    let lo = if lo.is_finite() { lo as u32 & 0xFFFF } else { 0 };
+    let hi = if hi.is_finite() { hi as u32 & 0xFFFF } else { 0 };
+    (hi << 16) | lo
+}
+
+/// Write a full 64-bit event mask bit-preservingly across three f32 slots.
+///
+/// Bits `0..=15` live in `DOG_BUF_EVENT_BITMASK`, bits `16..=31` in
+/// `DOG_BUF_EVENT_BITMASK_HI`, and bits `32..=47` in
+/// `DOG_BUF_EVENT_BITMASK_HI2`. Each 16-bit chunk is exactly representable in
+/// an `f32` mantissa.
+pub fn write_event_mask64(buffer: &mut DogSimBuffer, events: u64) {
+    buffer.slots[DOG_BUF_EVENT_BITMASK] = (events & 0xFFFF) as f32;
+    buffer.slots[DOG_BUF_EVENT_BITMASK_HI] = ((events >> 16) & 0xFFFF) as f32;
+    buffer.slots[DOG_BUF_EVENT_BITMASK_HI2] = ((events >> 32) & 0xFFFF) as f32;
+}
+
+/// Read the full 64-bit event mask from the three f32 slots.
+pub fn read_event_mask64(buffer: &DogSimBuffer) -> u64 {
+    let lo = buffer.slots[DOG_BUF_EVENT_BITMASK];
+    let mid = buffer.slots[DOG_BUF_EVENT_BITMASK_HI];
+    let hi = buffer.slots[DOG_BUF_EVENT_BITMASK_HI2];
+    let lo = if lo.is_finite() { lo as u64 & 0xFFFF } else { 0 };
+    let mid = if mid.is_finite() { mid as u64 & 0xFFFF } else { 0 };
+    let hi = if hi.is_finite() { hi as u64 & 0xFFFF } else { 0 };
+    (hi << 32) | (mid << 16) | lo
+}
 
 #[cfg(test)]
 mod tests {
@@ -379,9 +475,9 @@ mod tests {
         DOG_BUF_ZOOMIES_ORBIT_ANGLE,
         DOG_BUF_ZOOMIES_ORBIT_RADIUS,
         DOG_BUF_ZOOMIES_ORBIT_DIR,
-        DOG_BUF_ZOOMIES_SHUTTLE_AX,
-        DOG_BUF_ZOOMIES_SHUTTLE_AY,
-        DOG_BUF_ZOOMIES_SHUTTLE_BX,
+        DOG_BUF_EVENT_BITMASK_HI,
+        DOG_BUF_COMMAND_ACCEPT_COUNT,
+        DOG_BUF_COMMAND_REJECT_COUNT,
         DOG_BUF_ZOOMIES_SHUTTLE_BY,
         DOG_BUF_LEFT_EAR_ANGLE,
         DOG_BUF_LEFT_EAR_VEL,

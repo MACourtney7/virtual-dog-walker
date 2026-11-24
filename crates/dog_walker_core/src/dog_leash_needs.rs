@@ -25,6 +25,23 @@ pub const LEASH_LATERAL_TARGET: f32 = 2.0;
 pub const LEASH_SHOULDER_MARGIN_MIN: f32 = 2.0;
 /// Feed-forward horizon (seconds) used to project owner velocity into the slot.
 pub const LEASH_VELOCITY_FEED_FORWARD_SEC: f32 = 0.12;
+/// Slack tolerance (px) below the max leash length before the leash is
+/// considered slack and tension starts decaying.
+pub const LEASH_TAUT_SLACK_EPS_PX: f32 = 2.0;
+/// Per-second rate at which leash tension decays while slack.
+pub const LEASH_TENSION_DECAY_PER_SEC: f32 = 0.25;
+
+/// External context for [`step_dog_leash_needs`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DogLeashNeedsContext {
+    pub owner_x: f32,
+    pub owner_y: f32,
+    pub leash_max_length: f32,
+    pub field_min_x: f32,
+    pub field_min_y: f32,
+    pub field_max_x: f32,
+    pub field_max_y: f32,
+}
 
 /// Target slot the dog should steer toward relative to the owner's body.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -380,6 +397,81 @@ pub fn constrain_leash_and_owner(
         leash_sag_px,
         leash_vibration_px,
     }
+}
+
+/// Advance leash tension and field clamping for one tick.
+///
+/// Returns the step-local leash event bitmask (`DOG_EVENT_LEASH_TAUT` /
+/// `DOG_EVENT_LEASH_SLACK`). Does not overwrite `buf.event_bitmask`.
+pub fn step_dog_leash_needs(
+    buf: &mut DogSimBuffer,
+    ctx: &DogLeashNeedsContext,
+    dt_s: f32,
+) -> u32 {
+    // Invalid dt: do not mutate state, return the current event bitmask
+    // unchanged.
+    if !dt_s.is_finite() || dt_s <= 0.0 {
+        return read_event_bitmask(buf);
+    }
+
+    let owner_x = sanitize(ctx.owner_x);
+    let owner_y = sanitize(ctx.owner_y);
+    let leash_max_length = sanitize(ctx.leash_max_length);
+
+    let mut dog_x = sanitize(buf.slots[DOG_BUF_DOG_X]);
+    let mut dog_y = sanitize(buf.slots[DOG_BUF_DOG_Y]);
+    let mut leash_tension = sanitize(buf.slots[DOG_BUF_LEASH_TENSION]).clamp(0.0, 1.0);
+
+    let mut events: u32 = 0;
+
+    let dx = dog_x - owner_x;
+    let dy = dog_y - owner_y;
+    let distance = dx.hypot(dy);
+
+    if leash_max_length <= 0.0 {
+        // Snap dog to owner; avoid division by zero.
+        dog_x = owner_x;
+        dog_y = owner_y;
+        leash_tension = 1.0;
+        events |= DOG_EVENT_LEASH_TAUT;
+    } else if distance > leash_max_length {
+        // Project dog onto the leash circle around the owner.
+        let (dir_x, dir_y) = if distance < 1e-6 {
+            (1.0, 0.0)
+        } else {
+            (dx / distance, dy / distance)
+        };
+        dog_x = owner_x + dir_x * leash_max_length;
+        dog_y = owner_y + dir_y * leash_max_length;
+        leash_tension = 1.0;
+        events |= DOG_EVENT_LEASH_TAUT;
+    } else if distance <= leash_max_length - LEASH_TAUT_SLACK_EPS_PX {
+        let previous = leash_tension;
+        leash_tension = (leash_tension - LEASH_TENSION_DECAY_PER_SEC * dt_s).max(0.0);
+        if previous > 0.0 && leash_tension == 0.0 {
+            events |= DOG_EVENT_LEASH_SLACK;
+        }
+    }
+
+    // Clamp final dog position to field bounds. Guard against inverted bounds
+    // (field_min > field_max) so `f32::clamp` never panics.
+    let field_min_x = sanitize(ctx.field_min_x);
+    let field_min_y = sanitize(ctx.field_min_y);
+    let field_max_x = sanitize(ctx.field_max_x);
+    let field_max_y = sanitize(ctx.field_max_y);
+    let min_x = field_min_x.min(field_max_x);
+    let max_x = field_min_x.max(field_max_x);
+    let min_y = field_min_y.min(field_max_y);
+    let max_y = field_min_y.max(field_max_y);
+    dog_x = dog_x.clamp(min_x, max_x);
+    dog_y = dog_y.clamp(min_y, max_y);
+
+    buf.slots[DOG_BUF_DOG_X] = dog_x;
+    buf.slots[DOG_BUF_DOG_Y] = dog_y;
+    buf.slots[DOG_BUF_LEASH_TENSION] = leash_tension;
+    // Heading is preserved: the context provides no target heading.
+
+    events
 }
 
 /// Full leash/need pipeline for one tick: resolve the discrete decision, write
@@ -947,6 +1039,202 @@ mod tests {
         assert!(!d.anchor_leash);
         assert!(approx(buffer.slots[DOG_BUF_TARGET_SLOT_X], 48.0));
         assert!(approx(buffer.slots[DOG_BUF_TARGET_SLOT_Y], -12.5));
+    }
+
+    fn leash_ctx(owner: (f32, f32), max_len: f32) -> DogLeashNeedsContext {
+        DogLeashNeedsContext {
+            owner_x: owner.0,
+            owner_y: owner.1,
+            leash_max_length: max_len,
+            field_min_x: -1000.0,
+            field_min_y: -1000.0,
+            field_max_x: 1000.0,
+            field_max_y: 1000.0,
+        }
+    }
+
+    #[test]
+    fn step_dog_leash_needs_projects_dog_when_taut() {
+        let mut buffer = make_buffer();
+        buffer.slots[DOG_BUF_DOG_X] = 100.0;
+        buffer.slots[DOG_BUF_DOG_Y] = 0.0;
+        buffer.slots[DOG_BUF_DOG_ANGLE] = 0.75;
+
+        let ctx = leash_ctx((0.0, 0.0), 50.0);
+        let events = step_dog_leash_needs(&mut buffer, &ctx, 0.016);
+
+        assert_eq!(events & DOG_EVENT_LEASH_TAUT, DOG_EVENT_LEASH_TAUT);
+        assert!(approx(buffer.slots[DOG_BUF_DOG_X], 50.0));
+        assert!(approx(buffer.slots[DOG_BUF_DOG_Y], 0.0));
+        assert!(approx(buffer.slots[DOG_BUF_LEASH_TENSION], 1.0));
+        // Heading preserved.
+        assert!(approx(buffer.slots[DOG_BUF_DOG_ANGLE], 0.75));
+    }
+
+    #[test]
+    fn step_dog_leash_needs_slack_decays_and_emits_only_on_transition() {
+        let mut buffer = make_buffer();
+        buffer.slots[DOG_BUF_DOG_X] = 10.0;
+        buffer.slots[DOG_BUF_DOG_Y] = 0.0;
+        buffer.slots[DOG_BUF_LEASH_TENSION] = 0.1;
+
+        let ctx = leash_ctx((0.0, 0.0), 50.0);
+
+        // First step: tension decays but stays positive -> no slack event.
+        let events = step_dog_leash_needs(&mut buffer, &ctx, 0.1);
+        assert_eq!(events & DOG_EVENT_LEASH_SLACK, 0);
+        assert!(approx(buffer.slots[DOG_BUF_LEASH_TENSION], 0.075));
+
+        // Second step: tension reaches 0.0 -> slack event emitted.
+        let events = step_dog_leash_needs(&mut buffer, &ctx, 1.0);
+        assert_eq!(events & DOG_EVENT_LEASH_SLACK, DOG_EVENT_LEASH_SLACK);
+        assert!(approx(buffer.slots[DOG_BUF_LEASH_TENSION], 0.0));
+
+        // Third step: already zero -> no further slack event.
+        let events = step_dog_leash_needs(&mut buffer, &ctx, 1.0);
+        assert_eq!(events & DOG_EVENT_LEASH_SLACK, 0);
+    }
+
+    #[test]
+    fn step_dog_leash_needs_zero_leash_snaps_to_owner() {
+        let mut buffer = make_buffer();
+        buffer.slots[DOG_BUF_DOG_X] = 30.0;
+        buffer.slots[DOG_BUF_DOG_Y] = -20.0;
+
+        let ctx = leash_ctx((5.0, 7.0), 0.0);
+        let events = step_dog_leash_needs(&mut buffer, &ctx, 0.016);
+
+        assert_eq!(events & DOG_EVENT_LEASH_TAUT, DOG_EVENT_LEASH_TAUT);
+        assert!(approx(buffer.slots[DOG_BUF_DOG_X], 5.0));
+        assert!(approx(buffer.slots[DOG_BUF_DOG_Y], 7.0));
+        assert!(approx(buffer.slots[DOG_BUF_LEASH_TENSION], 1.0));
+    }
+
+    #[test]
+    fn step_dog_leash_needs_clamps_to_field_bounds() {
+        let mut buffer = make_buffer();
+        buffer.slots[DOG_BUF_DOG_X] = 500.0;
+        buffer.slots[DOG_BUF_DOG_Y] = -500.0;
+
+        let ctx = DogLeashNeedsContext {
+            owner_x: 0.0,
+            owner_y: 0.0,
+            leash_max_length: 1000.0,
+            field_min_x: -100.0,
+            field_min_y: -100.0,
+            field_max_x: 100.0,
+            field_max_y: 100.0,
+        };
+        step_dog_leash_needs(&mut buffer, &ctx, 0.016);
+
+        assert!(approx(buffer.slots[DOG_BUF_DOG_X], 100.0));
+        assert!(approx(buffer.slots[DOG_BUF_DOG_Y], -100.0));
+    }
+
+    #[test]
+    fn step_dog_leash_needs_invalid_dt_does_not_mutate() {
+        let mut buffer = make_buffer();
+        buffer.slots[DOG_BUF_DOG_X] = 100.0;
+        buffer.slots[DOG_BUF_DOG_Y] = 0.0;
+        buffer.slots[DOG_BUF_LEASH_TENSION] = 0.5;
+        buffer.slots[DOG_BUF_EVENT_BITMASK] = 7.0;
+
+        let ctx = leash_ctx((0.0, 0.0), 50.0);
+
+        for bad_dt in [0.0_f32, -1.0, f32::NAN, f32::INFINITY] {
+            let events = step_dog_leash_needs(&mut buffer, &ctx, bad_dt);
+            assert_eq!(events, 7);
+            assert!(approx(buffer.slots[DOG_BUF_DOG_X], 100.0));
+            assert!(approx(buffer.slots[DOG_BUF_DOG_Y], 0.0));
+            assert!(approx(buffer.slots[DOG_BUF_LEASH_TENSION], 0.5));
+        }
+    }
+
+    #[test]
+    fn step_dog_leash_needs_handles_inverted_field_bounds() {
+        let mut buffer = make_buffer();
+        buffer.slots[DOG_BUF_DOG_X] = 500.0;
+        buffer.slots[DOG_BUF_DOG_Y] = -500.0;
+
+        // field_min > field_max on both axes: must not panic.
+        let ctx = DogLeashNeedsContext {
+            owner_x: 0.0,
+            owner_y: 0.0,
+            leash_max_length: 1000.0,
+            field_min_x: 100.0,
+            field_min_y: 100.0,
+            field_max_x: -100.0,
+            field_max_y: -100.0,
+        };
+        step_dog_leash_needs(&mut buffer, &ctx, 0.016);
+
+        // Bounds are normalised, so the dog lands inside [-100, 100].
+        assert!(buffer.slots[DOG_BUF_DOG_X].is_finite());
+        assert!(buffer.slots[DOG_BUF_DOG_Y].is_finite());
+        assert!(buffer.slots[DOG_BUF_DOG_X] >= -100.0 && buffer.slots[DOG_BUF_DOG_X] <= 100.0);
+        assert!(buffer.slots[DOG_BUF_DOG_Y] >= -100.0 && buffer.slots[DOG_BUF_DOG_Y] <= 100.0);
+    }
+
+    #[test]
+    fn step_dog_leash_needs_invalid_dt_returns_current_bitmask() {
+        let mut buffer = make_buffer();
+        buffer.slots[DOG_BUF_DOG_X] = 100.0;
+        buffer.slots[DOG_BUF_DOG_Y] = 0.0;
+        buffer.slots[DOG_BUF_LEASH_TENSION] = 0.5;
+        buffer.slots[DOG_BUF_EVENT_BITMASK] = 123.0;
+
+        let ctx = leash_ctx((0.0, 0.0), 50.0);
+
+        for bad_dt in [0.0_f32, -1.0, f32::NAN, f32::INFINITY] {
+            let events = step_dog_leash_needs(&mut buffer, &ctx, bad_dt);
+            assert_eq!(events, 123);
+            assert!(approx(buffer.slots[DOG_BUF_DOG_X], 100.0));
+            assert!(approx(buffer.slots[DOG_BUF_DOG_Y], 0.0));
+            assert!(approx(buffer.slots[DOG_BUF_LEASH_TENSION], 0.5));
+            assert!(approx(buffer.slots[DOG_BUF_EVENT_BITMASK], 123.0));
+        }
+    }
+
+    #[test]
+    fn step_dog_leash_needs_does_not_overwrite_event_bitmask() {
+        let mut buffer = make_buffer();
+        buffer.slots[DOG_BUF_DOG_X] = 100.0;
+        buffer.slots[DOG_BUF_EVENT_BITMASK] = 42.0;
+
+        let ctx = leash_ctx((0.0, 0.0), 50.0);
+        let events = step_dog_leash_needs(&mut buffer, &ctx, 0.016);
+
+        assert_eq!(events & DOG_EVENT_LEASH_TAUT, DOG_EVENT_LEASH_TAUT);
+        assert!(approx(buffer.slots[DOG_BUF_EVENT_BITMASK], 42.0));
+    }
+
+    #[test]
+    fn leash_events_distinct_from_state_machine_events() {
+        let leash = [DOG_EVENT_LEASH_TAUT, DOG_EVENT_LEASH_SLACK];
+        let state = [
+            DOG_EVENT_WHISTLE_RECALL_STARTED,
+            DOG_EVENT_TRANSITION_STATE_CHANGED,
+            DOG_EVENT_PET_ACCEPTED,
+            DOG_EVENT_PRAISE_ACCEPTED,
+            DOG_EVENT_BARK,
+            DOG_EVENT_ZOOMIES_STARTED,
+            DOG_EVENT_FETCH_STARTED,
+            DOG_EVENT_RECALL_ARRIVED,
+            DOG_EVENT_FETCH_COMPLETED,
+            DOG_EVENT_SUNNY_ROLL_STARTED,
+            DOG_EVENT_SUNNY_ROLL_FINISHED,
+            DOG_EVENT_PACK_PLAY_STARTED,
+            DOG_EVENT_PACK_PLAY_BROKEN,
+            DOG_EVENT_NEED_HUNGRY,
+            DOG_EVENT_NEED_GROOMING,
+            DOG_EVENT_COMMAND_REJECTED,
+            DOG_EVENT_NEED_TIRED,
+        ];
+        for l in leash.iter() {
+            for s in state.iter() {
+                assert_ne!(l, s);
+            }
+        }
     }
 
     #[test]

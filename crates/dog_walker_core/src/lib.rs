@@ -1,4 +1,5 @@
 pub mod ball_physics;
+pub mod care_sim;
 pub mod collision;
 pub mod dog_contract;
 pub mod dog_leash_needs;

@@ -18,6 +18,12 @@ impl Mulberry32 {
         Self { state: seed }
     }
 
+    /// Current internal state, allowing callers to persist and restore the
+    /// generator between ticks (used by the owner wander autopilot).
+    pub fn state(&self) -> u32 {
+        self.state
+    }
+
     pub fn next_f64(&mut self) -> f64 {
         self.state = self.state.wrapping_add(0x6D2B79F5);
         let mut z = self.state;

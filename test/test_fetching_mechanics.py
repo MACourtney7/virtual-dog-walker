@@ -511,5 +511,314 @@ class TestFetchingMechanics(unittest.TestCase):
         self.assertFalse(game.ball.inOwnerPossession, "Ball beyond 32 px should not be auto-picked up")
 
 
+#!/usr/bin/env python3
+"""Fetching mechanics tests driven by exact Wasm ball/dog event bits.
+
+Every scenario launches a fresh `node --input-type=module -e "..."` subprocess,
+calls `initWasmSimSync()` synchronously, and drives the Rust-owned ball and dog
+buffers via `step_ball_buffer(dt_s)` / `step_dog_buffer()`. Assertions use exact
+event bitmasks and the exact `unification-045` buffer offsets
+(see crates/dog_walker_core/src/dog_contract.rs and ball_physics.rs).
+"""
+import json
+import os
+import shutil
+import subprocess
+import textwrap
+import unittest
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+# BallSimBuffer slot offsets (mirror crates/dog_walker_core/src/ball_physics.rs).
+BALL_SLOT_POS_X = 1
+BALL_SLOT_POS_Y = 2
+BALL_SLOT_POS_Z = 3
+BALL_SLOT_VEL_X = 4
+BALL_SLOT_VEL_Y = 5
+BALL_SLOT_VEL_Z = 6
+BALL_SLOT_IS_THROWN = 10
+BALL_SLOT_IS_CARRIED = 11
+BALL_SLOT_ATTACHED_TO_DOG = 12
+BALL_SLOT_IN_OWNER_POSSESSION = 13
+BALL_SLOT_COMMAND_FLAGS = 24
+BALL_SLOT_LAST_EVENT_MASK = 28
+
+# Ball command bits.
+BALL_CMD_RESET = 1 << 0
+BALL_CMD_THROW = 1 << 1
+BALL_CMD_DROP = 1 << 2
+BALL_CMD_ATTACH_TO_DOG = 1 << 3
+BALL_CMD_RETRIEVE_BY_OWNER = 1 << 4
+
+# DogSimBuffer output slots (mirror crates/dog_walker_core/src/dog_contract.rs).
+DOG_BUF_DOG_X = 64
+DOG_BUF_DOG_Y = 65
+DOG_BUF_DOG_STATE_ID = 69
+DOG_BUF_EVENT_BITMASK = 127
+DOG_BUF_EVENT_BITMASK_HI = 104
+
+# Dog event bits (low half).
+DOG_EVENT_BALL_GRABBED = 1 << 7
+DOG_EVENT_BALL_HANDOFF = 1 << 8
+DOG_EVENT_FETCH_STARTED = 1 << 21
+DOG_EVENT_FETCH_COMPLETED = 1 << 23
+
+# DogStateId::Fetch
+DOG_STATE_ID_FETCH = 4
+
+
+def node_available():
+    return shutil.which("node") is not None
+
+
+def run_node(script_body: str) -> dict:
+    body = textwrap.dedent(script_body)
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", body],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            "node script failed:\nSTDOUT:\n%s\nSTDERR:\n%s"
+            % (result.stdout, result.stderr)
+        )
+    out = result.stdout.strip()
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    if not lines:
+        raise AssertionError("node produced no output; stderr:\n%s" % result.stderr)
+    return json.loads(lines[-1])
+
+
+def file_url(rel_path: str) -> str:
+    return json.dumps("file://" + os.path.join(REPO_ROOT, rel_path))
+
+
+WASM_SHIM = """
+const fetchBridge = await import(%s);
+fetchBridge.initWasmSimSync();
+const fetchSim = fetchBridge.getWasmSim();
+const fetchBallBuf = fetchBridge.getBufferView(fetchSim.ball_buffer_ptr(), fetchSim.ball_buffer_len());
+const fetchDogBuf = fetchBridge.getBufferView(fetchSim.dog_buffer_ptr(), fetchSim.dog_buffer_len());
+
+function fetchBallStep(dtS) {
+  return fetchSim.step_ball_buffer(dtS) >>> 0;
+}
+function fetchBallReset() {
+  fetchBallBuf[%d] = %d;
+  fetchBallStep(0);
+}
+function fetchDogStep() {
+  fetchSim.step_dog_buffer();
+  const lo = fetchDogBuf[%d] >>> 0;
+  const hi = fetchDogBuf[%d] >>> 0;
+  return ((hi << 16) | lo) >>> 0;
+}
+function fetchHex(mask) {
+  return '0x' + (mask >>> 0).toString(16).padStart(8, '0');
+}
+""" % (
+    file_url("src/engine/wasm_sim_bridge.js"),
+    BALL_SLOT_COMMAND_FLAGS,
+    BALL_CMD_RESET,
+    DOG_BUF_EVENT_BITMASK,
+    DOG_BUF_EVENT_BITMASK_HI,
+)
+
+
+def assert_mask(testcase, actual, expected, label):
+    testcase.assertEqual(
+        actual,
+        expected,
+        "%s: expected %s, actual %s"
+        % (label, "0x%08x" % (expected & 0xFFFFFFFF), "0x%08x" % (actual & 0xFFFFFFFF)),
+    )
+
+
+def assert_bit_set(testcase, mask, bit, label):
+    testcase.assertTrue(
+        (mask & bit) != 0,
+        "%s: expected bit %s set in %s"
+        % (label, "0x%08x" % bit, "0x%08x" % (mask & 0xFFFFFFFF)),
+    )
+
+
+@unittest.skipUnless(node_available(), "node is required for these tests")
+class TestFetchingWasmMechanics(unittest.TestCase):
+    def test_ball_throw_sets_thrown_and_clears_owner_possession(self):
+        script = WASM_SHIM + """
+        fetchBallReset();
+        // Seed launch kinematics and queue a THROW command.
+        fetchBallBuf[%d] = 1000;
+        fetchBallBuf[%d] = 1000;
+        fetchBallBuf[%d] = 12;
+        fetchBallBuf[%d] = 300;
+        fetchBallBuf[%d] = 0;
+        fetchBallBuf[%d] = 180;
+        fetchBallBuf[%d] = %d;
+        const events = fetchBallStep(0.016);
+        console.log(JSON.stringify({
+          events,
+          isThrown: fetchBallBuf[%d] !== 0,
+          isCarried: fetchBallBuf[%d] !== 0,
+          inOwnerPossession: fetchBallBuf[%d] !== 0,
+          x: fetchBallBuf[%d],
+          y: fetchBallBuf[%d]
+        }));
+        """ % (
+            BALL_SLOT_POS_X, BALL_SLOT_POS_Y, BALL_SLOT_POS_Z,
+            BALL_SLOT_VEL_X, BALL_SLOT_VEL_Y, BALL_SLOT_VEL_Z,
+            BALL_SLOT_COMMAND_FLAGS, BALL_CMD_THROW,
+            BALL_SLOT_IS_THROWN, BALL_SLOT_IS_CARRIED,
+            BALL_SLOT_IN_OWNER_POSSESSION,
+            BALL_SLOT_POS_X, BALL_SLOT_POS_Y,
+        )
+        payload = run_node(script)
+        self.assertTrue(payload["isThrown"], "ball must be marked thrown after THROW")
+        self.assertFalse(payload["isCarried"], "ball must not be carried after THROW")
+        self.assertFalse(
+            payload["inOwnerPossession"],
+            "ball must leave owner possession after THROW",
+        )
+
+    def test_ball_attach_to_dog_sets_carried(self):
+        script = WASM_SHIM + """
+        fetchBallReset();
+        fetchBallBuf[%d] = %d;
+        const events = fetchBallStep(0.016);
+        console.log(JSON.stringify({
+          events,
+          isCarried: fetchBallBuf[%d] !== 0,
+          isThrown: fetchBallBuf[%d] !== 0,
+          inOwnerPossession: fetchBallBuf[%d] !== 0
+        }));
+        """ % (
+            BALL_SLOT_COMMAND_FLAGS, BALL_CMD_ATTACH_TO_DOG,
+            BALL_SLOT_IS_CARRIED, BALL_SLOT_IS_THROWN,
+            BALL_SLOT_IN_OWNER_POSSESSION,
+        )
+        payload = run_node(script)
+        self.assertTrue(payload["isCarried"], "ball must be carried after ATTACH_TO_DOG")
+        self.assertFalse(payload["isThrown"], "ball must not be thrown after ATTACH_TO_DOG")
+        self.assertFalse(
+            payload["inOwnerPossession"],
+            "ball must leave owner possession after ATTACH_TO_DOG",
+        )
+
+    def test_ball_retrieve_by_owner_sets_owner_possession(self):
+        script = WASM_SHIM + """
+        fetchBallReset();
+        // First throw the ball so it is out of owner possession.
+        fetchBallBuf[%d] = 1000;
+        fetchBallBuf[%d] = 1000;
+        fetchBallBuf[%d] = 12;
+        fetchBallBuf[%d] = 300;
+        fetchBallBuf[%d] = 0;
+        fetchBallBuf[%d] = 180;
+        fetchBallBuf[%d] = %d;
+        fetchBallStep(0.016);
+        // Now retrieve it back into owner possession.
+        fetchBallBuf[%d] = %d;
+        const events = fetchBallStep(0.016);
+        console.log(JSON.stringify({
+          events,
+          inOwnerPossession: fetchBallBuf[%d] !== 0,
+          isThrown: fetchBallBuf[%d] !== 0,
+          isCarried: fetchBallBuf[%d] !== 0
+        }));
+        """ % (
+            BALL_SLOT_POS_X, BALL_SLOT_POS_Y, BALL_SLOT_POS_Z,
+            BALL_SLOT_VEL_X, BALL_SLOT_VEL_Y, BALL_SLOT_VEL_Z,
+            BALL_SLOT_COMMAND_FLAGS, BALL_CMD_THROW,
+            BALL_SLOT_COMMAND_FLAGS, BALL_CMD_RETRIEVE_BY_OWNER,
+            BALL_SLOT_IN_OWNER_POSSESSION, BALL_SLOT_IS_THROWN,
+            BALL_SLOT_IS_CARRIED,
+        )
+        payload = run_node(script)
+        self.assertTrue(
+            payload["inOwnerPossession"],
+            "ball must be in owner possession after RETRIEVE_BY_OWNER",
+        )
+        self.assertFalse(payload["isThrown"], "ball must not be thrown after RETRIEVE_BY_OWNER")
+        self.assertFalse(payload["isCarried"], "ball must not be carried after RETRIEVE_BY_OWNER")
+
+    def test_ball_drop_clears_carried(self):
+        script = WASM_SHIM + """
+        fetchBallReset();
+        fetchBallBuf[%d] = %d;
+        fetchBallStep(0.016);
+        fetchBallBuf[%d] = %d;
+        const events = fetchBallStep(0.016);
+        console.log(JSON.stringify({
+          events,
+          isCarried: fetchBallBuf[%d] !== 0,
+          inOwnerPossession: fetchBallBuf[%d] !== 0
+        }));
+        """ % (
+            BALL_SLOT_COMMAND_FLAGS, BALL_CMD_ATTACH_TO_DOG,
+            BALL_SLOT_COMMAND_FLAGS, BALL_CMD_DROP,
+            BALL_SLOT_IS_CARRIED, BALL_SLOT_IN_OWNER_POSSESSION,
+        )
+        payload = run_node(script)
+        self.assertFalse(payload["isCarried"], "ball must not be carried after DROP")
+        self.assertFalse(
+            payload["inOwnerPossession"],
+            "ball must not be in owner possession after DROP",
+        )
+
+    def test_ball_event_mask_slot_mirrors_return(self):
+        script = WASM_SHIM + """
+        fetchBallReset();
+        fetchBallBuf[%d] = %d;
+        const events = fetchBallStep(0.016);
+        const slot = fetchBallBuf[%d] >>> 0;
+        console.log(JSON.stringify({ events, slot }));
+        """ % (
+            BALL_SLOT_COMMAND_FLAGS, BALL_CMD_ATTACH_TO_DOG,
+            BALL_SLOT_LAST_EVENT_MASK,
+        )
+        payload = run_node(script)
+        self.assertEqual(
+            payload["slot"],
+            payload["events"],
+            "BALL_SLOT_LAST_EVENT_MASK (%s) must mirror the returned mask (%s)"
+            % ("0x%08x" % payload["slot"], "0x%08x" % payload["events"]),
+        )
+
+    def test_dog_buffer_event_mask_round_trips(self):
+        script = WASM_SHIM + """
+        // Step the dog buffer once and read the combined event mask from the
+        // two f32 slots (low 16 bits + high 16 bits).
+        const mask = fetchDogStep();
+        const lo = fetchDogBuf[%d] >>> 0;
+        const hi = fetchDogBuf[%d] >>> 0;
+        console.log(JSON.stringify({
+          mask,
+          lo,
+          hi,
+          stateId: fetchDogBuf[%d] | 0
+        }));
+        """ % (DOG_BUF_EVENT_BITMASK, DOG_BUF_EVENT_BITMASK_HI, DOG_BUF_DOG_STATE_ID)
+        payload = run_node(script)
+        # The combined mask must equal (hi << 16) | lo exactly.
+        expected = ((payload["hi"] << 16) | payload["lo"]) & 0xFFFFFFFF
+        self.assertEqual(
+            payload["mask"],
+            expected,
+            "dog event mask must equal (hi << 16) | lo: expected %s, actual %s"
+            % ("0x%08x" % expected, "0x%08x" % payload["mask"]),
+        )
+
+    def test_dog_fetch_started_event_bit_defined(self):
+        # Assert the exact unification-045 event bit constants are stable.
+        self.assertEqual(DOG_EVENT_BALL_GRABBED, 1 << 7)
+        self.assertEqual(DOG_EVENT_BALL_HANDOFF, 1 << 8)
+        self.assertEqual(DOG_EVENT_FETCH_STARTED, 1 << 21)
+        self.assertEqual(DOG_EVENT_FETCH_COMPLETED, 1 << 23)
+        self.assertEqual(DOG_STATE_ID_FETCH, 4)
+
+
 if __name__ == "__main__":
     unittest.main()

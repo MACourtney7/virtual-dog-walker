@@ -864,5 +864,275 @@ class TestCareLoopUI(unittest.TestCase):
         self.assertEqual(payload["calls"]["grooming"], 0)
 
 
+#!/usr/bin/env python3
+"""Tests for the care-loop UI driven by exact Wasm care event bits.
+
+Every scenario launches a fresh `node --input-type=module -e "..."` subprocess,
+calls `initWasmSimSync()` synchronously, and drives the Rust-owned care buffer
+via `step_care_buffer(dt_ms)`. UI side effects (flash / toast) are derived from
+the exact `CARE_EVENT_UI_FLASH` and `CARE_EVENT_TOAST` bits only — no JS timer
+math and no legacy JS source inspection.
+"""
+import json
+import os
+import shutil
+import subprocess
+import textwrap
+import unittest
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+# CareSimBuffer slot offsets (mirror crates/dog_walker_core/src/care_sim.rs).
+CARE_SLOT_ACTION_FLAGS = 11
+CARE_SLOT_EVENT_BITMASK = 12
+CARE_SLOT_UI_TOAST_KIND = 25
+CARE_SLOT_REJECTION_KIND = 26
+
+# Care command bits.
+CARE_CMD_FEED = 1 << 0
+CARE_CMD_GROOM = 1 << 1
+CARE_CMD_REST = 1 << 2
+CARE_CMD_RESET = 1 << 3
+
+# Care event bits.
+CARE_EVENT_FEED_ACCEPTED = 1 << 4
+CARE_EVENT_GROOM_ACCEPTED = 1 << 5
+CARE_EVENT_REST_ACCEPTED = 1 << 6
+CARE_EVENT_HUNGER_RESOLVED = 1 << 7
+CARE_EVENT_GROOMING_RESOLVED = 1 << 8
+CARE_EVENT_TIREDNESS_RESOLVED = 1 << 9
+CARE_EVENT_ACTION_REJECTED = 1 << 10
+CARE_EVENT_UI_FLASH = 1 << 11
+CARE_EVENT_TOAST = 1 << 12
+
+# Toast kinds (CARE_SLOT_UI_TOAST_KIND).
+CARE_TOAST_FED = 1
+CARE_TOAST_GROOMED = 2
+CARE_TOAST_RESTED = 3
+CARE_TOAST_REJECTED_HUNGRY = 4
+CARE_TOAST_REJECTED_GROOM = 5
+CARE_TOAST_REJECTED_REST = 6
+
+
+def node_available():
+    return shutil.which("node") is not None
+
+
+def run_node(script_body: str) -> dict:
+    body = textwrap.dedent(script_body)
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", body],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            "node script failed:\nSTDOUT:\n%s\nSTDERR:\n%s"
+            % (result.stdout, result.stderr)
+        )
+    out = result.stdout.strip()
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    if not lines:
+        raise AssertionError("node produced no output; stderr:\n%s" % result.stderr)
+    return json.loads(lines[-1])
+
+
+def file_url(rel_path: str) -> str:
+    return json.dumps("file://" + os.path.join(REPO_ROOT, rel_path))
+
+
+WASM_SHIM = """
+const careBridge = await import(%s);
+careBridge.initWasmSimSync();
+const careSim = careBridge.getWasmSim();
+const careBuf = careBridge.getBufferView(careSim.care_buffer_ptr(), careSim.care_buffer_len());
+
+function careStep(dtMs) {
+  return careSim.step_care_buffer(dtMs) >>> 0;
+}
+// step_care_buffer clamps dt_ms to [0, 1000], so advance in <=1000ms chunks.
+function careAdvance(totalMs) {
+  let rem = totalMs;
+  let events = 0;
+  while (rem > 0) {
+    const chunk = Math.min(1000, rem);
+    events = (events | careStep(chunk)) >>> 0;
+    rem -= chunk;
+  }
+  return events >>> 0;
+}
+function careReset() {
+  careBuf[%d] = %d;
+  careStep(0);
+}
+function careHex(mask) {
+  return '0x' + (mask >>> 0).toString(16).padStart(8, '0');
+}
+""" % (
+    file_url("src/engine/wasm_sim_bridge.js"),
+    CARE_SLOT_ACTION_FLAGS,
+    CARE_CMD_RESET,
+)
+
+
+def assert_mask(testcase, actual, expected, label):
+    testcase.assertEqual(
+        actual,
+        expected,
+        "%s: expected %s, actual %s"
+        % (label, "0x%08x" % (expected & 0xFFFFFFFF), "0x%08x" % (actual & 0xFFFFFFFF)),
+    )
+
+
+@unittest.skipUnless(node_available(), "node is required for these tests")
+class TestCareLoopWasmUI(unittest.TestCase):
+    def test_feed_emits_ui_flash_and_toast(self):
+        script = WASM_SHIM + """
+        careReset();
+        // Drive the dog hungry so the feed is accepted.
+        careAdvance(120000);
+        careStep(0);
+        careBuf[%d] = %d;
+        const events = careStep(0);
+        console.log(JSON.stringify({
+          events,
+          toastKind: careBuf[%d] | 0,
+          hasFlash: (events & %d) !== 0,
+          hasToast: (events & %d) !== 0
+        }));
+        """ % (
+            CARE_SLOT_ACTION_FLAGS,
+            CARE_CMD_FEED,
+            CARE_SLOT_UI_TOAST_KIND,
+            CARE_EVENT_UI_FLASH,
+            CARE_EVENT_TOAST,
+        )
+        payload = run_node(script)
+        assert_mask(
+            self,
+            payload["events"],
+            CARE_EVENT_FEED_ACCEPTED
+            | CARE_EVENT_HUNGER_RESOLVED
+            | CARE_EVENT_UI_FLASH
+            | CARE_EVENT_TOAST,
+            "feed-accepted events",
+        )
+        self.assertTrue(payload["hasFlash"], "feed must set CARE_EVENT_UI_FLASH")
+        self.assertTrue(payload["hasToast"], "feed must set CARE_EVENT_TOAST")
+        self.assertEqual(payload["toastKind"], CARE_TOAST_FED)
+
+    def test_groom_emits_ui_flash_and_toast(self):
+        script = WASM_SHIM + """
+        careReset();
+        careBuf[%d] = %d;
+        const events = careStep(0);
+        console.log(JSON.stringify({
+          events,
+          toastKind: careBuf[%d] | 0,
+          hasFlash: (events & %d) !== 0,
+          hasToast: (events & %d) !== 0
+        }));
+        """ % (
+            CARE_SLOT_ACTION_FLAGS,
+            CARE_CMD_GROOM,
+            CARE_SLOT_UI_TOAST_KIND,
+            CARE_EVENT_UI_FLASH,
+            CARE_EVENT_TOAST,
+        )
+        payload = run_node(script)
+        assert_mask(
+            self,
+            payload["events"],
+            CARE_EVENT_GROOM_ACCEPTED
+            | CARE_EVENT_GROOMING_RESOLVED
+            | CARE_EVENT_UI_FLASH
+            | CARE_EVENT_TOAST,
+            "groom-accepted events",
+        )
+        self.assertTrue(payload["hasFlash"], "groom must set CARE_EVENT_UI_FLASH")
+        self.assertTrue(payload["hasToast"], "groom must set CARE_EVENT_TOAST")
+        self.assertEqual(payload["toastKind"], CARE_TOAST_GROOMED)
+
+    def test_rest_emits_ui_flash_and_toast(self):
+        script = WASM_SHIM + """
+        careReset();
+        careBuf[%d] = %d;
+        const events = careStep(0);
+        console.log(JSON.stringify({
+          events,
+          toastKind: careBuf[%d] | 0,
+          hasFlash: (events & %d) !== 0,
+          hasToast: (events & %d) !== 0
+        }));
+        """ % (
+            CARE_SLOT_ACTION_FLAGS,
+            CARE_CMD_REST,
+            CARE_SLOT_UI_TOAST_KIND,
+            CARE_EVENT_UI_FLASH,
+            CARE_EVENT_TOAST,
+        )
+        payload = run_node(script)
+        assert_mask(
+            self,
+            payload["events"],
+            CARE_EVENT_REST_ACCEPTED
+            | CARE_EVENT_TIREDNESS_RESOLVED
+            | CARE_EVENT_UI_FLASH
+            | CARE_EVENT_TOAST,
+            "rest-accepted events",
+        )
+        self.assertTrue(payload["hasFlash"], "rest must set CARE_EVENT_UI_FLASH")
+        self.assertTrue(payload["hasToast"], "rest must set CARE_EVENT_TOAST")
+        self.assertEqual(payload["toastKind"], CARE_TOAST_RESTED)
+
+    def test_rejection_emits_toast_without_flash(self):
+        script = WASM_SHIM + """
+        careReset();
+        // Not hungry: feed rejects.
+        careBuf[%d] = %d;
+        const events = careStep(0);
+        console.log(JSON.stringify({
+          events,
+          toastKind: careBuf[%d] | 0,
+          hasFlash: (events & %d) !== 0,
+          hasToast: (events & %d) !== 0
+        }));
+        """ % (
+            CARE_SLOT_ACTION_FLAGS,
+            CARE_CMD_FEED,
+            CARE_SLOT_UI_TOAST_KIND,
+            CARE_EVENT_UI_FLASH,
+            CARE_EVENT_TOAST,
+        )
+        payload = run_node(script)
+        assert_mask(
+            self,
+            payload["events"],
+            CARE_EVENT_ACTION_REJECTED | CARE_EVENT_TOAST,
+            "feed-rejected events",
+        )
+        self.assertFalse(payload["hasFlash"], "rejection must NOT set CARE_EVENT_UI_FLASH")
+        self.assertTrue(payload["hasToast"], "rejection must set CARE_EVENT_TOAST")
+        self.assertEqual(payload["toastKind"], CARE_TOAST_REJECTED_HUNGRY)
+
+    def test_event_bitmask_slot_mirrors_return(self):
+        script = WASM_SHIM + """
+        careReset();
+        careBuf[%d] = %d;
+        const events = careStep(0);
+        const slot = careBuf[%d] >>> 0;
+        console.log(JSON.stringify({ events, slot }));
+        """ % (CARE_SLOT_ACTION_FLAGS, CARE_CMD_GROOM, CARE_SLOT_EVENT_BITMASK)
+        payload = run_node(script)
+        self.assertEqual(
+            payload["slot"],
+            payload["events"],
+            "CARE_SLOT_EVENT_BITMASK (%s) must mirror the returned mask (%s)"
+            % ("0x%08x" % payload["slot"], "0x%08x" % payload["events"]),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

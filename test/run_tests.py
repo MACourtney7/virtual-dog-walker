@@ -3,6 +3,9 @@ import sys
 import os
 import shutil
 import subprocess
+import argparse
+import glob
+import tempfile
 
 def ensure_node_available():
     extra_paths = [
@@ -22,6 +25,85 @@ def ensure_node_available():
             return
         print("❌ ERROR: 'node' executable not found in PATH. Node.js is required so JS/UI unit tests are not silently skipped.", file=sys.stderr)
         sys.exit(1)
+
+WASM_ARTIFACT_DIR = os.path.join("src", "wasm_core")
+WASM_ARTIFACT = os.path.join(WASM_ARTIFACT_DIR, "dog_walker_core_bg.wasm")
+WASM_CRATE_SRC_DIR = os.path.join("crates", "dog_walker_core", "src")
+WASM_BRIDGE_MODULE = os.path.join("src", "engine", "wasm_sim_bridge.js")
+
+
+def _newest_mtime(paths):
+    newest = 0.0
+    for p in paths:
+        try:
+            m = os.path.getmtime(p)
+        except OSError:
+            continue
+        if m > newest:
+            newest = m
+    return newest
+
+
+def verify_wasm_artifact():
+    """Ensure the Wasm artifact exists and is not stale relative to the Rust crate sources."""
+    if not os.path.isfile(WASM_ARTIFACT):
+        raise RuntimeError("Wasm sim artifact missing or stale")
+
+    crate_sources = []
+    if os.path.isdir(WASM_CRATE_SRC_DIR):
+        crate_sources.extend(glob.glob(os.path.join(WASM_CRATE_SRC_DIR, "**", "*.rs"), recursive=True))
+    crate_manifest = os.path.join("crates", "dog_walker_core", "Cargo.toml")
+    if os.path.isfile(crate_manifest):
+        crate_sources.append(crate_manifest)
+
+    if crate_sources:
+        newest_src = _newest_mtime(crate_sources)
+        artifact_mtime = os.path.getmtime(WASM_ARTIFACT)
+        if newest_src > artifact_mtime:
+            raise RuntimeError("Wasm sim artifact missing or stale")
+
+
+def run_wasm_preflight():
+    """Synchronously initialize the Wasm sim via Node and fail if it is not ready."""
+    if not os.path.isfile(WASM_BRIDGE_MODULE):
+        raise RuntimeError("Wasm sim not initialized")
+
+    bridge_url = "file://" + os.path.abspath(WASM_BRIDGE_MODULE)
+    script = (
+        "import { initWasmSimSync, isWasmSimReady } from " + repr(bridge_url) + ";\n"
+        "try {\n"
+        "  const ok = initWasmSimSync();\n"
+        "  if (ok === false || !isWasmSimReady()) {\n"
+        "    console.error('Wasm sim not initialized');\n"
+        "    process.exit(2);\n"
+        "  }\n"
+        "} catch (e) {\n"
+        "  console.error('Wasm sim not initialized: ' + (e && e.message ? e.message : e));\n"
+        "  process.exit(2);\n"
+        "}\n"
+    )
+
+    fd, tmp_path = tempfile.mkstemp(suffix=".mjs", prefix="wasm_preflight_")
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(script)
+        res = subprocess.run(["node", tmp_path], capture_output=True, text=True)
+    finally:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+
+    if res.returncode != 0:
+        detail = (res.stderr or res.stdout or "").strip()
+        raise RuntimeError("Wasm sim not initialized" + (f": {detail}" if detail else ""))
+
+
+def test_wasm_preflight():
+    verify_wasm_artifact()
+    run_wasm_preflight()
+    print("✅ test_wasm_preflight passed: Wasm artifact present, fresh, and initialized.")
+
 
 def test_scaffold():
     assert os.path.exists("index.html"), "index.html missing"
@@ -52,9 +134,11 @@ def test_scaffold():
         
     print("✅ test_scaffold passed: All Clifton Down social sandbox modules present.")
 
-def run_all():
+def run_all(use_wasm=True):
     ensure_node_available()
     test_scaffold()
+    if use_wasm:
+        test_wasm_preflight()
     test_suites = [
         "test/test_steering.py",
         "test/test_ball_physics.py",
@@ -102,5 +186,28 @@ def run_all():
             sys.exit(res.returncode)
     print("🎉 All test suites passed successfully!")
 
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(description="Run the virtual_dog_walker test suites.")
+    parser.add_argument(
+        "--wasm",
+        dest="wasm",
+        action="store_true",
+        default=True,
+        help="Verify and initialize the Wasm sim before running tests (default: on).",
+    )
+    parser.add_argument(
+        "--no-wasm",
+        dest="wasm",
+        action="store_false",
+        help="Skip the Wasm artifact/preflight checks.",
+    )
+    return parser.parse_args(argv)
+
+
 if __name__ == "__main__":
-    run_all()
+    args = parse_args()
+    try:
+        run_all(use_wasm=args.wasm)
+    except RuntimeError as e:
+        print(f"❌ Error(\"{e}\")", file=sys.stderr)
+        sys.exit(1)

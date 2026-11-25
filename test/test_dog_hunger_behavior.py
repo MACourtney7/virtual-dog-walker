@@ -261,5 +261,251 @@ console.log(JSON.stringify({ threw, calls }));
         self.assertEqual(result["calls"], 0)
 
 
+#!/usr/bin/env python3
+"""Behavioural tests for the Wasm care buffer (hunger) and HomeHungerAnimator.
+
+Every scenario launches a fresh `node --input-type=module -e "..."` subprocess,
+calls `initWasmSimSync()` synchronously, and drives the Rust-owned care buffer
+via `step_care_buffer(dt_ms)`. Assertions are made against exact Wasm event
+bitmasks (see crates/dog_walker_core/src/care_sim.rs).
+"""
+import json
+import os
+import shutil
+import subprocess
+import textwrap
+import unittest
+
+REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+
+# CareSimBuffer slot offsets (mirror crates/dog_walker_core/src/care_sim.rs).
+CARE_SLOT_NOW_MS = 1
+CARE_SLOT_HUNGER_ELAPSED_MS = 2
+CARE_SLOT_HUNGER_REMAINING_MS = 3
+CARE_SLOT_IS_HUNGRY = 8
+CARE_SLOT_ACTION_FLAGS = 11
+CARE_SLOT_EVENT_BITMASK = 12
+CARE_SLOT_HUNGER_LAST_FED_MS = 17
+CARE_SLOT_HUNGER_DURATION_MS = 27
+
+# Care command bits.
+CARE_CMD_FEED = 1 << 0
+CARE_CMD_RESET = 1 << 3
+
+# Care event bits.
+CARE_EVENT_HUNGER_STARTED = 1 << 0
+CARE_EVENT_FEED_ACCEPTED = 1 << 4
+CARE_EVENT_HUNGER_RESOLVED = 1 << 7
+CARE_EVENT_ACTION_REJECTED = 1 << 10
+CARE_EVENT_UI_FLASH = 1 << 11
+CARE_EVENT_TOAST = 1 << 12
+CARE_EVENT_RESET = 1 << 13
+
+DEFAULT_HUNGER_DURATION_MS = 120000.0
+
+
+def node_available():
+    return shutil.which("node") is not None
+
+
+def run_node(script_body: str) -> dict:
+    """Run a fresh node ESM process and parse its JSON stdout."""
+    body = textwrap.dedent(script_body)
+    result = subprocess.run(
+        ["node", "--input-type=module", "-e", body],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    if result.returncode != 0:
+        raise AssertionError(
+            "node script failed:\nSTDOUT:\n%s\nSTDERR:\n%s"
+            % (result.stdout, result.stderr)
+        )
+    out = result.stdout.strip()
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    if not lines:
+        raise AssertionError("node produced no output; stderr:\n%s" % result.stderr)
+    return json.loads(lines[-1])
+
+
+def file_url(rel_path: str) -> str:
+    return json.dumps("file://" + os.path.join(REPO_ROOT, rel_path))
+
+
+# Shared Wasm bootstrap + care-buffer helpers, injected at the top of each
+# script. Uses a unique prefix so it never collides with scenario identifiers.
+WASM_SHIM = """
+const hungerBridge = await import(%s);
+hungerBridge.initWasmSimSync();
+const hungerSim = hungerBridge.getWasmSim();
+const hungerBuf = hungerBridge.getBufferView(hungerSim.care_buffer_ptr(), hungerSim.care_buffer_len());
+
+function hungerStep(dtMs) {
+  return hungerSim.step_care_buffer(dtMs) >>> 0;
+}
+// step_care_buffer clamps dt_ms to [0, 1000], so advance in <=1000ms chunks.
+function hungerAdvance(totalMs) {
+  let rem = totalMs;
+  let events = 0;
+  while (rem > 0) {
+    const chunk = Math.min(1000, rem);
+    events = (events | hungerStep(chunk)) >>> 0;
+    rem -= chunk;
+  }
+  return events >>> 0;
+}
+function hungerReset() {
+  // Seed the default hunger duration/last-fed so the buffer starts from a
+  // known baseline regardless of how the Wasm module was constructed.
+  hungerBuf[%d] = %s;
+  hungerBuf[%d] = 0;
+  hungerBuf[%d] = %d;
+  hungerStep(0);
+}
+function hungerHex(mask) {
+  return '0x' + (mask >>> 0).toString(16).padStart(8, '0');
+}
+""" % (
+    file_url("src/engine/wasm_sim_bridge.js"),
+    CARE_SLOT_HUNGER_DURATION_MS,
+    DEFAULT_HUNGER_DURATION_MS,
+    CARE_SLOT_HUNGER_LAST_FED_MS,
+    CARE_SLOT_ACTION_FLAGS,
+    CARE_CMD_RESET,
+)
+
+
+def assert_mask(testcase, actual, expected, label):
+    testcase.assertEqual(
+        actual,
+        expected,
+        "%s: expected %s, actual %s"
+        % (label, "0x%08x" % (expected & 0xFFFFFFFF), "0x%08x" % (actual & 0xFFFFFFFF)),
+    )
+
+
+@unittest.skipUnless(node_available(), "node is required for these tests")
+class TestWasmCareHunger(unittest.TestCase):
+    def test_initial_hunger_state_not_hungry(self):
+        script = WASM_SHIM + """
+        hungerReset();
+        const events = hungerStep(0);
+        console.log(JSON.stringify({
+          events,
+          isHungry: hungerBuf[%d],
+          remaining: hungerBuf[%d],
+          duration: hungerBuf[%d]
+        }));
+        """ % (
+            CARE_SLOT_IS_HUNGRY,
+            CARE_SLOT_HUNGER_REMAINING_MS,
+            CARE_SLOT_HUNGER_DURATION_MS,
+        )
+        payload = run_node(script)
+        assert_mask(self, payload["events"], 0, "reset step events")
+        self.assertEqual(payload["isHungry"], 0.0)
+        self.assertEqual(payload["duration"], DEFAULT_HUNGER_DURATION_MS)
+        self.assertEqual(payload["remaining"], DEFAULT_HUNGER_DURATION_MS)
+
+    def test_hunger_started_event_at_threshold(self):
+        script = WASM_SHIM + """
+        hungerReset();
+        // Advance to just below the threshold, then cross it.
+        hungerAdvance(%d - 1);
+        const before = hungerStep(0);
+        const beforeHungry = hungerBuf[%d];
+        const cross = hungerStep(1);
+        const afterHungry = hungerBuf[%d];
+        console.log(JSON.stringify({
+          before, beforeHungry, cross, afterHungry
+        }));
+        """ % (
+            int(DEFAULT_HUNGER_DURATION_MS),
+            CARE_SLOT_IS_HUNGRY,
+            CARE_SLOT_IS_HUNGRY,
+        )
+        payload = run_node(script)
+        assert_mask(self, payload["before"], 0, "below-threshold events")
+        self.assertEqual(payload["beforeHungry"], 0.0)
+        assert_mask(self, payload["cross"], CARE_EVENT_HUNGER_STARTED, "hunger-started events")
+        self.assertEqual(payload["afterHungry"], 1.0)
+
+    def test_feed_rejected_when_not_hungry(self):
+        script = WASM_SHIM + """
+        hungerReset();
+        hungerBuf[%d] = %d;
+        const events = hungerStep(0);
+        console.log(JSON.stringify({ events }));
+        """ % (CARE_SLOT_ACTION_FLAGS, CARE_CMD_FEED)
+        payload = run_node(script)
+        assert_mask(
+            self,
+            payload["events"],
+            CARE_EVENT_ACTION_REJECTED | CARE_EVENT_TOAST,
+            "feed-rejected events",
+        )
+
+    def test_feed_accepted_when_hungry(self):
+        script = WASM_SHIM + """
+        hungerReset();
+        // Drive the dog hungry via the elapsed timer. The HUNGER_STARTED
+        // event fires on the step that crosses the threshold, so capture the
+        // events returned by hungerAdvance itself.
+        const hungryEvents = hungerAdvance(%d);
+        const wasHungry = hungerBuf[%d];
+        hungerBuf[%d] = %d;
+        const events = hungerStep(0);
+        console.log(JSON.stringify({
+          hungryEvents, wasHungry, events,
+          isHungry: hungerBuf[%d],
+          lastFed: hungerBuf[%d],
+          remaining: hungerBuf[%d]
+        }));
+        """ % (
+            int(DEFAULT_HUNGER_DURATION_MS),
+            CARE_SLOT_IS_HUNGRY,
+            CARE_SLOT_ACTION_FLAGS,
+            CARE_CMD_FEED,
+            CARE_SLOT_IS_HUNGRY,
+            CARE_SLOT_HUNGER_LAST_FED_MS,
+            CARE_SLOT_HUNGER_REMAINING_MS,
+        )
+        payload = run_node(script)
+        assert_mask(self, payload["hungryEvents"], CARE_EVENT_HUNGER_STARTED, "hunger-started events")
+        self.assertEqual(payload["wasHungry"], 1.0)
+        assert_mask(
+            self,
+            payload["events"],
+            CARE_EVENT_FEED_ACCEPTED
+            | CARE_EVENT_HUNGER_RESOLVED
+            | CARE_EVENT_UI_FLASH
+            | CARE_EVENT_TOAST,
+            "feed-accepted events",
+        )
+        self.assertEqual(payload["isHungry"], 0.0)
+        self.assertEqual(payload["remaining"], DEFAULT_HUNGER_DURATION_MS)
+        self.assertEqual(payload["lastFed"], DEFAULT_HUNGER_DURATION_MS)
+
+    def test_event_bitmask_slot_mirrors_return(self):
+        script = WASM_SHIM + """
+        hungerReset();
+        hungerBuf[%d] = %d;
+        const events = hungerStep(0);
+        const slot = hungerBuf[%d] >>> 0;
+        console.log(JSON.stringify({ events, slot }));
+        """ % (CARE_SLOT_ACTION_FLAGS, CARE_CMD_FEED, CARE_SLOT_EVENT_BITMASK)
+        payload = run_node(script)
+        self.assertEqual(
+            payload["slot"],
+            payload["events"],
+            "CARE_SLOT_EVENT_BITMASK (%s) must mirror the returned mask (%s)"
+            % ("0x%08x" % payload["slot"], "0x%08x" % payload["events"]),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
+
+

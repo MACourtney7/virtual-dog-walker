@@ -794,7 +794,9 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
     dog.zoomiesPath = 'FIGURE_EIGHT';
   }
   dog.gaitMode = gaitModeIdToMode(outBuf[72]);
-  dog.gaitPhase = outBuf[73];
+  // DOG_BUF_GAIT_PHASE is normalized in [0.0, 1.0); CompanionDog.draw() feeds gaitPhase
+  // directly into Math.sin(), which expects radians in [0, 2*PI).
+  dog.gaitPhase = outBuf[73] * Math.PI * 2;
 
   dog.leftEar = dog.leftEar || {};
   dog.leftEar.angle = outBuf[108];

@@ -454,7 +454,19 @@ fn target_for(active: u32, input: &UtilityInput<'_>) -> (f32, f32) {
     let now = finite_or(b[DOG_BUF_NOW_SEC], 0.0);
 
     match active {
-        UTIL_HEEL_FOLLOW | UTIL_RECALL | UTIL_CHECK_IN => (ox, oy),
+        UTIL_HEEL_FOLLOW => {
+            // Prefer the forward-flank heel slot when leashed so the dog walks
+            // beside the owner instead of trailing behind the owner's center.
+            if input.combo.is_on_leash {
+                let slot_x = b[DOG_BUF_TARGET_SLOT_X];
+                let slot_y = b[DOG_BUF_TARGET_SLOT_Y];
+                if slot_x.is_finite() && slot_y.is_finite() && (slot_x != 0.0 || slot_y != 0.0) {
+                    return (slot_x, slot_y);
+                }
+            }
+            (ox, oy)
+        }
+        UTIL_RECALL | UTIL_CHECK_IN => (ox, oy),
         UTIL_FETCH_BALL => (
             finite_or(b[DOG_BUF_BALL_X], ox),
             finite_or(b[DOG_BUF_BALL_Y], oy),
@@ -707,7 +719,13 @@ pub fn compute_steering(input: &UtilityInput<'_>, active_utility_id: u32) -> (f3
     let px = finite_or(b[DOG_BUF_POS_X], 0.0);
     let py = finite_or(b[DOG_BUF_POS_Y], 0.0);
 
-    let (sx, sy) = seek_force(input, active_utility_id, px, py);
+    // Heel-follow relies on `arrive_force` alone so velocity tapers smoothly to
+    // zero at the heel slot; adding a unit-magnitude seek would prevent that.
+    let (sx, sy) = if active_utility_id == UTIL_HEEL_FOLLOW {
+        (0.0, 0.0)
+    } else {
+        seek_force(input, active_utility_id, px, py)
+    };
     let (ax, ay) = arrive_force(input, active_utility_id, px, py);
     let (ox, oy) = obstacle_skirt_force(input, px, py);
     let (mx, my) = screen_perimeter_force(input, px, py);
@@ -893,7 +911,7 @@ pub fn integrate_micro_expressions(
     let gait = gait_from_speed(speed);
 
     let previous_phase = finite_or(buffer.slots[DOG_BUF_GAIT_PHASE], 0.0).rem_euclid(1.0);
-    let mut next_phase = previous_phase + speed / 12.0 * dt;
+    let mut next_phase = previous_phase + speed / 95.0 * dt;
     let wrapped = next_phase >= 1.0;
     next_phase %= 1.0;
     if !next_phase.is_finite() {

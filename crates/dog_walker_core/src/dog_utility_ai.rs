@@ -115,11 +115,11 @@ fn speed_of(buffer: &DogSimBuffer) -> f32 {
 }
 
 fn gait_from_speed(speed: f32) -> GaitModeId {
-    if speed < 1.0 {
+    if speed < 5.0 {
         GaitModeId::Idle
-    } else if speed < 20.0 {
+    } else if speed < 90.0 {
         GaitModeId::Walk
-    } else if speed < 40.0 {
+    } else if speed < 170.0 {
         GaitModeId::Trot
     } else {
         GaitModeId::Gallop
@@ -1006,9 +1006,10 @@ pub fn integrate_micro_expressions(
 /// Base target speed for an active utility prior to score/trait scaling.
 pub(crate) fn base_desired_speed(active_utility_id: u32) -> f32 {
     match active_utility_id {
-        UTIL_ZOOMIES | UTIL_FETCH_BALL => 48.0,
-        UTIL_ROAM_EXPLORE | UTIL_SCOUT_AHEAD | UTIL_PACK_PLAY | UTIL_SOCIAL_GREET => 32.0,
-        UTIL_HEEL_FOLLOW | UTIL_RECALL | UTIL_CHECK_IN | UTIL_LAG_AND_SNIFF => 18.0,
+        UTIL_ZOOMIES | UTIL_FETCH_BALL => 290.0,
+        UTIL_HEEL_FOLLOW | UTIL_RECALL => 220.0,
+        UTIL_ROAM_EXPLORE | UTIL_SCOUT_AHEAD | UTIL_PACK_PLAY | UTIL_SOCIAL_GREET => 155.0,
+        UTIL_CHECK_IN | UTIL_LAG_AND_SNIFF => 120.0,
         UTIL_AMBIENT_REST | UTIL_BARK_IMPULSE => 0.0,
         _ => 0.0,
     }
@@ -1061,9 +1062,10 @@ pub fn step_utility_ai(
 
     let energy = unit(input.traits.energy);
     let stubbornness = unit(input.traits.stubbornness);
-    let trait_scale = (0.5 + 0.5 * energy) * (1.0 - 0.3 * stubbornness);
+    let trait_scale = (0.85 + 0.25 * energy) * (1.0 - 0.10 * stubbornness);
+    let score_scale = 0.75 + 0.25 * unit(active_utility_score);
     let base_speed = base_desired_speed(active_utility_id);
-    let desired_speed = (base_speed * unit(active_utility_score) * trait_scale).clamp(0.0, 64.0);
+    let desired_speed = (base_speed * score_scale * trait_scale).clamp(0.0, 340.0);
     let desired_gait = gait_from_speed(desired_speed);
 
     let ear_target_raw = 0.15
@@ -1872,7 +1874,7 @@ mod tests {
     #[test]
     fn gallop_puff_is_emitted_on_phase_wrap() {
         let mut buffer = blank_buffer();
-        buffer.slots[DOG_BUF_DOG_VX] = 50.0;
+        buffer.slots[DOG_BUF_DOG_VX] = 200.0;
         buffer.slots[DOG_BUF_GAIT_PHASE] = 0.99;
         buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = UTIL_ZOOMIES as f32;
 
@@ -2231,12 +2233,16 @@ mod tests {
 
     #[test]
     fn base_desired_speed_mapping() {
-        assert_eq!(base_desired_speed(UTIL_ZOOMIES), 48.0);
-        assert_eq!(base_desired_speed(UTIL_FETCH_BALL), 48.0);
-        assert_eq!(base_desired_speed(UTIL_ROAM_EXPLORE), 32.0);
-        assert_eq!(base_desired_speed(UTIL_SCOUT_AHEAD), 32.0);
-        assert_eq!(base_desired_speed(UTIL_HEEL_FOLLOW), 18.0);
-        assert_eq!(base_desired_speed(UTIL_RECALL), 18.0);
+        assert_eq!(base_desired_speed(UTIL_ZOOMIES), 290.0);
+        assert_eq!(base_desired_speed(UTIL_FETCH_BALL), 290.0);
+        assert_eq!(base_desired_speed(UTIL_HEEL_FOLLOW), 220.0);
+        assert_eq!(base_desired_speed(UTIL_RECALL), 220.0);
+        assert_eq!(base_desired_speed(UTIL_ROAM_EXPLORE), 155.0);
+        assert_eq!(base_desired_speed(UTIL_SCOUT_AHEAD), 155.0);
+        assert_eq!(base_desired_speed(UTIL_PACK_PLAY), 155.0);
+        assert_eq!(base_desired_speed(UTIL_SOCIAL_GREET), 155.0);
+        assert_eq!(base_desired_speed(UTIL_CHECK_IN), 120.0);
+        assert_eq!(base_desired_speed(UTIL_LAG_AND_SNIFF), 120.0);
         assert_eq!(base_desired_speed(UTIL_AMBIENT_REST), 0.0);
         assert_eq!(base_desired_speed(UTIL_BARK_IMPULSE), 0.0);
     }
@@ -2253,7 +2259,7 @@ mod tests {
         let output = step_utility_ai(&mut buffer, &obstacles, blank_combo(), 0.016);
 
         assert_eq!(output.desired_gait, gait_from_speed(output.desired_speed));
-        assert!(output.desired_speed >= 0.0 && output.desired_speed <= 48.0 + 1e-4);
+        assert!(output.desired_speed >= 0.0 && output.desired_speed <= 340.0 + 1e-4);
     }
 
     #[test]
@@ -2407,7 +2413,7 @@ mod tests {
     fn pant_event_requires_low_energy_and_fast_gait() {
         let obstacles: [WorldObstacle; 0] = [];
         let mut buffer = blank_buffer();
-        buffer.slots[DOG_BUF_DOG_VX] = 50.0;
+        buffer.slots[DOG_BUF_DOG_VX] = 200.0;
 
         let snap = snapshot(&buffer);
         let traits = PersonalityTraits {

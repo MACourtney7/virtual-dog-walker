@@ -459,6 +459,8 @@ pub fn step_owner_buffer(buf: &mut OwnerSimBuffer, input: &OwnerStepInput<'_>) -
 
     let mut x = buf.data[OWNER_SLOT_X];
     let mut y = buf.data[OWNER_SLOT_Y];
+    let prev_x = x;
+    let prev_y = y;
     let mut heading = buf.data[OWNER_SLOT_ANGLE];
     let mut walk_phase = buf.data[OWNER_SLOT_WALK_PHASE];
 
@@ -903,14 +905,19 @@ pub fn step_owner_buffer(buf: &mut OwnerSimBuffer, input: &OwnerStepInput<'_>) -
     let (hand_lx, hand_ly) = compute_leash_hand_local(dog_forward_local, input.dog_is_pooping);
 
     // --- Walk cadence (phase in radians). Emit only on full 2*PI wrap. ---
-    let stride_hz = walk_stride_hz(actual_speed);
-    let prev_phase = walk_phase;
-    let raw_phase = walk_phase + stride_hz * dt * 2.0 * PI;
-    walk_phase = raw_phase.rem_euclid(2.0 * PI);
-    if raw_phase >= 2.0 * PI {
-        events |= OWNER_EVENT_WALK_CYCLE;
+    let ground_speed = if dt > 0.0 {
+        ((x - prev_x).hypot(y - prev_y)) / dt
+    } else {
+        0.0
+    };
+    if ground_speed > 2.0 {
+        let cadence_rad_s = walk_stride_hz(ground_speed);
+        let raw_phase = walk_phase + cadence_rad_s * dt;
+        walk_phase = raw_phase.rem_euclid(2.0 * PI);
+        if raw_phase >= 2.0 * PI {
+            events |= OWNER_EVENT_WALK_CYCLE;
+        }
     }
-    let _ = prev_phase;
 
     // --- Last known safe position. ---
     let mut last_safe_x = sanitize_f32(buf.data[OWNER_SLOT_LAST_SAFE_X]);
@@ -1294,13 +1301,16 @@ mod tests {
     fn owner_sim_walk_cycle_event() {
         let gates: [WarpGate; 0] = [];
         let obstacles: [WorldObstacle; 0] = [];
-        let input = base_input(&gates, &obstacles);
+        let mut input = base_input(&gates, &obstacles);
 
         let mut buf = buf_at(1600.0, 1200.0);
         buf.data[OWNER_SLOT_CMD_FLAGS] = OWNER_CMD_WALK as f32;
 
         let mut saw_cycle = false;
-        for _ in 0..40 {
+        for _ in 0..80 {
+            // Keep the dog co-located with the owner so the leash never clamps
+            // the owner and a full stride cycle can complete.
+            input.dog_pos_x = buf.data[OWNER_SLOT_X];
             buf.data[OWNER_SLOT_CMD_FLAGS] = OWNER_CMD_WALK as f32;
             let events = step_owner_buffer(&mut buf, &input);
             if events & OWNER_EVENT_WALK_CYCLE != 0 {

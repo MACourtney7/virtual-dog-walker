@@ -630,6 +630,31 @@ function writePoint(buf, base, x, y) {
   buf[base + 1] = Number.isFinite(y) ? y : NaN;
 }
 
+// Owner gait string -> numeric gait id (owner gait vocabulary, not GaitModeId).
+const OWNER_GAIT_IDS = {
+  STAND: 0,
+  STROLL: 1,
+  WALK: 2,
+  JOG: 3,
+  WANDER: 4,
+};
+
+/**
+ * Resolves the owner's numeric gait id. Prefers a numeric `owner.gaitId`, then a numeric
+ * `owner.gait`, then maps the string `owner.gait` ('STAND'|'STROLL'|'WALK'|'JOG'|'WANDER').
+ * Defaults to 0 (STAND) when unknown.
+ */
+function ownerGaitToId(owner) {
+  if (!owner) return 0;
+  if (Number.isFinite(owner.gaitId)) return owner.gaitId;
+  if (Number.isFinite(owner.gait)) return owner.gait;
+  if (typeof owner.gait === 'string') {
+    const id = OWNER_GAIT_IDS[owner.gait.toUpperCase()];
+    if (Number.isFinite(id)) return id;
+  }
+  return 0;
+}
+
 /**
  * Steps the companion dog through the Wasm authority buffer. Writes inputs [0..63], calls
  * step_dog_buffer(), hydrates outputs [64..127] onto `dog`, and returns the event bitmask.
@@ -655,17 +680,25 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   buf[3] = owner && Number.isFinite(owner.y) ? owner.y : 0;
   buf[4] = owner && Number.isFinite(owner.vx) ? owner.vx : 0;
   buf[5] = owner && Number.isFinite(owner.vy) ? owner.vy : 0;
-  buf[6] = owner && Number.isFinite(owner.heading) ? owner.heading : 0;
+  const ownerHeading = owner
+    ? (Number.isFinite(owner.angle) ? owner.angle : (Number.isFinite(owner.heading) ? owner.heading : 0))
+    : 0;
+  buf[6] = ownerHeading;
   buf[7] = owner && Number.isFinite(owner.halfWidth) ? owner.halfWidth : 0;
-  const ownerGait = owner ? (owner.gait ?? owner.gaitId) : 0;
-  buf[8] = Number.isFinite(ownerGait) ? ownerGait : 0;
+  buf[8] = ownerGaitToId(owner);
   buf[9] = owner && owner.isMoving ? 1 : 0;
   buf[10] = isOnLeash ? 1 : 0;
   buf[11] = (dog && dog.preferredSide === 'right') ? 1 : -1;
   const store = (dog && dog.dogStateStore) ? dog.dogStateStore : null;
-  const isHungry = store && store.isHungry != null ? store.isHungry : (dog && dog.isHungry);
-  const needsGrooming = store && store.needsGrooming != null ? store.needsGrooming : (dog && dog.needsGrooming);
-  const isTired = store && store.isTired != null ? store.isTired : (dog && dog.isTired);
+  const isHungry = store && store.isHungry != null
+    ? (typeof store.isHungry === 'function' ? store.isHungry() : store.isHungry)
+    : (dog && dog.isHungry);
+  const needsGrooming = store && store.needsGrooming != null
+    ? (typeof store.needsGrooming === 'function' ? store.needsGrooming() : store.needsGrooming)
+    : (dog && dog.needsGrooming);
+  const isTired = store && store.isTired != null
+    ? (typeof store.isTired === 'function' ? store.isTired() : store.isTired)
+    : (dog && dog.isTired);
   buf[12] = isHungry ? 1 : 0;
   buf[13] = needsGrooming ? 1 : 0;
   buf[14] = isTired ? 1 : 0;

@@ -96,6 +96,10 @@ export const CARE_REJECTION_NOT_DIRTY = 2;
 export const CARE_REJECTION_NOT_TIRED = 3;
 
 // Flash / rejection animation durations (ms).
+// Largest gap (ms) advanced via the chunked loop; larger gaps are applied
+// directly to elapsed slots to avoid spinning the loop billions of times.
+export const CARE_MAX_CHUNKED_ADVANCE_MS = 600000; // 10 minutes
+
 export const CARE_REJECTION_ANIM_MS = 500;
 export const CARE_FEED_FLASH_MS = 500;
 export const CARE_GROOM_FLASH_MS = 500;
@@ -440,13 +444,25 @@ export class DogStateStore {
     this._careBuf[CARE_SLOT_HUNGER_DURATION_MS] = this._hungerDurationMs;
     this._careBuf[CARE_SLOT_GROOMING_DURATION_MS] = DEFAULT_GROOMING_DURATION_MS;
     this._careBuf[CARE_SLOT_TIREDNESS_DURATION_MS] = DEFAULT_TIREDNESS_DURATION_MS;
+    // JS f64 clock for the care buffer. `CARE_SLOT_NOW_MS` is f32 and cannot
+    // represent `Date.now()` precisely, so `dt` is always derived from this.
+    this._lastCareNowMs = this._now();
+    // Set once the Rust-owned Wasm buffer has been seeded from `_state`.
+    this._wasmCareHydrated = false;
     this._hydrateCareFromState(this._state);
   }
 
   // Returns the active care buffer: the Rust-owned zero-copy view when Wasm is available,
   // else the local JS mirror. Re-resolved on every access so memory growth is handled.
   _careView() {
-    return resolveCareBufferView(this._careBuf);
+    const view = resolveCareBufferView(this._careBuf);
+    // The Wasm buffer starts zero-initialized; seed it from `_state` the first
+    // time we switch to it so `CARE_SLOT_NOW_MS` is never left at 0.
+    if (view !== this._careBuf && !this._wasmCareHydrated) {
+      this._wasmCareHydrated = true;
+      this._hydrateCareFromState(this._state);
+    }
+    return view;
   }
 
   // --- CareSimBuffer hydration / stepping ---------------------------------
@@ -501,20 +517,33 @@ export class DogStateStore {
 
     buf[CARE_SLOT_NOW_MS] = nowMs;
     buf[CARE_SLOT_ACTION_FLAGS] = 0;
+    this._lastCareNowMs = nowMs;
   }
 
   // Advances the care buffer to `nowMs` and returns the accumulated events.
   _advanceCare(nowMs) {
     const buf = this._careView();
     const target = Number.isFinite(nowMs) ? nowMs : this._now();
-    const current = buf[CARE_SLOT_NOW_MS];
-    let dt = target - current;
+    // `dt` is derived from the JS f64 clock, never from the f32 `CARE_SLOT_NOW_MS`.
+    const last = Number.isFinite(this._lastCareNowMs) ? this._lastCareNowMs : target;
+    let dt = target - last;
     if (!Number.isFinite(dt)) dt = 0;
+    this._lastCareNowMs = target;
     if (dt < 0) {
       // Clock rollback: re-derive elapsed from the last-action timestamps so
       // elapsed clamps to zero (legacy `Math.max(0, nowMs - lastFedAt)`).
       this._rehydrateElapsedForRollback(target);
       return 0;
+    }
+    if (dt === 0) {
+      return stepCareBuffer(buf, 0) >>> 0;
+    }
+    // Large gaps (e.g. tab was backgrounded / offline for hours) must not spin
+    // the chunked loop billions of times. Advance elapsed timers directly and
+    // let a single zero-dt step recompute flags/events.
+    if (dt > CARE_MAX_CHUNKED_ADVANCE_MS) {
+      this._advanceElapsedDirect(dt);
+      return stepCareBuffer(buf, 0) >>> 0;
     }
     // Step in <=1000ms chunks so the Wasm clamp never truncates elapsed time.
     let events = 0;
@@ -524,10 +553,32 @@ export class DogStateStore {
       events |= stepCareBuffer(buf, chunk);
       remaining -= chunk;
     }
-    if (dt === 0) {
-      events |= stepCareBuffer(buf, 0);
-    }
     return events >>> 0;
+  }
+
+  // Adds `dt` ms directly to the elapsed slots (and recomputes remaining/flags)
+  // without looping. Used for large offline gaps.
+  _advanceElapsedDirect(dt) {
+    const buf = this._careView();
+    const hungerDuration = careDurationSlot(buf, CARE_SLOT_HUNGER_DURATION_MS, this._hungerDurationMs);
+    const groomingDuration = careDurationSlot(buf, CARE_SLOT_GROOMING_DURATION_MS, DEFAULT_GROOMING_DURATION_MS);
+    const tirednessDuration = careDurationSlot(buf, CARE_SLOT_TIREDNESS_DURATION_MS, DEFAULT_TIREDNESS_DURATION_MS);
+
+    buf[CARE_SLOT_HUNGER_ELAPSED_MS] = careSaturatingAdd(buf[CARE_SLOT_HUNGER_ELAPSED_MS], dt);
+    buf[CARE_SLOT_GROOMING_ELAPSED_MS] = careSaturatingAdd(buf[CARE_SLOT_GROOMING_ELAPSED_MS], dt);
+    buf[CARE_SLOT_TIREDNESS_ELAPSED_MS] = careSaturatingAdd(buf[CARE_SLOT_TIREDNESS_ELAPSED_MS], dt);
+
+    buf[CARE_SLOT_HUNGER_REMAINING_MS] = Math.max(0, hungerDuration - buf[CARE_SLOT_HUNGER_ELAPSED_MS]);
+    buf[CARE_SLOT_GROOMING_REMAINING_MS] = Math.max(0, groomingDuration - buf[CARE_SLOT_GROOMING_ELAPSED_MS]);
+    buf[CARE_SLOT_TIREDNESS_REMAINING_MS] = Math.max(0, tirednessDuration - buf[CARE_SLOT_TIREDNESS_ELAPSED_MS]);
+
+    buf[CARE_SLOT_IS_HUNGRY] = buf[CARE_SLOT_HUNGER_REMAINING_MS] <= 0 ? 1 : 0;
+    buf[CARE_SLOT_NEEDS_GROOMING] = (buf[CARE_SLOT_GROOMING_LAST_GROOMED_MS] < 0 ||
+      buf[CARE_SLOT_GROOMING_ELAPSED_MS] >= groomingDuration) ? 1 : 0;
+    buf[CARE_SLOT_IS_TIRED] = (buf[CARE_SLOT_TIREDNESS_LAST_RESTED_MS] < 0 ||
+      buf[CARE_SLOT_TIREDNESS_ELAPSED_MS] >= tirednessDuration) ? 1 : 0;
+
+    buf[CARE_SLOT_NOW_MS] = careSaturatingAdd(buf[CARE_SLOT_NOW_MS], dt);
   }
 
   // Recomputes elapsed/remaining/need flags from the last-action timestamps
@@ -557,6 +608,7 @@ export class DogStateStore {
       buf[CARE_SLOT_TIREDNESS_ELAPSED_MS] >= tirednessDuration) ? 1 : 0;
 
     buf[CARE_SLOT_NOW_MS] = targetMs;
+    this._lastCareNowMs = targetMs;
   }
 
   // Writes the care buffer's timestamps back into the persisted state shape.
@@ -909,6 +961,7 @@ if (typeof globalThis !== 'undefined') {
   globalThis.DEFAULT_TIREDNESS_DURATION_MS = DEFAULT_TIREDNESS_DURATION_MS;
   globalThis.DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS;
   globalThis.CARE_BUFFER_SLOTS = CARE_BUFFER_SLOTS;
+  globalThis.CARE_MAX_CHUNKED_ADVANCE_MS = CARE_MAX_CHUNKED_ADVANCE_MS;
   globalThis.CARE_CMD_FEED = CARE_CMD_FEED;
   globalThis.CARE_CMD_GROOM = CARE_CMD_GROOM;
   globalThis.CARE_CMD_REST = CARE_CMD_REST;

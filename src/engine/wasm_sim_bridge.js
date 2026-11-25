@@ -731,7 +731,7 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   buf[34] = cmds && cmds.fetchBall ? 1 : 0;
 
   // Peers [38..45], NPCs [46..53], scents [54..61]
-  const peers = Array.isArray(otherDogs) ? otherDogs : [];
+  const peers = Array.isArray(otherDogs) ? otherDogs.filter((p) => p && p !== dog) : [];
   const peerCount = Math.min(4, peers.length);
   buf[35] = peerCount;
   for (let i = 0; i < 4; i++) {

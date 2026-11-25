@@ -256,6 +256,12 @@ fn dog_position(buffer: &DogSimBuffer) -> (f32, f32) {
 pub fn score_heel_follow(input: &UtilityInput<'_>) -> f32 {
     let loyalty = unit(input.traits.loyalty);
     let stubbornness = unit(input.traits.stubbornness);
+    // On-leash heel-following must reliably outrank competing utilities
+    // (social greet, ambient rest, lag-and-sniff, check-in, pack play) while
+    // preserving monotonic ordering in `loyalty`.
+    if input.combo.is_on_leash && !input.combo.is_pooping {
+        return unit(0.82 + 0.15 * loyalty - 0.05 * stubbornness);
+    }
     let (px, py) = dog_position(input.buffer);
     let tx = finite_or(
         input.buffer.slots[DOG_BUF_TARGET_SLOT_X],

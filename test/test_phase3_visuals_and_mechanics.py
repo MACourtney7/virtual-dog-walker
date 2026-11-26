@@ -101,8 +101,8 @@ class TestCompanionDogPhase3Mechanics(unittest.TestCase):
         """Zoomies path selection/steering lives in the Rust core; JS triggers the burst."""
         # Rust core: figure-eight parametric motion uses sin(phase) and sin(phase * 2).
         self.assertIn("ZoomiePathId::FigureEight", self.utility_ai_code)
-        self.assertIn("(phase * core::f32::consts::TAU).sin() * 60.0", self.utility_ai_code)
-        self.assertIn("(phase * core::f32::consts::TAU * 2.0).sin() * 30.0", self.utility_ai_code)
+        self.assertIn("(phase * core::f32::consts::TAU).sin() * 110.0", self.utility_ai_code)
+        self.assertIn("(phase * core::f32::consts::TAU * 2.0).sin() * 55.0", self.utility_ai_code)
         self.assertIn("fn zoomie_path_for", self.utility_ai_code)
         # Bridge hydrates the zoomie path output slot onto the dog.
         self.assertIn("dog.zoomiesPath = zoomiePathIdToPath(zoomiePathId)", self.bridge_code)

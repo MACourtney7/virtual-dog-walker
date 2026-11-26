@@ -511,10 +511,23 @@ fn target_for(active: u32, input: &UtilityInput<'_>) -> (f32, f32) {
             finite_or(b[DOG_BUF_BALL_X], ox),
             finite_or(b[DOG_BUF_BALL_Y], oy),
         ),
-        UTIL_ROAM_EXPLORE => (
-            ox + (now * 0.7).sin() * 120.0,
-            oy + (now * 0.9).cos() * 120.0,
-        ),
+        UTIL_ROAM_EXPLORE => {
+            let wx = b[DOG_BUF_ROAM_WAYPOINT_X];
+            let wy = b[DOG_BUF_ROAM_WAYPOINT_Y];
+            // Never use a stale off-leash waypoint while on-leash.
+            if !input.combo.is_on_leash
+                && wx.is_finite()
+                && wy.is_finite()
+                && (wx != 0.0 || wy != 0.0)
+            {
+                (wx, wy)
+            } else {
+                (
+                    ox + (now * 0.7).sin() * 120.0,
+                    oy + (now * 0.9).cos() * 120.0,
+                )
+            }
+        }
         UTIL_SCOUT_AHEAD => {
             let heading = finite_or(b[DOG_BUF_OWNER_HEADING], 0.0);
             (
@@ -522,10 +535,23 @@ fn target_for(active: u32, input: &UtilityInput<'_>) -> (f32, f32) {
                 oy + heading.sin() * 130.0 + (now * 0.6).cos() * 40.0,
             )
         }
-        UTIL_LAG_AND_SNIFF => (
-            ox + (now * 0.15).sin() * 90.0,
-            oy + (now * 0.15).cos() * 90.0,
-        ),
+        UTIL_LAG_AND_SNIFF => {
+            let wx = b[DOG_BUF_ROAM_WAYPOINT_X];
+            let wy = b[DOG_BUF_ROAM_WAYPOINT_Y];
+            // Never use a stale off-leash waypoint while on-leash.
+            if !input.combo.is_on_leash
+                && wx.is_finite()
+                && wy.is_finite()
+                && (wx != 0.0 || wy != 0.0)
+            {
+                (wx, wy)
+            } else {
+                (
+                    ox + (now * 0.15).sin() * 90.0,
+                    oy + (now * 0.15).cos() * 90.0,
+                )
+            }
+        }
         UTIL_SOCIAL_GREET | UTIL_PACK_PLAY => {
             if nearest_peer_distance(input.buffer, px, py).is_some() {
                 (
@@ -721,13 +747,13 @@ fn zoomies_parametric_step(input: &UtilityInput<'_>, active_utility_id: u32) -> 
 
     let (tx, ty) = match path {
         p if p == ZoomiePathId::FigureEight as u32 as i32 => {
-            let a = (phase * core::f32::consts::TAU).sin() * 60.0;
-            let c = (phase * core::f32::consts::TAU * 2.0).sin() * 30.0;
+            let a = (phase * core::f32::consts::TAU).sin() * 110.0;
+            let c = (phase * core::f32::consts::TAU * 2.0).sin() * 55.0;
             (cx + a, cy + c)
         }
         p if p == ZoomiePathId::OrbitOwner as u32 as i32 => {
-            let raw_radius = finite_or(b[DOG_BUF_ZOOMIES_ORBIT_RADIUS], 60.0);
-            let radius = if raw_radius <= 1.0 { 60.0 } else { raw_radius };
+            let raw_radius = finite_or(b[DOG_BUF_ZOOMIES_ORBIT_RADIUS], 95.0);
+            let radius = if raw_radius <= 1.0 { 95.0 } else { raw_radius };
             let angle = finite_or(b[DOG_BUF_ZOOMIES_ORBIT_ANGLE], 0.0);
             let dir = if finite_or(b[DOG_BUF_ZOOMIES_ORBIT_DIR], 1.0) >= 0.0 {
                 1.0
@@ -754,7 +780,8 @@ fn zoomies_parametric_step(input: &UtilityInput<'_>, active_utility_id: u32) -> 
     let dy = ty - py;
     let distance = magnitude(dx, dy);
     if distance > 1e-4 {
-        (dx / distance, dy / distance)
+        let scale = (distance / 28.0).clamp(0.0, 1.0);
+        (dx / distance * scale, dy / distance * scale)
     } else {
         (0.0, 0.0)
     }
@@ -1081,6 +1108,87 @@ pub(crate) fn base_desired_speed(active_utility_id: u32) -> f32 {
     }
 }
 
+/// Advance persistent off-leash roam waypoints and sniff micro-pauses.
+///
+/// Returns `true` when the dog is currently in a sniff/look-around pause, in
+/// which case the caller should zero the desired speed.
+fn advance_roam_waypoints(
+    buffer: &mut DogSimBuffer,
+    active_utility_id: u32,
+    combo: DiscreteCombo,
+    dt: f32,
+) -> bool {
+    if combo.is_on_leash || combo.is_pooping {
+        return false;
+    }
+    if !matches!(active_utility_id, UTIL_ROAM_EXPLORE | UTIL_LAG_AND_SNIFF) {
+        return false;
+    }
+    let now = finite_or(buffer.slots[DOG_BUF_NOW_SEC], 0.0);
+    if now <= 0.0 {
+        return false;
+    }
+
+    let dt = if dt.is_finite() {
+        dt.clamp(0.0, 0.1)
+    } else {
+        0.0
+    };
+
+    // Tick the pause and wander timers.
+    let pause = (finite_or(buffer.slots[DOG_BUF_ROAM_MICROPAUSE_TIMER], 0.0) - dt).max(0.0);
+    buffer.slots[DOG_BUF_ROAM_MICROPAUSE_TIMER] = pause;
+    let wtimer = (finite_or(buffer.slots[DOG_BUF_WANDER_TIMER], 0.0) - dt).max(0.0);
+    buffer.slots[DOG_BUF_WANDER_TIMER] = wtimer;
+
+    let px = finite_or(buffer.slots[DOG_BUF_POS_X], 0.0);
+    let py = finite_or(buffer.slots[DOG_BUF_POS_Y], 0.0);
+    let ox = finite_or(buffer.slots[DOG_BUF_OWNER_X], px);
+    let oy = finite_or(buffer.slots[DOG_BUF_OWNER_Y], py);
+
+    let wx = finite_or(buffer.slots[DOG_BUF_ROAM_WAYPOINT_X], 0.0);
+    let wy = finite_or(buffer.slots[DOG_BUF_ROAM_WAYPOINT_Y], 0.0);
+    let waypoint_valid = wx != 0.0 || wy != 0.0;
+
+    // Arrived at the current waypoint: start a natural sniff/look-around pause.
+    // Require `wtimer > 0.0` so that once the pause expires (and `wtimer` was
+    // zeroed on entry) the arrival branch cannot re-trigger, letting
+    // `needs_new` pick a fresh waypoint and resume roaming.
+    if waypoint_valid && wtimer > 0.0 && pause <= 0.0 && magnitude(px - wx, py - wy) < 22.0 {
+        let seed = finite_or(buffer.slots[DOG_BUF_RNG_SEED], 0.0) as u32;
+        let mut rng = Mulberry32::new(seed);
+        let pause_len = 1.4 + (rng.next_f64() as f32) * 1.6;
+        let advanced = (rng.next_f64() * (u32::MAX as f64)) as u32;
+        buffer.slots[DOG_BUF_RNG_SEED] = advanced as f32;
+        buffer.slots[DOG_BUF_ROAM_MICROPAUSE_TIMER] = pause_len;
+        buffer.slots[DOG_BUF_WANDER_TIMER] = 0.0;
+        return true;
+    }
+
+    // Pick a fresh waypoint when idle, stale, or too far from the owner.
+    let needs_new = pause <= 0.0
+        && (!waypoint_valid || wtimer <= 0.0 || magnitude(wx - ox, wy - oy) > 380.0);
+    if needs_new {
+        let seed = finite_or(buffer.slots[DOG_BUF_RNG_SEED], 0.0) as u32;
+        let mut rng = Mulberry32::new(seed);
+        let angle = (rng.next_f64() as f32) * core::f32::consts::TAU;
+        let distance = 65.0 + (rng.next_f64() as f32) * 165.0;
+        let heading = finite_or(buffer.slots[DOG_BUF_OWNER_HEADING], 0.0);
+        let owner_moving = finite_or(buffer.slots[DOG_BUF_OWNER_IS_MOVING], 0.0) > 0.5;
+        let bias = if owner_moving { 45.0 } else { 0.0 };
+        let nx = ox + angle.cos() * distance + heading.cos() * bias;
+        let ny = oy + angle.sin() * distance + heading.sin() * bias;
+        let wander_len = 4.0 + (rng.next_f64() as f32) * 4.0;
+        let advanced = (rng.next_f64() * (u32::MAX as f64)) as u32;
+        buffer.slots[DOG_BUF_RNG_SEED] = advanced as f32;
+        buffer.slots[DOG_BUF_ROAM_WAYPOINT_X] = nx;
+        buffer.slots[DOG_BUF_ROAM_WAYPOINT_Y] = ny;
+        buffer.slots[DOG_BUF_WANDER_TIMER] = wander_len;
+    }
+
+    buffer.slots[DOG_BUF_ROAM_MICROPAUSE_TIMER] > 0.0
+}
+
 pub fn step_utility_ai(
     buffer: &mut DogSimBuffer,
     obstacles: &[WorldObstacle],
@@ -1168,7 +1276,11 @@ pub fn step_utility_ai(
     let trait_scale = (0.85 + 0.25 * energy) * (1.0 - 0.10 * stubbornness);
     let score_scale = 0.75 + 0.25 * unit(active_utility_score);
     let base_speed = base_desired_speed(active_utility_id);
-    let desired_speed = (base_speed * score_scale * trait_scale).clamp(0.0, 340.0);
+    let mut desired_speed = (base_speed * score_scale * trait_scale).clamp(0.0, 340.0);
+    // A sniff/look-around pause stops the dog calmly instead of orbiting.
+    if advance_roam_waypoints(buffer, active_utility_id, combo, dt) {
+        desired_speed = 0.0;
+    }
     let desired_gait = gait_from_speed(desired_speed);
 
     let ear_target_raw = 0.15
@@ -3406,6 +3518,105 @@ mod tests {
         assert_eq!(
             score_scout_ahead(&pooping_peak),
             score_scout_ahead(&pooping_baseline)
+        );
+    }
+
+    #[test]
+    fn zoomies_parametric_step_damps_near_target() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = UTIL_ZOOMIES as f32;
+        buffer.slots[DOG_BUF_ZOOMIE_PATH_ID] = ZoomiePathId::OrbitOwner as u32 as f32;
+        buffer.slots[DOG_BUF_ZOOMIES_CENTER_X] = 100.0;
+        buffer.slots[DOG_BUF_ZOOMIES_CENTER_Y] = 100.0;
+        buffer.slots[DOG_BUF_ZOOMIES_ORBIT_RADIUS] = 95.0;
+        buffer.slots[DOG_BUF_ZOOMIES_ORBIT_ANGLE] = 0.0;
+        buffer.slots[DOG_BUF_ZOOMIES_ORBIT_DIR] = 1.0;
+        // Place the dog just short of the orbit target (center + radius on +x).
+        buffer.slots[DOG_BUF_POS_X] = 100.0 + 95.0 - 5.0;
+        buffer.slots[DOG_BUF_POS_Y] = 100.0;
+
+        let input = UtilityInput {
+            buffer: &buffer,
+            combo: blank_combo(),
+            traits: base_traits(),
+            obstacles: &obstacles,
+        };
+
+        let (sx, sy) = zoomies_parametric_step(&input, UTIL_ZOOMIES);
+        assert!(
+            magnitude(sx, sy) < 0.5,
+            "near-target zoomie step must be damped, got {}",
+            magnitude(sx, sy)
+        );
+    }
+
+    #[test]
+    fn off_leash_roam_uses_persistent_waypoint_and_pauses_on_arrival() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_TRAIT_CURIOSITY] = 0.3;
+        buffer.slots[DOG_BUF_TRAIT_ENERGY] = 0.3;
+        buffer.slots[DOG_BUF_TRAIT_STUBBORNNESS] = 0.5;
+        buffer.slots[DOG_BUF_TRAIT_LOYALTY] = 0.0;
+        buffer.slots[DOG_BUF_TARGET_SLOT_X] = 10000.0;
+        buffer.slots[DOG_BUF_TARGET_SLOT_Y] = 10000.0;
+        buffer.slots[DOG_BUF_CAM_ACTIVE] = 1.0;
+        buffer.slots[DOG_BUF_CAM_LEFT] = 0.0;
+        buffer.slots[DOG_BUF_CAM_TOP] = 0.0;
+        buffer.slots[DOG_BUF_CAM_RIGHT] = 1920.0;
+        buffer.slots[DOG_BUF_CAM_BOTTOM] = 1080.0;
+        buffer.slots[DOG_BUF_RNG_SEED] = 12345.0;
+        buffer.slots[DOG_BUF_NOW_SEC] = 10.0;
+
+        let output = step_utility_ai(&mut buffer, &obstacles, blank_combo(), 0.016);
+        assert_eq!(output.active_utility_id, UTIL_ROAM_EXPLORE);
+
+        let wx = buffer.slots[DOG_BUF_ROAM_WAYPOINT_X];
+        let wy = buffer.slots[DOG_BUF_ROAM_WAYPOINT_Y];
+        assert!(wx != 0.0 || wy != 0.0, "waypoint must be populated");
+
+        // The waypoint must persist across subsequent steps (no per-frame orbit).
+        let _ = step_utility_ai(&mut buffer, &obstacles, blank_combo(), 0.016);
+        assert_eq!(buffer.slots[DOG_BUF_ROAM_WAYPOINT_X], wx);
+        assert_eq!(buffer.slots[DOG_BUF_ROAM_WAYPOINT_Y], wy);
+
+        // Placing the dog at the waypoint triggers a sniff pause and stops it.
+        buffer.slots[DOG_BUF_POS_X] = wx;
+        buffer.slots[DOG_BUF_POS_Y] = wy;
+        let output = step_utility_ai(&mut buffer, &obstacles, blank_combo(), 0.016);
+        assert!(
+            buffer.slots[DOG_BUF_ROAM_MICROPAUSE_TIMER] > 0.0,
+            "arrival must start a sniff micro-pause"
+        );
+        assert_eq!(output.desired_speed, 0.0);
+
+        // Step past the pause timer: the pause must expire, a fresh waypoint
+        // must be generated, and the dog must resume roaming (no infinite
+        // arrival-pause loop).
+        let mut resumed = None;
+        for _ in 0..40 {
+            let out = step_utility_ai(&mut buffer, &obstacles, blank_combo(), 0.1);
+            if buffer.slots[DOG_BUF_ROAM_MICROPAUSE_TIMER] == 0.0 {
+                resumed = Some(out);
+                break;
+            }
+        }
+        let resumed = resumed.expect("micro-pause must expire");
+        assert_eq!(buffer.slots[DOG_BUF_ROAM_MICROPAUSE_TIMER], 0.0);
+        let nx = buffer.slots[DOG_BUF_ROAM_WAYPOINT_X];
+        let ny = buffer.slots[DOG_BUF_ROAM_WAYPOINT_Y];
+        assert!(
+            nx != wx || ny != wy,
+            "a fresh waypoint must be generated after the pause"
+        );
+        assert!(
+            buffer.slots[DOG_BUF_WANDER_TIMER] > 0.0,
+            "wander timer must be reset for the new waypoint"
+        );
+        assert!(
+            resumed.desired_speed > 0.0,
+            "dog must resume roaming after the pause expires"
         );
     }
 }

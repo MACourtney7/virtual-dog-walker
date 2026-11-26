@@ -788,12 +788,9 @@ pub fn step_owner_buffer(buf: &mut OwnerSimBuffer, input: &OwnerStepInput<'_>) -
     } else if (post_x - pre_x).abs() > 1e-4 || (post_y - pre_y).abs() > 1e-4 {
         obstacle_blocked = true;
         events |= OWNER_EVENT_OBSTACLE_DEFLECTED;
-        // Deflect heading by half the push-out normal.
-        let nx = post_x - pre_x;
-        let ny = post_y - pre_y;
-        if nx.abs() > 1e-6 || ny.abs() > 1e-6 {
-            heading = normalize_angle(heading + 0.5 * ny.atan2(nx));
-        }
+        // No heading twist: `resolve_field_collisions` already pushed the
+        // owner smoothly out along the surface normal, so the owner slides
+        // cleanly around trees and benches without pinball-bouncing.
     }
     x = post_x;
     y = post_y;

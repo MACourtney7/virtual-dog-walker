@@ -260,10 +260,14 @@ impl WasmWorldSim {
         // honor the dog's actual leash state.
         let dog_stepped = self.dog_buffer.slots[DOG_BUF_DT] > 0.0
             || self.dog_buffer.slots[DOG_BUF_NOW_SEC] > 0.0;
+        // On frame 1 the dog buffer has not been seeded yet (dog.update() has
+        // not run), so the dog sits at (0, 0). Treating that as on-leash would
+        // clamp the owner toward the origin and cause an initial spawn slide.
+        let dog_seeded = dog_stepped || dog_x != 0.0 || dog_y != 0.0;
         let is_on_leash = if dog_stepped {
             slot_bool(&self.dog_buffer, DOG_BUF_IS_ON_LEASH)
         } else {
-            true
+            dog_seeded
         };
 
         let input = OwnerStepInput {

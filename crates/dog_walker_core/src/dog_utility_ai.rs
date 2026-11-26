@@ -671,18 +671,25 @@ fn zoomies_parametric_step(input: &UtilityInput<'_>, active_utility_id: u32) -> 
     let cx_default = finite_or(b[DOG_BUF_OWNER_X], px);
     let cy_default = finite_or(b[DOG_BUF_OWNER_Y], py);
 
+    // A zeroed center slot means "unset": fall back to the owner position
+    // rather than orbiting the world origin.
+    let center_x = finite_or(b[DOG_BUF_ZOOMIES_CENTER_X], cx_default);
+    let center_y = finite_or(b[DOG_BUF_ZOOMIES_CENTER_Y], cy_default);
+    let (cx, cy) = if center_x == 0.0 && center_y == 0.0 {
+        (cx_default, cy_default)
+    } else {
+        (center_x, center_y)
+    };
+
     let (tx, ty) = match path {
         p if p == ZoomiePathId::FigureEight as u32 as i32 => {
-            let cx = finite_or(b[DOG_BUF_ZOOMIES_CENTER_X], cx_default);
-            let cy = finite_or(b[DOG_BUF_ZOOMIES_CENTER_Y], cy_default);
             let a = (phase * core::f32::consts::TAU).sin() * 60.0;
             let c = (phase * core::f32::consts::TAU * 2.0).sin() * 30.0;
             (cx + a, cy + c)
         }
         p if p == ZoomiePathId::OrbitOwner as u32 as i32 => {
-            let cx = finite_or(b[DOG_BUF_ZOOMIES_CENTER_X], cx_default);
-            let cy = finite_or(b[DOG_BUF_ZOOMIES_CENTER_Y], cy_default);
-            let radius = finite_or(b[DOG_BUF_ZOOMIES_ORBIT_RADIUS], 60.0);
+            let raw_radius = finite_or(b[DOG_BUF_ZOOMIES_ORBIT_RADIUS], 60.0);
+            let radius = if raw_radius <= 1.0 { 60.0 } else { raw_radius };
             let angle = finite_or(b[DOG_BUF_ZOOMIES_ORBIT_ANGLE], 0.0);
             let dir = if finite_or(b[DOG_BUF_ZOOMIES_ORBIT_DIR], 1.0) >= 0.0 {
                 1.0
@@ -720,14 +727,15 @@ pub fn compute_steering(input: &UtilityInput<'_>, active_utility_id: u32) -> (f3
     let px = finite_or(b[DOG_BUF_POS_X], 0.0);
     let py = finite_or(b[DOG_BUF_POS_Y], 0.0);
 
-    // Heel-follow relies on `arrive_force` alone so velocity tapers smoothly to
-    // zero at the heel slot; adding a unit-magnitude seek would prevent that.
-    let (sx, sy) = if active_utility_id == UTIL_HEEL_FOLLOW {
+    // Every steering utility relies on `arrive_force` alone so velocity tapers
+    // smoothly to zero at the target. Adding a unit-magnitude `seek_force` on
+    // top prevented deceleration and caused 180-degree overshoot jitter.
+    // Zoomies are driven purely by the parametric path below.
+    let (ax, ay) = if active_utility_id == UTIL_ZOOMIES {
         (0.0, 0.0)
     } else {
-        seek_force(input, active_utility_id, px, py)
+        arrive_force(input, active_utility_id, px, py)
     };
-    let (ax, ay) = arrive_force(input, active_utility_id, px, py);
     let (ox, oy) = obstacle_skirt_force(input, px, py);
     let (mx, my) = screen_perimeter_force(input, px, py);
     let (tx, ty) = soft_tether_force(input, px, py);
@@ -735,8 +743,8 @@ pub fn compute_steering(input: &UtilityInput<'_>, active_utility_id: u32) -> (f3
     let (cx, cy) = social_circle_force(input, active_utility_id, px, py);
     let (zx, zy) = zoomies_parametric_step(input, active_utility_id);
 
-    let fx = sx + ax + ox + mx + tx + nx + cx + zx;
-    let fy = sy + ay + oy + my + ty + ny + cy + zy;
+    let fx = ax + ox + mx + tx + nx + cx + zx;
+    let fy = ay + oy + my + ty + ny + cy + zy;
     let mag = magnitude(fx, fy);
 
     if mag <= 1e-6 {
@@ -1064,6 +1072,22 @@ pub fn step_utility_ai(
     let (steer_x, steer_y) = compute_steering(&input, active_utility_id);
     let (roam_submode, rng_used) = select_roam_submode_internal(&input, active_utility_id);
     let zoomie_path = zoomie_path_for(active_utility_id, &input);
+
+    // Advance the zoomies parametric path so the dog actually moves along the
+    // figure-8 / orbit / shuttle trajectory instead of stalling at a fixed
+    // phase.
+    if active_utility_id == UTIL_ZOOMIES {
+        let dt = if dt.is_finite() {
+            dt.clamp(0.0, 0.1)
+        } else {
+            0.0
+        };
+        buffer.slots[DOG_BUF_ZOOMIES_PHASE] =
+            (finite_or(buffer.slots[DOG_BUF_ZOOMIES_PHASE], 0.0) + dt * 0.45).rem_euclid(1.0);
+        buffer.slots[DOG_BUF_ZOOMIES_ORBIT_ANGLE] =
+            (finite_or(buffer.slots[DOG_BUF_ZOOMIES_ORBIT_ANGLE], 0.0) + dt * 3.2)
+                .rem_euclid(core::f32::consts::TAU);
+    }
 
     buffer.slots[DOG_BUF_ACTIVE_UTILITY_ID] = active_utility_id as f32;
     buffer.slots[DOG_BUF_ACTIVE_UTILITY_SCORE] = active_utility_score;

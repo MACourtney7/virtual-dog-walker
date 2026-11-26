@@ -201,6 +201,7 @@ export class ParkNPC {
     this._lastStepTime = this.spawnTime;
     this._speechPhrase = null;
     this._pendingEvents = 0;
+    this._rustNpcInitialized = false;
     this._initRustNpcBuffer();
 
     // Entity state
@@ -265,9 +266,9 @@ export class ParkNPC {
     // and speech timeline (rather than an empty/default path).
     if (sim && typeof sim.set_npc_path === 'function') {
       try {
-        const flatXY = (this.flatWaypoints instanceof Float64Array)
+        const flatXY = (this.flatWaypoints instanceof Float32Array)
           ? this.flatWaypoints
-          : new Float64Array(this.flatWaypoints || []);
+          : new Float32Array(this.flatWaypoints || []);
         const phrases = (this.seed % 2 === 0) ? COMMON_PHRASES : ODD_PHRASES;
         const phraseCount = (phrases && phrases.length > 0) ? phrases.length : 0;
         sim.set_npc_path(this.npcSlot, flatXY, phraseCount);
@@ -283,6 +284,7 @@ export class ParkNPC {
     view[NPC_SLOT_NEXT_SPEECH_DELAY_S] = NPC_SPEECH_BASE_DELAY_S;
     view[NPC_SLOT_STATE] = this.isJogger ? NPC_STATE_RUNNING : NPC_STATE_WALKING;
     view[NPC_SLOT_CMD_FLAGS] = NPC_CMD_RESET;
+    this._rustNpcInitialized = true;
   }
 
   /**
@@ -391,7 +393,7 @@ export class ParkNPC {
    * `step_npc_buffer(slot, dt_s)` and records the returned event bitmask.
    */
   _stepRustNpcBuffer(dt) {
-    if (!this._refreshNpcBufferView()) {
+    if (!this._rustNpcInitialized || !this._refreshNpcBufferView()) {
       this._initRustNpcBuffer();
       if (!this.npcBuffer) return;
     }

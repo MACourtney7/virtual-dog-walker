@@ -188,8 +188,29 @@ impl WasmWorldSim {
         let vx = sanitize_f32(util.steer_x * speed);
         let vy = sanitize_f32(util.steer_y * speed);
 
-        let next_x = sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_DOG_X) + vx * dt);
-        let next_y = sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_DOG_Y) + vy * dt);
+        let mut next_x = sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_DOG_X) + vx * dt);
+        let mut next_y = sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_DOG_Y) + vy * dt);
+
+        // Keep the dog inside the world bounds. When real field obstacles are
+        // loaded, resolve field collisions first (matching the JS field), then
+        // clamp to the world rectangle. With no obstacles (unit tests) just
+        // clamp so a dog starting at (0, 0) is unaffected.
+        if self.world_width > 0.0 && self.world_height > 0.0 {
+            if !self.obstacles.is_empty() {
+                let (rx, ry) = resolve_field_collisions(
+                    next_x as f64,
+                    next_y as f64,
+                    12.0,
+                    self.world_width,
+                    self.world_height,
+                    &self.obstacles,
+                );
+                next_x = sanitize_f32(rx as f32);
+                next_y = sanitize_f32(ry as f32);
+            }
+            next_x = next_x.clamp(0.0, self.world_width as f32);
+            next_y = next_y.clamp(0.0, self.world_height as f32);
+        }
 
         self.dog_buffer.slots[DOG_BUF_DOG_X] = next_x;
         self.dog_buffer.slots[DOG_BUF_DOG_Y] = next_y;
@@ -883,6 +904,35 @@ mod tests {
         let combined = sim.dog_event_bitmask();
         assert_ne!(combined & DOG_EVENT_BARK, 0, "utility event must survive");
         assert_ne!(combined & DOG_EVENT_LEASH_TAUT, 0, "leash event must be added");
+    }
+
+    #[test]
+    fn dog_contract_step_buffer_clamps_off_leash_dog_to_world_bounds() {
+        let mut sim = WasmWorldSim::new(2000.0, 2000.0);
+        sim.dog_buffer.slots[DOG_BUF_DT] = 0.1;
+        // Off-leash dog placed outside the right edge, moving right fast enough
+        // to overshoot the world width in a single step.
+        sim.dog_buffer.slots[DOG_BUF_IS_ON_LEASH] = 0.0;
+        sim.dog_buffer.slots[DOG_BUF_DOG_X] = 2050.0;
+        sim.dog_buffer.slots[DOG_BUF_DOG_Y] = 1000.0;
+        sim.dog_buffer.slots[DOG_BUF_DOG_VX] = 5000.0;
+        sim.dog_buffer.slots[DOG_BUF_DOG_VY] = 0.0;
+
+        sim.step_dog_buffer();
+
+        let x = sim.dog_buffer.slots[DOG_BUF_DOG_X];
+        let y = sim.dog_buffer.slots[DOG_BUF_DOG_Y];
+        assert!(x.is_finite() && y.is_finite());
+        assert_eq!(
+            x, 2000.0,
+            "dog x must be clamped exactly to world_width, got {}",
+            x
+        );
+        assert!(
+            (0.0..=2000.0).contains(&y),
+            "dog y must be clamped within [0, world_height], got {}",
+            y
+        );
     }
 
     #[test]

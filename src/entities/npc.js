@@ -70,11 +70,25 @@ const NPC_KNOWN_EVENT_BITS =
   NPC_EVENT_FADE_STARTED |
   NPC_EVENT_FADE_COMPLETED |
   NPC_EVENT_CMD_REJECTED;
-// Round-robin allocator so each live NPC owns a distinct Rust-side slot.
-let _nextNpcSlot = 0;
+// Refcount tracking so each live NPC owns a distinct Rust-side slot while
+// allowing multiple NPCs to share a slot when the pool is over-subscribed.
+const _npcSlotRefCounts = new Array(NPC_SLOT_COUNT).fill(0);
 function allocateNpcSlot() {
-  const slot = _nextNpcSlot % NPC_SLOT_COUNT;
-  _nextNpcSlot = (_nextNpcSlot + 1) % NPC_SLOT_COUNT;
+  // Prefer the first free slot (refcount 0) so we never steal a live NPC's slot.
+  for (let i = 0; i < NPC_SLOT_COUNT; i++) {
+    if (_npcSlotRefCounts[i] === 0) {
+      _npcSlotRefCounts[i] += 1;
+      return i;
+    }
+  }
+  // All slots in use: fall back to the least-used slot (over-subscribed pool).
+  let slot = 0;
+  for (let i = 1; i < NPC_SLOT_COUNT; i++) {
+    if (_npcSlotRefCounts[i] < _npcSlotRefCounts[slot]) {
+      slot = i;
+    }
+  }
+  _npcSlotRefCounts[slot] += 1;
   return slot;
 }
 
@@ -194,9 +208,11 @@ export class ParkNPC {
         throw new RangeError('NPC slot out of range');
       }
       this.npcSlot = requestedSlot;
+      _npcSlotRefCounts[requestedSlot] += 1;
     } else {
       this.npcSlot = allocateNpcSlot();
     }
+    this._slotReleased = false;
     this.npcBuffer = null; // resolved lazily from the Rust-owned view
     this._lastStepTime = this.spawnTime;
     this._speechPhrase = null;
@@ -284,7 +300,22 @@ export class ParkNPC {
     view[NPC_SLOT_NEXT_SPEECH_DELAY_S] = NPC_SPEECH_BASE_DELAY_S;
     view[NPC_SLOT_STATE] = this.isJogger ? NPC_STATE_RUNNING : NPC_STATE_WALKING;
     view[NPC_SLOT_CMD_FLAGS] = NPC_CMD_RESET;
+    // NPC_CMD_RESET resets the Rust-side state to WALKING, so joggers must
+    // re-assert RUNNING on the next step to keep their running gait.
+    this._pendingJoggerState = Boolean(this.isJogger);
     this._rustNpcInitialized = true;
+  }
+
+  /**
+   * Releases this NPC's Rust-side slot back to the pool so a later NPC can
+   * reuse it. Idempotent: repeated calls are safe no-ops.
+   */
+  releaseSlot() {
+    if (this._slotReleased) return;
+    this._slotReleased = true;
+    if (typeof this.npcSlot === 'number' && this.npcSlot >= 0 && this.npcSlot < NPC_SLOT_COUNT) {
+      _npcSlotRefCounts[this.npcSlot] = Math.max(0, _npcSlotRefCounts[this.npcSlot] - 1);
+    }
   }
 
   /**
@@ -404,6 +435,15 @@ export class ParkNPC {
       sim = null;
     }
     if (!sim || typeof sim.step_npc_buffer !== 'function') return;
+    // Re-assert the jogger running state after the initial RESET command.
+    // While pending, always OR SET_RUNNING into the command flags before
+    // stepping (unless a RESET is queued, which would override it).
+    if (this._pendingJoggerState) {
+      const buf = this._refreshNpcBufferView();
+      if (buf && (buf[NPC_SLOT_CMD_FLAGS] & NPC_CMD_RESET) === 0) {
+        buf[NPC_SLOT_CMD_FLAGS] = (buf[NPC_SLOT_CMD_FLAGS] | NPC_CMD_SET_RUNNING) >>> 0;
+      }
+    }
     try {
       const events = sim.step_npc_buffer(this.npcSlot, dt);
       this._pendingEvents = (events >>> 0);
@@ -411,6 +451,20 @@ export class ParkNPC {
     } catch (e) {
       // Leave state untouched on Wasm-side failure; JS fallback is not authoritative here.
       this._pendingEvents = 0;
+    }
+    // After stepping, clear the pending flag only once the Rust state is
+    // actually RUNNING and no RESET is queued; otherwise re-queue SET_RUNNING
+    // so the very next step transitions it to RUNNING.
+    if (this._pendingJoggerState) {
+      const buf = this._refreshNpcBufferView();
+      if (buf) {
+        const stateId = buf[NPC_SLOT_STATE] | 0;
+        if (stateId === NPC_STATE_RUNNING && (buf[NPC_SLOT_CMD_FLAGS] & NPC_CMD_RESET) === 0) {
+          this._pendingJoggerState = false;
+        } else {
+          buf[NPC_SLOT_CMD_FLAGS] = (buf[NPC_SLOT_CMD_FLAGS] | NPC_CMD_SET_RUNNING) >>> 0;
+        }
+      }
     }
   }
 
@@ -466,6 +520,12 @@ export class ParkNPC {
 
   isDone(now) {
     if (this.done) return true;
+    // When the Rust-owned buffer is live it is authoritative for the
+    // path-completion + fade-out lifecycle. Trusting the JS `finishTime`
+    // estimate here despawned prewarmed NPCs mid-path.
+    if (this._rustNpcInitialized && this.npcBuffer) {
+      return Boolean(this.done);
+    }
     if (typeof now === 'number') {
       const nowSec = toSeconds(now);
       return nowSec >= this.finishTime + 0.5;

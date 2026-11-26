@@ -454,7 +454,7 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         # The Rust orchestrator integrates position exactly once per step.
         self.assertIn("DOG_BUF_DOG_X", self.lib_src)
         self.assertIn("DOG_BUF_DOG_Y", self.lib_src)
-        idx = self.lib_src.find("let next_x = sanitize_f32")
+        idx = self.lib_src.find("let mut next_x = sanitize_f32")
         self.assertNotEqual(idx, -1)
         window = self.lib_src[idx:idx + 400]
         self.assertIn("DOG_BUF_DOG_X", window)

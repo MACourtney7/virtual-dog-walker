@@ -29,6 +29,10 @@ const OWNER_SLOT_WARP_GATE_ID = 25;
 const OWNER_SLOT_WANDER_BLOCKED = 31;
 const OWNER_SLOT_DESIRED_GAIT = 34;
 const OWNER_SLOT_SPEED_MULTIPLIER = 35;
+// Last known safe (non-colliding) position, used by the Wasm sim to recover
+// from teleports/warps that would otherwise leave the owner stuck in geometry.
+const OWNER_SLOT_LAST_SAFE_X = 36;
+const OWNER_SLOT_LAST_SAFE_Y = 37;
 
 // Gait ids.
 const OWNER_GAIT_STAND = 0;
@@ -382,6 +386,35 @@ export class Owner {
     // legacy JS behaviour of forcing STAND on a boundary block.
     if (events & OWNER_EVENT_BOUNDARY_BLOCKED) {
       this.setGait(Gait.STAND);
+    }
+  }
+
+  /**
+   * Teleports the owner to (x, y) and mirrors the new position into the Wasm
+   * owner buffer so the authoritative sim does not snap the owner back to its
+   * pre-warp coordinates on the next step. Used by zone warps.
+   */
+  syncPositionToWasm(x, y) {
+    const nx = Number.isFinite(x) ? x : this.x;
+    const ny = Number.isFinite(y) ? y : this.y;
+    this.x = nx;
+    this.y = ny;
+    this.vx = 0;
+    this.vy = 0;
+
+    const buf = this._getOwnerBuffer();
+    if (buf) {
+      buf[OWNER_SLOT_X] = nx;
+      buf[OWNER_SLOT_Y] = ny;
+      buf[OWNER_SLOT_VX] = 0;
+      buf[OWNER_SLOT_VY] = 0;
+      buf[OWNER_SLOT_LAST_SAFE_X] = nx;
+      buf[OWNER_SLOT_LAST_SAFE_Y] = ny;
+      this._ownerBufferSeeded = true;
+    } else {
+      // Wasm not ready yet: force a re-seed from the new JS coordinates once
+      // the buffer becomes available.
+      this._ownerBufferSeeded = false;
     }
   }
 

@@ -951,8 +951,14 @@ export class CliftonDownGame {
     this.currentZoneId = (this.field && this.field.zoneId) || targetZoneId;
     syncWorldObstacles(this.field);
 
-    this.owner.x = targetX;
-    this.owner.y = targetY;
+    // Teleport the owner AND mirror the new position into the Wasm owner
+    // buffer so the authoritative sim does not snap the owner back.
+    if (this.owner && typeof this.owner.syncPositionToWasm === 'function') {
+      this.owner.syncPositionToWasm(targetX, targetY);
+    } else if (this.owner) {
+      this.owner.x = targetX;
+      this.owner.y = targetY;
+    }
     this.dog.x = targetX - 30;
     this.dog.y = targetY + 20;
 
@@ -965,6 +971,11 @@ export class CliftonDownGame {
     }
 
     this.remotePlayers.clear();
+    // Release every NPC's Rust-side slot before dropping the local map so the
+    // slot pool does not leak across zone warps.
+    for (const npc of this.npcs.values()) {
+      if (typeof npc.releaseSlot === 'function') npc.releaseSlot();
+    }
     this.npcs.clear();
 
     if (this.hud) {
@@ -1408,6 +1419,7 @@ export class CliftonDownGame {
     for (const [id, npc] of this.npcs) {
       npc.update(dt, nowSec, avoidanceEntities);
       if (npc.isDone(nowSec)) {
+        if (typeof npc.releaseSlot === 'function') npc.releaseSlot();
         this.npcs.delete(id);
       }
     }

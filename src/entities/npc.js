@@ -506,6 +506,12 @@ export class ParkNPC {
   }
 
   isFinished(now) {
+    // When the Rust-owned buffer is live it is authoritative for path
+    // completion. Trusting the JS `finishTime` estimate here prematurely
+    // stopped `walkPhase` mid-path for prewarmed NPCs.
+    if (this._rustNpcInitialized && this.npcBuffer) {
+      return Boolean(this.isFinishedState);
+    }
     if (typeof now === 'number') {
       const nowSec = toSeconds(now);
       if (nowSec >= this.finishTime) return true;

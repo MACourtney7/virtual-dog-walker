@@ -311,7 +311,19 @@ pub fn score_scout_ahead(input: &UtilityInput<'_>) -> f32 {
     let heading = finite_or(input.buffer.slots[DOG_BUF_OWNER_HEADING], 0.0);
     let forward = (px - ox) * heading.cos() + (py - oy) * heading.sin();
     let forward_norm = unit(forward / 160.0);
-    unit(0.15 + 0.40 * energy + 0.35 * forward_norm)
+    let now = finite_or(input.buffer.slots[DOG_BUF_NOW_SEC], 0.0);
+    // Off-leash dogs periodically scout ahead of the owner. Gated on
+    // `now > 0.0` so `now == 0.0` unit tests remain unchanged.
+    let scout_wave = if !input.combo.is_on_leash && !input.combo.is_pooping && now > 0.0 {
+        if (now * 0.23 + 2.4).sin() > 0.55 {
+            0.42 * (0.4 + 0.6 * energy)
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+    unit(0.15 + 0.40 * energy + 0.35 * forward_norm + scout_wave)
 }
 
 pub fn score_lag_and_sniff(input: &UtilityInput<'_>) -> f32 {
@@ -321,7 +333,19 @@ pub fn score_lag_and_sniff(input: &UtilityInput<'_>) -> f32 {
     let proximity = nearest_scent_distance(input.buffer, px, py)
         .map(|d| unit(1.0 - d / 200.0))
         .unwrap_or(0.0);
-    unit(0.10 + 0.45 * curiosity + 0.30 * proximity - 0.15 * energy)
+    let now = finite_or(input.buffer.slots[DOG_BUF_NOW_SEC], 0.0);
+    // Off-leash dogs periodically stop/slow to sniff patches of grass. Gated on
+    // `now > 0.0` so `now == 0.0` unit tests remain unchanged.
+    let sniff_wave = if !input.combo.is_on_leash && !input.combo.is_pooping && now > 0.0 {
+        if (now * 0.31 + 1.1).sin() > 0.55 {
+            0.45 * (0.4 + 0.6 * curiosity)
+        } else {
+            0.0
+        }
+    } else {
+        0.0
+    };
+    unit(0.10 + 0.45 * curiosity + 0.30 * proximity - 0.15 * energy + sniff_wave)
 }
 
 pub fn score_check_in(input: &UtilityInput<'_>) -> f32 {
@@ -351,13 +375,28 @@ pub fn score_pack_play(input: &UtilityInput<'_>) -> f32 {
 }
 
 pub fn score_zoomies(input: &UtilityInput<'_>) -> f32 {
-    if input.combo.is_on_leash
-        || finite_or(input.buffer.slots[DOG_BUF_ZOOMIES_COOLDOWN], 0.0) > 0.0
+    if input.combo.is_on_leash || input.combo.is_pooping || input.combo.has_need {
+        return 0.0;
+    }
+    // A triggered or in-progress zoomies burst always runs.
+    if finite_or(input.buffer.slots[DOG_BUF_CMD_TRIGGER_ZOOMIES], 0.0) > 0.5
+        || finite_or(input.buffer.slots[DOG_BUF_ZOOMIES_TIMER], 0.0) > 0.0
     {
+        return 1.0;
+    }
+    if finite_or(input.buffer.slots[DOG_BUF_ZOOMIES_COOLDOWN], 0.0) > 0.0 {
         return 0.0;
     }
     let energy = unit(input.traits.energy);
-    unit(0.15 + 0.65 * energy + 0.20 * camera_open_space(input))
+    let now = finite_or(input.buffer.slots[DOG_BUF_NOW_SEC], 0.0);
+    // Periodic burst wave during live gameplay. Gated on `now > 0.0` so
+    // `now == 0.0` unit tests remain unchanged.
+    let burst = if now > 0.0 && (now * 0.25).sin() > 0.88 && energy >= 0.35 {
+        0.35
+    } else {
+        0.0
+    };
+    unit(0.15 + 0.65 * energy + 0.20 * camera_open_space(input) + burst)
 }
 
 pub fn score_ambient_rest(input: &UtilityInput<'_>) -> f32 {
@@ -472,9 +511,20 @@ fn target_for(active: u32, input: &UtilityInput<'_>) -> (f32, f32) {
             finite_or(b[DOG_BUF_BALL_X], ox),
             finite_or(b[DOG_BUF_BALL_Y], oy),
         ),
-        UTIL_ROAM_EXPLORE | UTIL_LAG_AND_SNIFF | UTIL_SCOUT_AHEAD => (
+        UTIL_ROAM_EXPLORE => (
             ox + (now * 0.7).sin() * 120.0,
             oy + (now * 0.9).cos() * 120.0,
+        ),
+        UTIL_SCOUT_AHEAD => {
+            let heading = finite_or(b[DOG_BUF_OWNER_HEADING], 0.0);
+            (
+                ox + heading.cos() * 130.0 + (now * 0.6).sin() * 40.0,
+                oy + heading.sin() * 130.0 + (now * 0.6).cos() * 40.0,
+            )
+        }
+        UTIL_LAG_AND_SNIFF => (
+            ox + (now * 0.15).sin() * 90.0,
+            oy + (now * 0.15).cos() * 90.0,
         ),
         UTIL_SOCIAL_GREET | UTIL_PACK_PLAY => {
             if nearest_peer_distance(input.buffer, px, py).is_some() {
@@ -495,18 +545,6 @@ fn target_for(active: u32, input: &UtilityInput<'_>) -> (f32, f32) {
         ),
         UTIL_AMBIENT_REST | UTIL_BARK_IMPULSE => (px, py),
         _ => (ox, oy),
-    }
-}
-
-fn seek_force(input: &UtilityInput<'_>, active: u32, px: f32, py: f32) -> (f32, f32) {
-    let (tx, ty) = target_for(active, input);
-    let dx = tx - px;
-    let dy = ty - py;
-    let distance = magnitude(dx, dy);
-    if distance > 1e-4 {
-        (dx / distance, dy / distance)
-    } else {
-        (0.0, 0.0)
     }
 }
 
@@ -1036,7 +1074,8 @@ pub(crate) fn base_desired_speed(active_utility_id: u32) -> f32 {
         UTIL_ZOOMIES | UTIL_FETCH_BALL => 290.0,
         UTIL_HEEL_FOLLOW | UTIL_RECALL => 220.0,
         UTIL_ROAM_EXPLORE | UTIL_SCOUT_AHEAD | UTIL_PACK_PLAY | UTIL_SOCIAL_GREET => 155.0,
-        UTIL_CHECK_IN | UTIL_LAG_AND_SNIFF => 120.0,
+        UTIL_CHECK_IN => 150.0,
+        UTIL_LAG_AND_SNIFF => 75.0,
         UTIL_AMBIENT_REST | UTIL_BARK_IMPULSE => 0.0,
         _ => 0.0,
     }
@@ -1073,19 +1112,40 @@ pub fn step_utility_ai(
     let (roam_submode, rng_used) = select_roam_submode_internal(&input, active_utility_id);
     let zoomie_path = zoomie_path_for(active_utility_id, &input);
 
+    // Tick down the zoomies cooldown so bursts can recur.
+    let dt_clamped = if dt.is_finite() {
+        dt.clamp(0.0, 0.1)
+    } else {
+        0.0
+    };
+    buffer.slots[DOG_BUF_ZOOMIES_COOLDOWN] =
+        (finite_or(buffer.slots[DOG_BUF_ZOOMIES_COOLDOWN], 0.0) - dt_clamped).max(0.0);
+
     // Advance the zoomies parametric path so the dog actually moves along the
     // figure-8 / orbit / shuttle trajectory instead of stalling at a fixed
-    // phase.
+    // phase. Zoomies run in distinct playful bursts rather than non-stop.
     if active_utility_id == UTIL_ZOOMIES {
-        let dt = if dt.is_finite() {
-            dt.clamp(0.0, 0.1)
+        let timer = finite_or(buffer.slots[DOG_BUF_ZOOMIES_TIMER], 0.0);
+        if timer <= 0.0 {
+            buffer.slots[DOG_BUF_ZOOMIES_TIMER] = 4.5;
+            // Refresh the burst center every time a new burst starts so the
+            // dog orbits the owner's current position instead of a stale one.
+            buffer.slots[DOG_BUF_ZOOMIES_CENTER_X] =
+                finite_or(buffer.slots[DOG_BUF_OWNER_X], 0.0);
+            buffer.slots[DOG_BUF_ZOOMIES_CENTER_Y] =
+                finite_or(buffer.slots[DOG_BUF_OWNER_Y], 0.0);
         } else {
-            0.0
-        };
+            let next_timer = (timer - dt_clamped).max(0.0);
+            buffer.slots[DOG_BUF_ZOOMIES_TIMER] = next_timer;
+            if next_timer <= 0.0 {
+                buffer.slots[DOG_BUF_ZOOMIES_COOLDOWN] = 16.0;
+            }
+        }
         buffer.slots[DOG_BUF_ZOOMIES_PHASE] =
-            (finite_or(buffer.slots[DOG_BUF_ZOOMIES_PHASE], 0.0) + dt * 0.45).rem_euclid(1.0);
+            (finite_or(buffer.slots[DOG_BUF_ZOOMIES_PHASE], 0.0) + dt_clamped * 0.45)
+                .rem_euclid(1.0);
         buffer.slots[DOG_BUF_ZOOMIES_ORBIT_ANGLE] =
-            (finite_or(buffer.slots[DOG_BUF_ZOOMIES_ORBIT_ANGLE], 0.0) + dt * 3.2)
+            (finite_or(buffer.slots[DOG_BUF_ZOOMIES_ORBIT_ANGLE], 0.0) + dt_clamped * 3.2)
                 .rem_euclid(core::f32::consts::TAU);
     }
 
@@ -2284,10 +2344,22 @@ mod tests {
         assert_eq!(base_desired_speed(UTIL_SCOUT_AHEAD), 155.0);
         assert_eq!(base_desired_speed(UTIL_PACK_PLAY), 155.0);
         assert_eq!(base_desired_speed(UTIL_SOCIAL_GREET), 155.0);
-        assert_eq!(base_desired_speed(UTIL_CHECK_IN), 120.0);
-        assert_eq!(base_desired_speed(UTIL_LAG_AND_SNIFF), 120.0);
+        assert_eq!(base_desired_speed(UTIL_CHECK_IN), 150.0);
+        assert_eq!(base_desired_speed(UTIL_LAG_AND_SNIFF), 75.0);
         assert_eq!(base_desired_speed(UTIL_AMBIENT_REST), 0.0);
         assert_eq!(base_desired_speed(UTIL_BARK_IMPULSE), 0.0);
+    }
+
+    #[test]
+    fn zoomies_trigger_command_selects_zoomies_and_starts_timer() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_CMD_TRIGGER_ZOOMIES] = 1.0;
+
+        let output = step_utility_ai(&mut buffer, &obstacles, blank_combo(), 0.016);
+
+        assert_eq!(output.active_utility_id, UTIL_ZOOMIES);
+        assert!(buffer.slots[DOG_BUF_ZOOMIES_TIMER] > 0.0);
     }
 
     #[test]
@@ -3207,5 +3279,133 @@ mod tests {
 
         assert_eq!(events, DOG_EVENT_COMMAND_REJECTED);
         assert_eq!(read_event_bitmask(&buf), DOG_EVENT_COMMAND_REJECTED);
+    }
+
+    #[test]
+    fn zoomies_burst_expires_into_cooldown() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut buffer = blank_buffer();
+        buffer.slots[DOG_BUF_CMD_TRIGGER_ZOOMIES] = 1.0;
+
+        // `dt = 0.0625` (1/16) is exact in f32 AND within the `[0.0, 0.1]`
+        // sanitization clamp, so the timer arithmetic below is free of
+        // IEEE-754 drift.
+        let dt = 0.0625f32;
+
+        let output = step_utility_ai(&mut buffer, &obstacles, blank_combo(), dt);
+        assert_eq!(output.active_utility_id, UTIL_ZOOMIES);
+        assert!((buffer.slots[DOG_BUF_ZOOMIES_TIMER] - 4.5).abs() < 1e-6);
+
+        // Clear the trigger so the burst runs purely on its timer.
+        buffer.slots[DOG_BUF_CMD_TRIGGER_ZOOMIES] = 0.0;
+
+        // 4.4375s elapsed: the 4.5s burst timer must not have expired yet.
+        for _ in 0..71 {
+            let _ = step_utility_ai(&mut buffer, &obstacles, blank_combo(), dt);
+        }
+        assert!((buffer.slots[DOG_BUF_ZOOMIES_TIMER] - 0.0625).abs() < 1e-6);
+
+        // 4.50s elapsed: the burst expires and the exact 16.0s cooldown starts.
+        let _ = step_utility_ai(&mut buffer, &obstacles, blank_combo(), dt);
+        assert_eq!(buffer.slots[DOG_BUF_ZOOMIES_TIMER], 0.0);
+        assert!((buffer.slots[DOG_BUF_ZOOMIES_COOLDOWN] - 16.0).abs() < 1e-6);
+
+        let input = UtilityInput {
+            buffer: &buffer,
+            combo: blank_combo(),
+            traits: base_traits(),
+            obstacles: &obstacles,
+        };
+        assert_eq!(score_zoomies(&input), 0.0);
+    }
+
+    #[test]
+    fn off_leash_waves_boost_only_when_now_positive_and_off_leash() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let traits = base_traits();
+
+        // Find a `now` where both wave conditions are at their peak.
+        let mut peak_now = 0.0f32;
+        let mut found = false;
+        let mut t = 0.01f32;
+        while t < 200.0 {
+            let sniff_peak = (t * 0.31 + 1.1).sin() > 0.55;
+            let scout_peak = (t * 0.23 + 2.4).sin() > 0.55;
+            if sniff_peak && scout_peak {
+                peak_now = t;
+                found = true;
+                break;
+            }
+            t += 0.01;
+        }
+        assert!(found, "could not find a peak wave time");
+
+        let baseline_buffer = blank_buffer();
+        let mut peak_buffer = blank_buffer();
+        peak_buffer.slots[DOG_BUF_NOW_SEC] = peak_now;
+
+        let baseline_input = UtilityInput {
+            buffer: &baseline_buffer,
+            combo: blank_combo(),
+            traits,
+            obstacles: &obstacles,
+        };
+        let peak_input = UtilityInput {
+            buffer: &peak_buffer,
+            combo: blank_combo(),
+            traits,
+            obstacles: &obstacles,
+        };
+
+        assert!(score_lag_and_sniff(&peak_input) > score_lag_and_sniff(&baseline_input));
+        assert!(score_scout_ahead(&peak_input) > score_scout_ahead(&baseline_input));
+
+        // Leashed: the wave boost must not apply.
+        let mut leashed_combo = blank_combo();
+        leashed_combo.is_on_leash = true;
+        let leashed_baseline = UtilityInput {
+            buffer: &baseline_buffer,
+            combo: leashed_combo,
+            traits,
+            obstacles: &obstacles,
+        };
+        let leashed_peak = UtilityInput {
+            buffer: &peak_buffer,
+            combo: leashed_combo,
+            traits,
+            obstacles: &obstacles,
+        };
+        assert_eq!(
+            score_lag_and_sniff(&leashed_peak),
+            score_lag_and_sniff(&leashed_baseline)
+        );
+        assert_eq!(
+            score_scout_ahead(&leashed_peak),
+            score_scout_ahead(&leashed_baseline)
+        );
+
+        // Pooping: the wave boost must not apply.
+        let mut pooping_combo = blank_combo();
+        pooping_combo.is_pooping = true;
+        let pooping_baseline = UtilityInput {
+            buffer: &baseline_buffer,
+            combo: pooping_combo,
+            traits,
+            obstacles: &obstacles,
+        };
+        let pooping_peak = UtilityInput {
+            buffer: &peak_buffer,
+            combo: pooping_combo,
+            traits,
+            obstacles: &obstacles,
+        };
+        assert_eq!(
+            score_lag_and_sniff(&pooping_peak),
+            score_lag_and_sniff(&pooping_baseline)
+        );
+        assert_eq!(
+            score_scout_ahead(&pooping_peak),
+            score_scout_ahead(&pooping_baseline)
+        );
     }
 }

@@ -196,7 +196,13 @@ impl WasmWorldSim {
         self.dog_buffer.slots[DOG_BUF_DOG_VX] = vx;
         self.dog_buffer.slots[DOG_BUF_DOG_VY] = vy;
 
-        if speed > 0.001 {
+        // When settled at heel on the leash, align to the owner's heading so
+        // the dog never pivots 90 degrees sideways as the owner stops.
+        let vel_mag = (vx * vx + vy * vy).sqrt();
+        let owner_heading = sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_OWNER_HEADING));
+        if combo.is_on_leash && !combo.is_pooping && vel_mag < 25.0 {
+            self.dog_buffer.slots[DOG_BUF_DOG_ANGLE] = owner_heading;
+        } else if vel_mag > 1.0 {
             self.dog_buffer.slots[DOG_BUF_DOG_ANGLE] = sanitize_f32(vy.atan2(vx));
         }
 
@@ -248,6 +254,18 @@ impl WasmWorldSim {
         let dog_is_pooping =
             current_state_id(&self.dog_buffer) == DogStateId::Poop as u32;
 
+        // Standalone `step_owner_buffer` tests never run `step_dog_buffer`, so
+        // the dog buffer is uninitialized (DT and NOW_SEC both zero). Default
+        // to on-leash in that case to preserve existing behavior; otherwise
+        // honor the dog's actual leash state.
+        let dog_stepped = self.dog_buffer.slots[DOG_BUF_DT] > 0.0
+            || self.dog_buffer.slots[DOG_BUF_NOW_SEC] > 0.0;
+        let is_on_leash = if dog_stepped {
+            slot_bool(&self.dog_buffer, DOG_BUF_IS_ON_LEASH)
+        } else {
+            true
+        };
+
         let input = OwnerStepInput {
             dt_s,
             dog_pos_x: dog_x,
@@ -258,6 +276,7 @@ impl WasmWorldSim {
             field_max_x: self.world_width as f32,
             field_max_y: self.world_height as f32,
             dog_is_pooping,
+            is_on_leash,
             warp_gates: &[],
             obstacles: &self.obstacles,
         };

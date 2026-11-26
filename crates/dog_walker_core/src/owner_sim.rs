@@ -207,6 +207,9 @@ pub struct OwnerStepInput<'a> {
     pub field_max_x: f32,
     pub field_max_y: f32,
     pub dog_is_pooping: bool,
+    /// Whether the dog is currently on the leash. When `false`, leash
+    /// clamping, taut detection, and forced-stand are all disabled.
+    pub is_on_leash: bool,
     pub warp_gates: &'a [WarpGate],
     pub obstacles: &'a [WorldObstacle],
 }
@@ -663,8 +666,15 @@ pub fn step_owner_buffer(buf: &mut OwnerSimBuffer, input: &OwnerStepInput<'_>) -
 
     // --- Step-off entry: check BEFORE rotating so large errors are caught. ---
     // Blocked wander rotates in place and must not trigger step-off.
+    // Step-off only applies when leaving STAND: while already moving the owner
+    // turns smoothly at the gait turn rate instead of stopping to pivot.
     let intended_speed = gait_speed(desired_gait) * speed_multiplier;
-    if step_off_timer <= 0.0 && intended_speed > 0.0 && !wander_blocked {
+    if prev_gait == OWNER_GAIT_STAND
+        && desired_gait != OWNER_GAIT_STAND
+        && step_off_timer <= 0.0
+        && intended_speed > 0.0
+        && !wander_blocked
+    {
         if let Some(t) = target_heading {
             let err = angle_delta(heading, t).abs();
             if err > STEP_OFF_ALIGN_TOLERANCE_RAD {
@@ -859,13 +869,15 @@ pub fn step_owner_buffer(buf: &mut OwnerSimBuffer, input: &OwnerStepInput<'_>) -
     // Hysteresis: the leash becomes taut at MAX_LEASH_LENGTH_PX but only
     // relaxes once the distance drops below MAX_LEASH_LENGTH_PX - 2.0. The
     // persisted taut flag therefore stays set inside the hysteresis band.
-    let post_leash_taut = if prev_leash_taut {
+    let post_leash_taut = if !input.is_on_leash {
+        false
+    } else if prev_leash_taut {
         post_leash_dist > leash_slack_threshold
     } else {
         post_leash_dist >= MAX_LEASH_LENGTH_PX
     };
 
-    if post_leash_dist >= MAX_LEASH_LENGTH_PX && post_leash_dist > 1e-6 {
+    if input.is_on_leash && post_leash_dist >= MAX_LEASH_LENGTH_PX && post_leash_dist > 1e-6 {
         // Pull the owner back toward the dog so the leash is exactly taut.
         let scale = MAX_LEASH_LENGTH_PX / post_leash_dist;
         x = sanitize_f32(input.dog_pos_x - post_dog_rel_x * scale);
@@ -882,7 +894,7 @@ pub fn step_owner_buffer(buf: &mut OwnerSimBuffer, input: &OwnerStepInput<'_>) -
     // --- Forced stand / poop hold, derived from the post-integration leash. ---
     // The owner is held in place only while the dog is pooping AND the leash
     // is taut after integration.
-    let forced_stand = input.dog_is_pooping && post_leash_taut;
+    let forced_stand = input.is_on_leash && input.dog_is_pooping && post_leash_taut;
     if forced_stand {
         events |= OWNER_EVENT_LEASH_FORCED_STAND;
         events |= OWNER_EVENT_POOP_HOLD;
@@ -898,7 +910,11 @@ pub fn step_owner_buffer(buf: &mut OwnerSimBuffer, input: &OwnerStepInput<'_>) -
 
     let final_dog_rel_x = sanitize_f32(input.dog_pos_x - x);
     let final_dog_rel_y = sanitize_f32(input.dog_pos_y - y);
-    let leash_tension = (post_leash_dist / MAX_LEASH_LENGTH_PX).clamp(0.0, 1.0);
+    let leash_tension = if input.is_on_leash {
+        (post_leash_dist / MAX_LEASH_LENGTH_PX).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
     // Pass the owner-local forward coordinate (dot of dog-relative vector with
     // the owner's forward axis), not the world-space x delta.
     let dog_forward_local = final_dog_rel_x * heading.cos() + final_dog_rel_y * heading.sin();
@@ -992,6 +1008,7 @@ mod tests {
             field_max_x: 3200.0,
             field_max_y: 2400.0,
             dog_is_pooping: false,
+            is_on_leash: true,
             warp_gates: gates,
             obstacles,
         }
@@ -1669,6 +1686,68 @@ mod tests {
         input.dog_pos_x = 1600.0 + MAX_LEASH_LENGTH_PX + 20.0;
         let events = step_owner_buffer(&mut buf, &input);
         assert_ne!(events & OWNER_EVENT_POOP_HOLD, 0);
+    }
+
+    #[test]
+    fn owner_sim_off_leash_does_not_clamp_or_force_stand() {
+        let gates: [WarpGate; 0] = [];
+        let obstacles: [WorldObstacle; 0] = [];
+        let mut input = base_input(&gates, &obstacles);
+        input.is_on_leash = false;
+        input.dog_is_pooping = true;
+        // Dog far away: with a leash this would clamp the owner back.
+        input.dog_pos_x = 1600.0 + MAX_LEASH_LENGTH_PX + 200.0;
+        input.dog_pos_y = 1200.0;
+
+        let mut buf = buf_at(1600.0, 1200.0);
+        buf.data[OWNER_SLOT_CMD_FLAGS] = OWNER_CMD_WALK as f32;
+
+        let events = step_owner_buffer(&mut buf, &input);
+
+        // Off-leash: the owner must not be pulled toward the dog. Walking one
+        // tick advances the owner slightly (~1601.0); leash clamping toward
+        // dog_pos_x = 1852.5 would instead pull it to ~1800.0.
+        let owner_x = buf.data[OWNER_SLOT_X];
+        assert!(
+            owner_x < 1610.0 && owner_x >= 1600.0,
+            "off-leash owner must walk normally and not be clamped toward the dog, got {}",
+            owner_x
+        );
+        assert_eq!(events & OWNER_EVENT_LEASH_FORCED_STAND, 0);
+        assert_eq!(events & OWNER_EVENT_POOP_HOLD, 0);
+        assert_eq!(buf.data[OWNER_SLOT_LEASH_TENSION], 0.0);
+    }
+
+    #[test]
+    fn owner_sim_step_off_only_from_stand() {
+        let gates: [WarpGate; 0] = [];
+        let obstacles: [WorldObstacle; 0] = [];
+        let input = base_input(&gates, &obstacles);
+
+        // From STAND with a large heading error: step-off fires.
+        let mut buf = buf_at(1600.0, 1200.0);
+        buf.data[OWNER_SLOT_GAIT] = OWNER_GAIT_STAND as f32;
+        buf.data[OWNER_SLOT_ANGLE] = 0.0;
+        buf.data[OWNER_SLOT_INPUT_X] = 0.0;
+        buf.data[OWNER_SLOT_INPUT_Y] = 1.0;
+        buf.data[OWNER_SLOT_CMD_FLAGS] = OWNER_CMD_WALK as f32;
+        let events = step_owner_buffer(&mut buf, &input);
+        assert_ne!(events & OWNER_EVENT_STEP_OFF_STARTED, 0);
+
+        // From WALK with a large heading error: no step-off, keeps moving.
+        let mut buf = buf_at(1600.0, 1200.0);
+        buf.data[OWNER_SLOT_GAIT] = OWNER_GAIT_WALK as f32;
+        buf.data[OWNER_SLOT_ANGLE] = 0.0;
+        buf.data[OWNER_SLOT_INPUT_X] = 0.0;
+        buf.data[OWNER_SLOT_INPUT_Y] = 1.0;
+        buf.data[OWNER_SLOT_CMD_FLAGS] = OWNER_CMD_WALK as f32;
+        let events = step_owner_buffer(&mut buf, &input);
+        assert_eq!(events & OWNER_EVENT_STEP_OFF_STARTED, 0);
+        assert!(
+            buf.data[OWNER_SLOT_SPEED] > 0.0,
+            "owner should keep moving while turning from WALK, speed = {}",
+            buf.data[OWNER_SLOT_SPEED]
+        );
     }
 
     #[test]

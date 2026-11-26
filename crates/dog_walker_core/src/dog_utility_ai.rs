@@ -262,17 +262,12 @@ pub fn score_heel_follow(input: &UtilityInput<'_>) -> f32 {
     if input.combo.is_on_leash && !input.combo.is_pooping {
         return unit(0.82 + 0.15 * loyalty - 0.05 * stubbornness);
     }
-    let (px, py) = dog_position(input.buffer);
-    let tx = finite_or(
-        input.buffer.slots[DOG_BUF_TARGET_SLOT_X],
-        finite_or(input.buffer.slots[DOG_BUF_OWNER_X], px),
-    );
-    let ty = finite_or(
-        input.buffer.slots[DOG_BUF_TARGET_SLOT_Y],
-        finite_or(input.buffer.slots[DOG_BUF_OWNER_Y], py),
-    );
-    let proximity = unit(1.0 - magnitude(px - tx, py - ty) / 160.0);
-    unit(0.20 + 0.45 * loyalty + 0.35 * proximity - 0.20 * stubbornness)
+    if input.combo.is_pooping {
+        return 0.0;
+    }
+    // Off-leash heel-following must not outrank roaming/scouting/zoomies, so
+    // it is scored low and ignores proximity entirely.
+    unit(0.10 + 0.20 * loyalty - 0.10 * stubbornness)
 }
 
 pub fn score_fetch_ball(input: &UtilityInput<'_>) -> f32 {
@@ -2586,6 +2581,37 @@ mod tests {
 
         assert_eq!(output.active_utility_id, UTIL_ROAM_EXPLORE);
         assert_ne!(buffer.slots[DOG_BUF_RNG_SEED], before);
+    }
+
+    #[test]
+    fn off_leash_heel_score_yields_to_roam_explore() {
+        let obstacles: [WorldObstacle; 0] = [];
+        let buffer = blank_buffer();
+        let traits = PersonalityTraits {
+            curiosity: 0.5,
+            energy: 0.5,
+            stubbornness: 0.25,
+            loyalty: 0.75,
+        };
+        let input = UtilityInput {
+            buffer: &buffer,
+            combo: blank_combo(),
+            traits,
+            obstacles: &obstacles,
+        };
+
+        let heel = score_heel_follow(&input);
+        let roam = score_roam_explore(&input);
+
+        assert!(
+            heel < roam,
+            "off-leash heel ({}) must yield to roam ({})",
+            heel,
+            roam
+        );
+        let expected = unit(0.10 + 0.20 * 0.75 - 0.10 * 0.25);
+        assert!((heel - expected).abs() < 1e-6, "heel = {}, expected {}", heel, expected);
+        assert!((heel - 0.225).abs() < 1e-6);
     }
 
     #[test]

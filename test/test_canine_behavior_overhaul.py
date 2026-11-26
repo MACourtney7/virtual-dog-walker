@@ -444,8 +444,8 @@ class TestCanineBehaviorOverhaul(unittest.TestCase):
         # and the orchestrator's speed integration (zero speed => zero velocity).
         self.assertIn("DOG_BUF_ZOOMIES_COOLDOWN", self.util_ai_src)
         self.assertIn("score_zoomies", self.util_ai_src)
-        # The orchestrator zeroes velocity when the desired speed is zero.
-        self.assertIn("if speed > 0.001", self.lib_src)
+        # The orchestrator guards angle updates on actual velocity magnitude.
+        self.assertIn("if vel_mag > 1.0", self.lib_src)
         # The removed JS zoomies timer must no longer be present.
         self.assertNotIn("this.zoomiesTimer -= dt;", self.dog_src)
 

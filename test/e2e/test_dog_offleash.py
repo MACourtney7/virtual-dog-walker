@@ -165,6 +165,59 @@ class DogOffLeashTests(unittest.TestCase):
             self.assertLess(dist, 140, f"dog did not recall to owner ({dist:.1f}px)")
             gs.assert_no_errors()
 
+    def test_offleash_sniff_animation_and_emote_bubbles(self):
+        with GameSession() as gs:
+            gs.set_leash(False)
+            gs.set_keys()
+            gs.step_frames(5)
+
+            max_abs_nose_twitch = 0.0
+            max_sniff_time = 0.0
+            saw_sniff_state = False
+            saw_sniffing_trail = False
+            saw_emote_bubble = False
+
+            for _ in range(120):
+                gs.step_frames(10)
+                dog = gs.snapshot()["dog"]
+                state = dog["state"]
+                sniffing = state in ("SNIFFING_TRAIL", "IDLE_SNIFF")
+                if sniffing:
+                    saw_sniff_state = True
+                if state == "SNIFFING_TRAIL":
+                    saw_sniffing_trail = True
+                nose_twitch = abs(dog.get("noseTwitch", 0.0) or 0.0)
+                sniff_time = dog.get("sniffTime", 0.0) or 0.0
+                max_abs_nose_twitch = max(max_abs_nose_twitch, nose_twitch)
+                max_sniff_time = max(max_sniff_time, sniff_time)
+                bubble = dog.get("emoteBubble")
+                if bubble:
+                    saw_emote_bubble = True
+
+            gs.trigger_zoomies("FIGURE_EIGHT")
+            for _ in range(30):
+                gs.step_frames(10)
+                dog = gs.snapshot()["dog"]
+                bubble = dog.get("emoteBubble")
+                if bubble:
+                    saw_emote_bubble = True
+
+            self.assertTrue(
+                saw_sniff_state,
+                "dog never entered a sniffing state (SNIFFING_TRAIL or IDLE_SNIFF)",
+            )
+            if saw_sniffing_trail:
+                self.assertTrue(
+                    max_abs_nose_twitch > 0.05 or max_sniff_time > 0.05,
+                    f"sniff animation not alive (noseTwitch={max_abs_nose_twitch:.3f}, "
+                    f"sniffTime={max_sniff_time:.3f}, sawSniffState={saw_sniff_state})",
+                )
+            self.assertTrue(
+                saw_emote_bubble,
+                "no emote bubble observed during sniffing or zoomies",
+            )
+            gs.assert_no_errors()
+
     def test_offleash_zoomies_patterns_and_expiry(self):
         with GameSession() as gs:
             gs.set_leash(False)

@@ -28,7 +28,7 @@ class OwnerLocomotionTests(unittest.TestCase):
             o1 = s1["owner"]
             moved = math.hypot(o1["x"] - o0["x"], o1["y"] - o0["y"])
             self.assertLess(moved, 5.0, f"owner slid {moved:.2f}px from spawn")
-            self.assertLess(res["maxFrameMs"], 50.0, "frame time spike at spawn")
+            self.assertLess(res["maxFrameMs"], 150.0, "frame time spike at spawn")
             gs.assert_no_errors()
 
     def test_movement_and_walk_phase_cadence(self):

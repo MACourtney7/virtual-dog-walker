@@ -9,10 +9,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import os
 import sys
+import time
 import unittest
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _REPO_ROOT = os.path.dirname(os.path.dirname(_HERE))
@@ -27,6 +29,102 @@ def _run_suite(serve_dir: str, verbose: bool) -> int:
     runner = unittest.TextTestRunner(verbosity=2 if verbose else 1)
     result = runner.run(suite)
     return 0 if result.wasSuccessful() else 1
+
+
+# ---------------------------------------------------------------------------
+# Parallel per-module runner
+# ---------------------------------------------------------------------------
+
+
+def _discover_modules() -> List[str]:
+    """Return sorted test module filenames (e.g. ``test_foo.py``) in _HERE."""
+    modules: List[str] = []
+    for name in sorted(os.listdir(_HERE)):
+        if name.startswith("test_") and name.endswith(".py"):
+            modules.append(name)
+    return modules
+
+
+def _run_module(module_name: str, serve_dir: str) -> Tuple[str, int, int, List[str]]:
+    """Run a single test module in an isolated process.
+
+    Returns ``(module_name, tests_run, failures, error_lines)``.
+    """
+    os.environ["VDW_E2E_SERVE_DIR"] = serve_dir
+    if _REPO_ROOT not in sys.path:
+        sys.path.insert(0, _REPO_ROOT)
+
+    module_path = os.path.join(_HERE, module_name)
+    loader = unittest.TestLoader()
+    try:
+        suite = loader.discover(
+            start_dir=_HERE,
+            pattern=module_name,
+            top_level_dir=_REPO_ROOT,
+        )
+    except Exception as exc:  # pragma: no cover - defensive
+        return (module_name, 0, 1, [f"discovery error: {exc!r}"])
+
+    runner = unittest.TextTestRunner(verbosity=0, stream=open(os.devnull, "w"))
+    try:
+        result = runner.run(suite)
+    except Exception as exc:  # pragma: no cover - defensive
+        return (module_name, 0, 1, [f"runner error: {exc!r}"])
+
+    error_lines: List[str] = []
+    for test, trace in result.failures:
+        error_lines.append(f"FAIL: {test}")
+        error_lines.append(trace)
+    for test, trace in result.errors:
+        error_lines.append(f"ERROR: {test}")
+        error_lines.append(trace)
+
+    failures = len(result.failures) + len(result.errors)
+    return (module_name, result.testsRun, failures, error_lines)
+
+
+def _run_parallel(serve_dir: str, workers: int) -> int:
+    modules = _discover_modules()
+    if not modules:
+        print("No test modules discovered.")
+        return 0
+
+    print(f"Running {len(modules)} module(s) with {workers} worker(s)...")
+    start = time.time()
+    total_tests = 0
+    total_failures = 0
+    all_ok = True
+
+    with concurrent.futures.ProcessPoolExecutor(max_workers=workers) as executor:
+        futures = {
+            executor.submit(_run_module, mod, serve_dir): mod for mod in modules
+        }
+        for future in concurrent.futures.as_completed(futures):
+            mod = futures[future]
+            try:
+                name, tests_run, failures, error_lines = future.result()
+            except Exception as exc:  # pragma: no cover - defensive
+                print(f"[{mod}] worker crashed: {exc!r}")
+                all_ok = False
+                total_failures += 1
+                continue
+
+            total_tests += tests_run
+            total_failures += failures
+            status = "OK" if failures == 0 else "FAIL"
+            print(f"[{name}] {tests_run} test(s), {failures} failure(s) - {status}")
+            if failures:
+                all_ok = False
+                for line in error_lines:
+                    print(line)
+
+    elapsed = time.time() - start
+    print()
+    print(f"Total tests: {total_tests}")
+    print(f"Total failures: {total_failures}")
+    print(f"Elapsed: {elapsed:.2f}s")
+    print("RESULT:", "PASS" if all_ok else "FAIL")
+    return 0 if all_ok else 1
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +238,12 @@ def main(argv: List[str]) -> int:
     parser.add_argument("--serve-dir", default=None, help="Directory to serve")
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose output")
     parser.add_argument(
+        "--workers",
+        type=int,
+        default=4,
+        help="Number of parallel worker processes (1 = single-process)",
+    )
+    parser.add_argument(
         "--compare",
         nargs=2,
         metavar=("BASELINE_DIR", "CANDIDATE_DIR"),
@@ -157,6 +261,9 @@ def main(argv: List[str]) -> int:
         else:
             default = os.path.join(_REPO_ROOT, "virtual_dog_walker")
             serve_dir = default if os.path.isdir(default) else _REPO_ROOT
+
+    if args.workers and args.workers > 1:
+        return _run_parallel(serve_dir, args.workers)
     return _run_suite(serve_dir, args.verbose)
 
 

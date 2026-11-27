@@ -1048,8 +1048,36 @@ export class CompanionDog {
     // Delegate all decision, steering, leash, and need math to the Wasm
     // simulation step. The bridge returns an event bitmask describing the
     // discrete side-effects the JS layer must execute this frame.
+    const prevState = this.state;
     const bitmask = stepCompanionDogWasm(this, dt, field, otherDogs, activeBall, npcs);
     this.executeDogEventBitmask(bitmask, field, activeBall);
+
+    // Restore Sniff Animation: drive the nose twitch while sniffing.
+    if (this.state === DogState.SNIFFING_TRAIL || this.state === DogState.IDLE_SNIFF) {
+      this.sniffTime = (this.sniffTime || 0) + dt;
+      this.noseTwitch = Math.sin(this.sniffTime * 25) * 1.6;
+    } else {
+      this.noseTwitch = 0;
+    }
+
+    // Restore State-Entry Emoji Bubbles: show a contextual emote on entry.
+    if (this.state !== prevState) {
+      if (this.state === DogState.SNIFFING_TRAIL || this.state === DogState.IDLE_SNIFF) {
+        this.setEmote('👃', 2.0);
+      } else if (this.state === DogState.ZOOMIES) {
+        this.setEmote('⚡', 2.0);
+      } else if (
+        this.state === DogState.SOCIAL_GREET ||
+        this.state === DogState.PLAY_BOW ||
+        this.state === DogState.PACK_PLAY
+      ) {
+        this.setEmote('🐾', 2.5);
+      } else if (this.state === DogState.LYING_DOWN) {
+        this.setEmote('💤', 2.5);
+      } else if (this.state === DogState.POOPING) {
+        this.setEmote('💩', 2.0);
+      }
+    }
 
     // Poop completion: advance the squat timer and drop the pile when done.
     if (this.state === DogState.POOPING) {
@@ -1062,6 +1090,7 @@ export class CompanionDog {
           field.addPoopPile(pile);
         }
         this._isPooping = false;
+        this.poopSquatDuration = 1.5;
         this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
       }
     }

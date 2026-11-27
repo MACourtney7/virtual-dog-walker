@@ -1771,6 +1771,12 @@ export class CliftonDownGame {
       unlockHome() {
         if (game.hud) {
           game.hud.isHomeLocked = false;
+          if (game.hud.dogSlot == null) {
+            game.hud.dogSlot = { name: 'Ziggy', coat: 'CHOCOLATE_TAN' };
+          }
+          if (typeof game.hud.closeModal === 'function') {
+            game.hud.closeModal();
+          }
         }
         if (typeof document !== 'undefined') {
           const ids = ['home-overlay', 'onboarding-overlay', 'home-sanctuary'];
@@ -1779,6 +1785,12 @@ export class CliftonDownGame {
             if (el) {
               el.style.display = 'none';
             }
+          }
+          // Only remove the 'open' class from the customizer modal so
+          // #btn-customize can cleanly re-open it (never inline display:none).
+          const customizer = document.getElementById('customizer-modal');
+          if (customizer && customizer.classList) {
+            customizer.classList.remove('open');
           }
         }
       },
@@ -1950,6 +1962,69 @@ export class CliftonDownGame {
         syncDogPositionToWasm(x, y);
       },
 
+      spawnRemotePeer(peerId = 'peer-test-1', x = null, y = null) {
+        if (!game.remotePlayers) return 0;
+        const px = (typeof x === 'number') ? x : (game.owner ? game.owner.x + 60 : 0);
+        const py = (typeof y === 'number') ? y : (game.owner ? game.owner.y : 0);
+        const remoteOwner = new Owner(px, py, 'Peer', false);
+        const remoteDog = new CompanionDog(px + 20, py + 10, remoteOwner, CoatPreset.GOLDEN);
+        game.remotePlayers.set(peerId, { owner: remoteOwner, dog: remoteDog, hasDog: true });
+        return game.remotePlayers.size;
+      },
+
+      clearRemotePeers() {
+        if (game.remotePlayers) {
+          game.remotePlayers.clear();
+        }
+      },
+
+      triggerRemoteBark(peerId = 'peer-test-1') {
+        if (!game.remotePlayers) return;
+        const peer = game.remotePlayers.get(peerId);
+        if (peer && peer.dog && game.dog && typeof game.dog.onRemoteBark === 'function') {
+          game.dog.onRemoteBark(peer.dog);
+        }
+      },
+
+      canvasPixelStats() {
+        const canvas = game.canvas;
+        if (!canvas || typeof canvas.getContext !== 'function') {
+          return { width: 0, height: 0, nonZeroCount: 0, checksum: 0 };
+        }
+        const ctx = canvas.getContext('2d');
+        if (!ctx || typeof ctx.getImageData !== 'function') {
+          return { width: canvas.width, height: canvas.height, nonZeroCount: 0, checksum: 0 };
+        }
+        const width = canvas.width;
+        const height = canvas.height;
+        let data;
+        try {
+          data = ctx.getImageData(0, 0, width, height).data;
+        } catch (_e) {
+          return { width, height, nonZeroCount: 0, checksum: 0 };
+        }
+        const cols = 32;
+        const rows = 18;
+        let nonZeroCount = 0;
+        let checksum = 0;
+        for (let gy = 0; gy < rows; gy++) {
+          const py = Math.min(height - 1, Math.floor((gy + 0.5) * (height / rows)));
+          for (let gx = 0; gx < cols; gx++) {
+            const px = Math.min(width - 1, Math.floor((gx + 0.5) * (width / cols)));
+            const idx = (py * width + px) * 4;
+            const r = data[idx];
+            const g = data[idx + 1];
+            const b = data[idx + 2];
+            const a = data[idx + 3];
+            if (r || g || b || a) {
+              nonZeroCount++;
+            }
+            checksum = (checksum + r + g * 3 + b * 7 + a * 11) % 2147483647;
+          }
+        }
+        return { width, height, nonZeroCount, checksum };
+      },
+
       snapshot() {
         return game.snapshot();
       }
@@ -2009,6 +2084,8 @@ export class CliftonDownGame {
 
     return {
       zoneId: this.currentZoneId,
+      biome: (this.field && this.field.zoneConfig && this.field.zoneConfig.biome) || 'parkland',
+      remotePeerCount: this.remotePlayers ? this.remotePlayers.size : 0,
       wasmReady,
       warpCooldown: this.warpCooldown || 0,
       isHomeLocked: Boolean(this.hud && this.hud.isHomeLocked),
@@ -2054,7 +2131,8 @@ export class CliftonDownGame {
         hasBall: Boolean(dog.hasBall),
         zoomiesPath: dog.zoomiesPath || null,
         emoteBubble: dog.emoteBubble || null,
-        stateTimer: dog.stateTimer || 0
+        stateTimer: dog.stateTimer || 0,
+        noseTwitch: dog.noseTwitch || 0
       },
       ball: this.ball ? {
         x: this.ball.x, y: this.ball.y, z: this.ball.z || 0,

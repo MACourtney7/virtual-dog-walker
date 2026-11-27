@@ -113,8 +113,7 @@ _NEVER_IGNORED_SUBSTRINGS = (
 
 
 def _is_ignored_error(message: str) -> bool:
-    lower = message.lower()
-    if any(k in lower for k in ("wasm", "dog_walker_core", "wasmsimbridge")):
+    if any(token in message for token in _NEVER_IGNORED_SUBSTRINGS):
         return False
     return any(token in message for token in _IGNORED_ERROR_SUBSTRINGS)
 
@@ -308,6 +307,34 @@ class GameSession:
             "([x, y]) => window.__vdwDebug.setDogPosition(x, y)",
             [float(x), float(y)],
         )
+
+    def spawn_remote_peer(
+        self,
+        peer_id: str = "peer-test-1",
+        x: Optional[float] = None,
+        y: Optional[float] = None,
+    ) -> int:
+        return self.page.evaluate(
+            "([peerId, x, y]) => window.__vdwDebug.spawnRemotePeer(peerId, x, y)",
+            [peer_id, x, y],
+        )
+
+    def clear_remote_peers(self) -> None:
+        self.page.evaluate("() => window.__vdwDebug.clearRemotePeers()")
+
+    def trigger_remote_bark(self, peer_id: str = "peer-test-1") -> None:
+        self.page.evaluate(
+            "(peerId) => window.__vdwDebug.triggerRemoteBark(peerId)", peer_id
+        )
+
+    def canvas_pixel_stats(self) -> Dict[str, Any]:
+        return self.page.evaluate("() => window.__vdwDebug.canvasPixelStats()")
+
+    def click_canvas(self, x: float, y: float) -> None:
+        self.page.mouse.click(x, y)
+
+    def click_selector(self, selector: str) -> None:
+        self.page.locator(selector).click()
 
     def assert_no_errors(self) -> None:
         if self.errors:

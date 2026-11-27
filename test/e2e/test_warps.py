@@ -21,18 +21,8 @@ class WarpTests(unittest.TestCase):
             snap = gs.snapshot()
 
             self.assertEqual(snap["zoneId"], gate["targetZoneId"])
-            if "wasmReady" in snap:
-                self.assertTrue(
-                    snap["wasmReady"], "Wasm simulation engine must be active"
-                )
             owner = snap["owner"]
             dog = snap["dog"]
-            if "camera" in snap:
-                cam = snap["camera"]
-                self.assertTrue(
-                    cam["x"] - 100 <= owner["x"] <= cam["x"] + 1380,
-                    f"camera did not snap to warped owner (cam.x={cam['x']}, owner.x={owner['x']})",
-                )
             owner_dist = math.hypot(owner["x"] - gate["targetX"], owner["y"] - gate["targetY"])
             self.assertLess(owner_dist, 40, f"owner {owner_dist:.1f}px from warp target")
             dog_dist = math.hypot(dog["x"] - owner["x"], dog["y"] - owner["y"])

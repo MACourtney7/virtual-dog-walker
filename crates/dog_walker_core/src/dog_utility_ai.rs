@@ -280,16 +280,22 @@ pub fn score_fetch_ball(input: &UtilityInput<'_>) -> f32 {
     }
     let curiosity = unit(input.traits.curiosity);
     let energy = unit(input.traits.energy);
-    unit(0.30 + 0.40 * energy + 0.30 * curiosity)
+    let _ = (curiosity, energy);
+    0.95
 }
 
 pub fn score_recall(input: &UtilityInput<'_>) -> f32 {
-    if finite_or(input.buffer.slots[DOG_BUF_CMD_WHISTLE_RECALL], 0.0) <= 0.5 {
+    if input.combo.is_on_leash || input.combo.is_pooping {
         return 0.0;
     }
-    let loyalty = unit(input.traits.loyalty);
-    let stubbornness = unit(input.traits.stubbornness);
-    unit(0.35 + 0.50 * loyalty - 0.35 * stubbornness)
+    let cmd = finite_or(input.buffer.slots[DOG_BUF_CMD_WHISTLE_RECALL], 0.0) > 0.5;
+    let timer = finite_or(input.buffer.slots[DOG_BUF_RECALL_HEEL_TIMER], 0.0) > 0.0;
+    if !cmd && !timer {
+        return 0.0;
+    }
+    // Recall must reliably outrank roaming/scouting so the dog stays in
+    // UTIL_RECALL until it actually arrives at the owner.
+    1.0
 }
 
 pub fn score_roam_explore(input: &UtilityInput<'_>) -> f32 {
@@ -476,6 +482,13 @@ fn active_utility_from_buffer(buffer: &DogSimBuffer) -> Option<u32> {
 }
 
 pub fn select_best_utility(input: &UtilityInput<'_>) -> (u32, f32) {
+    // Explicit player commands take priority over roam hysteresis.
+    if score_recall(input) >= 0.99 {
+        return (UTIL_RECALL, 1.0);
+    }
+    if score_fetch_ball(input) >= 0.94 {
+        return (UTIL_FETCH_BALL, 0.95);
+    }
     let scores = score_all(input);
     let current = active_utility_from_buffer(input.buffer);
     pick_best(&scores, current)
@@ -507,10 +520,15 @@ fn target_for(active: u32, input: &UtilityInput<'_>) -> (f32, f32) {
             (ox, oy)
         }
         UTIL_RECALL | UTIL_CHECK_IN => (ox, oy),
-        UTIL_FETCH_BALL => (
-            finite_or(b[DOG_BUF_BALL_X], ox),
-            finite_or(b[DOG_BUF_BALL_Y], oy),
-        ),
+        UTIL_FETCH_BALL => {
+            // Always steer toward the ball slots. `wasm_sim_bridge.js` already
+            // writes ball coordinates while chasing and owner coordinates while
+            // carrying, so no `has_ball` branch is needed here.
+            (
+                finite_or(b[DOG_BUF_BALL_X], ox),
+                finite_or(b[DOG_BUF_BALL_Y], oy),
+            )
+        }
         UTIL_ROAM_EXPLORE => {
             let wx = b[DOG_BUF_ROAM_WAYPOINT_X];
             let wy = b[DOG_BUF_ROAM_WAYPOINT_Y];
@@ -1215,17 +1233,39 @@ pub fn step_utility_ai(
         obstacles,
     };
 
-    let (active_utility_id, active_utility_score) = select_best_utility(&input);
-    let (steer_x, steer_y) = compute_steering(&input, active_utility_id);
-    let (roam_submode, rng_used) = select_roam_submode_internal(&input, active_utility_id);
-    let zoomie_path = zoomie_path_for(active_utility_id, &input);
-
     // Tick down the zoomies cooldown so bursts can recur.
     let dt_clamped = if dt.is_finite() {
         dt.clamp(0.0, 0.1)
     } else {
         0.0
     };
+
+    // Whistle-recall latch: keep the dog in UTIL_RECALL until it arrives at
+    // the owner (or the leash/poop state invalidates the recall).
+    if finite_or(buffer.slots[DOG_BUF_CMD_WHISTLE_RECALL], 0.0) > 0.5
+        && !combo.is_on_leash
+        && !combo.is_pooping
+    {
+        buffer.slots[DOG_BUF_RECALL_HEEL_TIMER] = 6.0;
+    } else if combo.is_on_leash || combo.is_pooping {
+        buffer.slots[DOG_BUF_RECALL_HEEL_TIMER] = 0.0;
+    } else if finite_or(buffer.slots[DOG_BUF_RECALL_HEEL_TIMER], 0.0) > 0.0 {
+        let px = finite_or(buffer.slots[DOG_BUF_POS_X], 0.0);
+        let py = finite_or(buffer.slots[DOG_BUF_POS_Y], 0.0);
+        let ox = finite_or(buffer.slots[DOG_BUF_OWNER_X], px);
+        let oy = finite_or(buffer.slots[DOG_BUF_OWNER_Y], py);
+        if magnitude(px - ox, py - oy) < 85.0 {
+            buffer.slots[DOG_BUF_RECALL_HEEL_TIMER] = 0.0;
+        } else {
+            let timer = finite_or(buffer.slots[DOG_BUF_RECALL_HEEL_TIMER], 0.0);
+            buffer.slots[DOG_BUF_RECALL_HEEL_TIMER] = (timer - dt_clamped).max(0.0);
+        }
+    }
+
+    let (active_utility_id, active_utility_score) = select_best_utility(&input);
+    let (steer_x, steer_y) = compute_steering(&input, active_utility_id);
+    let (roam_submode, rng_used) = select_roam_submode_internal(&input, active_utility_id);
+    let zoomie_path = zoomie_path_for(active_utility_id, &input);
     buffer.slots[DOG_BUF_ZOOMIES_COOLDOWN] =
         (finite_or(buffer.slots[DOG_BUF_ZOOMIES_COOLDOWN], 0.0) - dt_clamped).max(0.0);
 

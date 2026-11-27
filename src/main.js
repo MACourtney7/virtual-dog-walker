@@ -20,7 +20,7 @@ import { NPC_PATHS, getNpcPath } from './world/npc_paths.js';
 import { NavigationArrow } from './ui/navigation_arrow.js';
 import { weatherClient, WeatherType } from './systems/weather.js';
 import { environmentSystem, TimeOfDay } from './world/environment.js';
-import { initWasmSim, getWasmSim, syncWorldObstacles, syncDogPositionToWasm } from './engine/wasm_sim_bridge.js';
+import { initWasmSim, getWasmSim, syncWorldObstacles, syncDogPositionToWasm, syncDogLeashToWasm } from './engine/wasm_sim_bridge.js';
 import { applyCoastalShallowWaterInteraction } from './systems/coastalWater.js';
 
 // Speed-up floating chevron badge lifetime (ms). Must stay within [400, 500].
@@ -579,6 +579,9 @@ export class CliftonDownGame {
           this.owner.wanderMode = true;
           this.owner.wanderBaseHeading = this.owner.angle;
           this.owner.wanderPhase = 0;
+          if (typeof this.owner.setGait === 'function') {
+            this.owner.setGait(Gait.WANDER);
+          }
         }
         e.preventDefault();
         return;
@@ -1019,6 +1022,7 @@ export class CliftonDownGame {
     if (this.owner.isLeashed) {
       // Turning OFF leash – always allowed
       this.owner.isLeashed = false;
+      syncDogLeashToWasm(false);
       if (this.touchControls && typeof this.touchControls.setLeashed === 'function') {
         this.touchControls.setLeashed(false);
       }
@@ -1037,6 +1041,7 @@ export class CliftonDownGame {
     }
 
     this.owner.isLeashed = true;
+    syncDogLeashToWasm(true);
     if (typeof this.owner.triggerPet === 'function') {
       this.owner.triggerPet(0.45);
     }
@@ -1677,8 +1682,13 @@ export class CliftonDownGame {
     const hook = {
       isReady() {
         // Only report ready once the Rust/Wasm engine is initialized, so
-        // wait_for_function never proceeds on a silent JS fallback.
-        return Boolean(getWasmSim());
+        // wait_for_function never proceeds on a silent JS fallback. Guarded so
+        // polling before async Wasm init never throws.
+        try {
+          return Boolean(getWasmSim());
+        } catch (_e) {
+          return false;
+        }
       },
 
       pauseLoop() {
@@ -1847,6 +1857,99 @@ export class CliftonDownGame {
         if (typeof store.rest === 'function') store.rest();
       },
 
+      setHomeLocked(locked) {
+        if (game.hud) {
+          game.hud.isHomeLocked = Boolean(locked);
+        }
+      },
+
+      pressKey(code) {
+        if (typeof window === 'undefined') return;
+        window.dispatchEvent(new KeyboardEvent('keydown', { code, bubbles: true }));
+      },
+
+      praise() {
+        game.praiseDog();
+      },
+
+      whistle() {
+        game.whistleDog();
+      },
+
+      throwBall(dirX = 1, dirY = 0) {
+        if (!game.ball || !game.owner) return;
+        if (!game.ball.inOwnerPossession) {
+          if (typeof game.ball.retrieveByOwner === 'function') {
+            game.ball.retrieveByOwner();
+          } else {
+            game.ball.inOwnerPossession = true;
+            game.ball.isThrown = false;
+            game.ball.isCarried = false;
+            game.ball.carrier = null;
+            game.ball.vx = 0;
+            game.ball.vy = 0;
+            game.ball.vz = 0;
+            game.ball.z = 0;
+          }
+        }
+        game.throwBallAt(
+          game.owner.x + dirX * 260,
+          game.owner.y + dirY * 260,
+          dirX,
+          dirY
+        );
+      },
+
+      triggerZoomies(pathType = null) {
+        if (!game.dog) return;
+        if (game.owner && game.owner.isLeashed) {
+          game.toggleLeash();
+        }
+        if (typeof game.dog.triggerZoomies === 'function') {
+          game.dog.triggerZoomies(pathType);
+        } else {
+          game.dog.state = DogState.ZOOMIES;
+          game.dog.zoomiesTimer = 4.5;
+          game.dog.zoomiesCooldown = 0;
+        }
+      },
+
+      triggerPoop() {
+        if (!game.dog) return;
+        game.dog.state = DogState.POOPING;
+        game.dog.poopTimer = 0.01;
+        game.dog.poopSquatDuration = 1.5;
+        game.dog._isPooping = true;
+      },
+
+      pickUpNearestPoop() {
+        if (!game.field || !Array.isArray(game.field.poopPiles) || game.field.poopPiles.length === 0) {
+          return;
+        }
+        const pile = game.field.poopPiles[0];
+        if (game.owner) {
+          game.owner.x = pile.x;
+          game.owner.y = pile.y;
+        }
+        game.activePoopPileNearPlayer = pile;
+        game.pickUpPoop();
+      },
+
+      disposePoopAtNearestBin() {
+        if (!game.field || !Array.isArray(game.field.bins) || game.field.bins.length === 0) {
+          return;
+        }
+        game.activeBinNearPlayer = game.field.bins[0];
+        game.disposePoopBag();
+      },
+
+      setDogPosition(x, y) {
+        if (!game.dog) return;
+        game.dog.x = x;
+        game.dog.y = y;
+        syncDogPositionToWasm(x, y);
+      },
+
       snapshot() {
         return game.snapshot();
       }
@@ -1897,9 +2000,20 @@ export class CliftonDownGame {
       }
     }
 
+    let wasmReady = false;
+    try {
+      wasmReady = Boolean(getWasmSim());
+    } catch (_e) {
+      wasmReady = false;
+    }
+
     return {
       zoneId: this.currentZoneId,
-      wasmReady: Boolean(getWasmSim()),
+      wasmReady,
+      warpCooldown: this.warpCooldown || 0,
+      isHomeLocked: Boolean(this.hud && this.hud.isHomeLocked),
+      hasPoopBag: Boolean(this.hasPoopBag),
+      poopPilesCount: (this.field && Array.isArray(this.field.poopPiles)) ? this.field.poopPiles.length : 0,
       camera: this.camera ? { x: this.camera.x, y: this.camera.y } : { x: 0, y: 0 },
       world: {
         width: (this.field && this.field.width) || 0,
@@ -1915,14 +2029,18 @@ export class CliftonDownGame {
         gait: owner.gait,
         walkPhase: owner.walkPhase,
         isLeashed: !!owner.isLeashed,
-        isMoving: !!owner.isMoving
+        isMoving: !!owner.isMoving,
+        jogTimer: owner.jogTimer || 0,
+        jogCooldown: owner.jogCooldown || 0,
+        wanderMode: Boolean(owner.wanderMode),
+        leashArmTension: owner.leashArmTension || 0
       },
       dog: {
         x: dog.x,
         y: dog.y,
         vx: dog.vx,
         vy: dog.vy,
-        speed: dog.speed,
+        speed: Math.hypot(dog.vx || 0, dog.vy || 0),
         angle: dog.angle,
         state: dog.state,
         gaitMode: dog.gaitMode,
@@ -1932,8 +2050,18 @@ export class CliftonDownGame {
         sniffTime: dog.sniffTime,
         poopTimer: dog.poopTimer,
         isStray: !!dog.isStray,
-        isLost: !!dog.isLost
+        isLost: !!dog.isLost,
+        hasBall: Boolean(dog.hasBall),
+        zoomiesPath: dog.zoomiesPath || null,
+        emoteBubble: dog.emoteBubble || null,
+        stateTimer: dog.stateTimer || 0
       },
+      ball: this.ball ? {
+        x: this.ball.x, y: this.ball.y, z: this.ball.z || 0,
+        vx: this.ball.vx || 0, vy: this.ball.vy || 0, vz: this.ball.vz || 0,
+        isThrown: Boolean(this.ball.isThrown),
+        inOwnerPossession: Boolean(this.ball.inOwnerPossession)
+      } : null,
       care,
       npcs
     };

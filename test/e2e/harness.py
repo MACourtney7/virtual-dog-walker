@@ -99,16 +99,22 @@ _IGNORED_ERROR_SUBSTRINGS = (
     "open-meteo",
     "workers.dev",
     "net::ERR_",
-    "status of 503",
     "ERR_BLOCKED_BY_CLIENT",
+    "status of 503",
+)
+
+# Errors mentioning these tokens are NEVER ignored (WASM init failures must
+# surface as test failures).
+_NEVER_IGNORED_SUBSTRINGS = (
+    "wasm",
+    "dog_walker_core",
+    "WasmSimBridge",
 )
 
 
 def _is_ignored_error(message: str) -> bool:
-    # Wasm initialization failures must never be silently swallowed: the E2E
-    # suite is meant to verify the real Rust/Wasm engine, not a JS fallback.
-    lowered = message.lower()
-    if "wasm" in lowered or "dog_walker_core" in lowered or "wasmsimbridge" in lowered:
+    lower = message.lower()
+    if any(k in lower for k in ("wasm", "dog_walker_core", "wasmsimbridge")):
         return False
     return any(token in message for token in _IGNORED_ERROR_SUBSTRINGS)
 
@@ -149,6 +155,9 @@ class GameSession:
         self.page.on("pageerror", self._on_page_error)
         self.page.on("console", self._on_console)
 
+        # Offline isolation: only allow requests to the local static server
+        # (plus data:/blob: URLs). Everything else is aborted so tests never
+        # depend on external network availability.
         def _route_filter(route):
             req_url = route.request.url
             if (
@@ -172,7 +181,6 @@ class GameSession:
         if self.pause_loop:
             self.page.evaluate("() => window.__vdwDebug.pauseLoop()")
         else:
-            # ?debug=1 boots paused at Frame 0; start the loop when requested.
             self.page.evaluate("() => window.__vdwDebug.resumeLoop()")
         if self.unlock_home:
             self.page.evaluate("() => window.__vdwDebug.unlockHome()")
@@ -260,6 +268,46 @@ class GameSession:
 
     def clear_care_needs(self) -> None:
         self.page.evaluate("() => window.__vdwDebug.clearCareNeeds()")
+
+    def set_home_locked(self, locked: bool) -> None:
+        self.page.evaluate(
+            "(v) => window.__vdwDebug.setHomeLocked(v)", bool(locked)
+        )
+
+    def press_key(self, code: str) -> None:
+        self.page.evaluate("(c) => window.__vdwDebug.pressKey(c)", code)
+
+    def praise(self) -> None:
+        self.page.evaluate("() => window.__vdwDebug.praise()")
+
+    def whistle(self) -> None:
+        self.page.evaluate("() => window.__vdwDebug.whistle()")
+
+    def throw_ball(self, dx: float = 1.0, dy: float = 0.0) -> None:
+        self.page.evaluate(
+            "([dx, dy]) => window.__vdwDebug.throwBall(dx, dy)",
+            [float(dx), float(dy)],
+        )
+
+    def trigger_zoomies(self, path_type: Optional[str] = None) -> None:
+        self.page.evaluate(
+            "(p) => window.__vdwDebug.triggerZoomies(p)", path_type
+        )
+
+    def trigger_poop(self) -> None:
+        self.page.evaluate("() => window.__vdwDebug.triggerPoop()")
+
+    def pick_up_nearest_poop(self) -> None:
+        self.page.evaluate("() => window.__vdwDebug.pickUpNearestPoop()")
+
+    def dispose_poop_at_nearest_bin(self) -> None:
+        self.page.evaluate("() => window.__vdwDebug.disposePoopAtNearestBin()")
+
+    def set_dog_position(self, x: float, y: float) -> None:
+        self.page.evaluate(
+            "([x, y]) => window.__vdwDebug.setDogPosition(x, y)",
+            [float(x), float(y)],
+        )
 
     def assert_no_errors(self) -> None:
         if self.errors:

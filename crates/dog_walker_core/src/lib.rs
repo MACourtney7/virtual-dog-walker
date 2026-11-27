@@ -179,14 +179,29 @@ impl WasmWorldSim {
         // 6. Resolve target state: forced states win, otherwise map utility -> state.
         let next_state = match decision.force_state {
             Some(state) => state,
-            None => dog_state_for_utility(util.active_utility_id),
+            None => {
+                if util.active_utility_id == dog_utility_ai::UTIL_ROAM_EXPLORE
+                    && util.desired_speed <= 0.01
+                {
+                    DogStateId::Sniff
+                } else {
+                    dog_state_for_utility(util.active_utility_id)
+                }
+            }
         };
         self.dog_buffer.slots[DOG_BUF_DOG_STATE_ID] = next_state as u32 as f32;
 
         // 7. Integrate movement from desired speed, multiplier, and steer.
-        let speed = sanitize_f32((util.desired_speed * decision.speed_multiplier).max(0.0));
-        let vx = sanitize_f32(util.steer_x * speed);
-        let vy = sanitize_f32(util.steer_y * speed);
+        // Freeze the dog in place while pooping.
+        let (vx, vy) = if next_state == DogStateId::Poop || combo.is_pooping {
+            (0.0_f32, 0.0_f32)
+        } else {
+            let speed = sanitize_f32((util.desired_speed * decision.speed_multiplier).max(0.0));
+            (
+                sanitize_f32(util.steer_x * speed),
+                sanitize_f32(util.steer_y * speed),
+            )
+        };
 
         let mut next_x = sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_DOG_X) + vx * dt);
         let mut next_y = sanitize_f32(slot_f32(&self.dog_buffer, DOG_BUF_DOG_Y) + vy * dt);

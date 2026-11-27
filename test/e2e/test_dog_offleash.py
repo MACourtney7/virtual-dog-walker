@@ -95,6 +95,94 @@ class DogOffLeashTests(unittest.TestCase):
             self.assertLessEqual(dog["y"], world["height"])
             gs.assert_no_errors()
 
+    def test_offleash_multi_state_behavioral_variety(self):
+        with GameSession() as gs:
+            gs.set_leash(False)
+            gs.set_keys()
+            gs.step_frames(5)
+
+            states = set()
+            speeds = []
+            total_path = 0.0
+            prev = gs.snapshot()["dog"]
+
+            # 1500 frames / 15 = 100 chunks of 15 frames (25s simulated).
+            for _ in range(100):
+                gs.step_frames(15)
+                dog = gs.snapshot()["dog"]
+                states.add(dog["state"])
+                speeds.append(dog["speed"])
+                total_path += math.hypot(dog["x"] - prev["x"], dog["y"] - prev["y"])
+                prev = dog
+
+            active_states = {
+                "SNIFFING_TRAIL",
+                "IDLE_SNIFF",
+                "SITTING",
+                "LYING_DOWN",
+                "ROLLING",
+                "ZOOMIES",
+                "POOPING",
+            }
+            self.assertGreaterEqual(
+                len(states),
+                2,
+                f"dog stuck in single state; only saw {sorted(states)}",
+            )
+            self.assertTrue(
+                states & active_states,
+                f"dog never entered an active off-leash state; saw {sorted(states)}",
+            )
+            self.assertGreater(total_path, 200, f"dog barely moved ({total_path:.1f}px)")
+            self.assertLess(min(speeds), 20, "dog never paused/sniffed/rested")
+            self.assertGreater(max(speeds), 80, "dog never roamed actively")
+            gs.assert_no_errors()
+
+    def test_offleash_whistle_recall_returns_dog_to_owner(self):
+        with GameSession() as gs:
+            gs.set_leash(False)
+            owner = gs.snapshot()["owner"]
+            gs.set_dog_position(owner["x"] + 300, owner["y"])
+            gs.step_frames(5)
+
+            gs.press_key("KeyR")
+            gs.step_frames(5)
+            self.assertEqual(
+                gs.snapshot()["dog"]["state"],
+                "RECALLED",
+                "whistle did not trigger RECALLED state",
+            )
+
+            for _ in range(48):
+                gs.step_frames(5)
+                snap = gs.snapshot()
+                dog = snap["dog"]
+                owner = snap["owner"]
+                dist = math.hypot(dog["x"] - owner["x"], dog["y"] - owner["y"])
+                if dist < 140:
+                    break
+
+            self.assertLess(dist, 140, f"dog did not recall to owner ({dist:.1f}px)")
+            gs.assert_no_errors()
+
+    def test_offleash_zoomies_patterns_and_expiry(self):
+        with GameSession() as gs:
+            gs.set_leash(False)
+            gs.trigger_zoomies("FIGURE_EIGHT")
+            gs.step_frames(10)
+
+            dog = gs.snapshot()["dog"]
+            self.assertEqual(dog["state"], "ZOOMIES", "FIGURE_EIGHT zoomies not active")
+            self.assertGreater(dog["zoomiesTimer"], 0, "zoomiesTimer not counting down")
+
+            gs.step_frames(360)
+            dog = gs.snapshot()["dog"]
+            self.assertNotEqual(dog["state"], "ZOOMIES", "zoomies did not expire")
+            self.assertLessEqual(
+                dog["zoomiesTimer"], 0.01, "zoomiesTimer did not reset after expiry"
+            )
+            gs.assert_no_errors()
+
 
 if __name__ == "__main__":
     unittest.main()

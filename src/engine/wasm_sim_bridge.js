@@ -557,6 +557,7 @@ export function dogStateIdToState(id, isOnLeash = false) {
     case 8: return 'LOST';
     case 9: return 'RECALLED';
     case 10: return 'BARKING';
+    case 11: return 'SNIFFING_TRAIL';
     default: return 'IDLE_SNIFF';
   }
 }
@@ -577,6 +578,7 @@ export function dogStateToId(state) {
     case 'LOST': return 8;
     case 'RECALLED': return 9;
     case 'BARKING': return 10;
+    case 'SNIFFING_TRAIL': return 11;
     case 'IDLE_SNIFF': return 0;
     default: return 0;
   }
@@ -703,10 +705,17 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   buf[13] = needsGrooming ? 1 : 0;
   buf[14] = isTired ? 1 : 0;
   const ball = (activeBall != null) ? activeBall : (dog && dog.activeBall ? dog.activeBall : null);
-  buf[15] = ball && ball.active ? 1 : 0;
+  const ballInPlay = Boolean(ball && (ball.isThrown || (!ball.inOwnerPossession && !ball.isCarried)));
+  const dogCarryingBall = Boolean(dog && dog.hasBall);
+  buf[15] = (ballInPlay || dogCarryingBall) ? 1 : 0;
   buf[16] = ball && ball.isThrown ? 1 : 0;
-  buf[17] = ball && Number.isFinite(ball.x) ? ball.x : 0;
-  buf[18] = ball && Number.isFinite(ball.y) ? ball.y : 0;
+  if (dogCarryingBall && owner) {
+    buf[17] = Number.isFinite(owner.x) ? owner.x : 0;
+    buf[18] = Number.isFinite(owner.y) ? owner.y : 0;
+  } else {
+    buf[17] = ball && Number.isFinite(ball.x) ? ball.x : 0;
+    buf[18] = ball && Number.isFinite(ball.y) ? ball.y : 0;
+  }
   const cam = (field && field.camera) ? field.camera : ((dog && dog.camera) ? dog.camera : null);
   buf[19] = cam && cam.active ? 1 : 0;
   buf[20] = cam && Number.isFinite(cam.left) ? cam.left : 0;
@@ -797,6 +806,8 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   // DOG_BUF_GAIT_PHASE is normalized in [0.0, 1.0); CompanionDog.draw() feeds gaitPhase
   // directly into Math.sin(), which expects radians in [0, 2*PI).
   dog.gaitPhase = outBuf[73] * Math.PI * 2;
+  // DOG_BUF_ZOOMIES_TIMER (slot 78): live Wasm zoomies countdown for JS UI/snapshots.
+  dog.zoomiesTimer = outBuf[78];
 
   dog.leftEar = dog.leftEar || {};
   dog.leftEar.angle = outBuf[108];
@@ -823,6 +834,25 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   dog.ownerFrozen = (ownerFlags & 2) !== 0;
 
   return outBuf[127] | 0;
+}
+
+/**
+ * Mirrors the dog's on-leash flag into the persistent Wasm dog buffer input
+ * slot (index 10) so the authoritative sim sees the current leash state even
+ * when the JS-side toggle happens outside a normal step. Returns true when the
+ * buffer was updated.
+ */
+export function syncDogLeashToWasm(isOnLeash) {
+  let buf = null;
+  try {
+    buf = getDogBufferView();
+  } catch (e) {
+    return false;
+  }
+  if (!buf) return false;
+  if (buf[0] <= 0) buf[0] = 1 / 60;
+  buf[10] = isOnLeash ? 1 : 0;
+  return true;
 }
 
 /**

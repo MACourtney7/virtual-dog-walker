@@ -94,6 +94,79 @@ class OwnerLocomotionTests(unittest.TestCase):
                 self.assertLessEqual(owner["y"], world["height"])
             gs.assert_no_errors()
 
+    def test_four_gait_speeds_and_jog_cooldown(self):
+        with GameSession() as gs:
+            gs.set_heading(0.0)
+
+            gs.set_gait("STROLL")
+            gs.step_frames(45)
+            owner = gs.snapshot()["owner"]
+            self.assertEqual(owner["gait"], "STROLL")
+            self.assertGreaterEqual(owner["speed"], 60, "STROLL speed too low")
+            self.assertLessEqual(owner["speed"], 90, "STROLL speed too high")
+
+            gs.set_gait("WALK")
+            gs.step_frames(45)
+            owner = gs.snapshot()["owner"]
+            self.assertEqual(owner["gait"], "WALK")
+            self.assertGreaterEqual(owner["speed"], 85, "WALK speed too low")
+            self.assertLessEqual(owner["speed"], 115, "WALK speed too high")
+
+            gs.set_gait("JOG")
+            gs.step_frames(30)
+            owner = gs.snapshot()["owner"]
+            self.assertEqual(owner["gait"], "JOG")
+            self.assertGreaterEqual(owner["speed"], 155, "JOG speed too low")
+            self.assertLessEqual(owner["speed"], 205, "JOG speed too high")
+
+            # Past the 2.0s jog duration the gait should drop back to WALK.
+            gs.step_frames(130)
+            owner = gs.snapshot()["owner"]
+            self.assertEqual(owner["gait"], "WALK", "JOG did not expire to WALK")
+            self.assertGreater(owner["jogCooldown"], 0, "jogCooldown not set after JOG")
+
+            # Cooldown must block re-entering JOG.
+            gs.set_gait("JOG")
+            gs.step_frames(5)
+            owner = gs.snapshot()["owner"]
+            self.assertNotEqual(owner["gait"], "JOG", "cooldown failed to block JOG")
+            gs.assert_no_errors()
+
+    def test_wander_mode_via_key_w(self):
+        with GameSession() as gs:
+            s0 = gs.snapshot()
+            gs.press_key("KeyW")
+            gs.step_frames(60)
+            s1 = gs.snapshot()
+
+            owner = s1["owner"]
+            self.assertTrue(owner["wanderMode"], "wanderMode not enabled by KeyW")
+            self.assertEqual(owner["gait"], "WANDER")
+            self.assertGreaterEqual(owner["speed"], 40, "WANDER speed too low")
+            self.assertLessEqual(owner["speed"], 80, "WANDER speed too high")
+
+            o0 = s0["owner"]
+            moved = math.hypot(owner["x"] - o0["x"], owner["y"] - o0["y"])
+            self.assertGreater(moved, 25, f"owner barely moved in wander ({moved:.1f}px)")
+            gs.assert_no_errors()
+
+    def test_keyboard_q_toggles_leash(self):
+        with GameSession() as gs:
+            self.assertTrue(gs.snapshot()["owner"]["isLeashed"], "expected start leashed")
+
+            gs.press_key("KeyQ")
+            gs.step_frames(2)
+            self.assertFalse(
+                gs.snapshot()["owner"]["isLeashed"], "KeyQ did not unleash dog"
+            )
+
+            gs.press_key("KeyQ")
+            gs.step_frames(2)
+            self.assertTrue(
+                gs.snapshot()["owner"]["isLeashed"], "KeyQ did not re-leash nearby dog"
+            )
+            gs.assert_no_errors()
+
 
 if __name__ == "__main__":
     unittest.main()

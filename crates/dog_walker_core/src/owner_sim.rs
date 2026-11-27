@@ -720,8 +720,8 @@ pub fn step_owner_buffer(buf: &mut OwnerSimBuffer, input: &OwnerStepInput<'_>) -
     } else if actual_speed > speed_cap {
         actual_speed = speed_cap;
     } else if actual_speed < speed_cap {
-        // Locked first-order clamp: approach the target at `target * dt`.
-        let step = speed_cap * dt;
+        // Responsive ramp: reaches full speed cleanly within ~0.67s.
+        let step = speed_cap * 1.5 * dt;
         actual_speed = (actual_speed + step).min(speed_cap);
     }
     if speed_cap <= 0.0 {

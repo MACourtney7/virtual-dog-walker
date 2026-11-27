@@ -150,7 +150,11 @@ export class TennisBall {
     buf[BALL_SLOT_RADIUS] = cfg.radius;
     buf[BALL_SLOT_GRAVITY] = -cfg.gravity;
     buf[BALL_SLOT_RESTITUTION] = cfg.restitution;
-    buf[BALL_SLOT_DRAG_PER_S] = (1 - cfg.friction) * 60;
+    buf[BALL_SLOT_DRAG_PER_S] = 0.35;
+    buf[BALL_SLOT_GROUND_Z] = 0;
+    buf[BALL_SLOT_CEILING_Z] = 1.0e6;
+    buf[BALL_SLOT_MAX_BOUNCES] = 6;
+    buf[BALL_SLOT_SETTLE_EPS] = 10;
     buf[BALL_SLOT_CONFIG_FLAGS] = BALL_CONFIG_FLAGS_INITIALIZED;
     this._ballConfigPending = false;
   }

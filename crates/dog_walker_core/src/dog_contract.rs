@@ -213,6 +213,7 @@ pub enum DogStateId {
     Stray = 8,
     Recall = 9,
     Bark = 10,
+    Sniff = 11,
 }
 
 #[repr(u32)]
@@ -550,6 +551,7 @@ mod tests {
         assert_eq!(DogStateId::Stray as u32, 8);
         assert_eq!(DogStateId::Recall as u32, 9);
         assert_eq!(DogStateId::Bark as u32, 10);
+        assert_eq!(DogStateId::Sniff as u32, 11);
 
         assert_eq!(RoamSubModeId::Baseline as u32, 0);
         assert_eq!(RoamSubModeId::Explore as u32, 1);

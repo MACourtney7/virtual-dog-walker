@@ -66,6 +66,41 @@ class DogOnLeashTests(unittest.TestCase):
             self.assertLessEqual(dog["y"], world["height"])
             gs.assert_no_errors()
 
+    def test_onleash_praise_in_stride_does_not_stop_movement(self):
+        with GameSession() as gs:
+            gs.set_leash(True)
+            gs.set_heading(0.0)
+            gs.set_gait("WALK")
+            gs.step_frames(45)
+
+            gs.press_key("KeyR")
+            gs.step_frames(10)
+
+            snap = gs.snapshot()
+            owner = snap["owner"]
+            dog = snap["dog"]
+            self.assertEqual(owner["gait"], "WALK", "praise halted owner gait")
+            self.assertGreater(owner["speed"], 50, "praise halted owner movement")
+            self.assertTrue(
+                dog.get("emoteBubble"), "praise did not trigger dog emote bubble"
+            )
+            gs.assert_no_errors()
+
+    def test_leash_reclip_refuses_when_dog_too_far(self):
+        with GameSession() as gs:
+            gs.set_leash(False)
+            owner = gs.snapshot()["owner"]
+            gs.set_dog_position(owner["x"] + 500, owner["y"])
+
+            gs.press_key("KeyQ")
+            gs.step_frames(2)
+
+            self.assertFalse(
+                gs.snapshot()["owner"]["isLeashed"],
+                "re-clipped lead while dog was too far away",
+            )
+            gs.assert_no_errors()
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1051,6 +1051,43 @@ export class CompanionDog {
     const bitmask = stepCompanionDogWasm(this, dt, field, otherDogs, activeBall, npcs);
     this.executeDogEventBitmask(bitmask, field, activeBall);
 
+    // Poop completion: advance the squat timer and drop the pile when done.
+    if (this.state === DogState.POOPING) {
+      this.poopSquatDuration = Math.max(0, (Number.isFinite(this.poopSquatDuration) ? this.poopSquatDuration : 1.5) - dt);
+      if (this.poopSquatDuration <= 0) {
+        const pile = new PoopPile(null, this.x, this.y);
+        if (typeof this.onPoopDropped === 'function') {
+          this.onPoopDropped(this, pile);
+        } else if (field && typeof field.addPoopPile === 'function') {
+          field.addPoopPile(pile);
+        }
+        this._isPooping = false;
+        this.state = (this.owner && this.owner.isLeashed) ? DogState.FOLLOWING : DogState.ROAMING;
+      }
+    }
+
+    // Fetch pickup & owner return: grab the ball on arrival, then hand it back
+    // to the owner once the dog is close enough.
+    if (this.state === DogState.FETCHING && activeBall) {
+      if (!this.hasBall && !activeBall.inOwnerPossession && !activeBall.isCarried) {
+        const distToBall = Math.hypot(this.x - activeBall.x, this.y - activeBall.y);
+        if (distToBall < 34 && (activeBall.z || 0) <= 22) {
+          if (typeof activeBall.attachToDog === 'function') {
+            activeBall.attachToDog(this);
+          }
+          this.hasBall = true;
+        }
+      } else if (this.hasBall && this.owner) {
+        const distToOwner = Math.hypot(this.x - this.owner.x, this.y - this.owner.y);
+        if (distToOwner < 48) {
+          if (typeof activeBall.retrieveByOwner === 'function') {
+            activeBall.retrieveByOwner();
+          }
+          this.hasBall = false;
+        }
+      }
+    }
+
     // Enforce the leash constraint through the Wasm bridge when available.
     if (this.owner && this.owner.isLeashed && typeof stepLeashConstraint === 'function') {
       stepLeashConstraint(this, this.owner, Math.round(MAX_LEASH_LENGTH * 0.75), 4.0, 5.0, dt);
@@ -1176,6 +1213,8 @@ export class CompanionDog {
 
     if (bitmask & DogEventBit.BALL_GRABBED) {
       run(() => {
+        // Never grab the ball while it is still high in the air.
+        if (activeBall && (activeBall.z || 0) > 22) return;
         this.hasBall = true;
         activeBall?.attachToDog?.(this);
         this.setEmote('🎾', 2.0);
@@ -1184,6 +1223,8 @@ export class CompanionDog {
 
     if (bitmask & DogEventBit.BALL_HANDOFF) {
       run(() => {
+        // Only hand off a ball the dog is actually carrying.
+        if (!this.hasBall) return;
         // Hand the ball back to the owner. Prefer the dog's tracked target ball
         // so the retrieveByOwner contract is honoured, then fall back to the
         // active ball passed into the step.

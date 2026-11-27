@@ -825,6 +825,28 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   return outBuf[127] | 0;
 }
 
+/**
+ * Mirrors a teleported dog position into the persistent Wasm dog buffer so
+ * `owner_sim.rs` and `dog_utility_ai.rs` do not see stale pre-warp dog
+ * coordinates (which caused the on-leash clamp to yank the owner back to the
+ * old zone). Returns true when the buffer was updated.
+ */
+export function syncDogPositionToWasm(x, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  let buf = null;
+  try {
+    buf = getDogBufferView();
+  } catch (e) {
+    return false;
+  }
+  if (!buf) return false;
+  buf[64] = x;
+  buf[65] = y;
+  buf[66] = 0; // vx
+  buf[67] = 0; // vy
+  return true;
+}
+
 export function stepEarSprings(leftEar, rightEar, dogVx, dogVy, dogAngle, dt) {
   if (wasmSimInstance && typeof wasmSimInstance.step_ears === 'function') {
     const lAngle = leftEar ? (leftEar.angle || 0) : 0;

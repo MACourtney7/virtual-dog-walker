@@ -739,6 +739,9 @@ export class EnvironmentSystem {
     ctx.lineWidth = 1.1;
     for (let i = 0; i < this.splashes.length; i++) {
       const s = this.splashes[i];
+      // Guard against invalid/non-positive radii: ctx.ellipse throws an
+      // IndexSizeError when passed a negative radius.
+      if (!Number.isFinite(s.radius) || s.radius <= 0) continue;
       const progress = 1 - (s.life / s.maxLife);
       const alpha = Math.max(0, s.alpha * (1 - progress));
       ctx.strokeStyle = `rgba(215, 235, 255, ${alpha.toFixed(2)})`;

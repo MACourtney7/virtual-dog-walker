@@ -585,9 +585,17 @@ export class Owner {
     // Record the world-space steering direction for the Wasm input vector.
     this._inputX = Math.cos(radians);
     this._inputY = Math.sin(radians);
-    // Turn-on-the-spot: while STAND, snap the facing angle immediately.
+    // Turn-on-the-spot: while STAND, snap the facing angle immediately and
+    // mirror it into the Wasm owner buffer so the next Wasm step does not
+    // whiplash the owner back to the stale pre-turn heading.
     if (this.gait === Gait.STAND) {
       this.angle = radians;
+      if (this._ownerBufferSeeded) {
+        const buf = this._getOwnerBuffer();
+        if (buf) {
+          buf[OWNER_SLOT_ANGLE] = radians;
+        }
+      }
     }
   }
 

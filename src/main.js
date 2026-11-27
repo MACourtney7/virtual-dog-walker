@@ -20,7 +20,7 @@ import { NPC_PATHS, getNpcPath } from './world/npc_paths.js';
 import { NavigationArrow } from './ui/navigation_arrow.js';
 import { weatherClient, WeatherType } from './systems/weather.js';
 import { environmentSystem, TimeOfDay } from './world/environment.js';
-import { initWasmSim, syncWorldObstacles } from './engine/wasm_sim_bridge.js';
+import { initWasmSim, getWasmSim, syncWorldObstacles, syncDogPositionToWasm } from './engine/wasm_sim_bridge.js';
 import { applyCoastalShallowWaterInteraction } from './systems/coastalWater.js';
 
 // Speed-up floating chevron badge lifetime (ms). Must stay within [400, 500].
@@ -265,8 +265,17 @@ export class CliftonDownGame {
       this.updateLocalSpawner(0);
     }
 
-    // Start 60fps loop
-    if (typeof requestAnimationFrame !== 'undefined') {
+    this._isDebugMode = typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).get('debug') === '1';
+    // In debug mode the loop starts paused at Frame 0 so E2E tests never race
+    // against a live requestAnimationFrame chain. resumeLoop() starts it.
+    this._debugPaused = this._isDebugMode;
+    if (this._isDebugMode) {
+      this._installDebugHook();
+    }
+
+    // Start 60fps loop (skipped in debug mode until resumeLoop() is called)
+    if (!this._debugPaused && typeof requestAnimationFrame !== 'undefined') {
       requestAnimationFrame((t) => this.gameLoop(t));
     }
   }
@@ -961,6 +970,23 @@ export class CliftonDownGame {
     }
     this.dog.x = targetX - 30;
     this.dog.y = targetY + 20;
+    this.dog.vx = 0;
+    this.dog.vy = 0;
+    // Mirror the teleported dog position into the Wasm dog buffer so the
+    // authoritative sims do not see stale pre-warp coordinates (which caused
+    // the on-leash clamp to yank the owner back to the old zone).
+    syncDogPositionToWasm(this.dog.x, this.dog.y);
+
+    // Snap the camera immediately to the warped owner so the camera and
+    // viewport bounds do not lag in the old zone.
+    if (this.camera && this.owner) {
+      const viewW = this.camera.viewportWidth / (this.camera.zoom || 1);
+      const viewH = this.camera.viewportHeight / (this.camera.zoom || 1);
+      const maxX = Math.max(0, (this.field ? this.field.width : 2600) - viewW);
+      const maxY = Math.max(0, (this.field ? this.field.height : 1900) - viewH);
+      this.camera.x = Math.max(0, Math.min(maxX, this.owner.x - viewW / 2));
+      this.camera.y = Math.max(0, Math.min(maxY, this.owner.y - viewH / 2));
+    }
 
     this.dog.isStray = false;
     this.dog.isLost = false;
@@ -1326,6 +1352,7 @@ export class CliftonDownGame {
   }
 
   gameLoop(timestamp) {
+    if (this._debugPaused) return;
     const dt = Math.min((timestamp - this.lastTime) / 1000, 0.1);
     this.lastTime = timestamp;
 
@@ -1634,6 +1661,282 @@ export class CliftonDownGame {
   // external callers remain valid.
   spawnSpeedBadge(_prevGait, _nextGait) {
     // Intentionally empty.
+  }
+
+  // --- Debug / E2E test hook (?debug=1) -----------------------------------
+
+  /**
+   * Installs `window.__vdwDebug`, a deterministic control surface for
+   * Playwright/Wasm end-to-end verification. Only called when the page is
+   * loaded with `?debug=1`.
+   */
+  _installDebugHook() {
+    if (typeof window === 'undefined') return;
+    const game = this;
+
+    const hook = {
+      isReady() {
+        // Only report ready once the Rust/Wasm engine is initialized, so
+        // wait_for_function never proceeds on a silent JS fallback.
+        return Boolean(getWasmSim());
+      },
+
+      pauseLoop() {
+        game._debugPaused = true;
+      },
+
+      resumeLoop() {
+        // Guard against duplicate rAF chains from repeated resumeLoop() calls.
+        if (!game._debugPaused) return;
+        game._debugPaused = false;
+        game.lastTime = typeof performance !== 'undefined' ? performance.now() : Date.now();
+        if (typeof requestAnimationFrame !== 'undefined') {
+          requestAnimationFrame((t) => game.gameLoop(t));
+        }
+      },
+
+      step(dt = 1 / 60) {
+        const start = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        game.update(dt);
+        game.render();
+        const end = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+        return { frameMs: end - start };
+      },
+
+      stepFrames(n = 1, dt = 1 / 60) {
+        const count = Math.max(0, Math.floor(Number(n) || 0));
+        let totalMs = 0;
+        let maxFrameMs = 0;
+        for (let i = 0; i < count; i++) {
+          const { frameMs } = hook.step(dt);
+          totalMs += frameMs;
+          if (frameMs > maxFrameMs) maxFrameMs = frameMs;
+        }
+        return { totalMs, maxFrameMs, snapshot: game.snapshot() };
+      },
+
+      setGait(gait) {
+        if (game.owner && typeof game.owner.setGait === 'function') {
+          game.owner.setGait(gait);
+        }
+      },
+
+      setHeading(radians) {
+        if (game.owner && typeof game.owner.setTargetHeading === 'function') {
+          game.owner.setTargetHeading(radians);
+        }
+      },
+
+      setKeys(keys = {}) {
+        if (!game.owner) return;
+        if (!game.owner.keys) game.owner.keys = {};
+        const k = game.owner.keys;
+        k.up = !!keys.up;
+        k.down = !!keys.down;
+        k.left = !!keys.left;
+        k.right = !!keys.right;
+
+        const dx = (k.right ? 1 : 0) - (k.left ? 1 : 0);
+        const dy = (k.down ? 1 : 0) - (k.up ? 1 : 0);
+        if (dx !== 0 || dy !== 0) {
+          if (typeof game.owner.setTargetHeading === 'function') {
+            game.owner.setTargetHeading(Math.atan2(dy, dx));
+          }
+          if (typeof game.owner.setGait === 'function') {
+            game.owner.setGait('WALK');
+          }
+        } else if (typeof game.owner.setGait === 'function') {
+          game.owner.setGait('STAND');
+        }
+      },
+
+      setLeash(isLeashed) {
+        if (!game.owner) return false;
+        if (Boolean(game.owner.isLeashed) !== Boolean(isLeashed)) {
+          game.toggleLeash();
+        }
+        return Boolean(game.owner.isLeashed);
+      },
+
+      unlockHome() {
+        if (game.hud) {
+          game.hud.isHomeLocked = false;
+        }
+        if (typeof document !== 'undefined') {
+          const ids = ['home-overlay', 'onboarding-overlay', 'home-sanctuary'];
+          for (const id of ids) {
+            const el = document.getElementById(id);
+            if (el) {
+              el.style.display = 'none';
+            }
+          }
+        }
+      },
+
+      warpTo(zoneId, targetX, targetY) {
+        game.warpToZone(zoneId, targetX, targetY);
+      },
+
+      getWarpGates() {
+        const gates = (game.field && game.field.warpGates) ? game.field.warpGates : [];
+        return gates.map((g) => ({
+          x: g.x,
+          y: g.y,
+          radius: g.radius || 48,
+          targetZoneId: g.targetZoneId,
+          targetX: g.targetX,
+          targetY: g.targetY
+        }));
+      },
+
+      getObstacles() {
+        if (game.field && typeof game.field.getObstacleCircles === 'function') {
+          return game.field.getObstacleCircles().map((o) => ({ x: o.x, y: o.y, r: o.r }));
+        }
+        return [];
+      },
+
+      triggerZoomies() {
+        if (!game.dog) return;
+        if (game.owner && game.owner.isLeashed) {
+          game.toggleLeash();
+        }
+        if (typeof game.dog.triggerZoomies === 'function') {
+          game.dog.triggerZoomies();
+        } else {
+          game.dog.state = DogState.ZOOMIES;
+          game.dog.zoomiesTimer = 4.5;
+          game.dog.zoomiesCooldown = 0;
+        }
+      },
+
+      advanceCareClock(ms) {
+        const store = game.dogStateStore;
+        if (!store) return;
+        const delta = Number(ms) || 0;
+        if (typeof store._advanceCare === 'function' &&
+            typeof store._lastCareNowMs === 'number') {
+          store._lastCareNowMs -= delta;
+          store._advanceCare(Date.now());
+        }
+        const needs = store._state && store._state.needs;
+        if (needs) {
+          if (needs.hunger && typeof needs.hunger.lastFedAt === 'number') {
+            needs.hunger.lastFedAt -= delta;
+          }
+          if (needs.grooming && typeof needs.grooming.lastGroomedAt === 'number') {
+            needs.grooming.lastGroomedAt -= delta;
+          }
+          if (needs.tiredness && typeof needs.tiredness.lastRestedAt === 'number') {
+            needs.tiredness.lastRestedAt -= delta;
+          }
+          if (typeof store._persist === 'function') {
+            store._persist(store._state);
+          }
+          if (typeof store._notify === 'function') {
+            store._notify(store.getSnapshot());
+          }
+        }
+      },
+
+      clearCareNeeds() {
+        const store = game.dogStateStore;
+        if (!store) return;
+        if (typeof store.feed === 'function') store.feed();
+        if (typeof store.groom === 'function') store.groom();
+        if (typeof store.rest === 'function') store.rest();
+      },
+
+      snapshot() {
+        return game.snapshot();
+      }
+    };
+
+    window.__vdwDebug = hook;
+  }
+
+  /**
+   * Returns a plain-object snapshot of the current game state for E2E tests.
+   */
+  snapshot() {
+    const owner = this.owner || {};
+    const dog = this.dog || {};
+    const store = this.dogStateStore;
+    const care = {
+      isHungry: false,
+      needsGrooming: false,
+      isTired: false
+    };
+    if (store) {
+      try {
+        if (typeof store.isHungry === 'function') care.isHungry = !!store.isHungry();
+        if (typeof store.needsGrooming === 'function') care.needsGrooming = !!store.needsGrooming();
+        if (typeof store.isTired === 'function') care.isTired = !!store.isTired();
+      } catch (_e) {
+        // Never let a care read break the snapshot.
+      }
+    }
+
+    const npcs = [];
+    if (this.npcs && typeof this.npcs.values === 'function') {
+      for (const npc of this.npcs.values()) {
+        npcs.push({
+          id: npc.id,
+          type: npc.type,
+          isJogger: Boolean(npc.isJogger),
+          x: npc.x,
+          y: npc.y,
+          vx: npc.vx || 0,
+          vy: npc.vy || 0,
+          speed: Math.hypot(npc.vx || 0, npc.vy || 0),
+          angle: npc.angle,
+          walkPhase: npc.walkPhase || 0,
+          done: Boolean(npc.done),
+          pathId: npc.pathId
+        });
+      }
+    }
+
+    return {
+      zoneId: this.currentZoneId,
+      wasmReady: Boolean(getWasmSim()),
+      camera: this.camera ? { x: this.camera.x, y: this.camera.y } : { x: 0, y: 0 },
+      world: {
+        width: (this.field && this.field.width) || 0,
+        height: (this.field && this.field.height) || 0
+      },
+      owner: {
+        x: owner.x,
+        y: owner.y,
+        vx: owner.vx,
+        vy: owner.vy,
+        speed: owner.speed,
+        angle: owner.angle,
+        gait: owner.gait,
+        walkPhase: owner.walkPhase,
+        isLeashed: !!owner.isLeashed,
+        isMoving: !!owner.isMoving
+      },
+      dog: {
+        x: dog.x,
+        y: dog.y,
+        vx: dog.vx,
+        vy: dog.vy,
+        speed: dog.speed,
+        angle: dog.angle,
+        state: dog.state,
+        gaitMode: dog.gaitMode,
+        gaitPhase: dog.gaitPhase,
+        isLeashed: !!owner.isLeashed,
+        zoomiesTimer: dog.zoomiesTimer,
+        sniffTime: dog.sniffTime,
+        poopTimer: dog.poopTimer,
+        isStray: !!dog.isStray,
+        isLost: !!dog.isLost
+      },
+      care,
+      npcs
+    };
   }
 
   render() {

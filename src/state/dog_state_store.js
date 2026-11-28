@@ -519,7 +519,7 @@ export function resolveCareBufferView(fallbackBuf) {
         return getBufferView(ptr, CARE_BUFFER_SLOTS);
       }
     }
-  } catch (_e) {
+  } catch {
     // Wasm unavailable: fall through to the local mirror.
   }
   return fallbackBuf;
@@ -541,7 +541,7 @@ export function stepCareBuffer(buf, dtMs) {
     if (sim && typeof sim.step_care_buffer === 'function') {
       return sim.step_care_buffer(dtMs) >>> 0;
     }
-  } catch (_e) {
+  } catch {
     // Wasm unavailable: fall through to the JS port.
   }
   return stepCareBufferJs(buf, dtMs);
@@ -583,7 +583,7 @@ function defaultStorage() {
     if (typeof globalThis !== 'undefined' && globalThis.localStorage) {
       return globalThis.localStorage;
     }
-  } catch (_e) {
+  } catch {
     // Access to localStorage can throw (e.g. security errors); fall through.
   }
   return null;
@@ -1032,7 +1032,7 @@ export class DogStateStore {
       if (this._storage && typeof this._storage.getItem === 'function') {
         raw = this._storage.getItem(this._storageKey);
       }
-    } catch (_e) {
+    } catch {
       raw = null;
     }
 
@@ -1066,7 +1066,7 @@ export class DogStateStore {
           }
           return backfillNeeds(parsed);
         }
-      } catch (_e) {
+      } catch {
         // Corrupt JSON: fall through to reset.
       }
     }
@@ -1085,7 +1085,7 @@ export class DogStateStore {
       if (this._storage && typeof this._storage.setItem === 'function') {
         this._storage.setItem(this._storageKey, JSON.stringify(state));
       }
-    } catch (_e) {
+    } catch {
       // Quota / security errors must not crash the store.
     }
   }
@@ -1098,7 +1098,7 @@ export class DogStateStore {
     for (const listener of Array.from(this._listeners)) {
       try {
         listener(snapshot);
-      } catch (_e) {
+      } catch {
         // Listener errors must not break other listeners.
       }
     }
@@ -1122,10 +1122,10 @@ export class DogStateStore {
   }
 
   /**
-   * @param {number} [nowMs]
+   * @param {number} [_nowMs]
    * @returns {DogStateSnapshot}
    */
-  getSnapshot(nowMs = this._now()) {
+  getSnapshot(_nowMs = this._now()) {
     // Read the care buffer directly (no re-advance) so a snapshot taken right
     // after an action reflects the timestamp just written.
     const buf = this._careView();

@@ -56,10 +56,11 @@ export interface WasmSimBridgeContract {
 
 /** Constants exported by the generated wasm bindings. */
 export interface GeneratedWasmConstants {
-  readonly WASM_VERSION: string;
-  readonly PROTOCOL_VERSION: number;
-  readonly MAX_ENTITIES: number;
-  readonly ENTITY_STRIDE: number;
-  readonly TICK_RATE: number;
-  readonly FIXED_STEP_SECONDS: number;
+  readonly world: Readonly<Record<string, number>>;
+  readonly dog: Readonly<Record<string, number>>;
+  readonly owner: Readonly<Record<string, number>>;
+  readonly care: Readonly<Record<string, number>>;
+  readonly ball: Readonly<Record<string, number>>;
+  readonly npc: Readonly<Record<string, number>>;
+  readonly collision: Readonly<Record<string, number>>;
 }

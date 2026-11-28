@@ -1,9 +1,106 @@
 // src/engine/wasm_sim_bridge.js
+// @ts-check
+// src/engine/wasm_sim_bridge.js
 // Strangler-Fig Simulation Bridge: Rust/Wasm accelerated simulation with transparent JS fallback.
 
 import { initSync, WasmWorldSim } from '../wasm_core/dog_walker_core.js';
+import { WASM_CONSTANTS } from './wasm_constants.js';
 
+/**
+ * @typedef {Object} OwnerLike
+ * @property {number} [x]
+ * @property {number} [y]
+ * @property {number} [vx]
+ * @property {number} [vy]
+ * @property {number} [angle]
+ * @property {number} [heading]
+ * @property {number} [halfWidth]
+ * @property {number} [gaitId]
+ * @property {number} [gait]
+ * @property {boolean} [isMoving]
+ * @property {boolean} [isLeashed]
+ */
+
+/**
+ * @typedef {Object} BallLike
+ * @property {number} [x]
+ * @property {number} [y]
+ * @property {number} [z]
+ * @property {number} [vx]
+ * @property {number} [vy]
+ * @property {number} [vz]
+ * @property {number} [gravity]
+ * @property {number} [restitution]
+ * @property {number} [friction]
+ * @property {boolean} [isThrown]
+ * @property {boolean} [isCarried]
+ * @property {boolean} [inOwnerPossession]
+ */
+
+/**
+ * @typedef {Object} NpcLike
+ * @property {number} [x]
+ * @property {number} [y]
+ */
+
+/**
+ * @typedef {Object} FieldLike
+ * @property {number} [width]
+ * @property {number} [height]
+ * @property {boolean} [isSunny]
+ * @property {boolean} [zoneIsSunny]
+ * @property {{ sunny?: boolean }} [zoneConfig]
+ * @property {{ active?: boolean, left?: number, top?: number, right?: number, bottom?: number } | null} [camera]
+ * @property {() => unknown} [getWorldObstacles]
+ * @property {(x: number, y: number, r: number) => { x: number, y: number }} [resolveCircleCollision]
+ */
+
+/**
+ * @typedef {Object} DogLike
+ * @property {number} [x]
+ * @property {number} [y]
+ * @property {number} [vx]
+ * @property {number} [vy]
+ * @property {number} [angle]
+ * @property {string} [state]
+ * @property {string} [roamSubMode]
+ * @property {string | null} [zoomiesPath]
+ * @property {string} [gaitMode]
+ * @property {number} [gaitPhase]
+ * @property {number} [zoomiesTimer]
+ * @property {boolean} [isOnLeash]
+ * @property {boolean} [hasBall]
+ * @property {boolean} [isHungry]
+ * @property {boolean} [needsGrooming]
+ * @property {boolean} [isTired]
+ * @property {string} [preferredSide]
+ * @property {number} [nowSec]
+ * @property {OwnerLike} [owner]
+ * @property {BallLike} [activeBall]
+ * @property {{ active?: boolean, left?: number, top?: number, right?: number, bottom?: number } | null} [camera]
+ * @property {Record<string, number>} [personality]
+ * @property {{ whistleRecall?: boolean, pet?: boolean, praise?: boolean, bark?: boolean, triggerZoomies?: boolean, fetchBall?: boolean }} [pendingCommands]
+ * @property {Array<{ x: number, y: number }>} [scents]
+ * @property {Record<string, unknown>} [dogStateStore]
+ * @property {{ angle?: number, vel?: number }} [leftEar]
+ * @property {{ angle?: number, vel?: number }} [rightEar]
+ * @property {number} [wagSpeed]
+ * @property {number} [tailAngle]
+ * @property {number} [noseTwitch]
+ * @property {{ x: number, y: number } | null} [targetSlot]
+ * @property {boolean} [isPullingLeash]
+ * @property {number} [leashTension]
+ * @property {number} [leashSagPx]
+ * @property {number} [leashVibrationPx]
+ * @property {number} [ownerClampedX]
+ * @property {number} [ownerClampedY]
+ * @property {boolean} [ownerWasClamped]
+ * @property {boolean} [ownerFrozen]
+ */
+
+/** @type {InstanceType<typeof WasmWorldSim> | null} */
 let wasmSimInstance = null;
+/** @type {Promise<InstanceType<typeof WasmWorldSim> | null> | null} */
 let initPromise = null;
 let simWorldWidth = 3200.0;
 let simWorldHeight = 2400.0;
@@ -12,14 +109,24 @@ let worldObstaclesReady = false;
 
 // --- Zero-copy step bridge state -------------------------------------------------------------
 // Raw Wasm linear memory (from initSync / default()), used to build the Float32Array view.
+/** @type {WebAssembly.Memory | null} */
 let wasmMemory = null;
 // Cached Float32Array view over the 128-slot dog buffer (recreated only on memory growth).
+/** @type {Float32Array | null} */
 let dogBufferView = null;
 // The buffer pointer the cached view was created from (0 = not yet resolved).
+/** @type {number} */
 let dogBufferPtr = 0;
 // Number of Float32 slots in the dog buffer contract.
-const DOG_BUFFER_SLOTS = 128;
+const DOG_BUFFER_SLOTS = WASM_CONSTANTS.dog.DOG_SIM_BUFFER_LEN;
 
+/**
+ * Initializes the Wasm simulation singleton (browser path). Idempotent: returns the cached
+ * instance or the in-flight init promise. Falls back to `null` in headless/non-Wasm environments.
+ * @param {number} [worldWidth]
+ * @param {number} [worldHeight]
+ * @returns {Promise<InstanceType<typeof WasmWorldSim> | null>}
+ */
 export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0) {
   simWorldWidth = worldWidth;
   simWorldHeight = worldHeight;
@@ -51,6 +158,11 @@ export async function initWasmSim(worldWidth = 3200.0, worldHeight = 2400.0) {
   return initPromise;
 }
 
+/**
+ * Returns the initialized Wasm sim singleton.
+ * @returns {InstanceType<typeof WasmWorldSim>}
+ * @throws {Error} When the Wasm sim has not been initialized.
+ */
 export function getWasmSim() {
   if (!wasmSimInstance) {
     throw new Error('Wasm sim not initialized');
@@ -59,9 +171,9 @@ export function getWasmSim() {
 }
 
 /**
- * Non-throwing Wasm availability check. Returns true only when the Wasm sim
- * singleton has been initialized. Safe to call from hot paths and headless
- * environments where Wasm may never load.
+ * Non-throwing Wasm availability check. Returns true only when the Wasm sim singleton has been
+ * initialized. Safe to call from hot paths and headless environments where Wasm may never load.
+ * @returns {boolean} True only when the Wasm sim singleton has been initialized.
  */
 export function isWasmSimReady() {
   return Boolean(wasmSimInstance);
@@ -69,7 +181,10 @@ export function isWasmSimReady() {
 
 /**
  * Returns a Float32Array view over the Wasm linear memory at `ptr` for `lengthFloats` slots.
- * Throws `Error("Wasm buffer pointer unavailable")` when the pointer or memory is unavailable.
+ * @param {number} ptr
+ * @param {number} lengthFloats
+ * @returns {Float32Array}
+ * @throws {Error} When the pointer or memory is unavailable.
  */
 export function getBufferView(ptr, lengthFloats) {
   if (!wasmMemory || !wasmMemory.buffer) {
@@ -95,6 +210,10 @@ export function getBufferView(ptr, lengthFloats) {
 /**
  * ORs `bit` (a command mask) into the Float32 slot at `offset`, preserving existing bits.
  * The slot is coerced to an unsigned 32-bit integer before the OR and written back as a float.
+ * @param {Float32Array | null} bufferView
+ * @param {number} offset
+ * @param {number} bit
+ * @returns {void}
  */
 export function writeCommandFlag(bufferView, offset, bit) {
   if (!bufferView) return;
@@ -106,20 +225,39 @@ export function writeCommandFlag(bufferView, offset, bit) {
 
 /**
  * Reads the Float32 slot at `offset` coerced to an unsigned 32-bit integer (event bitmask).
+ * @param {Float32Array | null} bufferView
+ * @param {number} offset
+ * @returns {number}
  */
 export function readEventBitmask(bufferView, offset) {
   if (!bufferView) return 0;
   return bufferView[offset | 0] >>> 0;
 }
 
+/**
+ * Returns the Node.js `process` object when running under Node, otherwise undefined.
+ * @returns {{ versions?: { node?: string }, getBuiltinModule?: (name: string) => unknown } | undefined}
+ */
+function getNodeProcess() {
+  return /** @type {{ process?: { versions?: { node?: string }, getBuiltinModule?: (name: string) => unknown } }} */ (
+    globalThis
+  ).process;
+}
+
 function isNodeRuntime() {
-  return typeof process !== 'undefined' && !!process.versions && !!process.versions.node;
+  const nodeProc = getNodeProcess();
+  return !!nodeProc && !!nodeProc.versions && !!nodeProc.versions.node;
 }
 
 /**
  * Synchronously initializes the Wasm core in Node.js. Locates the .wasm file relative to this
  * module (never the process cwd), reads it with fs.readFileSync, and calls initSync(bytes).
- * Returns the cached WasmWorldSim singleton. Throws an actionable error on failure.
+ * Returns true on success. Throws an actionable error on failure (non-Node runtime, missing
+ * built-ins, or wasm load error).
+ * @param {number} [worldWidth]
+ * @param {number} [worldHeight]
+ * @returns {boolean} True on success.
+ * @throws {Error} On failure (non-Node runtime, missing built-ins, or wasm load error).
  */
 export function initWasmSimSync(worldWidth = 3200.0, worldHeight = 2400.0) {
   simWorldWidth = worldWidth;
@@ -132,15 +270,16 @@ export function initWasmSimSync(worldWidth = 3200.0, worldHeight = 2400.0) {
   // Resolve the wasm path relative to this module, not the process cwd.
   // Node built-ins are loaded via process.getBuiltinModule() so browser bundlers never see
   // static `node:` imports and no `require()` is needed in this ESM module.
-  const getBuiltin = (typeof process !== 'undefined' && typeof process.getBuiltinModule === 'function')
-    ? process.getBuiltinModule.bind(process)
+  const nodeProc = getNodeProcess();
+  const getBuiltin = (nodeProc && typeof nodeProc.getBuiltinModule === 'function')
+    ? nodeProc.getBuiltinModule.bind(nodeProc)
     : null;
   if (!getBuiltin) {
     throw new Error('initWasmSimSync requires Node.js >= 22.3 (process.getBuiltinModule is unavailable).');
   }
-  const urlMod = getBuiltin('node:url');
-  const fs = getBuiltin('node:fs');
-  const path = getBuiltin('node:path');
+  const urlMod = /** @type {{ fileURLToPath: (u: string | URL) => string }} */ (getBuiltin('node:url'));
+  const fs = /** @type {{ readFileSync: (p: string) => Uint8Array }} */ (getBuiltin('node:fs'));
+  const path = /** @type {{ dirname: (p: string) => string, resolve: (...parts: string[]) => string }} */ (getBuiltin('node:path'));
   if (!urlMod || !fs || !path) {
     throw new Error('initWasmSimSync failed to load Node.js built-in modules (node:url, node:fs, node:path).');
   }
@@ -150,7 +289,7 @@ export function initWasmSimSync(worldWidth = 3200.0, worldHeight = 2400.0) {
   let wasmBytes;
   try {
     wasmBytes = fs.readFileSync(wasmPath);
-  } catch (e) {
+  } catch {
     throw new Error(`dog_walker_core wasm init failed: ${wasmPath}`);
   }
 
@@ -160,7 +299,7 @@ export function initWasmSimSync(worldWidth = 3200.0, worldHeight = 2400.0) {
       wasmMemory = initResult.memory;
     }
     wasmSimInstance = new WasmWorldSim(worldWidth, worldHeight);
-  } catch (e) {
+  } catch {
     throw new Error(`dog_walker_core wasm init failed: ${wasmPath}`);
   }
 
@@ -198,58 +337,58 @@ function getDogBufferView() {
 // --- NPC simulation buffer bridge (mirror npc_sim.rs) ----------------------------------------
 
 // NpcSimBuffer slot indices (0..63).
-export const NPC_SLOT_STATE = 0;
-export const NPC_SLOT_X = 1;
-export const NPC_SLOT_Y = 2;
-export const NPC_SLOT_HEADING_RAD = 3;
-export const NPC_SLOT_SPEED_SCALE = 4;
-export const NPC_SLOT_SEGMENT_INDEX = 5;
-export const NPC_SLOT_SEGMENT_T = 6;
-export const NPC_SLOT_ELAPSED_S = 7;
-export const NPC_SLOT_OPACITY = 8;
-export const NPC_SLOT_OPACITY_TARGET = 9;
-export const NPC_SLOT_DONE = 10;
-export const NPC_SLOT_IS_FINISHED_STATE = 11;
-export const NPC_SLOT_FINISH_TIME_S = 12;
-export const NPC_SLOT_FADE_START_S = 13;
-export const NPC_SLOT_FADE_ELAPSED_S = 14;
-export const NPC_SLOT_PAUSE_REMAINING_S = 15;
-export const NPC_SLOT_SPEECH_VISIBLE = 16;
-export const NPC_SLOT_SPEECH_PHRASE_ID = 17;
-export const NPC_SLOT_SPEECH_TIMER_S = 18;
-export const NPC_SLOT_SPEECH_WINDOW_S = 19;
-export const NPC_SLOT_PHRASE_TIMER_S = 20;
-export const NPC_SLOT_NEXT_SPEECH_DELAY_S = 21;
-export const NPC_SLOT_RNG_STATE = 22;
-export const NPC_SLOT_SEED = 23;
-export const NPC_SLOT_PATH_POINT_COUNT = 24;
-export const NPC_SLOT_PATH_TOTAL_LENGTH_PX = 25;
-export const NPC_SLOT_PATH_HASH = 26;
-export const NPC_SLOT_CMD_FLAGS = 27;
-export const NPC_SLOT_FADE_COMPLETED = 28;
+export const NPC_SLOT_STATE = WASM_CONSTANTS.npc.NPC_SLOT_STATE;
+export const NPC_SLOT_X = WASM_CONSTANTS.npc.NPC_SLOT_X;
+export const NPC_SLOT_Y = WASM_CONSTANTS.npc.NPC_SLOT_Y;
+export const NPC_SLOT_HEADING_RAD = WASM_CONSTANTS.npc.NPC_SLOT_HEADING_RAD;
+export const NPC_SLOT_SPEED_SCALE = WASM_CONSTANTS.npc.NPC_SLOT_SPEED_SCALE;
+export const NPC_SLOT_SEGMENT_INDEX = WASM_CONSTANTS.npc.NPC_SLOT_SEGMENT_INDEX;
+export const NPC_SLOT_SEGMENT_T = WASM_CONSTANTS.npc.NPC_SLOT_SEGMENT_T;
+export const NPC_SLOT_ELAPSED_S = WASM_CONSTANTS.npc.NPC_SLOT_ELAPSED_S;
+export const NPC_SLOT_OPACITY = WASM_CONSTANTS.npc.NPC_SLOT_OPACITY;
+export const NPC_SLOT_OPACITY_TARGET = WASM_CONSTANTS.npc.NPC_SLOT_OPACITY_TARGET;
+export const NPC_SLOT_DONE = WASM_CONSTANTS.npc.NPC_SLOT_DONE;
+export const NPC_SLOT_IS_FINISHED_STATE = WASM_CONSTANTS.npc.NPC_SLOT_IS_FINISHED_STATE;
+export const NPC_SLOT_FINISH_TIME_S = WASM_CONSTANTS.npc.NPC_SLOT_FINISH_TIME_S;
+export const NPC_SLOT_FADE_START_S = WASM_CONSTANTS.npc.NPC_SLOT_FADE_START_S;
+export const NPC_SLOT_FADE_ELAPSED_S = WASM_CONSTANTS.npc.NPC_SLOT_FADE_ELAPSED_S;
+export const NPC_SLOT_PAUSE_REMAINING_S = WASM_CONSTANTS.npc.NPC_SLOT_PAUSE_REMAINING_S;
+export const NPC_SLOT_SPEECH_VISIBLE = WASM_CONSTANTS.npc.NPC_SLOT_SPEECH_VISIBLE;
+export const NPC_SLOT_SPEECH_PHRASE_ID = WASM_CONSTANTS.npc.NPC_SLOT_SPEECH_PHRASE_ID;
+export const NPC_SLOT_SPEECH_TIMER_S = WASM_CONSTANTS.npc.NPC_SLOT_SPEECH_TIMER_S;
+export const NPC_SLOT_SPEECH_WINDOW_S = WASM_CONSTANTS.npc.NPC_SLOT_SPEECH_WINDOW_S;
+export const NPC_SLOT_PHRASE_TIMER_S = WASM_CONSTANTS.npc.NPC_SLOT_PHRASE_TIMER_S;
+export const NPC_SLOT_NEXT_SPEECH_DELAY_S = WASM_CONSTANTS.npc.NPC_SLOT_NEXT_SPEECH_DELAY_S;
+export const NPC_SLOT_RNG_STATE = WASM_CONSTANTS.npc.NPC_SLOT_RNG_STATE;
+export const NPC_SLOT_SEED = WASM_CONSTANTS.npc.NPC_SLOT_SEED;
+export const NPC_SLOT_PATH_POINT_COUNT = WASM_CONSTANTS.npc.NPC_SLOT_PATH_POINT_COUNT;
+export const NPC_SLOT_PATH_TOTAL_LENGTH_PX = WASM_CONSTANTS.npc.NPC_SLOT_PATH_TOTAL_LENGTH_PX;
+export const NPC_SLOT_PATH_HASH = WASM_CONSTANTS.npc.NPC_SLOT_PATH_HASH;
+export const NPC_SLOT_CMD_FLAGS = WASM_CONSTANTS.npc.NPC_SLOT_CMD_FLAGS;
+export const NPC_SLOT_FADE_COMPLETED = WASM_CONSTANTS.npc.NPC_SLOT_FADE_COMPLETED;
 
 // Command flags (stored in NPC_SLOT_CMD_FLAGS).
-export const NPC_CMD_RESET = 1 << 0;
-export const NPC_CMD_PAUSE = 1 << 1;
-export const NPC_CMD_RESUME = 1 << 2;
-export const NPC_CMD_SET_WALKING = 1 << 3;
-export const NPC_CMD_SET_RUNNING = 1 << 4;
-export const NPC_CMD_FORCE_SPEECH = 1 << 5;
+export const NPC_CMD_RESET = WASM_CONSTANTS.npc.NPC_CMD_RESET;
+export const NPC_CMD_PAUSE = WASM_CONSTANTS.npc.NPC_CMD_PAUSE;
+export const NPC_CMD_RESUME = WASM_CONSTANTS.npc.NPC_CMD_RESUME;
+export const NPC_CMD_SET_WALKING = WASM_CONSTANTS.npc.NPC_CMD_SET_WALKING;
+export const NPC_CMD_SET_RUNNING = WASM_CONSTANTS.npc.NPC_CMD_SET_RUNNING;
+export const NPC_CMD_FORCE_SPEECH = WASM_CONSTANTS.npc.NPC_CMD_FORCE_SPEECH;
 
 // Event bitmask constants returned from stepNpcBuffer.
-export const NPC_EVENT_RESET = 1 << 0;
-export const NPC_EVENT_PAUSED = 1 << 1;
-export const NPC_EVENT_RESUMED = 1 << 2;
-export const NPC_EVENT_STATE_CHANGED = 1 << 3;
-export const NPC_EVENT_SPEECH_TRIGGERED = 1 << 4;
-export const NPC_EVENT_SPEECH_HIDDEN = 1 << 5;
-export const NPC_EVENT_PATH_FINISHED = 1 << 6;
-export const NPC_EVENT_FADE_STARTED = 1 << 7;
-export const NPC_EVENT_FADE_COMPLETED = 1 << 8;
-export const NPC_EVENT_CMD_REJECTED = 1 << 9;
+export const NPC_EVENT_RESET = WASM_CONSTANTS.npc.NPC_EVENT_RESET;
+export const NPC_EVENT_PAUSED = WASM_CONSTANTS.npc.NPC_EVENT_PAUSED;
+export const NPC_EVENT_RESUMED = WASM_CONSTANTS.npc.NPC_EVENT_RESUMED;
+export const NPC_EVENT_STATE_CHANGED = WASM_CONSTANTS.npc.NPC_EVENT_STATE_CHANGED;
+export const NPC_EVENT_SPEECH_TRIGGERED = WASM_CONSTANTS.npc.NPC_EVENT_SPEECH_TRIGGERED;
+export const NPC_EVENT_SPEECH_HIDDEN = WASM_CONSTANTS.npc.NPC_EVENT_SPEECH_HIDDEN;
+export const NPC_EVENT_PATH_FINISHED = WASM_CONSTANTS.npc.NPC_EVENT_PATH_FINISHED;
+export const NPC_EVENT_FADE_STARTED = WASM_CONSTANTS.npc.NPC_EVENT_FADE_STARTED;
+export const NPC_EVENT_FADE_COMPLETED = WASM_CONSTANTS.npc.NPC_EVENT_FADE_COMPLETED;
+export const NPC_EVENT_CMD_REJECTED = WASM_CONSTANTS.npc.NPC_EVENT_CMD_REJECTED;
 
 // NpcSimBuffer contract constants (mirror npc_sim.rs).
-export const NPC_BUFFER_SLOTS = 64;
+export const NPC_BUFFER_SLOTS = WASM_CONSTANTS.world.NPC_SIM_BUFFER_LEN;
 export const NPC_FADE_DURATION_S = 0.5;
 export const NPC_SPEECH_WINDOW_S = 4.0;
 export const NPC_SPEECH_BASE_DELAY_S = 4.0;
@@ -526,6 +665,12 @@ function stepNpcBufferJs(buf, flat, phraseCount, dt) {
  * Advances an NPC simulation buffer by one tick. Delegates to the Wasm `step_npc_buffer`
  * authority when available, otherwise runs the exact JS fallback. `buf` is a Float32Array of
  * NPC_BUFFER_SLOTS; `flat` is the path as [x0,y0,x1,y1,...]. Returns the event bitmask.
+ * @param {Float32Array} buf Float32Array of NPC_BUFFER_SLOTS.
+ * @param {ArrayLike<number>} flat Path as [x0,y0,x1,y1,...].
+ * @param {number} phraseCount
+ * @param {number} dt Tick delta in seconds.
+ * @param {number} [slot] NPC buffer slot index.
+ * @returns {number} Event bitmask.
  */
 export function stepNpcBuffer(buf, flat, phraseCount, dt, slot = 0) {
   if (wasmSimInstance && typeof wasmSimInstance.step_npc_buffer === 'function') {
@@ -534,7 +679,7 @@ export function stepNpcBuffer(buf, flat, phraseCount, dt, slot = 0) {
       // `slot` is the NPC buffer slot index; `dt` is the tick delta in seconds.
       const resolvedSlot = Number.isFinite(slot) ? (slot | 0) : 0;
       return wasmSimInstance.step_npc_buffer(resolvedSlot, dt) >>> 0;
-    } catch (e) {
+    } catch {
       // Fall through to the JS fallback on any Wasm-side error.
     }
   }
@@ -543,7 +688,12 @@ export function stepNpcBuffer(buf, flat, phraseCount, dt, slot = 0) {
 
 // --- Enum mapping helpers (mirror dog_contract.rs) -------------------------------------------
 
-/** Maps a DogStateId numeric id to the JS dog state string. */
+/**
+ * Maps a DogStateId numeric id to the JS dog state string.
+ * @param {number} id
+ * @param {boolean} [isOnLeash]
+ * @returns {string}
+ */
 export function dogStateIdToState(id, isOnLeash = false) {
   switch (id | 0) {
     case 0: return isOnLeash ? 'FOLLOWING' : 'IDLE_SNIFF';
@@ -562,7 +712,11 @@ export function dogStateIdToState(id, isOnLeash = false) {
   }
 }
 
-/** Maps a JS dog state string to its DogStateId numeric id. */
+/**
+ * Maps a JS dog state string to its DogStateId numeric id.
+ * @param {string} state
+ * @returns {number}
+ */
 export function dogStateToId(state) {
   switch (state) {
     case 'FOLLOWING': return 1;
@@ -584,7 +738,11 @@ export function dogStateToId(state) {
   }
 }
 
-/** Maps a RoamSubModeId numeric id to the JS roam sub-mode string. */
+/**
+ * Maps a RoamSubModeId numeric id to the JS roam sub-mode string.
+ * @param {number} id
+ * @returns {string}
+ */
 export function roamSubModeIdToSubMode(id) {
   switch (id | 0) {
     case 0: return 'FREE_EXPLORE';
@@ -599,7 +757,11 @@ export function roamSubModeIdToSubMode(id) {
   }
 }
 
-/** Maps a ZoomiePathId numeric id to the JS zoomie path string (null for None). */
+/**
+ * Maps a ZoomiePathId numeric id to the JS zoomie path string (null for None).
+ * @param {number} id
+ * @returns {string | null}
+ */
 export function zoomiePathIdToPath(id) {
   switch (id | 0) {
     case 0: return null;
@@ -610,7 +772,11 @@ export function zoomiePathIdToPath(id) {
   }
 }
 
-/** Maps a GaitModeId numeric id to the JS gait mode string. */
+/**
+ * Maps a GaitModeId numeric id to the JS gait mode string.
+ * @param {number} id
+ * @returns {string}
+ */
 export function gaitModeIdToMode(id) {
   switch (id | 0) {
     case 0: return 'IDLE';
@@ -619,6 +785,15 @@ export function gaitModeIdToMode(id) {
     case 3: return 'GALLOP';
     default: return 'IDLE';
   }
+}
+
+/**
+ * Narrows a possibly-undefined numeric value to a finite number, defaulting to 0.
+ * @param {number | undefined | null} v
+ * @returns {number}
+ */
+function finiteOrZero(v) {
+  return typeof v === 'number' && Number.isFinite(v) ? v : 0;
 }
 
 function normalizeTrait(v) {
@@ -660,6 +835,13 @@ function ownerGaitToId(owner) {
 /**
  * Steps the companion dog through the Wasm authority buffer. Writes inputs [0..63], calls
  * step_dog_buffer(), hydrates outputs [64..127] onto `dog`, and returns the event bitmask.
+ * @param {DogLike} dog
+ * @param {number} dt
+ * @param {FieldLike | null} field
+ * @param {DogLike[]} otherDogs
+ * @param {BallLike | null} activeBall
+ * @param {NpcLike[]} npcs
+ * @returns {number} Event bitmask.
  */
 export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs) {
   if (!wasmSimInstance) {
@@ -676,21 +858,23 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
       : Date.now() / 1000);
 
   // Inputs [0..63]
-  buf[0] = dt;
-  buf[1] = nowSec;
-  buf[2] = owner && Number.isFinite(owner.x) ? owner.x : 0;
-  buf[3] = owner && Number.isFinite(owner.y) ? owner.y : 0;
-  buf[4] = owner && Number.isFinite(owner.vx) ? owner.vx : 0;
-  buf[5] = owner && Number.isFinite(owner.vy) ? owner.vy : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_DT] = dt;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_NOW_SEC] = nowSec;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_OWNER_X] = finiteOrZero(owner && owner.x);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_OWNER_Y] = finiteOrZero(owner && owner.y);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_OWNER_VX] = finiteOrZero(owner && owner.vx);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_OWNER_VY] = finiteOrZero(owner && owner.vy);
   const ownerHeading = owner
-    ? (Number.isFinite(owner.angle) ? owner.angle : (Number.isFinite(owner.heading) ? owner.heading : 0))
+    ? (typeof owner.angle === 'number' && Number.isFinite(owner.angle)
+      ? owner.angle
+      : finiteOrZero(owner.heading))
     : 0;
-  buf[6] = ownerHeading;
-  buf[7] = owner && Number.isFinite(owner.halfWidth) ? owner.halfWidth : 0;
-  buf[8] = ownerGaitToId(owner);
-  buf[9] = owner && owner.isMoving ? 1 : 0;
-  buf[10] = isOnLeash ? 1 : 0;
-  buf[11] = (dog && dog.preferredSide === 'right') ? 1 : -1;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_OWNER_HEADING] = ownerHeading;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_OWNER_HALF_WIDTH] = finiteOrZero(owner && owner.halfWidth);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_OWNER_GAIT_ID] = ownerGaitToId(owner);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_OWNER_IS_MOVING] = owner && owner.isMoving ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_IS_ON_LEASH] = isOnLeash ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_PREFERRED_SIDE_SIGN] = (dog && dog.preferredSide === 'right') ? 1 : -1;
   const store = (dog && dog.dogStateStore) ? dog.dogStateStore : null;
   const isHungry = store && store.isHungry != null
     ? (typeof store.isHungry === 'function' ? store.isHungry() : store.isHungry)
@@ -701,76 +885,77 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   const isTired = store && store.isTired != null
     ? (typeof store.isTired === 'function' ? store.isTired() : store.isTired)
     : (dog && dog.isTired);
-  buf[12] = isHungry ? 1 : 0;
-  buf[13] = needsGrooming ? 1 : 0;
-  buf[14] = isTired ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_IS_HUNGRY] = isHungry ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_NEEDS_GROOMING] = needsGrooming ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_IS_TIRED] = isTired ? 1 : 0;
   const ball = (activeBall != null) ? activeBall : (dog && dog.activeBall ? dog.activeBall : null);
   const ballInPlay = Boolean(ball && (ball.isThrown || (!ball.inOwnerPossession && !ball.isCarried)));
   const dogCarryingBall = Boolean(dog && dog.hasBall);
-  buf[15] = (ballInPlay || dogCarryingBall) ? 1 : 0;
-  buf[16] = ball && ball.isThrown ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_BALL_ACTIVE] = (ballInPlay || dogCarryingBall) ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_BALL_IS_THROWN] = ball && ball.isThrown ? 1 : 0;
   if (dogCarryingBall && owner) {
-    buf[17] = Number.isFinite(owner.x) ? owner.x : 0;
-    buf[18] = Number.isFinite(owner.y) ? owner.y : 0;
+    buf[WASM_CONSTANTS.dog.DOG_BUF_BALL_X] = finiteOrZero(owner.x);
+    buf[WASM_CONSTANTS.dog.DOG_BUF_BALL_Y] = finiteOrZero(owner.y);
   } else {
-    buf[17] = ball && Number.isFinite(ball.x) ? ball.x : 0;
-    buf[18] = ball && Number.isFinite(ball.y) ? ball.y : 0;
+    buf[WASM_CONSTANTS.dog.DOG_BUF_BALL_X] = finiteOrZero(ball && ball.x);
+    buf[WASM_CONSTANTS.dog.DOG_BUF_BALL_Y] = finiteOrZero(ball && ball.y);
   }
+  /** @type {{ active?: boolean, left?: number, top?: number, right?: number, bottom?: number } | null} */
   const cam = (field && field.camera) ? field.camera : ((dog && dog.camera) ? dog.camera : null);
-  buf[19] = cam && cam.active ? 1 : 0;
-  buf[20] = cam && Number.isFinite(cam.left) ? cam.left : 0;
-  buf[21] = cam && Number.isFinite(cam.top) ? cam.top : 0;
-  buf[22] = cam && Number.isFinite(cam.right) ? cam.right : 0;
-  buf[23] = cam && Number.isFinite(cam.bottom) ? cam.bottom : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_CAM_ACTIVE] = cam && cam.active ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_CAM_LEFT] = finiteOrZero(cam && cam.left);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_CAM_TOP] = finiteOrZero(cam && cam.top);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_CAM_RIGHT] = finiteOrZero(cam && cam.right);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_CAM_BOTTOM] = finiteOrZero(cam && cam.bottom);
   const isSunny = field
     ? (field.isSunny ?? field.zoneConfig?.sunny ?? field.zoneIsSunny)
     : false;
-  buf[24] = isSunny ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_ZONE_IS_SUNNY] = isSunny ? 1 : 0;
   const personality = (dog && dog.personality) ? dog.personality : {};
-  buf[25] = normalizeTrait(personality.curiosity ?? 3);
-  buf[26] = normalizeTrait(personality.energy ?? 3);
-  buf[27] = normalizeTrait(personality.stubbornness ?? 2);
-  buf[28] = normalizeTrait(personality.loyalty ?? 4);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_CURIOSITY] = normalizeTrait(personality.curiosity ?? 3);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_ENERGY] = normalizeTrait(personality.energy ?? 3);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_STUBBORNNESS] = normalizeTrait(personality.stubbornness ?? 2);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_LOYALTY] = normalizeTrait(personality.loyalty ?? 4);
   const cmds = (dog && dog.pendingCommands) ? dog.pendingCommands : null;
-  buf[29] = cmds && cmds.whistleRecall ? 1 : 0;
-  buf[30] = cmds && cmds.pet ? 1 : 0;
-  buf[31] = cmds && cmds.praise ? 1 : 0;
-  buf[32] = cmds && cmds.bark ? 1 : 0;
-  buf[33] = cmds && cmds.triggerZoomies ? 1 : 0;
-  buf[34] = cmds && cmds.fetchBall ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_CMD_WHISTLE_RECALL] = cmds && cmds.whistleRecall ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_CMD_PET] = cmds && cmds.pet ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_CMD_PRAISE] = cmds && cmds.praise ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_CMD_BARK] = cmds && cmds.bark ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_CMD_TRIGGER_ZOOMIES] = cmds && cmds.triggerZoomies ? 1 : 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_CMD_FETCH_BALL] = cmds && cmds.fetchBall ? 1 : 0;
 
   // Peers [38..45], NPCs [46..53], scents [54..61]
   const peers = Array.isArray(otherDogs) ? otherDogs.filter((p) => p && p !== dog) : [];
   const peerCount = Math.min(4, peers.length);
-  buf[35] = peerCount;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_PEER_COUNT] = peerCount;
   for (let i = 0; i < 4; i++) {
     const p = i < peerCount ? peers[i] : null;
-    writePoint(buf, 38 + i * 2, p ? p.x : NaN, p ? p.y : NaN);
+    writePoint(buf, WASM_CONSTANTS.dog.DOG_BUF_PEER0_X + i * 2, p ? p.x : NaN, p ? p.y : NaN);
   }
 
   const npcList = Array.isArray(npcs) ? npcs : [];
   const npcCount = Math.min(4, npcList.length);
-  buf[36] = npcCount;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_NPC_COUNT] = npcCount;
   for (let i = 0; i < 4; i++) {
     const n = i < npcCount ? npcList[i] : null;
-    writePoint(buf, 46 + i * 2, n ? n.x : NaN, n ? n.y : NaN);
+    writePoint(buf, WASM_CONSTANTS.dog.DOG_BUF_NPC0_X + i * 2, n ? n.x : NaN, n ? n.y : NaN);
   }
 
   const scents = (dog && Array.isArray(dog.scents)) ? dog.scents : [];
   const scentCount = Math.min(4, scents.length);
-  buf[37] = scentCount;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_SCENT_COUNT] = scentCount;
   for (let i = 0; i < 4; i++) {
     const s = i < scentCount ? scents[i] : null;
-    writePoint(buf, 54 + i * 2, s ? s.x : NaN, s ? s.y : NaN);
+    writePoint(buf, WASM_CONSTANTS.dog.DOG_BUF_SCENT0_X + i * 2, s ? s.x : NaN, s ? s.y : NaN);
   }
 
   // Seed persistent dog state slots [64..69] so the sim continues from the JS state.
-  buf[64] = Number.isFinite(dog.x) ? dog.x : 0;
-  buf[65] = Number.isFinite(dog.y) ? dog.y : 0;
-  buf[66] = Number.isFinite(dog.vx) ? dog.vx : 0;
-  buf[67] = Number.isFinite(dog.vy) ? dog.vy : 0;
-  buf[68] = Number.isFinite(dog.angle) ? dog.angle : 0;
-  buf[69] = dogStateToId(dog.state);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_DOG_X] = finiteOrZero(dog.x);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_DOG_Y] = finiteOrZero(dog.y);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_DOG_VX] = finiteOrZero(dog.vx);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_DOG_VY] = finiteOrZero(dog.vy);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_DOG_ANGLE] = finiteOrZero(dog.angle);
+  buf[WASM_CONSTANTS.dog.DOG_BUF_DOG_STATE_ID] = dogStateToId(dog.state || '');
 
   // Step the authoritative simulation.
   wasmSimInstance.step_dog_buffer();
@@ -789,94 +974,107 @@ export function stepCompanionDogWasm(dog, dt, field, otherDogs, activeBall, npcs
   }
 
   // Outputs [64..127]
-  dog.x = outBuf[64];
-  dog.y = outBuf[65];
-  dog.vx = outBuf[66];
-  dog.vy = outBuf[67];
-  dog.angle = outBuf[68];
-  dog.state = dogStateIdToState(outBuf[69], isOnLeash);
-  dog.roamSubMode = roamSubModeIdToSubMode(outBuf[70]);
-  const zoomiePathId = outBuf[71] | 0;
+  dog.x = outBuf[WASM_CONSTANTS.dog.DOG_BUF_DOG_X];
+  dog.y = outBuf[WASM_CONSTANTS.dog.DOG_BUF_DOG_Y];
+  dog.vx = outBuf[WASM_CONSTANTS.dog.DOG_BUF_DOG_VX];
+  dog.vy = outBuf[WASM_CONSTANTS.dog.DOG_BUF_DOG_VY];
+  dog.angle = outBuf[WASM_CONSTANTS.dog.DOG_BUF_DOG_ANGLE];
+  dog.state = dogStateIdToState(outBuf[WASM_CONSTANTS.dog.DOG_BUF_DOG_STATE_ID], isOnLeash);
+  dog.roamSubMode = roamSubModeIdToSubMode(outBuf[WASM_CONSTANTS.dog.DOG_BUF_ROAM_SUBMODE_ID]);
+  const zoomiePathId = outBuf[WASM_CONSTANTS.dog.DOG_BUF_ZOOMIE_PATH_ID] | 0;
   if (zoomiePathId !== 0) {
     dog.zoomiesPath = zoomiePathIdToPath(zoomiePathId);
   } else if (!dog.zoomiesPath) {
     dog.zoomiesPath = 'FIGURE_EIGHT';
   }
-  dog.gaitMode = gaitModeIdToMode(outBuf[72]);
+  dog.gaitMode = gaitModeIdToMode(outBuf[WASM_CONSTANTS.dog.DOG_BUF_GAIT_MODE_ID]);
   // DOG_BUF_GAIT_PHASE is normalized in [0.0, 1.0); CompanionDog.draw() feeds gaitPhase
   // directly into Math.sin(), which expects radians in [0, 2*PI).
-  dog.gaitPhase = outBuf[73] * Math.PI * 2;
-  // DOG_BUF_ZOOMIES_TIMER (slot 78): live Wasm zoomies countdown for JS UI/snapshots.
-  dog.zoomiesTimer = outBuf[78];
+  dog.gaitPhase = outBuf[WASM_CONSTANTS.dog.DOG_BUF_GAIT_PHASE] * Math.PI * 2;
+  // DOG_BUF_ZOOMIES_TIMER: live Wasm zoomies countdown for JS UI/snapshots.
+  dog.zoomiesTimer = outBuf[WASM_CONSTANTS.dog.DOG_BUF_ZOOMIES_TIMER];
 
   dog.leftEar = dog.leftEar || {};
-  dog.leftEar.angle = outBuf[108];
-  dog.leftEar.vel = outBuf[109];
+  dog.leftEar.angle = outBuf[WASM_CONSTANTS.dog.DOG_BUF_LEFT_EAR_ANGLE];
+  dog.leftEar.vel = outBuf[WASM_CONSTANTS.dog.DOG_BUF_LEFT_EAR_VEL];
   dog.rightEar = dog.rightEar || {};
-  dog.rightEar.angle = outBuf[110];
-  dog.rightEar.vel = outBuf[111];
-  dog.wagSpeed = outBuf[112];
-  dog.tailAngle = outBuf[113];
-  dog.noseTwitch = outBuf[114];
+  dog.rightEar.angle = outBuf[WASM_CONSTANTS.dog.DOG_BUF_RIGHT_EAR_ANGLE];
+  dog.rightEar.vel = outBuf[WASM_CONSTANTS.dog.DOG_BUF_RIGHT_EAR_VEL];
+  dog.wagSpeed = outBuf[WASM_CONSTANTS.dog.DOG_BUF_WAG_SPEED];
+  dog.tailAngle = outBuf[WASM_CONSTANTS.dog.DOG_BUF_TAIL_ANGLE];
+  dog.noseTwitch = outBuf[WASM_CONSTANTS.dog.DOG_BUF_NOSE_TWITCH];
   dog.targetSlot = isOnLeash
-    ? { x: outBuf[115], y: outBuf[116] }
+    ? { x: outBuf[WASM_CONSTANTS.dog.DOG_BUF_TARGET_SLOT_X], y: outBuf[WASM_CONSTANTS.dog.DOG_BUF_TARGET_SLOT_Y] }
     : null;
 
-  const leashFlags = outBuf[117] | 0;
+  const leashFlags = outBuf[WASM_CONSTANTS.dog.DOG_BUF_LEASH_FLAGS] | 0;
   dog.isPullingLeash = (leashFlags & 1) !== 0;
-  dog.leashTension = outBuf[118];
-  dog.leashSagPx = outBuf[119];
-  dog.leashVibrationPx = outBuf[120];
-  dog.ownerClampedX = outBuf[121];
-  dog.ownerClampedY = outBuf[122];
-  const ownerFlags = outBuf[123] | 0;
+  dog.leashTension = outBuf[WASM_CONSTANTS.dog.DOG_BUF_LEASH_TENSION];
+  dog.leashSagPx = outBuf[WASM_CONSTANTS.dog.DOG_BUF_LEASH_SAG_PX];
+  dog.leashVibrationPx = outBuf[WASM_CONSTANTS.dog.DOG_BUF_LEASH_VIBRATION_PX];
+  dog.ownerClampedX = outBuf[WASM_CONSTANTS.dog.DOG_BUF_OWNER_CLAMPED_X];
+  dog.ownerClampedY = outBuf[WASM_CONSTANTS.dog.DOG_BUF_OWNER_CLAMPED_Y];
+  const ownerFlags = outBuf[WASM_CONSTANTS.dog.DOG_BUF_OWNER_FLAGS] | 0;
   dog.ownerWasClamped = (ownerFlags & 1) !== 0;
   dog.ownerFrozen = (ownerFlags & 2) !== 0;
 
-  return outBuf[127] | 0;
+  return outBuf[WASM_CONSTANTS.dog.DOG_BUF_EVENT_BITMASK] | 0;
 }
 
 /**
- * Mirrors the dog's on-leash flag into the persistent Wasm dog buffer input
- * slot (index 10) so the authoritative sim sees the current leash state even
- * when the JS-side toggle happens outside a normal step. Returns true when the
- * buffer was updated.
+ * Mirrors the dog's on-leash flag into the persistent Wasm dog buffer input slot (index 10) so
+ * the authoritative sim sees the current leash state even when the JS-side toggle happens
+ * outside a normal step. Returns true when the buffer was updated.
+ * @param {boolean} isOnLeash
+ * @returns {boolean} True when the buffer was updated.
  */
 export function syncDogLeashToWasm(isOnLeash) {
   let buf = null;
   try {
     buf = getDogBufferView();
-  } catch (e) {
+  } catch {
     return false;
   }
   if (!buf) return false;
-  if (buf[0] <= 0) buf[0] = 1 / 60;
-  buf[10] = isOnLeash ? 1 : 0;
+  if (buf[WASM_CONSTANTS.dog.DOG_BUF_DT] <= 0) buf[WASM_CONSTANTS.dog.DOG_BUF_DT] = 1 / 60;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_IS_ON_LEASH] = isOnLeash ? 1 : 0;
   return true;
 }
 
 /**
- * Mirrors a teleported dog position into the persistent Wasm dog buffer so
- * `owner_sim.rs` and `dog_utility_ai.rs` do not see stale pre-warp dog
- * coordinates (which caused the on-leash clamp to yank the owner back to the
- * old zone). Returns true when the buffer was updated.
+ * Mirrors a teleported dog position into the persistent Wasm dog buffer so `owner_sim.rs` and
+ * `dog_utility_ai.rs` do not see stale pre-warp dog coordinates (which caused the on-leash clamp
+ * to yank the owner back to the old zone). Returns true when the buffer was updated.
+ * @param {number} x
+ * @param {number} y
+ * @returns {boolean} True when the buffer was updated.
  */
 export function syncDogPositionToWasm(x, y) {
   if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
   let buf = null;
   try {
     buf = getDogBufferView();
-  } catch (e) {
+  } catch {
     return false;
   }
   if (!buf) return false;
-  buf[64] = x;
-  buf[65] = y;
-  buf[66] = 0; // vx
-  buf[67] = 0; // vy
+  buf[WASM_CONSTANTS.dog.DOG_BUF_DOG_X] = x;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_DOG_Y] = y;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_DOG_VX] = 0;
+  buf[WASM_CONSTANTS.dog.DOG_BUF_DOG_VY] = 0;
   return true;
 }
 
+/**
+ * Steps both ear springs (Wasm authority, exact JS fallback).
+ * @param {{ angle?: number, vel?: number, v?: number } | null} leftEar
+ * @param {{ angle?: number, vel?: number, v?: number } | null} rightEar
+ * @param {number} dogVx
+ * @param {number} dogVy
+ * @param {number} dogAngle
+ * @param {number} dt
+ * @returns {void}
+ */
 export function stepEarSprings(leftEar, rightEar, dogVx, dogVy, dogAngle, dt) {
   if (wasmSimInstance && typeof wasmSimInstance.step_ears === 'function') {
     const lAngle = leftEar ? (leftEar.angle || 0) : 0;
@@ -927,6 +1125,16 @@ export function stepEarSprings(leftEar, rightEar, dogVx, dogVy, dogAngle, dt) {
   }
 }
 
+/**
+ * Applies the leash constraint to the dog (Wasm authority, exact JS fallback).
+ * @param {{ x: number, y: number, vx: number, vy: number }} dog
+ * @param {{ x: number, y: number }} owner
+ * @param {number} maxLength
+ * @param {number} stiffness
+ * @param {number} damping
+ * @param {number} dt
+ * @returns {boolean} True when the leash is taut.
+ */
 export function stepLeashConstraint(dog, owner, maxLength, stiffness, damping, dt) {
   if (wasmSimInstance) {
     const res = wasmSimInstance.step_leash(
@@ -970,6 +1178,15 @@ export function stepLeashConstraint(dog, owner, maxLength, stiffness, damping, d
   return false;
 }
 
+/**
+ * Resolves a circle entity against world bounds and colliders (Wasm authority, JS fallback).
+ * @param {{ x: number, y: number }} entity
+ * @param {number} radius
+ * @param {number} worldW
+ * @param {number} worldH
+ * @param {{ x: number, y: number, r: number }[]} [colliders]
+ * @returns {void}
+ */
 export function resolveWorldCollision(entity, radius, worldW, worldH, colliders = []) {
   if (wasmSimInstance) {
     const res = wasmSimInstance.resolve_collision(entity.x, entity.y, radius);
@@ -999,6 +1216,14 @@ export function resolveWorldCollision(entity, radius, worldW, worldH, colliders 
   entity.y = Math.max(margin, Math.min(worldH - margin, entity.y));
 }
 
+/**
+ * Samples an NPC's state along a waypoint path at time `now` (Wasm authority, JS fallback).
+ * @param {number[][]} waypoints
+ * @param {number} speed
+ * @param {number} spawnTime
+ * @param {number} now
+ * @returns {{ x: number, y: number, vx: number, vy: number, angle: number, walkPhase: number, opacity: number, finished: boolean }}
+ */
 export function sampleNpcState(waypoints, speed, spawnTime, now) {
   if (wasmSimInstance && waypoints && waypoints.length >= 2) {
     const flat = [];
@@ -1083,6 +1308,8 @@ export function sampleNpcState(waypoints, speed, spawnTime, now) {
 /**
  * Uploads the exact field obstacle set to the Wasm sim so `resolveFieldCollision` can delegate.
  * Safe to call repeatedly (e.g. after the field is rebuilt). Returns true when Wasm is active.
+ * @param {FieldLike | null} field
+ * @returns {boolean} True when Wasm is active and the upload succeeded.
  */
 export function syncWorldObstacles(field) {
   worldObstaclesReady = false;
@@ -1091,17 +1318,26 @@ export function syncWorldObstacles(field) {
   if (field.width !== simWorldWidth || field.height !== simWorldHeight) return false;
   try {
     worldObstaclesReady = wasmSimInstance.set_world_obstacles(JSON.stringify(field.getWorldObstacles())) === true;
-  } catch (e) {
+  } catch {
     worldObstaclesReady = false;
   }
   return worldObstaclesReady;
 }
 
+/**
+ * @returns {boolean} True once the field obstacle set has been uploaded to the Wasm sim.
+ */
 export function isWorldObstaclesReady() {
   return worldObstaclesReady;
 }
 
-/** Resolves a circle entity against the field (Wasm authority, `field.resolveCircleCollision` fallback). */
+/**
+ * Resolves a circle entity against the field (Wasm authority, `field.resolveCircleCollision` fallback).
+ * @param {{ x: number, y: number }} entity
+ * @param {number} radius
+ * @param {FieldLike | null} field
+ * @returns {void}
+ */
 export function resolveFieldCollision(entity, radius, field) {
   if (wasmSimInstance && worldObstaclesReady && typeof wasmSimInstance.resolve_field_collision === 'function') {
     const res = wasmSimInstance.resolve_field_collision(entity.x, entity.y, radius);
@@ -1110,13 +1346,24 @@ export function resolveFieldCollision(entity, radius, field) {
     return;
   }
   if (field) {
-    const resolved = field.resolveCircleCollision(entity.x, entity.y, radius);
+    const resolved = /** @type {{ resolveCircleCollision: (x: number, y: number, r: number) => { x: number, y: number } }} */ (field)
+      .resolveCircleCollision(entity.x, entity.y, radius);
     entity.x = resolved.x;
     entity.y = resolved.y;
   }
 }
 
-/** Integrates both ear springs towards JS-computed targets (Wasm authority, exact JS fallback). */
+/**
+ * Integrates both ear springs towards JS-computed targets (Wasm authority, exact JS fallback).
+ * @param {{ angle: number, vel: number }} leftEar
+ * @param {{ angle: number, vel: number }} rightEar
+ * @param {number} targetLeft
+ * @param {number} targetRight
+ * @param {number} springK
+ * @param {number} springDamp
+ * @param {number} dt
+ * @returns {void}
+ */
 export function stepEarSpringsToTargets(leftEar, rightEar, targetLeft, targetRight, springK, springDamp, dt) {
   if (wasmSimInstance && typeof wasmSimInstance.step_ear_targets === 'function') {
     const res = wasmSimInstance.step_ear_targets(
@@ -1144,6 +1391,10 @@ export function stepEarSpringsToTargets(leftEar, rightEar, targetLeft, targetRig
  * One 2.5D tennis-ball ballistic step (gravity, bounce, rolling friction, world-edge bounce).
  * `ball` needs x,y,z,vx,vy,vz,gravity,restitution,friction. Wasm authority only when the ball
  * uses the default TennisBall tuning (so custom-tuned balls keep exact JS behaviour).
+ * @param {{ x: number, y: number, z: number, vx: number, vy: number, vz: number, gravity: number, restitution: number, friction: number }} ball
+ * @param {number} dt
+ * @param {{ width: number, height: number } | null} field
+ * @returns {void}
  */
 export function stepToyBall(ball, dt, field) {
   const usesDefaults = ball.gravity === 720 && ball.restitution === 0.62 && ball.friction === 0.94;
@@ -1195,6 +1446,10 @@ export function stepToyBall(ball, dt, field) {
  * Samples the in-progress part of an NPC polyline path (exact port of the interpolating branch
  * of ParkNPC.setClock). `flat` = Float64Array/array [x0,y0,x1,y1,...]. Returns
  * {x,y,vx,vy,angle,hasAngle}. Wasm authority with exact JS fallback.
+ * @param {number[] | Float64Array} flat Path as [x0,y0,x1,y1,...].
+ * @param {number} speed
+ * @param {number} distance
+ * @returns {{ x: number, y: number, vx: number, vy: number, angle: number, hasAngle: boolean }}
  */
 export function sampleNpcPath(flat, speed, distance) {
   if (wasmSimInstance && typeof wasmSimInstance.sample_npc_path === 'function') {

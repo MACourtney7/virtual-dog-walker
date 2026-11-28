@@ -91,7 +91,7 @@ class TestCompanionDogPhase3Mechanics(unittest.TestCase):
         self.assertIn("DOG_EVENT_SCENT_DEPOSITED", self.utility_ai_code)
         self.assertIn("DOG_BUF_NOSE_TWITCH", self.utility_ai_code)
         # Bridge hydrates the nose twitch output slot onto the dog.
-        self.assertIn("dog.noseTwitch = outBuf[114]", self.bridge_code)
+        self.assertIn("dog.noseTwitch = outBuf[WASM_CONSTANTS.dog.DOG_BUF_NOSE_TWITCH]", self.bridge_code)
         # JS executes the SCENT_DEPOSITED event by depositing a scent trail.
         self.assertIn("DogEventBit.SCENT_DEPOSITED", self.dog_code)
         self.assertIn("field?.addScent?.(this.x, this.y, 'dog', this)", self.dog_code)
@@ -131,8 +131,8 @@ class TestCompanionDogPhase3Mechanics(unittest.TestCase):
         self.assertIn("GaitModeId::Walk", self.utility_ai_code)
         self.assertIn("DOG_EVENT_GALLOP_PUFF", self.utility_ai_code)
         # Bridge hydrates gait mode/phase output slots onto the dog.
-        self.assertIn("dog.gaitMode = gaitModeIdToMode(outBuf[72])", self.bridge_code)
-        self.assertIn("dog.gaitPhase = outBuf[73]", self.bridge_code)
+        self.assertIn("dog.gaitMode = gaitModeIdToMode(outBuf[WASM_CONSTANTS.dog.DOG_BUF_GAIT_MODE_ID])", self.bridge_code)
+        self.assertIn("dog.gaitPhase = outBuf[WASM_CONSTANTS.dog.DOG_BUF_GAIT_PHASE]", self.bridge_code)
         # JS renders the gait and executes the GALLOP_PUFF event.
         self.assertIn("this.gaitMode", self.dog_code)
         self.assertIn("this.gaitPhase", self.dog_code)

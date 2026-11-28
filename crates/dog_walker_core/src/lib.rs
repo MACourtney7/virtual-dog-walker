@@ -8,6 +8,7 @@ pub mod dog_utility_ai;
 pub mod math;
 pub mod npc_sim;
 pub mod owner_sim;
+pub mod wasm_contract_export;
 pub mod world_contract;
 
 use ball_physics::{step_ball_buffer, step_toy_ball, BallSim, BallStepContext};

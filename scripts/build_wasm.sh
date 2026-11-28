@@ -6,6 +6,15 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ZERO_PROTOCOL_DIR="${PROJECT_ROOT}/../zero_protocol"
 OUT_DIR_MESH="${PROJECT_ROOT}/src/wasm"
 OUT_DIR_CORE="${PROJECT_ROOT}/src/wasm_core"
+CONSTANTS_OUT="${PROJECT_ROOT}/src/engine/wasm_constants.js"
+CONSTANTS_TMP=""
+
+cleanup_constants_tmp() {
+    if [[ -n "${CONSTANTS_TMP}" && -f "${CONSTANTS_TMP}" ]]; then
+        rm -f "${CONSTANTS_TMP}"
+    fi
+}
+trap cleanup_constants_tmp EXIT
 
 echo "=== Building zero_mesh WebAssembly Package ==="
 if [[ ! -f "${ZERO_PROTOCOL_DIR}/crates/zero_mesh/Cargo.toml" ]]; then
@@ -61,6 +70,20 @@ if [[ ! -f "${OUT_DIR_CORE}/dog_walker_core.js" || ! -f "${OUT_DIR_CORE}/dog_wal
     exit 1
 fi
 echo "✅ dog_walker_core Wasm bundle built into ${OUT_DIR_CORE}"
+
+echo "=== Generating wasm_constants.js from dog_walker_core ==="
+mkdir -p "$(dirname "${CONSTANTS_OUT}")"
+CONSTANTS_TMP="$(mktemp "${CONSTANTS_OUT}.XXXXXX")"
+if ! cargo run --quiet --bin export_wasm_constants \
+    --manifest-path "${PROJECT_ROOT}/crates/dog_walker_core/Cargo.toml" -- --format js \
+    > "${CONSTANTS_TMP}"; then
+    echo "Error: failed to generate wasm constants; leaving ${CONSTANTS_OUT} untouched." >&2
+    exit 1
+fi
+chmod 644 "${CONSTANTS_TMP}"
+mv -f "${CONSTANTS_TMP}" "${CONSTANTS_OUT}"
+CONSTANTS_TMP=""
+echo "✅ wasm_constants.js generated at ${CONSTANTS_OUT}"
 
 echo "=== Syncing ZeroChatWidget from zero_chat ==="
 ZERO_CHAT_DIR="${PROJECT_ROOT}/../zero_chat"

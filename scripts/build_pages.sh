@@ -39,8 +39,7 @@ cp "${PROJECT_ROOT}/index.html" "${DIST_DIR}/"
 cp -r "${PROJECT_ROOT}/src" "${DIST_DIR}/"
 
 # Prune non-runtime files that might exist inside src/
-find "${DIST_DIR}" -type f \( -name "*.py" -o -name "*.md" -o -name "*.rs" -o -name "Cargo.toml" -o -name "Cargo.lock" \) -delete
-find "${DIST_DIR}" -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+"${PROJECT_ROOT}/scripts/prune_dist.sh" "${DIST_DIR}"
 
 # Verify dist mirrors source for critical runtime files.
 if [[ -f "${PROJECT_ROOT}/src/net/zero_mesh_network.js" ]]; then

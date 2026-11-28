@@ -5,117 +5,334 @@
 // (crates/dog_walker_core/src/care_sim.rs). Timer advancement and
 // accept/reject logic are delegated to `step_care_buffer(dtMs)` when the
 // Wasm core is available; otherwise an exact JS port of `care_sim.rs` runs.
+// @ts-check
 
 import { getWasmSim, getBufferView } from '../engine/wasm_sim_bridge.js';
+import { WASM_CONSTANTS } from '../engine/wasm_constants.js';
 
+/**
+ * @typedef {import('../types/wasm_contracts').GeneratedWasmConstants} GeneratedWasmConstants
+ */
+
+/**
+ * Persisted hunger need record.
+ * @typedef {object} HungerNeedState
+ * @property {number} lastFedAt Epoch ms of the last feed (or initial creation).
+ * @property {number} lastCompletedAt Epoch ms mirror of `lastFedAt`.
+ * @property {number} durationMs Hunger timer duration in ms.
+ */
+
+/**
+ * Persisted grooming need record.
+ * @typedef {object} GroomingNeedState
+ * @property {number | null} lastGroomedAt Epoch ms of the last groom, or null.
+ * @property {number} durationMs Grooming timer duration in ms.
+ */
+
+/**
+ * Persisted tiredness need record.
+ * @typedef {object} TirednessNeedState
+ * @property {number | null} lastRestedAt Epoch ms of the last rest, or null.
+ * @property {number} durationMs Tiredness timer duration in ms.
+ */
+
+/**
+ * Persisted needs container.
+ * @typedef {object} DogNeedsState
+ * @property {HungerNeedState} hunger
+ * @property {GroomingNeedState} grooming
+ * @property {TirednessNeedState} tiredness
+ */
+
+/**
+ * Persisted dog state shape (version 1).
+ * @typedef {object} DogState
+ * @property {1} version
+ * @property {DogNeedsState} needs
+ */
+
+/**
+ * Derived hunger snapshot.
+ * @typedef {object} HungerSnapshot
+ * @property {number} lastFedAt
+ * @property {number} durationMs
+ * @property {number} elapsedMs
+ * @property {number} remainingMs
+ * @property {number} hungryAt
+ * @property {boolean} isHungry
+ */
+
+/**
+ * Derived grooming snapshot.
+ * @typedef {object} GroomingSnapshot
+ * @property {number | null} lastGroomedAt
+ * @property {number} durationMs
+ * @property {number | null} elapsedMs
+ * @property {number} remainingMs
+ * @property {boolean} needsGrooming
+ */
+
+/**
+ * Derived tiredness snapshot.
+ * @typedef {object} TirednessSnapshot
+ * @property {number | null} lastRestedAt
+ * @property {number} durationMs
+ * @property {number | null} elapsedMs
+ * @property {number} remainingMs
+ * @property {boolean} isTired
+ */
+
+/**
+ * Combined derived needs snapshot.
+ * @typedef {object} NeedsSnapshot
+ * @property {HungerSnapshot} hunger
+ * @property {GroomingSnapshot} grooming
+ * @property {TirednessSnapshot} tiredness
+ */
+
+/**
+ * Snapshot emitted to subscribers and returned by action methods.
+ * @typedef {object} DogStateSnapshot
+ * @property {1} version
+ * @property {DogNeedsState & { hunger: HungerSnapshot }} needs
+ */
+
+/**
+ * Result of issuing a care command.
+ * @typedef {object} CareCommandResult
+ * @property {DogStateSnapshot} snapshot
+ * @property {number} events Event bitmask.
+ */
+
+/**
+ * Minimal storage interface (subset of `Storage`).
+ * @typedef {object} DogStateStorage
+ * @property {(key: string) => (string | null)} getItem
+ * @property {(key: string, value: string) => void} setItem
+ */
+
+/**
+ * @callback DogStateListener
+ * @param {DogStateSnapshot} snapshot
+ * @returns {void}
+ */
+
+/**
+ * @callback NowFn
+ * @returns {number}
+ */
+
+/**
+ * Options accepted by the {@link DogStateStore} constructor.
+ * @typedef {object} DogStateStoreOptions
+ * @property {DogStateStorage | null} [storage]
+ * @property {NowFn} [now]
+ * @property {string} [storageKey]
+ * @property {number} [hungerDurationMs]
+ */
+
+/** @type {string} */
 export const DOG_STATE_STORAGE_KEY = 'virtual_dog_walker.dog_state.v1';
+/** @type {number} */
 export const DEFAULT_HUNGER_DURATION_MS = 120000; // 2 minutes
+/** @type {number} */
 export const DEFAULT_GROOMING_DURATION_MS = 180000; // 3 minutes
+/** @type {number} */
 export const DEFAULT_TIREDNESS_DURATION_MS = 180000; // 3 minutes
+/** @type {number} */
 export const DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = 5000; // 5 seconds
 
 // ---------------------------------------------------------------------------
 // CareSimBuffer slot layout (mirror crates/dog_walker_core/src/care_sim.rs).
 // ---------------------------------------------------------------------------
 
-export const CARE_BUFFER_SLOTS = 32;
-export const CARE_SLOT_LAST_STEP_DT_MS = 0;
-export const CARE_SLOT_NOW_MS = 1;
-export const CARE_SLOT_HUNGER_ELAPSED_MS = 2;
-export const CARE_SLOT_HUNGER_REMAINING_MS = 3;
-export const CARE_SLOT_GROOMING_ELAPSED_MS = 4;
-export const CARE_SLOT_GROOMING_REMAINING_MS = 5;
-export const CARE_SLOT_TIREDNESS_ELAPSED_MS = 6;
-export const CARE_SLOT_TIREDNESS_REMAINING_MS = 7;
-export const CARE_SLOT_IS_HUNGRY = 8;
-export const CARE_SLOT_NEEDS_GROOMING = 9;
-export const CARE_SLOT_IS_TIRED = 10;
-export const CARE_SLOT_ACTION_FLAGS = 11;
-export const CARE_SLOT_EVENT_BITMASK = 12;
-export const CARE_SLOT_REJECTION_ANIM_TIMER_MS = 13;
-export const CARE_SLOT_FEED_FLASH_TIMER_MS = 14;
-export const CARE_SLOT_GROOM_FLASH_TIMER_MS = 15;
-export const CARE_SLOT_REST_FLASH_TIMER_MS = 16;
-export const CARE_SLOT_HUNGER_LAST_FED_MS = 17;
-export const CARE_SLOT_GROOMING_LAST_GROOMED_MS = 18;
-export const CARE_SLOT_TIREDNESS_LAST_RESTED_MS = 19;
-export const CARE_SLOT_LAST_ACTION_ELAPSED_MS = 20;
-export const CARE_SLOT_FEED_COUNT = 21;
-export const CARE_SLOT_GROOM_COUNT = 22;
-export const CARE_SLOT_REST_COUNT = 23;
-export const CARE_SLOT_LAST_ACTION = 24;
-export const CARE_SLOT_UI_TOAST_KIND = 25;
-export const CARE_SLOT_REJECTION_KIND = 26;
-export const CARE_SLOT_HUNGER_DURATION_MS = 27;
-export const CARE_SLOT_GROOMING_DURATION_MS = 28;
-export const CARE_SLOT_TIREDNESS_DURATION_MS = 29;
+/** @type {number} */
+export const CARE_BUFFER_SLOTS = WASM_CONSTANTS.world.CARE_SIM_BUFFER_LEN;
+/** @type {number} */
+export const CARE_SLOT_LAST_STEP_DT_MS = WASM_CONSTANTS.care.CARE_SLOT_LAST_STEP_DT_MS;
+/** @type {number} */
+export const CARE_SLOT_NOW_MS = WASM_CONSTANTS.care.CARE_SLOT_NOW_MS;
+/** @type {number} */
+export const CARE_SLOT_HUNGER_ELAPSED_MS = WASM_CONSTANTS.care.CARE_SLOT_HUNGER_ELAPSED_MS;
+/** @type {number} */
+export const CARE_SLOT_HUNGER_REMAINING_MS = WASM_CONSTANTS.care.CARE_SLOT_HUNGER_REMAINING_MS;
+/** @type {number} */
+export const CARE_SLOT_GROOMING_ELAPSED_MS = WASM_CONSTANTS.care.CARE_SLOT_GROOMING_ELAPSED_MS;
+/** @type {number} */
+export const CARE_SLOT_GROOMING_REMAINING_MS = WASM_CONSTANTS.care.CARE_SLOT_GROOMING_REMAINING_MS;
+/** @type {number} */
+export const CARE_SLOT_TIREDNESS_ELAPSED_MS = WASM_CONSTANTS.care.CARE_SLOT_TIREDNESS_ELAPSED_MS;
+/** @type {number} */
+export const CARE_SLOT_TIREDNESS_REMAINING_MS = WASM_CONSTANTS.care.CARE_SLOT_TIREDNESS_REMAINING_MS;
+/** @type {number} */
+export const CARE_SLOT_IS_HUNGRY = WASM_CONSTANTS.care.CARE_SLOT_IS_HUNGRY;
+/** @type {number} */
+export const CARE_SLOT_NEEDS_GROOMING = WASM_CONSTANTS.care.CARE_SLOT_NEEDS_GROOMING;
+/** @type {number} */
+export const CARE_SLOT_IS_TIRED = WASM_CONSTANTS.care.CARE_SLOT_IS_TIRED;
+/** @type {number} */
+export const CARE_SLOT_ACTION_FLAGS = WASM_CONSTANTS.care.CARE_SLOT_ACTION_FLAGS;
+/** @type {number} */
+export const CARE_SLOT_EVENT_BITMASK = WASM_CONSTANTS.care.CARE_SLOT_EVENT_BITMASK;
+/** @type {number} */
+export const CARE_SLOT_REJECTION_ANIM_TIMER_MS = WASM_CONSTANTS.care.CARE_SLOT_REJECTION_ANIM_TIMER_MS;
+/** @type {number} */
+export const CARE_SLOT_FEED_FLASH_TIMER_MS = WASM_CONSTANTS.care.CARE_SLOT_FEED_FLASH_TIMER_MS;
+/** @type {number} */
+export const CARE_SLOT_GROOM_FLASH_TIMER_MS = WASM_CONSTANTS.care.CARE_SLOT_GROOM_FLASH_TIMER_MS;
+/** @type {number} */
+export const CARE_SLOT_REST_FLASH_TIMER_MS = WASM_CONSTANTS.care.CARE_SLOT_REST_FLASH_TIMER_MS;
+/** @type {number} */
+export const CARE_SLOT_HUNGER_LAST_FED_MS = WASM_CONSTANTS.care.CARE_SLOT_HUNGER_LAST_FED_MS;
+/** @type {number} */
+export const CARE_SLOT_GROOMING_LAST_GROOMED_MS = WASM_CONSTANTS.care.CARE_SLOT_GROOMING_LAST_GROOMED_MS;
+/** @type {number} */
+export const CARE_SLOT_TIREDNESS_LAST_RESTED_MS = WASM_CONSTANTS.care.CARE_SLOT_TIREDNESS_LAST_RESTED_MS;
+/** @type {number} */
+export const CARE_SLOT_LAST_ACTION_ELAPSED_MS = WASM_CONSTANTS.care.CARE_SLOT_LAST_ACTION_ELAPSED_MS;
+/** @type {number} */
+export const CARE_SLOT_FEED_COUNT = WASM_CONSTANTS.care.CARE_SLOT_FEED_COUNT;
+/** @type {number} */
+export const CARE_SLOT_GROOM_COUNT = WASM_CONSTANTS.care.CARE_SLOT_GROOM_COUNT;
+/** @type {number} */
+export const CARE_SLOT_REST_COUNT = WASM_CONSTANTS.care.CARE_SLOT_REST_COUNT;
+/** @type {number} */
+export const CARE_SLOT_LAST_ACTION = WASM_CONSTANTS.care.CARE_SLOT_LAST_ACTION;
+/** @type {number} */
+export const CARE_SLOT_UI_TOAST_KIND = WASM_CONSTANTS.care.CARE_SLOT_UI_TOAST_KIND;
+/** @type {number} */
+export const CARE_SLOT_REJECTION_KIND = WASM_CONSTANTS.care.CARE_SLOT_REJECTION_KIND;
+/** @type {number} */
+export const CARE_SLOT_HUNGER_DURATION_MS = WASM_CONSTANTS.care.CARE_SLOT_HUNGER_DURATION_MS;
+/** @type {number} */
+export const CARE_SLOT_GROOMING_DURATION_MS = WASM_CONSTANTS.care.CARE_SLOT_GROOMING_DURATION_MS;
+/** @type {number} */
+export const CARE_SLOT_TIREDNESS_DURATION_MS = WASM_CONSTANTS.care.CARE_SLOT_TIREDNESS_DURATION_MS;
 
 // Command bitmask (written into CARE_SLOT_ACTION_FLAGS).
-export const CARE_CMD_FEED = 1 << 0;
-export const CARE_CMD_GROOM = 1 << 1;
-export const CARE_CMD_REST = 1 << 2;
-export const CARE_CMD_RESET = 1 << 3;
+/** @type {number} */
+export const CARE_CMD_FEED = WASM_CONSTANTS.care.CARE_CMD_FEED;
+/** @type {number} */
+export const CARE_CMD_GROOM = WASM_CONSTANTS.care.CARE_CMD_GROOM;
+/** @type {number} */
+export const CARE_CMD_REST = WASM_CONSTANTS.care.CARE_CMD_REST;
+/** @type {number} */
+export const CARE_CMD_RESET = WASM_CONSTANTS.care.CARE_CMD_RESET;
 
 // Event bitmask (returned from step_care_buffer).
-export const CARE_EVENT_HUNGER_STARTED = 1 << 0;
-export const CARE_EVENT_GROOMING_NEEDED = 1 << 1;
-export const CARE_EVENT_TIREDNESS_STARTED = 1 << 2;
-export const CARE_EVENT_REJECTION_ANIM_FINISHED = 1 << 3;
-export const CARE_EVENT_FEED_ACCEPTED = 1 << 4;
-export const CARE_EVENT_GROOM_ACCEPTED = 1 << 5;
-export const CARE_EVENT_REST_ACCEPTED = 1 << 6;
-export const CARE_EVENT_HUNGER_RESOLVED = 1 << 7;
-export const CARE_EVENT_GROOMING_RESOLVED = 1 << 8;
-export const CARE_EVENT_TIREDNESS_RESOLVED = 1 << 9;
-export const CARE_EVENT_ACTION_REJECTED = 1 << 10;
-export const CARE_EVENT_UI_FLASH = 1 << 11;
-export const CARE_EVENT_TOAST = 1 << 12;
-export const CARE_EVENT_RESET = 1 << 13;
+/** @type {number} */
+export const CARE_EVENT_HUNGER_STARTED = WASM_CONSTANTS.care.CARE_EVENT_HUNGER_STARTED;
+/** @type {number} */
+export const CARE_EVENT_GROOMING_NEEDED = WASM_CONSTANTS.care.CARE_EVENT_GROOMING_NEEDED;
+/** @type {number} */
+export const CARE_EVENT_TIREDNESS_STARTED = WASM_CONSTANTS.care.CARE_EVENT_TIREDNESS_STARTED;
+/** @type {number} */
+export const CARE_EVENT_REJECTION_ANIM_FINISHED = WASM_CONSTANTS.care.CARE_EVENT_REJECTION_ANIM_FINISHED;
+/** @type {number} */
+export const CARE_EVENT_FEED_ACCEPTED = WASM_CONSTANTS.care.CARE_EVENT_FEED_ACCEPTED;
+/** @type {number} */
+export const CARE_EVENT_GROOM_ACCEPTED = WASM_CONSTANTS.care.CARE_EVENT_GROOM_ACCEPTED;
+/** @type {number} */
+export const CARE_EVENT_REST_ACCEPTED = WASM_CONSTANTS.care.CARE_EVENT_REST_ACCEPTED;
+/** @type {number} */
+export const CARE_EVENT_HUNGER_RESOLVED = WASM_CONSTANTS.care.CARE_EVENT_HUNGER_RESOLVED;
+/** @type {number} */
+export const CARE_EVENT_GROOMING_RESOLVED = WASM_CONSTANTS.care.CARE_EVENT_GROOMING_RESOLVED;
+/** @type {number} */
+export const CARE_EVENT_TIREDNESS_RESOLVED = WASM_CONSTANTS.care.CARE_EVENT_TIREDNESS_RESOLVED;
+/** @type {number} */
+export const CARE_EVENT_ACTION_REJECTED = WASM_CONSTANTS.care.CARE_EVENT_ACTION_REJECTED;
+/** @type {number} */
+export const CARE_EVENT_UI_FLASH = WASM_CONSTANTS.care.CARE_EVENT_UI_FLASH;
+/** @type {number} */
+export const CARE_EVENT_TOAST = WASM_CONSTANTS.care.CARE_EVENT_TOAST;
+/** @type {number} */
+export const CARE_EVENT_RESET = WASM_CONSTANTS.care.CARE_EVENT_RESET;
 
 // Action kinds (CARE_SLOT_LAST_ACTION).
+/** @type {number} */
 export const CARE_ACTION_NONE = 0;
+/** @type {number} */
 export const CARE_ACTION_FEED = 1;
+/** @type {number} */
 export const CARE_ACTION_GROOM = 2;
+/** @type {number} */
 export const CARE_ACTION_REST = 3;
+/** @type {number} */
 export const CARE_ACTION_RESET = 4;
 
 // Toast kinds (CARE_SLOT_UI_TOAST_KIND).
+/** @type {number} */
 export const CARE_TOAST_NONE = 0;
+/** @type {number} */
 export const CARE_TOAST_FED = 1;
+/** @type {number} */
 export const CARE_TOAST_GROOMED = 2;
+/** @type {number} */
 export const CARE_TOAST_RESTED = 3;
+/** @type {number} */
 export const CARE_TOAST_REJECTED_HUNGRY = 4;
+/** @type {number} */
 export const CARE_TOAST_REJECTED_GROOM = 5;
+/** @type {number} */
 export const CARE_TOAST_REJECTED_REST = 6;
+/** @type {number} */
 export const CARE_TOAST_RESET = 7;
 
 // Rejection kinds (CARE_SLOT_REJECTION_KIND).
+/** @type {number} */
 export const CARE_REJECTION_NONE = 0;
+/** @type {number} */
 export const CARE_REJECTION_NOT_HUNGRY = 1;
+/** @type {number} */
 export const CARE_REJECTION_NOT_DIRTY = 2;
+/** @type {number} */
 export const CARE_REJECTION_NOT_TIRED = 3;
 
 // Flash / rejection animation durations (ms).
 // Largest gap (ms) advanced via the chunked loop; larger gaps are applied
 // directly to elapsed slots to avoid spinning the loop billions of times.
+/** @type {number} */
 export const CARE_MAX_CHUNKED_ADVANCE_MS = 600000; // 10 minutes
 
+/** @type {number} */
 export const CARE_REJECTION_ANIM_MS = 500;
+/** @type {number} */
 export const CARE_FEED_FLASH_MS = 500;
+/** @type {number} */
 export const CARE_GROOM_FLASH_MS = 500;
+/** @type {number} */
 export const CARE_REST_FLASH_MS = 500;
 
+/**
+ * Clamps a raw dt value into the `[0, 1000]` ms range used by the Wasm step.
+ * @param {unknown} raw
+ * @returns {number}
+ */
 function careSanitizeDtMs(raw) {
   const n = Number(raw);
   if (!Number.isFinite(n)) return 0;
   return Math.max(0, Math.min(1000, n));
 }
 
+/**
+ * Adds two numbers, saturating to `Number.MAX_VALUE` on overflow.
+ * @param {number} a
+ * @param {number} b
+ * @returns {number}
+ */
 function careSaturatingAdd(a, b) {
   const sum = a + b;
   return Number.isFinite(sum) ? sum : Number.MAX_VALUE;
 }
 
+/**
+ * Reads a duration slot, falling back when the slot is not a positive finite number.
+ * @param {Float32Array} buf
+ * @param {number} index
+ * @param {number} fallback
+ * @returns {number}
+ */
 function careDurationSlot(buf, index, fallback) {
   const v = buf[index];
   return (Number.isFinite(v) && v > 0) ? v : fallback;
@@ -124,6 +341,9 @@ function careDurationSlot(buf, index, fallback) {
 /**
  * Exact JS port of `step_care_buffer` (crates/dog_walker_core/src/care_sim.rs).
  * Mutates `buf` (Float32Array of CARE_BUFFER_SLOTS) and returns the event bitmask.
+ * @param {Float32Array} buf
+ * @param {number} dtMs
+ * @returns {number} Event bitmask.
  */
 export function stepCareBufferJs(buf, dtMs) {
   const dt = careSanitizeDtMs(dtMs);
@@ -176,6 +396,11 @@ export function stepCareBufferJs(buf, dtMs) {
   return events >>> 0;
 }
 
+/**
+ * Applies pending care commands from `CARE_SLOT_ACTION_FLAGS` to `buf`.
+ * @param {Float32Array} buf
+ * @returns {number} Event bitmask.
+ */
 function careProcessActionsJs(buf) {
   const flags = (buf[CARE_SLOT_ACTION_FLAGS] >>> 0);
   if (flags === 0) return 0;
@@ -281,6 +506,8 @@ function careProcessActionsJs(buf) {
  *
  * The generated binding exposes `care_buffer_ptr()` and `step_care_buffer(dt_ms)`; the buffer
  * itself lives in Wasm memory, so all reads/writes must go through this view.
+ * @param {Float32Array} fallbackBuf
+ * @returns {Float32Array}
  */
 export function resolveCareBufferView(fallbackBuf) {
   try {
@@ -304,6 +531,9 @@ export function resolveCareBufferView(fallbackBuf) {
  *
  * When Wasm is active the buffer is Rust-owned: `buf` is ignored and the generated
  * `step_care_buffer(dt_ms)` signature (single argument) is used.
+ * @param {Float32Array} buf
+ * @param {number} dtMs
+ * @returns {number} Event bitmask.
  */
 export function stepCareBuffer(buf, dtMs) {
   try {
@@ -317,6 +547,12 @@ export function stepCareBuffer(buf, dtMs) {
   return stepCareBufferJs(buf, dtMs);
 }
 
+/**
+ * Creates a fresh persisted dog state anchored at `nowMs`.
+ * @param {number} [nowMs]
+ * @param {number} [hungerDurationMs]
+ * @returns {DogState}
+ */
 export function createInitialDogState(nowMs = Date.now(), hungerDurationMs = DEFAULT_HUNGER_DURATION_MS) {
   return {
     version: 1,
@@ -338,6 +574,10 @@ export function createInitialDogState(nowMs = Date.now(), hungerDurationMs = DEF
   };
 }
 
+/**
+ * Resolves the default storage backend, or null when unavailable.
+ * @returns {DogStateStorage | null}
+ */
 function defaultStorage() {
   try {
     if (typeof globalThis !== 'undefined' && globalThis.localStorage) {
@@ -349,6 +589,11 @@ function defaultStorage() {
   return null;
 }
 
+/**
+ * Type guard for a persisted v1 dog state.
+ * @param {unknown} state
+ * @returns {state is DogState}
+ */
 function isValidState(state) {
   if (!(
     state &&
@@ -369,6 +614,11 @@ function isValidState(state) {
 
 // Backfill grooming/tiredness needs on a hydrated state without touching
 // existing needs.hunger. Preserves any custom top-level metadata keys.
+/**
+ * Backfills grooming/tiredness needs and mirrors hunger timestamps.
+ * @param {DogState} state
+ * @returns {DogState}
+ */
 function backfillNeeds(state) {
   if (!state || typeof state !== 'object') return state;
   if (!state.needs || typeof state.needs !== 'object') {
@@ -426,34 +676,52 @@ function backfillNeeds(state) {
   return state;
 }
 
+/**
+ * Persistent hunger/grooming/tiredness store backed by the Wasm care buffer.
+ */
 export class DogStateStore {
+  /**
+   * @param {DogStateStoreOptions} [options]
+   */
   constructor({
     storage = defaultStorage(),
     now = () => Date.now(),
     storageKey = DOG_STATE_STORAGE_KEY,
     hungerDurationMs = DEFAULT_HUNGER_DURATION_MS
   } = {}) {
+    /** @type {DogStateStorage | null} */
     this._storage = storage;
+    /** @type {NowFn} */
     this._now = typeof now === 'function' ? now : () => Date.now();
+    /** @type {string} */
     this._storageKey = storageKey;
+    /** @type {number} */
     this._hungerDurationMs = hungerDurationMs;
+    /** @type {Set<DogStateListener>} */
     this._listeners = new Set();
+    /** @type {DogState} */
     this._state = this._load();
     // Local JS mirror of the CareSimBuffer (32 floats), used when Wasm is unavailable.
+    /** @type {Float32Array} */
     this._careBuf = new Float32Array(CARE_BUFFER_SLOTS);
     this._careBuf[CARE_SLOT_HUNGER_DURATION_MS] = this._hungerDurationMs;
     this._careBuf[CARE_SLOT_GROOMING_DURATION_MS] = DEFAULT_GROOMING_DURATION_MS;
     this._careBuf[CARE_SLOT_TIREDNESS_DURATION_MS] = DEFAULT_TIREDNESS_DURATION_MS;
     // JS f64 clock for the care buffer. `CARE_SLOT_NOW_MS` is f32 and cannot
     // represent `Date.now()` precisely, so `dt` is always derived from this.
+    /** @type {number} */
     this._lastCareNowMs = this._now();
     // Set once the Rust-owned Wasm buffer has been seeded from `_state`.
+    /** @type {boolean} */
     this._wasmCareHydrated = false;
     this._hydrateCareFromState(this._state);
   }
 
   // Returns the active care buffer: the Rust-owned zero-copy view when Wasm is available,
   // else the local JS mirror. Re-resolved on every access so memory growth is handled.
+  /**
+   * @returns {Float32Array}
+   */
   _careView() {
     const view = resolveCareBufferView(this._careBuf);
     // The Wasm buffer starts zero-initialized; seed it from `_state` the first
@@ -469,6 +737,10 @@ export class DogStateStore {
 
   // Seeds the care buffer from the persisted state timestamps so the Wasm
   // authority continues from the same logical point.
+  /**
+   * @param {DogState} state
+   * @returns {void}
+   */
   _hydrateCareFromState(state) {
     const buf = this._careView();
     const nowMs = this._now();
@@ -521,6 +793,10 @@ export class DogStateStore {
   }
 
   // Advances the care buffer to `nowMs` and returns the accumulated events.
+  /**
+   * @param {number} nowMs
+   * @returns {number} Event bitmask.
+   */
   _advanceCare(nowMs) {
     const buf = this._careView();
     const target = Number.isFinite(nowMs) ? nowMs : this._now();
@@ -558,6 +834,10 @@ export class DogStateStore {
 
   // Adds `dt` ms directly to the elapsed slots (and recomputes remaining/flags)
   // without looping. Used for large offline gaps.
+  /**
+   * @param {number} dt
+   * @returns {void}
+   */
   _advanceElapsedDirect(dt) {
     const buf = this._careView();
     const hungerDuration = careDurationSlot(buf, CARE_SLOT_HUNGER_DURATION_MS, this._hungerDurationMs);
@@ -583,6 +863,10 @@ export class DogStateStore {
 
   // Recomputes elapsed/remaining/need flags from the last-action timestamps
   // relative to `targetMs`. Used when the clock rolls backwards.
+  /**
+   * @param {number} targetMs
+   * @returns {void}
+   */
   _rehydrateElapsedForRollback(targetMs) {
     const buf = this._careView();
     const hungerDuration = careDurationSlot(buf, CARE_SLOT_HUNGER_DURATION_MS, this._hungerDurationMs);
@@ -612,6 +896,9 @@ export class DogStateStore {
   }
 
   // Writes the care buffer's timestamps back into the persisted state shape.
+  /**
+   * @returns {void}
+   */
   _syncStateFromCare() {
     const buf = this._careView();
     const existingNeeds = (this._state && this._state.needs) || {};
@@ -658,6 +945,11 @@ export class DogStateStore {
   // timestamp is always written (feed/groom/rest never reject). The care
   // buffer is then re-derived so timers/flags stay consistent, and the Wasm
   // step is still used to advance timers and emit events.
+  /**
+   * @param {number} cmd
+   * @param {number} nowMs
+   * @returns {CareCommandResult}
+   */
   _issueCommand(cmd, nowMs) {
     const target = Number.isFinite(nowMs) ? nowMs : this._now();
     // Re-hydrate from `_state` so direct mutations (e.g. custom durationMs or
@@ -731,6 +1023,9 @@ export class DogStateStore {
     return { snapshot, events: events >>> 0 };
   }
 
+  /**
+   * @returns {DogState}
+   */
   _load() {
     let raw = null;
     try {
@@ -781,6 +1076,10 @@ export class DogStateStore {
     return initial;
   }
 
+  /**
+   * @param {DogState} state
+   * @returns {void}
+   */
   _persist(state) {
     try {
       if (this._storage && typeof this._storage.setItem === 'function') {
@@ -791,6 +1090,10 @@ export class DogStateStore {
     }
   }
 
+  /**
+   * @param {DogStateSnapshot} snapshot
+   * @returns {void}
+   */
   _notify(snapshot) {
     for (const listener of Array.from(this._listeners)) {
       try {
@@ -801,6 +1104,10 @@ export class DogStateStore {
     }
   }
 
+  /**
+   * @param {number} [nowMs]
+   * @returns {HungerSnapshot}
+   */
   getHunger(nowMs = this._now()) {
     this._advanceCare(nowMs);
     const buf = this._careView();
@@ -814,6 +1121,10 @@ export class DogStateStore {
     return { lastFedAt, durationMs, elapsedMs, remainingMs, hungryAt, isHungry };
   }
 
+  /**
+   * @param {number} [nowMs]
+   * @returns {DogStateSnapshot}
+   */
   getSnapshot(nowMs = this._now()) {
     // Read the care buffer directly (no re-advance) so a snapshot taken right
     // after an action reflects the timestamp just written.
@@ -843,15 +1154,27 @@ export class DogStateStore {
     };
   }
 
+  /**
+   * @param {number} [nowMs]
+   * @returns {boolean} True when the dog is hungry.
+   */
   isHungry(nowMs = this._now()) {
     return this.getHunger(nowMs).isHungry;
   }
 
   // Read-only selector: true when the dog is hungry.
+  /**
+   * @param {number} [nowMs]
+   * @returns {boolean} True when the dog is hungry.
+   */
   selectIsHungry(nowMs = this._now()) {
     return this.getHunger(nowMs).isHungry;
   }
 
+  /**
+   * @param {number} [nowMs]
+   * @returns {GroomingSnapshot}
+   */
   getGrooming(nowMs = this._now()) {
     this._advanceCare(nowMs);
     const buf = this._careView();
@@ -864,15 +1187,27 @@ export class DogStateStore {
     return { lastGroomedAt, durationMs, elapsedMs, remainingMs, needsGrooming };
   }
 
+  /**
+   * @param {number} [nowMs]
+   * @returns {boolean} True when the dog needs grooming.
+   */
   needsGrooming(nowMs = this._now()) {
     return this.getGrooming(nowMs).needsGrooming;
   }
 
   // Read-only selector: true when the dog needs grooming.
+  /**
+   * @param {number} [nowMs]
+   * @returns {boolean} True when the dog needs grooming.
+   */
   selectNeedsGrooming(nowMs = this._now()) {
     return this.getGrooming(nowMs).needsGrooming;
   }
 
+  /**
+   * @param {number} [nowMs]
+   * @returns {TirednessSnapshot}
+   */
   getTiredness(nowMs = this._now()) {
     this._advanceCare(nowMs);
     const buf = this._careView();
@@ -885,16 +1220,28 @@ export class DogStateStore {
     return { lastRestedAt, durationMs, elapsedMs, remainingMs, isTired };
   }
 
+  /**
+   * @param {number} [nowMs]
+   * @returns {boolean} True when the dog is tired.
+   */
   isTired(nowMs = this._now()) {
     return this.getTiredness(nowMs).isTired;
   }
 
   // Read-only selector: true when the dog is tired.
+  /**
+   * @param {number} [nowMs]
+   * @returns {boolean} True when the dog is tired.
+   */
   selectIsTired(nowMs = this._now()) {
     return this.getTiredness(nowMs).isTired;
   }
 
   // Snapshot of all needs with derived flags. Never persisted.
+  /**
+   * @param {number} [nowMs]
+   * @returns {NeedsSnapshot}
+   */
   getNeeds(nowMs = this._now()) {
     return {
       hunger: this.getHunger(nowMs),
@@ -903,44 +1250,77 @@ export class DogStateStore {
     };
   }
 
+  /**
+   * @param {number} [nowMs]
+   * @returns {DogStateSnapshot}
+   */
   feed(nowMs = this._now()) {
     return this._issueCommand(CARE_CMD_FEED, nowMs).snapshot;
   }
 
+  /**
+   * @param {number} [nowMs]
+   * @returns {DogStateSnapshot}
+   */
   groom(nowMs = this._now()) {
     return this._issueCommand(CARE_CMD_GROOM, nowMs).snapshot;
   }
 
+  /**
+   * @param {number} [nowMs]
+   * @returns {DogStateSnapshot}
+   */
   rest(nowMs = this._now()) {
     return this._issueCommand(CARE_CMD_REST, nowMs).snapshot;
   }
 
+  /**
+   * @param {number} [nowMs]
+   * @returns {DogStateSnapshot}
+   */
   reset(nowMs = this._now()) {
     return this._issueCommand(CARE_CMD_RESET, nowMs).snapshot;
   }
 
   // --- Care buffer accessors (for hosts that need events / raw slots) ------
 
-  /** Returns a copy of the current 32-slot care buffer. */
+  /**
+   * Returns a copy of the current 32-slot care buffer.
+   * @returns {Float32Array}
+   */
   getCareBuffer() {
     return new Float32Array(this._careView());
   }
 
-  /** Returns the last event bitmask produced by a care step. */
+  /**
+   * Returns the last event bitmask produced by a care step.
+   * @returns {number}
+   */
   getLastCareEvents() {
     return this._careView()[CARE_SLOT_EVENT_BITMASK] >>> 0;
   }
 
-  /** Returns the current UI toast kind (see CARE_TOAST_*). */
+  /**
+   * Returns the current UI toast kind (see CARE_TOAST_*).
+   * @returns {number}
+   */
   getToastKind() {
     return this._careView()[CARE_SLOT_UI_TOAST_KIND] | 0;
   }
 
-  /** Returns the current rejection kind (see CARE_REJECTION_*). */
+  /**
+   * Returns the current rejection kind (see CARE_REJECTION_*).
+   * @returns {number}
+   */
   getRejectionKind() {
     return this._careView()[CARE_SLOT_REJECTION_KIND] | 0;
   }
 
+  /**
+   * Subscribes to state snapshots.
+   * @param {DogStateListener} listener
+   * @returns {() => void} Unsubscribe function.
+   */
   subscribe(listener) {
     if (typeof listener !== 'function') {
       return () => {};
@@ -953,20 +1333,21 @@ export class DogStateStore {
 }
 
 if (typeof globalThis !== 'undefined') {
-  globalThis.DogStateStore = DogStateStore;
-  globalThis.createInitialDogState = createInitialDogState;
-  globalThis.DOG_STATE_STORAGE_KEY = DOG_STATE_STORAGE_KEY;
-  globalThis.DEFAULT_HUNGER_DURATION_MS = DEFAULT_HUNGER_DURATION_MS;
-  globalThis.DEFAULT_GROOMING_DURATION_MS = DEFAULT_GROOMING_DURATION_MS;
-  globalThis.DEFAULT_TIREDNESS_DURATION_MS = DEFAULT_TIREDNESS_DURATION_MS;
-  globalThis.DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS;
-  globalThis.CARE_BUFFER_SLOTS = CARE_BUFFER_SLOTS;
-  globalThis.CARE_MAX_CHUNKED_ADVANCE_MS = CARE_MAX_CHUNKED_ADVANCE_MS;
-  globalThis.CARE_CMD_FEED = CARE_CMD_FEED;
-  globalThis.CARE_CMD_GROOM = CARE_CMD_GROOM;
-  globalThis.CARE_CMD_REST = CARE_CMD_REST;
-  globalThis.CARE_CMD_RESET = CARE_CMD_RESET;
-  globalThis.stepCareBuffer = stepCareBuffer;
-  globalThis.stepCareBufferJs = stepCareBufferJs;
-  globalThis.resolveCareBufferView = resolveCareBufferView;
+  const g = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (globalThis));
+  g.DogStateStore = DogStateStore;
+  g.createInitialDogState = createInitialDogState;
+  g.DOG_STATE_STORAGE_KEY = DOG_STATE_STORAGE_KEY;
+  g.DEFAULT_HUNGER_DURATION_MS = DEFAULT_HUNGER_DURATION_MS;
+  g.DEFAULT_GROOMING_DURATION_MS = DEFAULT_GROOMING_DURATION_MS;
+  g.DEFAULT_TIREDNESS_DURATION_MS = DEFAULT_TIREDNESS_DURATION_MS;
+  g.DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS = DEFAULT_HUNGRY_ANIMATION_INTERVAL_MS;
+  g.CARE_BUFFER_SLOTS = CARE_BUFFER_SLOTS;
+  g.CARE_MAX_CHUNKED_ADVANCE_MS = CARE_MAX_CHUNKED_ADVANCE_MS;
+  g.CARE_CMD_FEED = CARE_CMD_FEED;
+  g.CARE_CMD_GROOM = CARE_CMD_GROOM;
+  g.CARE_CMD_REST = CARE_CMD_REST;
+  g.CARE_CMD_RESET = CARE_CMD_RESET;
+  g.stepCareBuffer = stepCareBuffer;
+  g.stepCareBufferJs = stepCareBufferJs;
+  g.resolveCareBufferView = resolveCareBufferView;
 }

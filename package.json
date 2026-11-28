@@ -8,9 +8,19 @@
     "deploy": "npm run build && wrangler pages deploy dist --project-name=virtual-dog-walker",
     "build:wasm": "bash scripts/build_wasm.sh",
     "build": "bash scripts/build_pages.sh",
-    "test": "python3 test/run_tests.py"
+    "test": "python3 test/run_tests.py",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "typecheck:engine": "tsc -p tsconfig.engine.json --noEmit",
+    "typecheck:entities": "tsc -p tsconfig.entities.json --noEmit",
+    "typecheck:net-systems": "tsc -p tsconfig.net-systems.json --noEmit",
+    "typecheck:world": "tsc -p tsconfig.world.json --noEmit",
+    "typecheck:ui-entry": "tsc -p tsconfig.ui-entry.json --noEmit",
+    "typecheck:zero-chat-widget": "tsc -p tsconfig.zero-chat-widget.json --noEmit",
+    "lint": "oxlint --config .oxlintrc.json src ../zero_chat/zero_client/widget/zero_chat_widget.js"
   },
   "devDependencies": {
+    "oxlint": "0.15.15",
+    "typescript": "5.7.2",
     "wrangler": "^3.100.0"
   }
 }

@@ -1,0 +1,10 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "src/net/**/*.js",
+    "src/systems/**/*.js",
+    "src/types/**/*.d.ts",
+    "src/wasm/**/*.d.ts",
+    "src/wasm_core/**/*.d.ts"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "include": [
+    "../zero_chat/zero_client/widget/zero_chat_widget.js",
+    "src/types/**/*.d.ts",
+    "src/wasm/**/*.d.ts",
+    "src/wasm_core/**/*.d.ts"
+  ]
+}
